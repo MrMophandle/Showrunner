@@ -2,7 +2,8 @@ import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { initLibrary, libraryPaths, openDatabase, writeIfAbsent } from './library.ts'
+import { openStore } from './db/store.ts'
+import { initLibrary, libraryPaths, openLibraryStore, writeIfAbsent } from './library.ts'
 
 let root: string
 
@@ -46,13 +47,31 @@ describe('the library volume', () => {
   it('opens the database in WAL mode with foreign keys on', () => {
     const paths = libraryPaths(root)
     initLibrary(root)
-    const db = openDatabase(paths)
+    const store = openLibraryStore(paths)
 
     try {
-      expect(db.prepare('PRAGMA journal_mode').get()).toMatchObject({ journal_mode: 'wal' })
-      expect(db.prepare('PRAGMA foreign_keys').get()).toMatchObject({ foreign_keys: 1 })
+      expect(store.get('PRAGMA journal_mode')).toMatchObject({ journal_mode: 'wal' })
+      expect(store.get('PRAGMA foreign_keys')).toMatchObject({ foreign_keys: 1 })
     } finally {
-      db.close()
+      store.close()
+    }
+  })
+
+  it('migrates on boot, so the app never comes up on a schema-less file', () => {
+    const paths = initLibrary(root)
+    const migrated = openLibraryStore(paths)
+    const untouched = openStore(join(root, 'never-booted.db'))
+
+    try {
+      expect(
+        migrated.all('SELECT number FROM schema_migration ORDER BY number'),
+      ).not.toHaveLength(0)
+      expect(
+        untouched.get("SELECT name FROM sqlite_master WHERE name = 'schema_migration'"),
+      ).toBeUndefined()
+    } finally {
+      migrated.close()
+      untouched.close()
     }
   })
 })

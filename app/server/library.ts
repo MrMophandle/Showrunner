@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
-import { DatabaseSync } from 'node:sqlite'
+import { migrate } from './db/migrate.ts'
+import { openStore, type Store } from './db/store.ts'
 
 /**
  * The library volume (D2): SQLite for structure, plain files for heavy artifacts,
@@ -10,7 +11,7 @@ import { DatabaseSync } from 'node:sqlite'
 export interface LibraryPaths {
   /** The mount point itself. */
   root: string
-  /** The one SQLite file. E1-2 gives it a schema; this scaffold only creates it. */
+  /** The one SQLite file, carrying the schema in `db/migrations/`. */
   databaseFile: string
   /** Where artifacts land as plain files. */
   artifactDir: string
@@ -31,11 +32,8 @@ export function libraryPaths(root: string): LibraryPaths {
 }
 
 /** Opens (creating if absent) the library database. Callers close it. */
-export function openDatabase(paths: LibraryPaths): DatabaseSync {
-  const db = new DatabaseSync(paths.databaseFile)
-  db.exec('PRAGMA journal_mode = WAL')
-  db.exec('PRAGMA foreign_keys = ON')
-  return db
+export function openLibraryStore(paths: LibraryPaths): Store {
+  return openStore(paths.databaseFile)
 }
 
 /**
@@ -57,13 +55,18 @@ This file is not canon. Only ratification writes canon.
 `
 
 /**
- * Creates the library layout, the SQLite file, and one sample artifact.
- * Idempotent — run it on every boot.
+ * Creates the library layout, migrates the SQLite file to the current schema, and writes
+ * one sample artifact. Idempotent — run it on every boot.
  */
 export function initLibrary(root: string = libraryRoot()): LibraryPaths {
   const paths = libraryPaths(root)
   mkdirSync(paths.artifactDir, { recursive: true })
-  openDatabase(paths).close()
+  const store = openLibraryStore(paths)
+  try {
+    migrate(store)
+  } finally {
+    store.close()
+  }
   writeIfAbsent(join(paths.artifactDir, 'hello.txt'), SCAFFOLD_ARTIFACT)
   return paths
 }
