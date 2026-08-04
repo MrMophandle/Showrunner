@@ -5,8 +5,9 @@ keeping, image and audio generation, assembly, and publishing, with the showrunn
 ruling at every gate.
 
 **Status: E1 in progress.** The scaffold stands — one container serving a hello page
-on :4400, with the library volume mounted. The domain schema, runner, gates, and
-event log are the rest of E1.
+on :4400, with the library volume mounted — and the domain schema is in: show, season,
+episode, scene, artifacts with provenance and computed freshness, arcs and waypoints.
+The runner, gates, and event log are the rest of E1.
 
 ## Running it
 
@@ -42,6 +43,26 @@ outside the container (D5) — nothing GPU-related belongs in compose.
 
 Work is tracked in [GitHub Issues](https://github.com/MrMophandle/Showrunner/issues),
 one milestone per epic. **E1 · The spine** is issues #1–#9.
+
+## The data layer
+
+`app/server/db/` is the schema and the one seam onto SQLite; `app/server/domain/` is the
+typed layer over it. Four rules hold it together:
+
+- **`node:sqlite` is imported in `db/store.ts` and nowhere else.** Everything else takes a
+  `Store` and never sees a database handle, so a driver swap is a one-module change.
+- **Migrations are plain numbered SQL files** in `db/migrations/`, applied in order inside a
+  transaction and recorded in `schema_migration`. Change the schema by adding the next
+  number; never edit an applied file. No ORM, no query builder, no schema DSL.
+- **Staleness is computed, never remembered.** There is no `is_stale` column. An artifact
+  records what it consumed and at which version — optionally scoped to one scene — and
+  "which artifacts are stale and why" is a query over those edges.
+- **Scenes are derived, never prescribed.** There is no `num_scenes` anywhere: the count
+  is `SELECT COUNT(*)` off the episode the writer actually wrote.
+
+The same computed-not-remembered rule covers arcs: an episode records the waypoint
+*ordinal* it declared against, so inserting a waypoint mid-sequence makes the ordinal
+drift, and "which episodes need re-checking" falls out of the drift rather than a flag.
 
 ## The shape of it
 
