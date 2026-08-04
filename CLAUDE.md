@@ -77,7 +77,8 @@ doc except a later ruling from Ryan.
 4. **Honest confidence.** Text checks gate hard; image checks flag for his eye;
    audio checks verify words only and queue a listen. Never render a weak check
    as a green checkmark.
-5. **Nothing runs without a click.** Retries are bounded at **2** — everywhere,
+5. **Nothing runs without a click.** Retries are bounded at **2** — that is **three
+   attempts in all**, the first plus two re-runs — everywhere,
    including image generation — then it reaches Ryan with the full attempt history.
 
 ## The Archon rule (binding)

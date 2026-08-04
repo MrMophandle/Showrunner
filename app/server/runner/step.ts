@@ -41,7 +41,15 @@ export interface StepContext {
 export interface Step<Out = unknown> {
   /** Stable across code changes — resume matches persisted rows to code by this name. */
   readonly name: string
-  /** The scarce resource this step takes for its whole execution, if any. */
+  /**
+   * The scarce resource this step takes for its whole execution, if any.
+   *
+   * **Singular on purpose.** One lock, held for exactly as long as the step runs, means
+   * nothing ever holds a lock while waiting for another — so deadlock is impossible by
+   * construction and the runner needs no detection for it. If this ever becomes a list,
+   * that property dies the same day: acquire an ordering discipline or deadlock
+   * detection before you make the change, not after.
+   */
   readonly lock?: LockName
   /** Names of earlier steps in this stage whose output this step reads. */
   readonly inputs?: readonly string[]
