@@ -1,0 +1,326 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Showrunner — Season Map · Dead Light S1</title>
+<style>
+  :root {
+    --page: #0d0d0d;
+    --card: #1a1a19;
+    --card-raised: #222220;
+    --line: #2c2c2a;
+    --ink: #ffffff;
+    --ink-2: #c3c2b7;
+    --muted: #898781;
+    --good: #0ca30c;
+    --warn: #fab219;
+    --serious: #ec835a;
+    --critical: #d03b3b;
+    --live: #6db3f2;
+    --cols: 190px repeat(9, minmax(104px, 1fr));
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--page);
+    color: var(--ink-2);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    padding: 28px 40px 70px;
+  }
+  .wrap { max-width: 1320px; margin: 0 auto; }
+  .crumb { font-size: 12.5px; color: var(--muted); margin-bottom: 10px; }
+  .crumb a { color: var(--muted); text-decoration: none; border-bottom: 1px solid var(--line); }
+  .top { display: flex; align-items: baseline; gap: 16px; margin-bottom: 20px; flex-wrap: wrap; }
+  h1 { font-size: 22px; font-weight: 650; color: var(--ink); }
+  .top .meta { font-size: 13px; color: var(--muted); }
+
+  .panel { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; margin-bottom: 18px; }
+  .panel-h { font-size: 12px; letter-spacing: .16em; text-transform: uppercase; color: var(--muted); margin-bottom: 14px; display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .panel-h .sub { text-transform: none; letter-spacing: 0; font-size: 12.5px; }
+
+  /* ── The grid ── */
+  .scroller { overflow-x: auto; }
+  .map { min-width: 1090px; }
+  .row { display: grid; grid-template-columns: var(--cols); align-items: stretch; }
+
+  /* episode header row */
+  .row.head .cell { padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+  .eph { display: flex; flex-direction: column; gap: 2px; padding: 0 6px; }
+  .eph .n { font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+  .eph .t { font-size: 13px; font-weight: 650; color: var(--ink); line-height: 1.25; }
+  .eph .st { font-size: 11px; display: flex; align-items: center; gap: 5px; margin-top: 3px; color: var(--muted); }
+  .eph .st::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: #4e4e49; flex: none; }
+  .eph.pub .t { color: var(--ink-2); }
+  .eph.pub { opacity: .62; }
+  .eph.gate .st { color: var(--warn); }
+  .eph.gate .st::before { background: var(--warn); }
+  .eph.live .st { color: var(--live); }
+  .eph.live .st::before { background: var(--live); }
+  .eph.plan .t { color: var(--ink-2); }
+  .eph.plan .st { font-style: italic; }
+
+  /* arc rows */
+  .row.arc { position: relative; }
+  .row.arc + .row.arc { border-top: 1px solid #232321; }
+  .row.arc .cell { padding: 16px 6px; display: flex; align-items: center; justify-content: center; position: relative; }
+  /* the arc's track line, drawn behind the chips */
+  .row.arc .cell.track::before {
+    content: ""; position: absolute; left: -50%; right: 50%; top: 50%; height: 2px; background: #33332f;
+  }
+  .row.arc .cell.track.first::before { display: none; }
+  .row.arc .cell.gap::before { background: repeating-linear-gradient(90deg, #4a3d14 0 5px, transparent 5px 10px); }
+
+  /* the label column stays put while the season scrolls sideways */
+  .arclabel, .row.head .cell:first-child, .row.foot .label {
+    position: sticky; left: 0; z-index: 3; background: var(--card);
+    box-shadow: 1px 0 0 var(--line);
+  }
+  .arclabel { padding: 16px 12px 16px 2px; display: flex; flex-direction: column; gap: 3px; justify-content: center; }
+  .arclabel .nm { font-size: 14px; font-weight: 650; color: var(--ink); line-height: 1.25; }
+  .arclabel .nm a { color: var(--ink); text-decoration: none; border-bottom: 1px dashed #4e4e49; }
+  .arclabel .nm a:hover { border-bottom-color: var(--ink); }
+  .arclabel .kind { font-size: 11.5px; color: var(--muted); }
+  .arclabel .warn { font-size: 11.5px; color: var(--warn); display: flex; align-items: flex-start; gap: 5px; margin-top: 3px; line-height: 1.35; }
+  .arclabel .warn::before { content: "◆"; font-size: 8px; position: relative; top: 4px; }
+
+  .wp {
+    position: relative; z-index: 1; font-size: 11.5px; font-weight: 600; line-height: 1.25;
+    border: 1px solid #4e4e49; background: var(--card); border-radius: 7px; padding: 4px 8px;
+    color: var(--ink-2); text-align: center; max-width: 100%;
+  }
+  .wp.done { border-color: #4e4e49; }
+  .wp.here { background: var(--warn); border-color: var(--warn); color: #1a1400; font-weight: 700; }
+  .wp.plan { border-style: dashed; color: var(--muted); background: none; }
+  .wp .no { display: block; font-size: 9.5px; letter-spacing: .08em; text-transform: uppercase; opacity: .72; font-weight: 700; }
+  .dotonly { width: 7px; height: 7px; border-radius: 50%; background: #33332f; position: relative; z-index: 1; }
+
+  /* touches summary row */
+  .row.foot { border-top: 1px solid var(--line); }
+  .row.foot .cell { padding: 10px 6px; text-align: center; font-size: 11.5px; color: var(--muted); }
+  .row.foot .label { padding: 10px 12px 10px 2px; font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+  .vanilla { color: var(--ink-2); border: 1px dashed #4e4e49; border-radius: 6px; padding: 1px 7px; font-size: 11px; }
+  .planned { font-style: italic; color: #6b695f; }
+
+  /* ── Hanging threads ── */
+  .thread { padding: 12px 0; border-bottom: 1px solid #232321; }
+  .thread:last-child { border-bottom: none; padding-bottom: 0; }
+  .thread .h { font-size: 14px; color: var(--ink); font-weight: 650; }
+  .thread p { font-size: 13px; color: var(--ink-2); margin-top: 3px; }
+  .thread .why { font-size: 12.5px; color: var(--muted); margin-top: 3px; }
+
+  /* ── Idea pool ── */
+  .pool { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+  .pcol .ph { font-size: 11.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; display: flex; gap: 7px; align-items: baseline; }
+  .idea { border: 1px solid var(--line); border-radius: 9px; padding: 11px 13px; margin-bottom: 8px; }
+  .idea .t { font-size: 13.5px; color: var(--ink); font-weight: 600; line-height: 1.3; }
+  .idea .d { font-size: 12.5px; color: var(--muted); margin-top: 3px; }
+  .idea.green { border-color: #2e4d1d; background: #131a0f; }
+  .idea.parked { border-style: dashed; }
+  .idea.spiked { opacity: .55; }
+  .idea.spiked .t { text-decoration: line-through; }
+
+  .btn {
+    border-radius: 9px; padding: 9px 15px; font-size: 13.5px; font-weight: 600; cursor: pointer;
+    border: 1px solid var(--line); background: var(--card-raised); color: var(--ink);
+    text-align: left; line-height: 1.35;
+  }
+  .btn:hover { border-color: var(--muted); }
+  .btn .cost { display: block; font-weight: 400; font-size: 12px; color: var(--muted); }
+  .btn.wide { width: 100%; margin-top: 4px; }
+
+  footer { margin-top: 26px; font-size: 12px; color: #5c5b55; text-align: center; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="crumb"><a href="floor.html">← the floor</a> · Dead Light · the season map</div>
+  <div class="top">
+    <h1>Season 1 · the map</h1>
+    <span class="meta">9 episodes planned · 3 published · 4 in flight · 4 arcs · 1 hanging thread</span>
+  </div>
+
+  <!-- ── Episodes as columns, arcs as rows ── -->
+  <div class="panel">
+    <div class="panel-h">Arcs across the season
+      <span class="sub">waypoints plotted where episodes land them · a dashed track is a cold stretch</span>
+    </div>
+    <div class="scroller">
+      <div class="map">
+
+        <!-- episode header -->
+        <div class="row head">
+          <div class="cell"></div>
+          <div class="cell"><div class="eph pub"><span class="n">ep01</span><span class="t">Dead Light</span><span class="st">published</span></div></div>
+          <div class="cell"><div class="eph pub"><span class="n">ep02</span><span class="t">Ledger Line</span><span class="st">published</span></div></div>
+          <div class="cell"><div class="eph pub"><span class="n">ep03</span><span class="t">Hull Song</span><span class="st">published</span></div></div>
+          <div class="cell"><div class="eph gate"><span class="n">ep04</span><span class="t">Signal Fade</span><span class="st">final gate</span></div></div>
+          <div class="cell"><div class="eph live"><span class="n">ep05</span><span class="t">The Quiet Deck</span><span class="st">assets</span></div></div>
+          <div class="cell"><div class="eph gate"><span class="n">ep06</span><span class="t">Cold Ledger</span><span class="st">script gate</span></div></div>
+          <div class="cell"><div class="eph"><span class="n">ep07</span><span class="t">Meridian</span><span class="st">outline</span></div></div>
+          <div class="cell"><div class="eph plan"><span class="n">ep08</span><span class="t">Undertow</span><span class="st">premise, not greenlit</span></div></div>
+          <div class="cell"><div class="eph plan"><span class="n">ep09</span><span class="t">— unstarted</span><span class="st">planned</span></div></div>
+        </div>
+
+        <!-- arc: the beacon -->
+        <div class="row arc">
+          <div class="arclabel">
+            <span class="nm"><a href="arc.html">The beacon</a></span>
+            <span class="kind">story · season · 4 waypoints</span>
+          </div>
+          <div class="cell track first"><div class="wp done"><span class="no">wp 1</span>heard</div></div>
+          <div class="cell track"><span class="dotonly"></span></div>
+          <div class="cell track"><div class="wp done"><span class="no">wp 2</span>traced</div></div>
+          <div class="cell track"><span class="dotonly"></span></div>
+          <div class="cell track"><div class="wp here"><span class="no">wp 3</span>answered</div></div>
+          <div class="cell track"><span class="dotonly"></span></div>
+          <div class="cell track"><span class="dotonly"></span></div>
+          <div class="cell track"><span class="dotonly"></span></div>
+          <div class="cell track"><div class="wp plan"><span class="no">wp 4</span>the lie</div></div>
+        </div>
+
+        <!-- arc: trust -->
+        <div class="row arc">
+          <div class="arclabel">
+            <span class="nm"><a href="arc.html">Vessa ↔ Ferro · trust</a></span>
+            <span class="kind">character · show · 3 waypoints</span>
+          </div>
+          <div class="cell track first"><div class="wp done"><span class="no">wp 1</span>distrusts</div></div>
+          <div class="cell track"><span class="dotonly"></span></div>
+          <div class="cell track"><span class="dotonly"></span></div>
+          <div class="cell track"><span class="dotonly"></span></div>
+          <div class="cell track"><div class="wp here"><span class="no">wp 2</span>listens, double-checks</div></div>
+          <div class="cell track"><div class="wp here"><span class="no">wp 2</span>holds</div></div>
+          <div class="cell track"><span class="dotonly"></span></div>
+          <div class="cell track"><span class="dotonly"></span></div>
+          <div class="cell track"><div class="wp plan"><span class="no">wp 3</span>trusts</div></div>
+        </div>
+
+        <!-- arc: Mara's ledger — the hanging thread -->
+        <div class="row arc">
+          <div class="arclabel">
+            <span class="nm"><a href="arc.html">Mara’s ledger</a></span>
+            <span class="kind">story · season · 3 waypoints</span>
+            <span class="warn">cold for 3 episodes — wp 2 has no episode holding it</span>
+          </div>
+          <div class="cell track first"><span class="dotonly"></span></div>
+          <div class="cell track"><div class="wp done"><span class="no">wp 1</span>the debt named</div></div>
+          <div class="cell track gap"><span class="dotonly"></span></div>
+          <div class="cell track gap"><span class="dotonly"></span></div>
+          <div class="cell track gap"><span class="dotonly"></span></div>
+          <div class="cell track"><div class="wp here"><span class="no">wp 2</span>the debt called</div></div>
+          <div class="cell track"><span class="dotonly"></span></div>
+          <div class="cell track"><span class="dotonly"></span></div>
+          <div class="cell track"><div class="wp plan"><span class="no">wp 3</span>paid, wrongly</div></div>
+        </div>
+
+        <!-- arc: Trent -->
+        <div class="row arc">
+          <div class="arclabel">
+            <span class="nm"><a href="arc.html">Trent · the quiet mutiny</a></span>
+            <span class="kind">character · show · 3 waypoints</span>
+          </div>
+          <div class="cell track first"><span class="dotonly"></span></div>
+          <div class="cell track"><span class="dotonly"></span></div>
+          <div class="cell track"><div class="wp done"><span class="no">wp 1</span>doubts aloud</div></div>
+          <div class="cell track"><div class="wp done"><span class="no">wp 2</span>acts alone</div></div>
+          <div class="cell track"><span class="dotonly"></span></div>
+          <div class="cell track"><span class="dotonly"></span></div>
+          <div class="cell track"><span class="dotonly"></span></div>
+          <div class="cell track"><div class="wp plan"><span class="no">wp 3</span>is found out</div></div>
+          <div class="cell track"><span class="dotonly"></span></div>
+        </div>
+
+        <!-- touches summary -->
+        <div class="row foot">
+          <div class="label">Arcs touched</div>
+          <div class="cell">2</div>
+          <div class="cell">1</div>
+          <div class="cell">2</div>
+          <div class="cell">1</div>
+          <div class="cell">2</div>
+          <div class="cell">2</div>
+          <div class="cell"><span class="vanilla">vanilla</span></div>
+          <div class="cell"><span class="planned">1 planned</span></div>
+          <div class="cell"><span class="planned">3 planned</span></div>
+        </div>
+
+      </div>
+    </div>
+    <div style="font-size:12.5px;color:var(--muted);margin-top:12px">
+      ep07 “Meridian” is <b style="color:var(--ink-2)">vanilla</b> — it touches no arc. Legal, tracked,
+      never a failure state; it tells its own story between two heavy episodes.
+    </div>
+  </div>
+
+  <!-- ── Hanging threads ── -->
+  <div class="panel">
+    <div class="panel-h">Hanging threads <span class="sub">computed — time since last touch vs. where the next waypoint sits</span></div>
+    <div class="thread">
+      <div class="h">Mara’s ledger — cold since ep02</div>
+      <p>Three episodes have passed since “the debt named,” and waypoint 2 only lands
+      at ep06, which is still at its script gate. If ep06 is rejected, the gap becomes five.</p>
+      <div class="why">the audience last heard the debt 3 episodes ago · longest silence of any live arc this season</div>
+    </div>
+    <div class="thread">
+      <div class="h">Everything else is holding</div>
+      <p>“The beacon” lands wp 3 in ep05 and its last waypoint is placed at ep09.
+      “Trust” sits at wp 2 across ep05–06 by design. Trent’s wp 3 is placed at ep08.</p>
+      <div class="why">no other arc has gone more than 2 episodes untouched</div>
+    </div>
+  </div>
+
+  <!-- ── Idea pool ── -->
+  <div class="panel">
+    <div class="panel-h">The idea pool <span class="sub">premises before they’re episodes</span></div>
+    <div class="pool">
+
+      <div class="pcol">
+        <div class="ph">Greenlit <span style="color:var(--good)">3</span></div>
+        <div class="idea green">
+          <div class="t">“The beacon lies”</div>
+          <div class="d">answers wp 4 · earmarked for ep09 · checked clean against canon Jul 30</div>
+        </div>
+        <div class="idea green">
+          <div class="t">“Ferro’s nine years”</div>
+          <div class="d">would fill his history gap · touches no arc — would be vanilla</div>
+        </div>
+        <div class="idea green">
+          <div class="t">“The tow line’s owner”</div>
+          <div class="d">closes Mara’s ledger wp 3 · no episode assigned yet</div>
+        </div>
+      </div>
+
+      <div class="pcol">
+        <div class="ph">Parked <span>2</span></div>
+        <div class="idea parked">
+          <div class="t">“Old Sette returns”</div>
+          <div class="d">parked — Sette is <b style="color:var(--ink-2)">retired</b> in canon; a reappearance would raise a finding</div>
+        </div>
+        <div class="idea parked">
+          <div class="t">“The station’s second beacon”</div>
+          <div class="d">parked until “the beacon” arc lands wp 4 — too close to it before then</div>
+        </div>
+      </div>
+
+      <div class="pcol">
+        <div class="ph">Spiked <span>1</span></div>
+        <div class="idea spiked">
+          <div class="t">“Vessa was never aboard”</div>
+          <div class="d">spiked Jul 12 — contradicts 4 ratified facts; your note: “too cheap a trick, and it costs us ep01”</div>
+        </div>
+        <div style="margin-top:14px">
+          <button class="btn wide">Pitch a new premise against canon
+            <span class="cost">runs the check panel on the idea, pre-episode · 1 Opus call · ~$0.30</span>
+          </button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <footer>Mockup · the season map (screen 5.7) · not wired</footer>
+</div>
+</body>
+</html>

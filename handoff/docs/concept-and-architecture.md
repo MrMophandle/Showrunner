@@ -346,3 +346,17 @@ just before each epic starts.
   required, exactly one. Gap found when Ryan asked what the mockup's invented
   `keeps` relation meant — 3.1 listed "member-of, located-in…" and never said
   who owns that list.
+- **D24 · Arcs get their own page** (ruled Aug 4, 2026): an arc is a first-class
+  object with no home in the seven screens — it appeared only as a row on the
+  season map and a chip on entity pages, so nothing anywhere said what an arc
+  *is*. An arc page is added, reachable from the season map (click the arc name)
+  and the canon library (an Arcs section beside the categories). It carries: a
+  prose **statement** (what the arc is about and the question it asks — authored
+  by Ryan, the thing you re-read when you've forgotten); the ordered waypoints,
+  each with what it means, **what landing it looks like**, which episode holds
+  it, and the facts ratified when it landed; the entities involved; episodes
+  touching it; how the arc is checked (D8 semantics, with an example finding);
+  and an edit history including waypoint renames with their notes. Waypoints are
+  editable and insertable — inserting re-checks episodes that declare a later
+  position. Gap found when Ryan said he'd forgotten what "The beacon" was and
+  had nowhere to look.

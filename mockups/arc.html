@@ -1,0 +1,276 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Showrunner — Arc · The beacon</title>
+<style>
+  :root {
+    --page: #0d0d0d;
+    --card: #1a1a19;
+    --card-raised: #222220;
+    --line: #2c2c2a;
+    --ink: #ffffff;
+    --ink-2: #c3c2b7;
+    --muted: #898781;
+    --good: #0ca30c;
+    --warn: #fab219;
+    --serious: #ec835a;
+    --critical: #d03b3b;
+    --live: #6db3f2;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--page);
+    color: var(--ink-2);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    padding: 28px 40px 70px;
+  }
+  .wrap { max-width: 1280px; margin: 0 auto; }
+  .crumb { font-size: 12.5px; color: var(--muted); margin-bottom: 10px; }
+  .crumb a { color: var(--muted); text-decoration: none; border-bottom: 1px solid var(--line); }
+
+  .head { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; margin-bottom: 4px; }
+  h1 { font-size: 26px; font-weight: 700; color: var(--ink); }
+  .chip { font-size: 11px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; border-radius: 5px; padding: 1px 8px; }
+  .chip.kind { color: var(--ink-2); border: 1px solid #4e4e49; }
+  .chip.live { color: var(--live); border: 1px solid #23405a; }
+  .headsub { font-size: 13px; color: var(--muted); margin-bottom: 22px; }
+
+  .cols { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 20px; align-items: start; }
+  @media (max-width: 1080px) { .cols { grid-template-columns: minmax(0, 1fr); } }
+
+  .panel { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 18px 22px; margin-bottom: 18px; }
+  .panel-h {
+    font-size: 12px; letter-spacing: .16em; text-transform: uppercase; color: var(--muted);
+    margin-bottom: 13px; display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+  }
+  .panel-h .sub { text-transform: none; letter-spacing: 0; font-size: 12.5px; }
+  .panel-h .act { margin-left: auto; }
+
+  .btn {
+    border-radius: 8px; padding: 6px 12px; font-size: 12.5px; font-weight: 600; cursor: pointer;
+    border: 1px solid var(--line); background: var(--card-raised); color: var(--ink);
+    text-align: left; line-height: 1.3;
+  }
+  .btn:hover { border-color: var(--muted); }
+  .btn .cost { display: block; font-weight: 400; font-size: 11.5px; color: var(--muted); }
+  .btn.wide { display: block; width: 100%; margin-top: 10px; padding: 9px 14px; font-size: 13.5px; }
+  .btn.dashed { border-style: dashed; background: none; }
+
+  /* the statement — what the arc IS */
+  .statement { font-size: 16px; line-height: 1.6; color: var(--ink-2); }
+  .statement b { color: var(--ink); font-weight: 650; }
+  .statement .q { color: var(--muted); font-style: italic; display: block; margin-top: 10px; font-size: 14px; }
+
+  /* waypoints as an ordered spine */
+  .wps { position: relative; }
+  .wprow { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 16px; padding-bottom: 22px; position: relative; }
+  .wprow:last-child { padding-bottom: 0; }
+  .wprow::before {
+    content: ""; position: absolute; left: 14px; top: 26px; bottom: -4px; width: 2px; background: var(--line);
+  }
+  .wprow:last-child::before { display: none; }
+  .pip {
+    width: 30px; height: 30px; border-radius: 50%; border: 2px solid var(--line); background: var(--page);
+    display: flex; align-items: center; justify-content: center; font-size: 11.5px; font-weight: 700;
+    color: var(--muted); z-index: 1; position: relative;
+  }
+  .wprow.done .pip { background: #4e4e49; border-color: #4e4e49; color: var(--ink); }
+  .wprow.now .pip { background: var(--warn); border-color: var(--warn); color: #1a1400; }
+  .wprow.plan .pip { border-style: dashed; }
+  .wpbody .t { font-size: 16px; font-weight: 650; color: var(--ink); line-height: 1.3; }
+  .wprow.plan .wpbody .t { color: var(--ink-2); }
+  .wpbody .means { font-size: 13.5px; color: var(--ink-2); margin-top: 4px; }
+  .wpbody .lands { font-size: 12.5px; color: var(--muted); margin-top: 5px; }
+  .wpbody .lands b { color: var(--ink-2); font-weight: 600; }
+  .wpmeta { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; align-items: center; }
+  .tag { font-size: 11.5px; border-radius: 6px; padding: 1px 8px; border: 1px solid var(--line); color: var(--muted); }
+  .tag.ep { color: var(--ink-2); border-color: #4e4e49; }
+  .tag.now { color: #1a1400; background: var(--warn); border-color: var(--warn); font-weight: 700; }
+  .tag.fact { color: var(--good); border-color: #1d4d1d; }
+  .tag.plan { border-style: dashed; }
+  .editlink { font-size: 12px; color: var(--muted); background: none; border: none; cursor: pointer; border-bottom: 1px dashed var(--line); padding: 0; }
+  .editlink:hover { color: var(--ink); }
+
+  /* right rail */
+  .kv { display: flex; gap: 10px; padding: 7px 0; border-bottom: 1px solid #232321; font-size: 13.5px; align-items: baseline; }
+  .kv:last-child { border-bottom: none; }
+  .kv .k { font-size: 11.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); min-width: 104px; flex: none; }
+  .kv a { color: var(--ink); text-decoration: none; border-bottom: 1px dashed var(--line); }
+  .kv .v { color: var(--ink-2); }
+
+  .epline { display: flex; gap: 7px; flex-wrap: wrap; }
+  .ep { font-size: 12px; border: 1px solid #4e4e49; border-radius: 6px; padding: 2px 9px; color: var(--ink-2); }
+  .ep.plan { border-style: dashed; color: var(--muted); }
+  .ep.gap { border-color: #5c4c16; color: var(--warn); }
+
+  .rule { font-size: 13px; color: var(--ink-2); line-height: 1.6; }
+  .rule b { color: var(--ink); }
+  .rule .ex { display: block; margin-top: 8px; padding: 9px 11px; background: var(--page); border: 1px solid var(--line); border-radius: 8px; font-size: 12.5px; color: var(--muted); }
+  .rule .ex q { color: var(--ink-2); font-style: italic; }
+
+  .hist { padding: 8px 0; border-bottom: 1px solid #232321; font-size: 13px; }
+  .hist:last-child { border-bottom: none; }
+  .hist .d { font-size: 12px; color: var(--muted); }
+  .hist .w { color: var(--ink); font-weight: 600; }
+
+  footer { margin-top: 26px; font-size: 12px; color: #5c5b55; text-align: center; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="crumb"><a href="floor.html">← the floor</a> · <a href="season-map.html">the season map</a> ·
+    <a href="canon-library.html">canon library</a> · arcs</div>
+
+  <div class="head">
+    <h1>The beacon</h1>
+    <span class="chip kind">story · season 1</span>
+    <span class="chip live">at waypoint 3 of 4</span>
+  </div>
+  <div class="headsub">4 waypoints · touched by 5 episodes · last landed in ep05, in flight now</div>
+
+  <div class="cols">
+    <div>
+
+      <!-- What the arc IS — the thing you forget -->
+      <div class="panel">
+        <div class="panel-h">What this arc is
+          <span class="act"><button class="btn">Edit the statement<span class="cost">your words · no cost</span></button></span>
+        </div>
+        <div class="statement">
+          A signal has been repeating out of the drift since before the settlement was built.
+          The crew <b>hears</b> it, <b>traces</b> it, <b>answers</b> it — and discovers the
+          answer was never a distress call. It was bait, and it has been working for nine years.
+          <span class="q">The question the arc asks: what do you owe a voice that was never asking for help?</span>
+        </div>
+      </div>
+
+      <!-- The waypoints: ordered, each one explained -->
+      <div class="panel">
+        <div class="panel-h">Waypoints <span class="sub">ordered · an episode declares its position; behavior off-position is a finding (D8)</span></div>
+        <div class="wps">
+
+          <div class="wprow done">
+            <div class="pip">1</div>
+            <div class="wpbody">
+              <div class="t">heard</div>
+              <div class="means">The signal is noticed and dismissed as machinery. Nobody acts on it;
+                nobody yet believes anything is out there.</div>
+              <div class="lands"><b>Landing looks like:</b> a character registers the repetition out loud and does nothing about it.</div>
+              <div class="wpmeta">
+                <span class="tag ep">landed in ep01 “Dead Light”</span>
+                <span class="tag fact">2 facts ratified</span>
+                <button class="editlink">edit waypoint</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="wprow done">
+            <div class="pip">2</div>
+            <div class="wpbody">
+              <div class="t">traced</div>
+              <div class="means">The signal gets a source and a direction. It stops being weather
+                and becomes a place you could go.</div>
+              <div class="lands"><b>Landing looks like:</b> the crew fixes the origin and argues about approaching it.</div>
+              <div class="wpmeta">
+                <span class="tag ep">landed in ep03 “Hull Song”</span>
+                <span class="tag fact">3 facts ratified</span>
+                <button class="editlink">edit waypoint</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="wprow now">
+            <div class="pip">3</div>
+            <div class="wpbody">
+              <div class="t">answered</div>
+              <div class="means">Someone transmits back. The reply is the point of no return —
+                after this the beacon knows the ship exists.</div>
+              <div class="lands"><b>Landing looks like:</b> a reply leaves the ship, deliberately or not, and is acknowledged.</div>
+              <div class="wpmeta">
+                <span class="tag now">here — ep05 “The Quiet Deck”</span>
+                <span class="tag plan">1 proposal riding · rules at the ep05 gate</span>
+                <button class="editlink">edit waypoint</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="wprow plan">
+            <div class="pip">4</div>
+            <div class="wpbody">
+              <div class="t">the lie</div>
+              <div class="means">The distress framing collapses. What the beacon wanted was never
+                rescue — and the nine years become a body count, not a vigil.</div>
+              <div class="lands"><b>Landing looks like:</b> the crew learns the original transmission's real purpose and has to decide what to do with it.</div>
+              <div class="wpmeta">
+                <span class="tag plan">planned for ep09 — from the greenlit premise “The beacon lies”</span>
+                <button class="editlink">edit waypoint</button>
+              </div>
+            </div>
+          </div>
+
+        </div>
+        <button class="btn dashed wide">Add a waypoint to “The beacon”
+          <span class="cost">insert anywhere in the order · re-checks episodes that declare a later position</span>
+        </button>
+      </div>
+
+    </div>
+
+    <!-- Right column -->
+    <div>
+
+      <div class="panel">
+        <div class="panel-h">This arc at a glance</div>
+        <div class="kv"><span class="k">Scope</span><span class="v">season 1 — resolves before the finale</span></div>
+        <div class="kv"><span class="k">Kind</span><span class="v">story</span></div>
+        <div class="kv"><span class="k">Entities</span><span class="v"><a href="#">the beacon</a> · <a href="#">the drift</a> · <a href="canon-library.html">Vessa</a> · <a href="canon-library.html">Ferro</a></span></div>
+        <div class="kv"><span class="k">Health</span><span class="v" style="color:var(--good)">holding — never cold more than 2 episodes</span></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-h">Episodes touching it</div>
+        <div class="epline">
+          <span class="ep">ep01 · wp1</span>
+          <span class="ep">ep03 · wp2</span>
+          <span class="ep">ep04 · mentions</span>
+          <span class="ep">ep05 · wp3</span>
+          <span class="ep plan">ep09 · wp4 planned</span>
+        </div>
+        <div style="font-size:12.5px;color:var(--muted);margin-top:9px">
+          ep02, ep06, ep07, ep08 don’t touch it. ep07 is vanilla by design.
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-h">How this arc is checked</div>
+        <div class="rule">
+          An episode <b>declares its position</b> on the arc. Checks then read the script against
+          that waypoint: behavior <b>ahead</b> of it or <b>behind</b> it raises a finding, argued
+          not vetoed. Landing a waypoint becomes a fact through the proposal flow — it is never
+          written automatically.
+          <span class="ex">Example finding, ep05 round 1:
+            <q>Vessa treats the beacon as hostile — that reads like waypoint 4 behavior, but ep05
+            declares waypoint 3. She shouldn't know it's bait yet.</q></span>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-h">History</div>
+        <div class="hist"><span class="w">wp3 “answered” declared</span> <span class="d">ep05 · Jul 26 — riding, not yet ratified</span></div>
+        <div class="hist"><span class="w">wp2 “traced” landed</span> <span class="d">ep03 · ratified Jul 18 · 3 facts</span></div>
+        <div class="hist"><span class="w">wp4 renamed</span> <span class="d">Jul 14 — was “the truth”, now “the lie” · your note: “the truth is what they find; the lie is what it always was”</span></div>
+        <div class="hist"><span class="w">wp1 “heard” landed</span> <span class="d">ep01 · ratified Jul 2 · 2 facts</span></div>
+        <div class="hist"><span class="w">arc created</span> <span class="d">Jun 28 · scope season 1</span></div>
+      </div>
+
+    </div>
+  </div>
+
+  <footer>Mockup · the arc page (new — reached from the season map and the canon library) · not wired</footer>
+</div>
+</body>
+</html>
