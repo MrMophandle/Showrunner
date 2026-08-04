@@ -136,8 +136,8 @@ this project exists to escape. Either party may say "Archon" and the other stops
 - **Use the domain nouns above, exactly** — in code, tables, URLs, UI copy, and
   commit messages. A gate is a `gate`, not an "approval step"; a finding is a
   `finding`, not an "issue"; ratification is not "saving".
-- SQL tables and columns `snake_case` and singular-noun-plural (`episode`,
-  `arc_waypoint`); TypeScript `camelCase` values, `PascalCase` types.
+- SQL tables and columns `snake_case`, table names **singular** (`episode`, not
+  `episodes`; `arc_waypoint`); TypeScript `camelCase` values, `PascalCase` types.
 - Adapter interfaces are `XAdapter` (`LLMAdapter`, `ImageAdapter`); backend and
   lock ids are `kebab-case` (`gpu`, `image-api`, `z-image-turbo`).
 - Migrations are plain numbered SQL files, applied in order.
