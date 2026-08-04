@@ -1,0 +1,309 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Showrunner — Gate Room · ep06 script</title>
+<style>
+  :root {
+    --page: #0d0d0d;
+    --card: #1a1a19;
+    --card-raised: #222220;
+    --line: #2c2c2a;
+    --ink: #ffffff;
+    --ink-2: #c3c2b7;
+    --muted: #898781;
+    --good: #0ca30c;
+    --warn: #fab219;
+    --serious: #ec835a;
+    --critical: #d03b3b;
+    --live: #6db3f2;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--page);
+    color: var(--ink-2);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    padding: 32px 40px 120px;
+  }
+  .wrap { max-width: 1240px; margin: 0 auto; }
+
+  .crumb { font-size: 12.5px; color: var(--muted); margin-bottom: 10px; }
+  .crumb a { color: var(--muted); text-decoration: none; border-bottom: 1px solid var(--line); }
+  header { display: flex; align-items: baseline; gap: 14px; margin-bottom: 28px; flex-wrap: wrap; }
+  h1 { font-size: 24px; font-weight: 650; color: var(--ink); }
+  .gatechip {
+    font-size: 12px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase;
+    color: var(--warn); border: 1px solid #5c4c16; border-radius: 6px; padding: 2px 10px;
+  }
+  .meta { font-size: 13px; color: var(--muted); }
+
+  .cols { display: grid; grid-template-columns: 1fr 370px; gap: 20px; align-items: start; }
+
+  /* ── The artifact: the script, rendered ─── */
+  .script {
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    padding: 34px 42px; font-family: "Courier New", Courier, monospace; font-size: 14.5px;
+    line-height: 1.75; color: var(--ink-2);
+  }
+  .script .doc-h { font-family: inherit; color: var(--muted); font-size: 12px; letter-spacing: .1em; margin-bottom: 26px; }
+  .script .slug { color: var(--ink); font-weight: 700; margin: 26px 0 10px; }
+  .script p { margin-bottom: 12px; }
+  .script .cue { text-align: center; color: var(--ink); font-weight: 700; margin-bottom: 0; }
+  .script .dlg { margin: 0 auto 12px; max-width: 62%; }
+  .skip {
+    text-align: center; color: var(--muted); font-size: 12.5px; font-family: -apple-system, sans-serif;
+    border-top: 1px dashed var(--line); border-bottom: 1px dashed var(--line);
+    padding: 8px 0; margin: 22px 0;
+  }
+  mark.red { background: #3a1414; color: #f2b6b6; padding: 1px 3px; border-radius: 3px; border-bottom: 2px solid var(--critical); }
+  mark.amber { background: #2c250e; color: #e8d49a; padding: 1px 3px; border-radius: 3px; border-bottom: 2px solid var(--warn); }
+
+  /* ── Inline finding cards ───────────────── */
+  .finding {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--page); border: 1px solid var(--line); border-left: 3px solid var(--critical);
+    border-radius: 0 10px 10px 0; padding: 14px 18px; margin: 14px 0 20px;
+  }
+  .finding.amber { border-left-color: var(--warn); }
+  .finding .top { display: flex; gap: 10px; align-items: baseline; margin-bottom: 6px; flex-wrap: wrap; }
+  .sev { font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; border-radius: 5px; padding: 1px 7px; }
+  .sev.red { color: #f2a0a0; border: 1px solid #5c2020; }
+  .sev.amber { color: var(--warn); border: 1px solid #5c4c16; }
+  .conf { font-size: 12px; color: var(--muted); }
+  .finding p { font-size: 13.5px; margin-bottom: 4px; }
+  .finding p b { color: var(--ink); }
+  .finding .fact { font-size: 12.5px; color: var(--muted); font-style: italic; margin-bottom: 10px; }
+  .rem { display: flex; gap: 8px; flex-wrap: wrap; }
+  .btn {
+    border-radius: 8px; padding: 6px 12px; font-size: 12.5px; font-weight: 600; cursor: pointer;
+    border: 1px solid var(--line); background: var(--card-raised); color: var(--ink);
+    text-align: left; line-height: 1.3; transition: border-color .15s;
+  }
+  .btn:hover { border-color: var(--muted); }
+  .btn .cost { display: block; font-weight: 400; font-size: 11.5px; color: var(--muted); }
+
+  /* ── Right rail ─────────────────────────── */
+  .panel { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; margin-bottom: 18px; }
+  .panel-h { font-size: 12px; letter-spacing: .16em; text-transform: uppercase; color: var(--muted); margin-bottom: 12px; }
+  .verdict { display: flex; align-items: baseline; gap: 10px; padding: 8px 0; border-bottom: 1px solid #232321; font-size: 13.5px; }
+  .verdict:last-child { border-bottom: none; }
+  .vdot { width: 9px; height: 9px; border-radius: 50%; flex: none; position: relative; top: -1px; }
+  .vdot.red { background: var(--critical); }
+  .vdot.amber { background: var(--warn); }
+  .vdot.green { background: var(--good); }
+  .verdict .who { color: var(--ink); font-weight: 600; min-width: 128px; }
+  .verdict .what { color: var(--muted); font-size: 12.5px; flex: 1; }
+  .verdict .what a { color: var(--ink-2); border-bottom: 1px dashed var(--line); text-decoration: none; }
+
+  .round { padding: 10px 0; border-bottom: 1px solid #232321; }
+  .round:last-child { border-bottom: none; }
+  .round .r { font-size: 13px; color: var(--ink); font-weight: 650; }
+  .round .stale-tag { font-size: 11px; color: var(--muted); border: 1px solid var(--line); border-radius: 5px; padding: 0 6px; margin-left: 6px; text-transform: uppercase; letter-spacing: .06em; }
+  .round p { font-size: 12.5px; color: var(--muted); margin-top: 3px; }
+  .round p q { color: var(--ink-2); font-style: italic; }
+
+  /* proposal five-part anatomy */
+  .prop .part { margin-bottom: 10px; }
+  .prop .part:last-child { margin-bottom: 0; }
+  .prop .k { font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); margin-bottom: 2px; }
+  .prop .v { font-size: 13px; color: var(--ink-2); }
+  .prop .v b { color: var(--ink); }
+  .prop .v q { font-style: italic; color: var(--muted); }
+  .delta { font-size: 13px; }
+  .delta .before { color: var(--muted); text-decoration: line-through; }
+  .delta .after { color: var(--ink); font-weight: 600; }
+  .prop .rem { margin-top: 12px; }
+
+  /* ── Decision dock ──────────────────────── */
+  .dock {
+    position: fixed; left: 0; right: 0; bottom: 0;
+    background: rgba(13,13,13,.92); backdrop-filter: blur(8px);
+    border-top: 1px solid var(--line); padding: 14px 40px;
+  }
+  .dock-inner { max-width: 1240px; margin: 0 auto; display: flex; gap: 12px; align-items: center; }
+  .dock .headline { font-size: 13px; color: var(--muted); flex: 1; }
+  .dock .headline b { color: var(--ink); }
+  .dbtn {
+    border-radius: 9px; padding: 10px 18px; font-size: 14px; font-weight: 650; cursor: pointer;
+    border: 1px solid var(--line); background: var(--card-raised); color: var(--ink);
+    text-align: left; line-height: 1.3;
+  }
+  .dbtn .cost { display: block; font-weight: 400; font-size: 12px; color: var(--muted); }
+  .dbtn.approve { background: #16240e; border-color: #2e4d1d; }
+  .dbtn.approve:hover { border-color: var(--good); }
+  .dbtn.approve .cost { color: #8fb17e; }
+  .dbtn.reject { background: #2c1210; border-color: #5c2620; }
+  .dbtn.reject:hover { border-color: var(--serious); }
+  .dbtn.reject .cost { color: #c99; }
+
+  footer { margin-top: 28px; font-size: 12px; color: #5c5b55; text-align: center; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="crumb"><a href="floor.html">← the floor</a> · <a href="episode-room.html">ep06 “Cold Ledger”</a> · Dead Light S1</div>
+  <header>
+    <h1>ep06 “Cold Ledger” — script gate</h1>
+    <span class="gatechip">Round 2 · open 38 min</span>
+    <span class="meta">script v2 under review · writer re-ran with your round-1 notes</span>
+  </header>
+
+  <div class="cols">
+
+    <!-- ── The artifact, rendered full-height, findings at their anchors ── -->
+    <div>
+      <div class="script">
+        <div class="doc-h">DEAD LIGHT · S1E06 “COLD LEDGER” · SCRIPT v2 · SCENES 1–6 (14 pp)</div>
+
+        <div class="skip">scenes 1–3 · no findings · <span style="border-bottom:1px dashed var(--line);cursor:pointer">unfold</span></div>
+
+        <div class="slug">SCENE 4 — INT. VERGE STATION, TRADE RING — LEDGER OFFICE</div>
+        <p>The office is a coffin of paper in a station that outlawed paper. Mara counts
+        by lamplight, lips moving, no sound. Beyond the pane, the dock arm holds the
+        Kestrel like evidence.</p>
+        <p>NARRATOR (V.O.): Debt has a temperature. Ledger-keepers know it the way
+        hull-walkers know frost — <mark class="amber">you can hear it settle if you stand
+        still enough</mark>.</p>
+
+        <div class="finding amber">
+          <div class="top">
+            <span class="sev amber">House style</span>
+            <span class="conf">severity low · confidence high · text check</span>
+          </div>
+          <p><b>The narrator addresses the audience.</b> House style fact: <q>the narrator
+          never says “you” — observation, not address</q>.</p>
+          <div class="fact">house-style › narrator-voice · established S1E01 gate · ratified Jul 2</div>
+          <div class="rem">
+            <button class="btn">Rewrite the span<span class="cost">pre-drafted, editable · “it settles where it can be heard”</span></button>
+            <button class="btn">Propose the canon change<span class="cost">amend narrator-voice to allow rare address</span></button>
+            <button class="btn">Dismiss with note<span class="cost">recorded · rides future style checks</span></button>
+          </div>
+        </div>
+
+        <p>The door does not knock. Ferro fills it, dock-suit half unsealed, carrying
+        the cold of outside like a second coat. The weight under Mara’s own coat
+        answers it.</p>
+        <p class="cue">FERRO</p>
+        <p class="dlg">Your numbers are wrong. Not by much. By enough.</p>
+        <p>Mara does not look up. Across the ring, <mark class="red">she watches the dock
+        arm from the bridge rail</mark>, counting the Kestrel’s running lights against
+        her ledger. Then she closes the book, and <mark class="red">cycles the airlock
+        beside her desk</mark> to let the cold argument out.</p>
+
+        <div class="finding">
+          <div class="top">
+            <span class="sev red">Continuity · blocking</span>
+            <span class="conf">severity high · confidence certain · deterministic, from the board</span>
+          </div>
+          <p><b>Mara is in two places in scene 4.</b> The continuity board reads her at the
+          <b>bridge rail</b> and at the <b>ledger-office airlock</b> in the same beat —
+          dual presence. This blocks the assets stage until resolved. It does not block
+          this gate; approving over it is recorded as your override.</p>
+          <div class="fact">continuity board · scene 4 · dual presence (deterministic rule)</div>
+          <div class="rem">
+            <button class="btn">Rewrite the span<span class="cost">pre-drafted, editable · keeps her at the office; the bridge glance becomes memory</span></button>
+            <button class="btn">Edit scene 4 directly<span class="cost">opens the scene in the episode room · re-checks on save</span></button>
+          </div>
+        </div>
+
+        <p class="cue">MARA</p>
+        <p class="dlg">Enough is a unit now? Sit. Show me where the station lies.</p>
+
+        <div class="skip">scenes 5–6 · 1 finding in scene 5 (story craft, below) · <span style="border-bottom:1px dashed var(--line);cursor:pointer">unfold</span></div>
+      </div>
+    </div>
+
+    <!-- ── Verdict board, round history, proposal, story-craft ── -->
+    <div>
+
+      <div class="panel">
+        <div class="panel-h">Verdict board · round 2</div>
+        <div class="verdict"><span class="vdot red"></span><span class="who">Continuity board</span><span class="what">1 contradiction · certain · <a href="#">scene 4</a></span></div>
+        <div class="verdict"><span class="vdot amber"></span><span class="who">House style</span><span class="what">1 note · high confidence · <a href="#">scene 4</a></span></div>
+        <div class="verdict"><span class="vdot amber"></span><span class="who">Story craft</span><span class="what">setup unpaid · medium confidence · <a href="#">scene 5</a></span></div>
+        <div class="verdict"><span class="vdot green"></span><span class="who">Characters</span><span class="what">clean — round 1’s Ferro finding resolved</span></div>
+        <div class="verdict"><span class="vdot green"></span><span class="who">World rules</span><span class="what">clean · 4 facts in scope</span></div>
+        <div class="verdict"><span class="vdot green"></span><span class="who">Timeline</span><span class="what">clean · fits between ep05 and the beacon answer</span></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-h">Story craft · scene 5</div>
+        <div style="font-size:13.5px">
+          <p style="margin-bottom:4px"><b style="color:var(--ink)">The coolant leak is set up and never paid.</b>
+          Scene 2 spends four lines on the Kestrel bleeding coolant; nothing downstream
+          touches it. Knowing gun on the wall, or clutter?</p>
+          <span class="conf">severity medium · confidence medium · craft reviewer argues, you decide</span>
+          <div class="rem" style="margin-top:10px">
+            <button class="btn">Jump to the anchor<span class="cost">scene 5, unfolds the script</span></button>
+            <button class="btn">Dismiss with note<span class="cost">e.g. “pays off in ep07” — recorded</span></button>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel prop">
+        <div class="panel-h">Proposal riding this gate</div>
+        <div class="part">
+          <div class="k">The change</div>
+          <div class="v delta"><b>Mara</b> › armament: <span class="before">unarmed by conviction</span> → <span class="after">carries a coil-pistol, never drawn, under the ledger coat</span></div>
+        </div>
+        <div class="part">
+          <div class="k">Usage context</div>
+          <div class="v"><q>…carrying the cold of outside like a second coat. The weight under
+          Mara’s own coat answers it.</q> — scene 4, two lines either side kept</div>
+        </div>
+        <div class="part">
+          <div class="k">Implications</div>
+          <div class="v">touches 1 ratified fact (ep02: “Mara refuses arms”); brushes arc
+          “Vessa ↔ Ferro · trust” waypoint 2; no prior-episode contradictions</div>
+        </div>
+        <div class="part">
+          <div class="k">Alternatives</div>
+          <div class="v">the weight is the ledger itself (no canon change) · the pistol is
+          Ferro’s, left behind (smaller change)</div>
+        </div>
+        <div class="part">
+          <div class="k">Origin &amp; disposition</div>
+          <div class="v">raised by the writer, round 2 · <b>awaiting your ruling</b> — approve,
+          reject with note, or defer (parks it, stops riding ep06)</div>
+        </div>
+        <div class="rem">
+          <button class="btn">Ratify — Mara carries the pistol<span class="cost">writes canon · flips the ep02 fact with lineage</span></button>
+          <button class="btn">Reject with note<span class="cost">note rides future writer runs</span></button>
+          <button class="btn">Defer<span class="cost">parks it · invisible to checks</span></button>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-h">Round history</div>
+        <div class="round">
+          <div class="r">Round 2 · current <span style="color:var(--warn)">· open</span></div>
+          <p>writer re-ran with your notes · 3 findings above · 1 proposal riding</p>
+        </div>
+        <div class="round">
+          <div class="r">Round 1 <span class="stale-tag">stale — from before your last rejection</span></div>
+          <p>rejected Jul 31 · your note: <q>Ferro folds too fast in scene 5 — he’s still
+          at waypoint 1. Make him leave unconvinced.</q></p>
+          <p>5 findings then: characters ×2 (resolved), continuity ×1 (persists), style ×2 (1 resolved)</p>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <footer>Mockup · the gate room (screen 5.3) · not wired</footer>
+</div>
+
+<!-- ── Decision dock: always visible ── -->
+<div class="dock">
+  <div class="dock-inner">
+    <span class="headline"><b>Your ruling closes round 2.</b> 1 red finding (deterministic — blocks
+    assets, not you) · 2 argued notes · 1 proposal awaiting its own ruling.</span>
+    <button class="dbtn reject">Reject the ep06 script with notes<span class="cost">notes required · reopens the write step as round 3 · ~$1.20</span></button>
+    <button class="dbtn approve">Approve the ep06 script<span class="cost">records an override over the red continuity finding · assets stay blocked until it’s fixed</span></button>
+  </div>
+</div>
+</body>
+</html>

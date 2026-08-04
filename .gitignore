@@ -1,0 +1,10 @@
+# Local agent session telemetry — not project content
+.agent-logs/
+
+# Runtime library volume (SQLite + heavy artifacts live here, per D2)
+/library/
+
+# Node
+node_modules/
+*.log
+.DS_Store

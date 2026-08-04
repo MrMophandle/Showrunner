@@ -1,0 +1,352 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Showrunner — Episode Room · ep05</title>
+<style>
+  :root {
+    --page: #0d0d0d;
+    --card: #1a1a19;
+    --card-raised: #222220;
+    --line: #2c2c2a;
+    --ink: #ffffff;
+    --ink-2: #c3c2b7;
+    --muted: #898781;
+    --good: #0ca30c;
+    --warn: #fab219;
+    --serious: #ec835a;
+    --critical: #d03b3b;
+    --live: #6db3f2;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--page);
+    color: var(--ink-2);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    padding: 32px 40px 80px;
+  }
+  .wrap { max-width: 1240px; margin: 0 auto; }
+
+  /* ── Header ─────────────────────────────── */
+  .crumb { font-size: 12.5px; color: var(--muted); margin-bottom: 10px; }
+  .crumb a { color: var(--muted); text-decoration: none; border-bottom: 1px solid var(--line); }
+  header { display: flex; align-items: center; gap: 26px; margin-bottom: 34px; flex-wrap: wrap; }
+  .id h1 { font-size: 26px; font-weight: 650; color: var(--ink); letter-spacing: -.01em; }
+  .id .num { font-size: 12px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
+
+  .track { display: flex; align-items: flex-start; width: 460px; margin-left: auto; }
+  .stage { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 6px; position: relative; }
+  .stage::before { content: ""; position: absolute; top: 5px; left: -50%; width: 100%; height: 2px; background: var(--line); }
+  .stage:first-child::before { display: none; }
+  .stage.done::before, .stage.now::before { background: #4e4e49; }
+  .stage .pip { width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--line); background: var(--page); z-index: 1; }
+  .stage.done .pip { background: #4e4e49; border-color: #4e4e49; }
+  .stage.now .pip { background: var(--live); border-color: var(--live); animation: pulse 1.6s ease-in-out infinite; }
+  @keyframes pulse { 50% { box-shadow: 0 0 0 5px rgba(109,179,242,.18); } }
+  .stage .lbl { font-size: 11px; color: var(--muted); }
+  .stage.now .lbl { color: var(--ink); font-weight: 600; }
+
+  /* ── Layout ─────────────────────────────── */
+  .cols { display: grid; grid-template-columns: 1fr 360px; gap: 20px; align-items: start; }
+  .panel { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 20px 22px; margin-bottom: 20px; }
+  .panel-h {
+    font-size: 12px; letter-spacing: .16em; text-transform: uppercase; color: var(--muted);
+    margin-bottom: 14px; display: flex; align-items: baseline; gap: 10px;
+  }
+  .panel-h .sub { text-transform: none; letter-spacing: 0; font-size: 12.5px; }
+
+  /* ── Buttons ────────────────────────────── */
+  .btn {
+    display: block; width: 100%; border-radius: 9px; padding: 9px 14px; font-size: 14px;
+    font-weight: 600; cursor: pointer; border: 1px solid var(--line);
+    background: var(--card-raised); color: var(--ink); text-align: left; line-height: 1.35;
+    transition: border-color .15s; margin-bottom: 8px;
+  }
+  .btn:hover { border-color: var(--muted); }
+  .btn .cost { display: block; font-weight: 400; font-size: 12.5px; color: var(--muted); }
+  .btn.rule { background: #2c250e; border-color: #5c4c16; }
+  .btn.rule:hover { border-color: var(--warn); }
+  .btn.rule .cost { color: #b1a06a; }
+  .btn.blocked { background: none; border-style: dashed; color: var(--muted); cursor: not-allowed; }
+  .btn.blocked .cost { color: #6b695f; }
+  .btn.quiet { background: none; font-weight: 500; color: var(--ink-2); }
+  .btn.small { width: auto; display: inline-block; padding: 5px 11px; font-size: 12.5px; margin: 0; }
+
+  /* ── Running strip ──────────────────────── */
+  .running { background: #14202b; border: 1px solid #23405a; border-radius: 9px; padding: 12px 14px; margin-bottom: 10px; }
+  .running .live-h { font-size: 11px; letter-spacing: .13em; text-transform: uppercase; color: var(--live); display: flex; align-items: center; gap: 7px; margin-bottom: 4px; }
+  .running .live-h::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--live); animation: pulse 1.6s infinite; }
+  .running .what { font-size: 13.5px; color: var(--ink); }
+  .running .stream { font-size: 12.5px; color: var(--muted); font-style: italic; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .queued-line { font-size: 12.5px; color: var(--muted); margin: 0 0 10px 2px; }
+  .queued-line b { color: var(--ink-2); }
+
+  /* ── Scene grid / continuity board ──────── */
+  .gridwrap { overflow-x: auto; }
+  table.scenes { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  table.scenes th {
+    text-align: left; font-size: 11px; letter-spacing: .1em; text-transform: uppercase;
+    color: var(--muted); font-weight: 600; padding: 6px 12px 8px; border-bottom: 1px solid var(--line);
+  }
+  table.scenes td { padding: 11px 12px; border-bottom: 1px solid #232321; vertical-align: top; color: var(--ink-2); }
+  table.scenes tr:last-child td { border-bottom: none; }
+  table.scenes .sc { color: var(--ink); font-weight: 650; white-space: nowrap; }
+  table.scenes .who { color: var(--ink); }
+  .env { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; border: 1px solid var(--line); border-radius: 6px; padding: 1px 8px; white-space: nowrap; }
+  .env.exposed { border-color: #5c3a20; color: var(--serious); }
+  .recheck { font-size: 11.5px; color: var(--good); white-space: nowrap; }
+  .editlink { font-size: 12.5px; color: var(--muted); background: none; border: none; cursor: pointer; border-bottom: 1px dashed var(--line); padding: 0; }
+  .editlink:hover { color: var(--ink); }
+
+  /* ── Artifacts ──────────────────────────── */
+  .art { display: flex; align-items: baseline; gap: 12px; padding: 10px 0; border-bottom: 1px solid #232321; }
+  .art:last-child { border-bottom: none; }
+  .art .name { color: var(--ink); font-weight: 600; min-width: 170px; }
+  .art .from { font-size: 13px; color: var(--muted); flex: 1; }
+  .fresh { font-size: 12px; font-weight: 600; border-radius: 6px; padding: 1px 8px; white-space: nowrap; }
+  .fresh.ok { color: var(--good); border: 1px solid #1d4d1d; }
+  .fresh.stale { color: var(--warn); border: 1px solid #5c4c16; }
+  .fresh.none { color: var(--muted); border: 1px solid var(--line); font-weight: 400; }
+  .art .act { margin-left: 8px; }
+
+  /* ── Findings / proposals ───────────────── */
+  .item { padding: 12px 0; border-bottom: 1px solid #232321; }
+  .item:last-child { border-bottom: none; padding-bottom: 2px; }
+  .item .top { display: flex; gap: 8px; align-items: baseline; margin-bottom: 3px; }
+  .sev { font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; border-radius: 5px; padding: 1px 7px; }
+  .sev.flag { color: var(--warn); border: 1px solid #5c4c16; }
+  .sev.dismissed { color: var(--muted); border: 1px solid var(--line); }
+  .sev.pending { color: var(--live); border: 1px solid #23405a; }
+  .item .where { font-size: 12px; color: var(--muted); }
+  .item p { font-size: 13.5px; color: var(--ink-2); }
+  .item p b { color: var(--ink); font-weight: 600; }
+  .conf { font-size: 12px; color: var(--muted); }
+
+  /* ── Arcs ───────────────────────────────── */
+  .arc { padding: 10px 0; border-bottom: 1px solid #232321; }
+  .arc:last-child { border-bottom: none; }
+  .arc .name { color: var(--ink); font-weight: 600; font-size: 14px; margin-bottom: 6px; }
+  .way { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  .wp { font-size: 12px; border: 1px solid var(--line); border-radius: 6px; padding: 2px 9px; color: var(--muted); }
+  .wp.done { color: var(--ink-2); border-color: #4e4e49; }
+  .wp.here { color: #1a1400; background: var(--warn); border-color: var(--warn); font-weight: 700; }
+  .way .sep { color: var(--line); }
+  .arc .note { font-size: 12px; color: var(--muted); margin-top: 5px; }
+
+  /* ── Ledger ─────────────────────────────── */
+  .ledger { font-size: 13.5px; width: 100%; border-collapse: collapse; }
+  .ledger td { padding: 5px 0; }
+  .ledger td:last-child { text-align: right; color: var(--ink); font-variant-numeric: tabular-nums; }
+  .ledger tr.total td { border-top: 1px solid var(--line); padding-top: 9px; font-weight: 700; color: var(--ink); }
+  .ledger .d { color: var(--muted); font-size: 12px; }
+
+  footer { margin-top: 28px; font-size: 12px; color: #5c5b55; text-align: center; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="crumb"><a href="floor.html">← the floor</a> · Dead Light · Season 1</div>
+  <header>
+    <div class="id">
+      <div class="num">Episode 05</div>
+      <h1>The Quiet Deck</h1>
+    </div>
+    <div class="track">
+      <div class="stage done"><span class="pip"></span><span class="lbl">premise</span></div>
+      <div class="stage done"><span class="pip"></span><span class="lbl">outline</span></div>
+      <div class="stage done"><span class="pip"></span><span class="lbl">script</span></div>
+      <div class="stage now"><span class="pip"></span><span class="lbl">assets</span></div>
+      <div class="stage"><span class="pip"></span><span class="lbl">assembled</span></div>
+      <div class="stage"><span class="pip"></span><span class="lbl">published</span></div>
+    </div>
+  </header>
+
+  <div class="cols">
+    <div class="main">
+
+      <!-- Scene grid = the continuity board as UI (3.2b) -->
+      <div class="panel">
+        <div class="panel-h">Scene grid · continuity board
+          <span class="sub">derived from script v4 · deterministic checks clean</span>
+        </div>
+        <div class="gridwrap">
+          <table class="scenes">
+            <tr>
+              <th>Scene</th><th>Location</th><th>Present</th><th>Environment</th>
+              <th>Ship</th><th>Elapsed</th><th></th>
+            </tr>
+            <tr>
+              <td class="sc">1</td><td>Mess deck</td><td class="who">Vessa, Ferro</td>
+              <td><span class="env">inside</span></td><td>docked · Meridian Spur</td><td>T+0h</td>
+              <td><button class="editlink">edit scene</button></td>
+            </tr>
+            <tr>
+              <td class="sc">2</td><td>Corridor spine</td><td class="who">Vessa</td>
+              <td><span class="env">inside · emergency light</span></td><td>undocked, drifting</td><td>T+1h</td>
+              <td><button class="editlink">edit scene</button></td>
+            </tr>
+            <tr>
+              <td class="sc">3</td><td>The quiet deck (deck 9)</td><td class="who">Vessa, the Passenger</td>
+              <td><span class="env">inside · unpowered</span></td><td>drifting</td><td>T+1h30</td>
+              <td><button class="editlink">edit scene</button><br>
+                  <span class="recheck">✓ re-checked after your edit, 2 h ago</span></td>
+            </tr>
+            <tr>
+              <td class="sc">4</td><td>Airlock bay → hull</td><td class="who">Ferro</td>
+              <td><span class="env exposed">suited · exposed</span></td><td>drifting</td><td>T+2h</td>
+              <td><button class="editlink">edit scene</button></td>
+            </tr>
+            <tr>
+              <td class="sc">5</td><td>Bridge</td><td class="who">Vessa, Ferro</td>
+              <td><span class="env">inside</span></td><td>under thrust</td><td>T+3h</td>
+              <td><button class="editlink">edit scene</button></td>
+            </tr>
+            <tr>
+              <td class="sc">6</td><td>The quiet deck (deck 9)</td><td class="who">Vessa, the Passenger</td>
+              <td><span class="env">inside</span></td><td>under thrust</td><td>T+4h</td>
+              <td><button class="editlink">edit scene</button></td>
+            </tr>
+          </table>
+        </div>
+      </div>
+
+      <!-- Artifacts with freshness edges -->
+      <div class="panel">
+        <div class="panel-h">Artifacts <span class="sub">freshness is computed, never remembered</span></div>
+
+        <div class="art">
+          <span class="name">Premise brief · v1</span>
+          <span class="from">ratified Jul 22</span>
+          <span class="fresh ok">fresh</span>
+        </div>
+        <div class="art">
+          <span class="name">Outline · v3</span>
+          <span class="from">approved Jul 24 · built from premise v1</span>
+          <span class="fresh ok">fresh</span>
+        </div>
+        <div class="art">
+          <span class="name">Script · v4</span>
+          <span class="from">approved Jul 28, round 2 · your scene-3 edit made v4</span>
+          <span class="fresh ok">fresh</span>
+        </div>
+        <div class="art">
+          <span class="name">Continuity board</span>
+          <span class="from">rebuilt from script v4</span>
+          <span class="fresh ok">fresh</span>
+        </div>
+        <div class="art">
+          <span class="name">Shot manifest · v2</span>
+          <span class="from">built from script v4 · 14 shots</span>
+          <span class="fresh ok">fresh</span>
+        </div>
+        <div class="art">
+          <span class="name">Shot images · 8 of 14</span>
+          <span class="from">shots 5–7 (scene 3) built from script v3; your scene-3 edit made v4</span>
+          <span class="fresh stale">3 stale</span>
+          <span class="act"><button class="btn small">Regenerate 3 stale shots<span class="cost">3 image calls · ~$0.24</span></button></span>
+        </div>
+        <div class="art">
+          <span class="name">TTS takes</span>
+          <span class="from">not started — queued behind the image run</span>
+          <span class="fresh none">—</span>
+        </div>
+        <div class="art">
+          <span class="name">Mix · timeline · render</span>
+          <span class="from">nothing yet — this episode hasn’t reached assembly</span>
+          <span class="fresh none">—</span>
+        </div>
+      </div>
+
+      <!-- Findings -->
+      <div class="panel">
+        <div class="panel-h">Findings <span class="sub">checks argue, never veto</span></div>
+        <div class="item">
+          <div class="top"><span class="sev flag">flagged for your eye</span><span class="where">shot 2 · scene 1, mess deck</span></div>
+          <p><b>Ferro’s jacket</b> reads slate-blue against the locked reference (rust-brown, ref locked Jun 30).</p>
+          <span class="conf">image check · severity low · confidence low — waiting in your review queue, never auto-ruled</span>
+        </div>
+        <div class="item">
+          <div class="top"><span class="sev dismissed">dismissed with note</span><span class="where">scene 4 · world rules</span></div>
+          <p>“Ferro hears the hull groan through his glove” — you ruled contact conduction is fine; note kept for future checks.</p>
+          <span class="conf">dismissed Jul 28 · your note rides every future world-rules check on this show</span>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- ── Right rail ──────────────────────── -->
+    <div class="rail">
+
+      <!-- Stage rail: legal actions with cost; everything else blocked with reason -->
+      <div class="panel">
+        <div class="panel-h">Stage rail</div>
+        <div class="running">
+          <div class="live-h">Generating · holds image-api lock</div>
+          <div class="what">Shot 8 of 14 — scene 2, the corridor</div>
+          <div class="stream">“emergency lighting dies section by section…”</div>
+        </div>
+        <div class="queued-line"><b>Queued:</b> produce ep05 TTS takes — waits for this run (one run per episode)</div>
+
+        <button class="btn rule">Review 7 ep05 shot images<span class="cost">one at a time · ~5 min · 7 more still generating</span></button>
+        <button class="btn quiet">Stop after the current shot<span class="cost">finishes shot 8, releases the image-api lock</span></button>
+        <button class="btn blocked" disabled>Mix ep05 scene audio<span class="cost">blocked — no TTS takes exist yet</span></button>
+        <button class="btn blocked" disabled>Assemble ep05<span class="cost">blocked — 6 shots missing · 3 stale · no mix</span></button>
+      </div>
+
+      <!-- Pending proposals -->
+      <div class="panel">
+        <div class="panel-h">Pending proposals</div>
+        <div class="item">
+          <div class="top"><span class="sev pending">provisional · rides ep05</span></div>
+          <p><b>The Passenger’s true name is “Iole.”</b> Raised by the writer in script round 2, scene 3. Visible to checks now; you rule at the next gate.</p>
+          <span class="conf">blast radius: 2 facts, arc “the beacon”, ep03 mention</span>
+        </div>
+      </div>
+
+      <!-- Arc positions -->
+      <div class="panel">
+        <div class="panel-h">Arc positions</div>
+        <div class="arc">
+          <div class="name">Vessa ↔ Ferro · trust <span style="font-weight:400;color:var(--muted);font-size:12px">(character · show)</span></div>
+          <div class="way">
+            <span class="wp done">distrusts</span><span class="sep">→</span>
+            <span class="wp here">listens, double-checks</span><span class="sep">→</span>
+            <span class="wp">trusts</span>
+          </div>
+          <div class="note">this episode declares waypoint 2 · behavior checked against it</div>
+        </div>
+        <div class="arc">
+          <div class="name">The beacon <span style="font-weight:400;color:var(--muted);font-size:12px">(story · season)</span></div>
+          <div class="way">
+            <span class="wp done">heard</span><span class="sep">→</span>
+            <span class="wp done">traced</span><span class="sep">→</span>
+            <span class="wp here">answered</span><span class="sep">→</span>
+            <span class="wp">the lie</span>
+          </div>
+          <div class="note">waypoint 3 lands here — becomes a fact via proposal at approval</div>
+        </div>
+      </div>
+
+      <!-- Episode cost ledger -->
+      <div class="panel">
+        <div class="panel-h">Cost ledger · ep05</div>
+        <table class="ledger">
+          <tr><td>Outline <span class="d">· 1 round</span></td><td>$0.92</td></tr>
+          <tr><td>Script <span class="d">· 2 rounds + 1 retry</span></td><td>$3.85</td></tr>
+          <tr><td>Checks <span class="d">· 11 calls</span></td><td>$1.28</td></tr>
+          <tr><td>Shot images <span class="d">· 8 so far</span></td><td>$2.11</td></tr>
+          <tr class="total"><td>Spent so far</td><td>$8.16</td></tr>
+          <tr><td class="d">projected to assembled</td><td class="d" style="text-align:right">~$13.60</td></tr>
+        </table>
+      </div>
+
+    </div>
+  </div>
+
+  <footer>Mockup · the episode room (screen 5.2) · not wired</footer>
+</div>
+</body>
+</html>

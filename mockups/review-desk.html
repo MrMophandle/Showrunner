@@ -1,0 +1,345 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Showrunner — Review Desk</title>
+<style>
+  :root {
+    --page: #0d0d0d;
+    --card: #1a1a19;
+    --card-raised: #222220;
+    --line: #2c2c2a;
+    --ink: #ffffff;
+    --ink-2: #c3c2b7;
+    --muted: #898781;
+    --good: #0ca30c;
+    --warn: #fab219;
+    --serious: #ec835a;
+    --critical: #d03b3b;
+    --live: #6db3f2;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--page);
+    color: var(--ink-2);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    padding: 28px 40px 110px;
+  }
+  .wrap { max-width: 1280px; margin: 0 auto; }
+
+  .crumb { font-size: 12.5px; color: var(--muted); margin-bottom: 10px; }
+  .crumb a { color: var(--muted); text-decoration: none; border-bottom: 1px solid var(--line); }
+
+  /* ── Top bar: title + queues + position ── */
+  .top { display: flex; align-items: center; gap: 18px; margin-bottom: 22px; flex-wrap: wrap; }
+  h1 { font-size: 22px; font-weight: 650; color: var(--ink); }
+  .queues { display: flex; gap: 8px; }
+  .qtab {
+    font-size: 13px; font-weight: 600; border: 1px solid var(--line); border-radius: 8px;
+    padding: 5px 13px; color: var(--muted); cursor: pointer; background: none;
+  }
+  .qtab.on { color: var(--ink); background: var(--card-raised); border-color: #4e4e49; }
+  .qtab .n { color: var(--warn); margin-left: 5px; }
+  .pos { margin-left: auto; font-size: 13px; color: var(--muted); }
+  .pos b { color: var(--ink); }
+
+  .cols { display: grid; grid-template-columns: 1fr 380px; gap: 20px; align-items: start; }
+
+  /* ── The artifact: full-bleed still ── */
+  .stillwrap { background: var(--card); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+  .flagbar {
+    display: flex; gap: 10px; align-items: baseline; padding: 12px 18px;
+    background: #232013; border-bottom: 1px solid #4a3d14; font-size: 13.5px;
+  }
+  .sev { font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; border-radius: 5px; padding: 1px 7px; color: var(--warn); border: 1px solid #5c4c16; white-space: nowrap; }
+  .flagbar p { color: var(--ink-2); }
+  .flagbar p b { color: var(--ink); }
+  .flagbar .conf { color: var(--muted); font-size: 12px; white-space: nowrap; }
+  .still { display: block; width: 100%; aspect-ratio: 16/9; }
+  .stillmeta { display: flex; gap: 16px; padding: 10px 18px; font-size: 12.5px; color: var(--muted); border-top: 1px solid var(--line); }
+  .stillmeta b { color: var(--ink-2); font-weight: 600; }
+  .pile { margin-left: auto; display: flex; align-items: center; gap: 7px; }
+  .key {
+    font: 11px/1 ui-monospace, Menlo, monospace; color: var(--ink); background: var(--card-raised);
+    border: 1px solid #4e4e49; border-bottom-width: 2px; border-radius: 5px; padding: 3px 6px;
+  }
+
+  /* ── Right column panels ── */
+  .panel { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; margin-bottom: 16px; }
+  .panel-h { font-size: 12px; letter-spacing: .16em; text-transform: uppercase; color: var(--muted); margin-bottom: 10px; }
+
+  .script { font-family: "Courier New", Courier, monospace; font-size: 13px; line-height: 1.65; color: var(--ink-2); }
+  .script .slug { color: var(--ink); font-weight: 700; margin-bottom: 6px; font-size: 12.5px; }
+  mark.shot { background: #14202b; color: #bcd8f0; padding: 1px 3px; border-radius: 3px; border-bottom: 2px solid var(--live); }
+  .script .after { color: var(--muted); }
+
+  .prompt { font-size: 13px; color: var(--ink-2); background: var(--page); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; font-family: ui-monospace, Menlo, monospace; line-height: 1.55; }
+  .gen-meta { font-size: 12.5px; color: var(--muted); margin-top: 9px; line-height: 1.6; }
+  .gen-meta b { color: var(--ink-2); font-weight: 600; }
+  .attempt { display: flex; gap: 7px; margin-top: 8px; }
+  .att { font-size: 11.5px; border: 1px solid var(--line); border-radius: 5px; padding: 1px 8px; color: var(--muted); }
+  .att.fail { color: var(--serious); border-color: #5c3a20; }
+  .att.now { color: var(--ink); border-color: #4e4e49; }
+
+  .refrow { display: flex; gap: 14px; align-items: flex-start; }
+  .refthumb { width: 118px; aspect-ratio: 1; border-radius: 8px; border: 1px solid #4e4e49; flex: none; }
+  .refinfo { font-size: 12.5px; color: var(--muted); line-height: 1.55; }
+  .refinfo b { color: var(--ink); font-weight: 600; display: block; font-size: 13.5px; }
+  .lockchip { display: inline-block; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--good); border: 1px solid #1d4d1d; border-radius: 5px; padding: 0 7px; margin: 4px 0 6px; }
+  .swatches { display: flex; gap: 8px; margin-top: 8px; align-items: center; font-size: 11.5px; }
+  .sw { width: 17px; height: 17px; border-radius: 4px; border: 1px solid var(--line); }
+
+  /* ── Ruling bar (bottom, fixed) ── */
+  .dock {
+    position: fixed; left: 0; right: 0; bottom: 0;
+    background: rgba(13,13,13,.92); backdrop-filter: blur(8px);
+    border-top: 1px solid var(--line); padding: 13px 40px;
+  }
+  .dock-inner { max-width: 1280px; margin: 0 auto; display: flex; gap: 12px; align-items: center; }
+  .dock .headline { font-size: 12.5px; color: var(--muted); flex: 1; }
+  .dock .headline b { color: var(--ink); }
+  .dbtn {
+    border-radius: 9px; padding: 9px 16px; font-size: 13.5px; font-weight: 650; cursor: pointer;
+    border: 1px solid var(--line); background: var(--card-raised); color: var(--ink);
+    text-align: left; line-height: 1.3;
+  }
+  .dbtn .cost { display: block; font-weight: 400; font-size: 11.5px; color: var(--muted); }
+  .dbtn.approve { background: #16240e; border-color: #2e4d1d; }
+  .dbtn.approve:hover { border-color: var(--good); }
+  .dbtn.reject { background: #2c1210; border-color: #5c2620; }
+  .dbtn.reject:hover { border-color: var(--serious); }
+  .dbtn .key { margin-right: 7px; }
+
+  footer { margin-top: 26px; font-size: 12px; color: #5c5b55; text-align: center; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="crumb"><a href="floor.html">← the floor</a> · Dead Light S1 · the review desk</div>
+
+  <div class="top">
+    <h1>Review desk</h1>
+    <div class="queues">
+      <button class="qtab on">Shot images<span class="n">7</span></button>
+      <button class="qtab">TTS takes<span class="n">0</span></button>
+      <button class="qtab">Voice casting<span class="n">1</span></button>
+    </div>
+    <span class="pos"><b>2 of 7</b> · ep05 “The Quiet Deck” · resumable — leave anytime, your place is kept</span>
+  </div>
+
+  <div class="cols">
+
+    <!-- ── LEFT: the artifact, full-bleed, with its flag above and tag row below ── -->
+    <div class="stillwrap">
+      <div class="flagbar">
+        <span class="sev">Flagged for your eye</span>
+        <p><b>Ferro’s jacket reads slate-blue</b> against the locked reference (rust-brown). The check flags; it never rules.</p>
+        <span class="conf">severity low · confidence low</span>
+      </div>
+
+      <!-- Mock still: dark mess-deck, two figures; the flagged slate-blue jacket is visible -->
+      <svg class="still" viewBox="0 0 1280 720" preserveAspectRatio="xMidYMid slice" role="img" aria-label="Mock still: mess deck, Vessa and Ferro at a table">
+        <defs>
+          <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="#10151c"/><stop offset=".6" stop-color="#0a0d12"/><stop offset="1" stop-color="#06080b"/>
+          </linearGradient>
+          <linearGradient id="lamp" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="#f2d9a0" stop-opacity=".28"/><stop offset="1" stop-color="#f2d9a0" stop-opacity="0"/>
+          </linearGradient>
+          <radialGradient id="glow" cx=".5" cy=".25" r=".7">
+            <stop offset="0" stop-color="#e8c87e" stop-opacity=".22"/><stop offset="1" stop-color="#000" stop-opacity="0"/>
+          </radialGradient>
+        </defs>
+        <rect width="1280" height="720" fill="url(#bg)"/>
+        <!-- porthole strip -->
+        <rect x="80" y="90" width="1120" height="8" fill="#1c2733"/>
+        <circle cx="240" cy="160" r="46" fill="#0d1723" stroke="#22303f" stroke-width="5"/>
+        <circle cx="1040" cy="160" r="46" fill="#0d1723" stroke="#22303f" stroke-width="5"/>
+        <circle cx="228" cy="150" r="3" fill="#cfe2f2"/><circle cx="256" cy="170" r="2" fill="#8fb3cf"/>
+        <circle cx="1052" cy="148" r="2.5" fill="#cfe2f2"/><circle cx="1028" cy="172" r="2" fill="#8fb3cf"/>
+        <!-- hanging lamp + pool of light -->
+        <rect x="636" y="60" width="8" height="90" fill="#151b22"/>
+        <path d="M600 150 h80 l16 26 h-112 z" fill="#232c36"/>
+        <polygon points="588,176 692,176 810,600 470,600" fill="url(#lamp)"/>
+        <ellipse cx="640" cy="560" rx="330" ry="80" fill="url(#glow)"/>
+        <!-- table -->
+        <rect x="380" y="520" width="520" height="26" rx="6" fill="#1f2730"/>
+        <rect x="420" y="546" width="18" height="120" fill="#141a21"/>
+        <rect x="842" y="546" width="18" height="120" fill="#141a21"/>
+        <!-- ledger book on table -->
+        <rect x="590" y="498" width="100" height="24" rx="3" fill="#2e2a22" transform="rotate(-4 640 510)"/>
+        <!-- Vessa: seated silhouette, left -->
+        <circle cx="500" cy="390" r="34" fill="#12161b"/>
+        <path d="M448 430 q52 -34 104 0 l12 96 h-128 z" fill="#161b21"/>
+        <!-- doorway behind Ferro -->
+        <rect x="716" y="140" width="180" height="440" fill="#07090c"/>
+        <rect x="706" y="130" width="10" height="460" fill="#1e2833"/>
+        <rect x="896" y="130" width="10" height="460" fill="#1e2833"/>
+        <rect x="706" y="122" width="200" height="10" fill="#1e2833"/>
+        <!-- Ferro: standing in the doorway — the flagged SLATE-BLUE jacket -->
+        <circle cx="806" cy="322" r="38" fill="#131519"/>
+        <path d="M748 368 q58 -38 116 0 l18 158 h-152 z" fill="#3d5570"/>
+        <path d="M760 372 l44 -8 v150 h-52 z" fill="#33475e"/>
+        <!-- half-unsealed collar -->
+        <path d="M780 366 l26 22 26 -24" stroke="#1b2530" stroke-width="7" fill="none"/>
+        <!-- vignette -->
+        <rect width="1280" height="720" fill="#000" opacity=".12"/>
+      </svg>
+
+      <div class="stillmeta">
+        <span>shot <b>s01-ferro-arrives</b> · scene 1, mess deck</span>
+        <span>2048×1152 · 16:9</span>
+        <span class="pile"><span class="key">P</span> tag for the pile — excluded unless tagged; tagged stills become candidate canon references via proposal</span>
+      </div>
+    </div>
+
+    <!-- ── RIGHT: everything pertinent, present — zero archaeology ── -->
+    <div>
+
+      <div class="panel">
+        <div class="panel-h">Where this lands · script v4</div>
+        <div class="script">
+          <div class="slug">SCENE 1 — INT. MESS DECK</div>
+          <p>Vessa eats standing up, the way people do when a room has stopped being
+          theirs. <mark class="shot">The door does not knock. Ferro fills it, dock-suit
+          half unsealed, carrying the cold of outside like a second coat.</mark>
+          <span class="after">She does not offer him the other chair. He takes it anyway.</span></p>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-h">Generating prompt · as sent</div>
+        <div class="prompt">Ferro fills the mess-deck doorway, dock-suit half unsealed,
+        rust-brown work jacket beneath; Vessa seated in lamplight, not rising; dark hard
+        science fiction, low-key but clearly exposed, real shadow, film grain, full-bleed.</div>
+        <div class="gen-meta">
+          <b>Nano Banana Pro</b> (cloud · character shot, per D20 routing) · conditioned on
+          Ferro’s locked sheet + 2 newest pile stills · $0.11 this attempt
+          <div class="attempt">
+            <span class="att fail">attempt 1 · audit failed: jacket color</span>
+            <span class="att fail">attempt 2 · audit failed: jacket color</span>
+            <span class="att now">attempt 3 · retries exhausted → your eye</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-h">Canon references · in scope</div>
+        <div class="refrow">
+          <!-- locked reference thumb: rust-brown jacket -->
+          <svg class="refthumb" viewBox="0 0 120 120" role="img" aria-label="Ferro locked reference thumbnail">
+            <rect width="120" height="120" fill="#141210"/>
+            <circle cx="60" cy="38" r="20" fill="#191512"/>
+            <path d="M28 62 q32 -20 64 0 l8 58 h-80 z" fill="#7a4630"/>
+            <path d="M34 64 l22 -5 v56 h-26 z" fill="#68402e"/>
+            <path d="M46 60 l14 12 14 -13" stroke="#241d18" stroke-width="4" fill="none"/>
+          </svg>
+          <div class="refinfo">
+            <b>Ferro — reference sheet</b>
+            <span class="lockchip">locked · Jun 30</span>
+            fact: <i>“wears the rust-brown dock jacket, ep01–present”</i> · established S1E01
+            gate · the check compared against this sheet
+            <div class="swatches">
+              <span class="sw" style="background:#7a4630"></span> locked
+              <span style="color:var(--line)">vs</span>
+              <span class="sw" style="background:#3d5570"></span> this still
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <footer>Mockup · the review desk (screen 5.5) · not wired</footer>
+</div>
+
+<!-- ── Ruling bar: one artifact, one ruling — never batch ── -->
+<div class="dock">
+
+  <!-- Reject composer: expands in place when X is pressed; the still stays visible above -->
+  <div class="composer" id="composer">
+    <div class="composer-inner">
+      <div class="comp-h">Reject <b>s01-ferro-arrives</b> — where does the fix land?</div>
+      <div class="routes">
+        <label class="route"><input type="radio" name="route" value="prompt" checked>
+          <span class="key">1</span>
+          <span><b>Rewrite this shot’s prompt</b><br><em>opens the manifest entry · your note pre-fills the rewrite</em></span></label>
+        <label class="route"><input type="radio" name="route" value="scene">
+          <span class="key">2</span>
+          <span><b>Send scene 1 back to writing</b><br><em>reopens the write step · note rides as rejection notes · downstream marked stale</em></span></label>
+        <label class="route"><input type="radio" name="route" value="hand">
+          <span class="key">3</span>
+          <span><b>Hold the slot for a hand-made still</b><br><em>assemble stays blocked: “waiting on your file for s01-ferro-arrives”</em></span></label>
+      </div>
+      <textarea class="note" placeholder="Your note — required. Recorded forever; rides future runs and checks."></textarea>
+      <div class="comp-actions">
+        <span class="comp-hint"><span class="key">Esc</span> cancel — no ruling filed</span>
+        <button class="dbtn reject" id="fileBtn">File the rejection — routes to the shot’s prompt<span class="cost">nothing regenerates until the route lands</span></button>
+      </div>
+    </div>
+  </div>
+
+  <div class="dock-inner">
+    <span class="headline"><b>One still, one ruling.</b> Keyboard-driven; the queue advances
+    on your ruling. No batch verdicts.</span>
+    <button class="dbtn approve"><span class="key">A</span>Approve this still<span class="cost">keeps it · records your approval over the flag</span></button>
+    <button class="dbtn"><span class="key">R</span>Recreate with notes<span class="cost">1 Nano Banana call · ~$0.11 · your note rides as corrective feedback</span></button>
+    <button class="dbtn reject" id="rejectBtn"><span class="key">X</span>Reject this still — route the fix<span class="cost">note required · expands here — the still stays on screen</span></button>
+  </div>
+</div>
+
+<style>
+  .composer { display: none; border-bottom: 1px solid var(--line); margin-bottom: 13px; }
+  .dock.open .composer { display: block; }
+  .composer-inner { max-width: 1280px; margin: 0 auto; padding-bottom: 14px; }
+  .comp-h { font-size: 14px; color: var(--ink-2); margin-bottom: 12px; }
+  .comp-h b { color: var(--ink); }
+  .routes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 12px; }
+  .route {
+    display: flex; gap: 10px; align-items: flex-start; font-size: 13px; cursor: pointer;
+    border: 1px solid var(--line); border-radius: 9px; padding: 11px 13px; line-height: 1.4;
+  }
+  .route input { display: none; }
+  .route:has(input:checked) { border-color: var(--serious); background: #241412; }
+  .route b { color: var(--ink); }
+  .route em { color: var(--muted); font-style: normal; font-size: 12px; }
+  .note {
+    width: 100%; min-height: 64px; resize: vertical; border-radius: 9px;
+    background: var(--page); border: 1px solid var(--line); color: var(--ink);
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    padding: 10px 12px; margin-bottom: 12px;
+  }
+  .note:focus { outline: none; border-color: var(--muted); }
+  .comp-actions { display: flex; align-items: center; justify-content: space-between; }
+  .comp-hint { font-size: 12.5px; color: var(--muted); }
+</style>
+<script>
+  const dock = document.querySelector('.dock');
+  const fileBtn = document.getElementById('fileBtn');
+  const labels = {
+    prompt: 'File the rejection — routes to the shot’s prompt',
+    scene: 'File the rejection — routes scene 1 to writing',
+    hand: 'File the rejection — holds the slot for your file',
+  };
+  document.getElementById('rejectBtn').addEventListener('click', () => {
+    dock.classList.toggle('open');
+    if (dock.classList.contains('open')) document.querySelector('.note').focus();
+  });
+  document.querySelectorAll('input[name="route"]').forEach(r =>
+    r.addEventListener('change', () => { fileBtn.firstChild.textContent = labels[r.value]; }));
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') dock.classList.remove('open');
+    if (e.target.tagName === 'TEXTAREA') return;
+    if (e.key === 'x' || e.key === 'X') { e.preventDefault(); document.getElementById('rejectBtn').click(); }
+    if (dock.classList.contains('open') && ['1','2','3'].includes(e.key)) {
+      const r = document.querySelectorAll('input[name="route"]')[+e.key - 1];
+      r.checked = true; r.dispatchEvent(new Event('change'));
+    }
+  });
+</script>
+</body>
+</html>

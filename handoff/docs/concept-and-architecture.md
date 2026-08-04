@@ -303,3 +303,34 @@ just before each epic starts.
 - **D17 · E1→E8 as ordered.**
 - **D18 · GitHub Issues** on MrMophandle/Showrunner, one milestone per epic.
 - **D19 · Next:** E1 issues first, mockups in parallel.
+
+## Addendum · rulings after the export
+
+- **D20 · Image generation backends** (ruled Aug 3, 2026): one `ImageAdapter`,
+  three backends carried forward from the Dead Light console — Nano Banana Pro
+  (Gemini API, cloud) for character shots; Z-Image-Turbo (local GPU) for ambient
+  shots; Qwen-Image-Edit (local GPU) for hero/identity shots. Routing is declared
+  per shot in the shot manifest. Cloud steps take the `image-api` lock only and
+  parallelize with audio; local image gen and TTS share the `gpu` lock (Metal
+  corruption lesson). A hand-made shot always wins — existing files are never
+  overwritten. Image-check auto-retries bounded at 2, then the shot reaches Ryan.
+  Full detail: `D20-image-backends.md`.
+- **D21 · Review-desk reject is routed, not rewound** (ruled Aug 3, 2026): the
+  three shot-image rulings are approve · recreate-with-notes (re-roll now, note
+  as corrective feedback) · reject-with-note, where the reject note picks its
+  depth — rewrite the shot's prompt in the manifest, send the scene back to
+  writing, or hold the slot for a hand-made still (which always wins, per D20).
+  Nothing regenerates until the route lands. Extends 4.7's routing rule from
+  the screening room down to the review desk.
+- **D22 · Every character declares a species** (ruled Aug 3, 2026): species is a
+  required identity field on the character category — a typed relation to an
+  entity in the Species category, not free text. Consequences: (a) the species'
+  facts load into check scope whenever that character is in scope, so world-rules
+  and physiology checks can actually fire on a character ("vacuum without
+  protection" only catches Ferro if something says what Ferro is); (b) editing an
+  inherited fact edits the species and every member inherits it — an individual
+  exception is a fact on the character that names what it overrides; (c) an
+  unknown species is declared explicitly as `unknown` (legal, tracked — e.g. a
+  candidate like the Passenger), never left blank. Non-character categories are
+  unaffected. Gap found while reviewing the canon-library mockup: 3.2 shipped
+  Species as a category but nothing linked a character to one.

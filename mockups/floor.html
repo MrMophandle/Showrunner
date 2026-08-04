@@ -1,0 +1,368 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Showrunner — The Floor</title>
+<style>
+  :root {
+    --page: #0d0d0d;
+    --card: #1a1a19;
+    --card-raised: #222220;
+    --line: #2c2c2a;
+    --ink: #ffffff;
+    --ink-2: #c3c2b7;
+    --muted: #898781;
+    --good: #0ca30c;
+    --warn: #fab219;
+    --serious: #ec835a;
+    --critical: #d03b3b;
+    --live: #6db3f2;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--page);
+    color: var(--ink-2);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    padding: 32px 40px 80px;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; }
+
+  /* ── Header ─────────────────────────────── */
+  header { display: flex; align-items: baseline; gap: 16px; margin-bottom: 6px; }
+  .app { font-size: 13px; letter-spacing: .18em; text-transform: uppercase; color: var(--muted); }
+  h1 { font-size: 28px; font-weight: 650; color: var(--ink); letter-spacing: -.01em; }
+  .season { font-size: 15px; color: var(--muted); }
+
+  /* ── Health strip ───────────────────────── */
+  .health {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px;
+    margin: 20px 0 36px;
+  }
+  .tile {
+    background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+    padding: 12px 16px; display: flex; flex-direction: column; gap: 3px;
+  }
+  .tile .k { font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+  .tile .v { font-size: 14.5px; color: var(--ink); display: flex; align-items: center; gap: 8px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+  .dot.good { background: var(--good); }
+  .dot.warn { background: var(--warn); }
+  .meter { height: 5px; border-radius: 3px; background: #2e2e2c; margin-top: 7px; overflow: hidden; }
+  .meter > i { display: block; height: 100%; border-radius: 3px; background: var(--ink-2); width: 52%; }
+  .tile .sub { font-size: 12px; color: var(--muted); }
+
+  /* ── Needs you ──────────────────────────── */
+  .section-h {
+    font-size: 12px; letter-spacing: .16em; text-transform: uppercase;
+    color: var(--muted); margin-bottom: 12px; display: flex; align-items: center; gap: 10px;
+  }
+  .section-h .count {
+    background: var(--warn); color: #1a1400; font-weight: 700; font-size: 12px;
+    border-radius: 99px; padding: 1px 9px; letter-spacing: 0;
+  }
+  .needs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 44px; }
+  .need {
+    background: linear-gradient(180deg, #232013, var(--card));
+    border: 1px solid #4a3d14; border-radius: 12px; padding: 18px 18px 16px;
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .need .kind { font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--warn); display: flex; align-items: center; gap: 7px; }
+  .need .kind::before { content: "◆"; font-size: 9px; }
+  .need h3 { font-size: 16.5px; font-weight: 600; color: var(--ink); line-height: 1.3; }
+  .need .why { font-size: 13.5px; color: var(--ink-2); flex: 1; }
+  .need .age { font-size: 12px; color: var(--muted); }
+  .chip {
+    display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 600;
+    border-radius: 6px; padding: 1px 8px; vertical-align: 1px;
+  }
+  .chip.red { background: #3a1414; color: #f2a0a0; border: 1px solid #5c2020; }
+  .chip.red::before { content: "⛔"; font-size: 10px; }
+
+  /* ── Buttons: verb + object + scope + cost ─ */
+  .btn {
+    display: inline-block; border-radius: 9px; padding: 9px 16px; font-size: 14px;
+    font-weight: 600; cursor: pointer; border: 1px solid var(--line);
+    background: var(--card-raised); color: var(--ink); text-align: left; line-height: 1.35;
+    transition: border-color .15s, background .15s;
+  }
+  .btn:hover { border-color: var(--muted); }
+  .btn .cost { display: block; font-weight: 400; font-size: 12.5px; color: var(--muted); }
+  .btn.rule { background: #2c250e; border-color: #5c4c16; }
+  .btn.rule:hover { border-color: var(--warn); }
+  .btn.rule .cost { color: #b1a06a; }
+  .btn.blocked {
+    background: none; border-style: dashed; border-color: var(--line);
+    color: var(--muted); cursor: not-allowed;
+  }
+  .btn.blocked .cost { color: #6b695f; }
+
+  /* ── Episode rows ───────────────────────── */
+  .floor { display: flex; flex-direction: column; gap: 12px; }
+  .ep {
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    display: grid; grid-template-columns: 250px 1fr 340px; gap: 24px;
+    padding: 20px 22px; align-items: center;
+  }
+  .ep.published { opacity: .55; }
+  .ep .id { display: flex; flex-direction: column; gap: 2px; }
+  .ep .num { font-size: 12px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
+  .ep .title { font-size: 18px; font-weight: 650; color: var(--ink); }
+  .ep .note { font-size: 12.5px; color: var(--muted); margin-top: 4px; }
+
+  /* lifecycle track */
+  .track { display: flex; align-items: flex-start; }
+  .stage { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 7px; position: relative; }
+  .stage::before {
+    content: ""; position: absolute; top: 5px; left: -50%; width: 100%; height: 2px; background: var(--line);
+  }
+  .stage:first-child::before { display: none; }
+  .stage.done::before, .stage.now::before { background: #4e4e49; }
+  .stage .pip { width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--line); background: var(--page); z-index: 1; }
+  .stage.done .pip { background: #4e4e49; border-color: #4e4e49; }
+  .stage.now .pip { background: var(--warn); border-color: var(--warn); }
+  .stage.now.live .pip { background: var(--live); border-color: var(--live); animation: pulse 1.6s ease-in-out infinite; }
+  @keyframes pulse { 50% { box-shadow: 0 0 0 5px rgba(109,179,242,.18); } }
+  .stage .lbl { font-size: 11px; color: var(--muted); }
+  .stage.now .lbl { color: var(--ink); font-weight: 600; }
+
+  /* status column */
+  .status { display: flex; flex-direction: column; gap: 8px; justify-self: end; width: 100%; }
+  .running { display: flex; flex-direction: column; gap: 5px; background: #14202b; border: 1px solid #23405a; border-radius: 9px; padding: 11px 14px; }
+  .running .live-h { font-size: 11px; letter-spacing: .13em; text-transform: uppercase; color: var(--live); display: flex; align-items: center; gap: 7px; }
+  .running .live-h::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--live); animation: pulse 1.6s infinite; }
+  .running .what { font-size: 13.5px; color: var(--ink); }
+  .running .stream { font-size: 12.5px; color: var(--muted); font-style: italic; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .queued { font-size: 12.5px; color: var(--muted); padding-left: 2px; }
+  .queued b { color: var(--ink-2); font-weight: 600; }
+  .waiting-gate { font-size: 13px; color: var(--warn); }
+  .epcost { font-size: 12px; color: var(--muted); }
+
+  /* idea pool footer */
+  .pool {
+    margin-top: 40px; border: 1px dashed var(--line); border-radius: 12px;
+    padding: 20px 24px; display: flex; align-items: center; justify-content: space-between; gap: 20px;
+  }
+  .pool .txt { font-size: 14px; color: var(--muted); }
+  .pool .txt b { color: var(--ink-2); font-weight: 600; }
+
+  footer { margin-top: 28px; font-size: 12px; color: #5c5b55; text-align: center; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <span class="app">Showrunner</span>
+    <h1>Dead Light</h1>
+    <span class="season">Season 1 · the floor</span>
+  </header>
+
+  <!-- Health strip: adapter · GPU worker · output volume · budget -->
+  <div class="health">
+    <div class="tile">
+      <span class="k">Claude adapter</span>
+      <span class="v"><span class="dot good"></span>Anthropic API · connected</span>
+      <span class="sub">last call 4 min ago</span>
+    </div>
+    <div class="tile">
+      <span class="k">GPU worker</span>
+      <span class="v"><span class="dot good"></span>mac-01 · online, idle</span>
+      <span class="sub">no lock held</span>
+    </div>
+    <div class="tile">
+      <span class="k">Library volume</span>
+      <span class="v"><span class="dot good"></span>412 GB free</span>
+      <span class="sub">/library · 148 GB used</span>
+    </div>
+    <div class="tile">
+      <span class="k">Budget · this week</span>
+      <span class="v">$31.40 of $60.00</span>
+      <div class="meter"><i></i></div>
+    </div>
+  </div>
+
+  <!-- Needs you: open gates, queued reviews — the loud part -->
+  <div class="section-h">Needs you <span class="count">3</span></div>
+  <div class="needs">
+
+    <div class="need">
+      <span class="kind">Gate open · round 2</span>
+      <h3>ep06 “Cold Ledger” — script gate</h3>
+      <div class="why">
+        3 findings: <span class="chip red">continuity</span> Mara is on the bridge and in the
+        airlock in scene 4 — blocks the assets stage until resolved, your gate stays open.
+        Plus 2 style notes.
+      </div>
+      <div class="age">opened 38 min ago · round 1 rejected with your notes</div>
+      <button class="btn rule">Rule on the ep06 script<span class="cost">3 findings · round 2 · no cost</span></button>
+    </div>
+
+    <div class="need">
+      <span class="kind">Final gate</span>
+      <h3>ep04 “Signal Fade” — assembled</h3>
+      <div class="why">
+        The full episode is cut and waiting for your watch-through. Approve runs the
+        ratification sweep (2 pending proposals ride this episode).
+      </div>
+      <div class="age">assembled 2 h ago</div>
+      <button class="btn rule">Screen ep04 “Signal Fade”<span class="cost">21 min watch-through · final gate</span></button>
+    </div>
+
+    <div class="need">
+      <span class="kind">Review queue</span>
+      <h3>7 shot images from ep05</h3>
+      <div class="why">
+        Image checks flagged nothing deterministic — these wait for your eye, one at a
+        time. 7 more are still generating.
+      </div>
+      <div class="age">oldest queued 26 min ago</div>
+      <button class="btn rule">Review 7 ep05 shot images<span class="cost">one at a time · ~5 min</span></button>
+    </div>
+
+  </div>
+
+  <!-- The floor: one row per in-flight episode -->
+  <div class="section-h">In flight</div>
+  <div class="floor">
+
+    <!-- ep04: assembled, waiting on the screening (mirrors the needs-you card) -->
+    <div class="ep">
+      <div class="id">
+        <span class="num">Episode 04</span>
+        <span class="title">Signal Fade</span>
+        <span class="note">$11.82 spent · 2 proposals riding</span>
+      </div>
+      <div class="track">
+        <div class="stage done"><span class="pip"></span><span class="lbl">premise</span></div>
+        <div class="stage done"><span class="pip"></span><span class="lbl">outline</span></div>
+        <div class="stage done"><span class="pip"></span><span class="lbl">script</span></div>
+        <div class="stage done"><span class="pip"></span><span class="lbl">assets</span></div>
+        <div class="stage now"><span class="pip"></span><span class="lbl">assembled</span></div>
+        <div class="stage"><span class="pip"></span><span class="lbl">published</span></div>
+      </div>
+      <div class="status">
+        <span class="waiting-gate">◆ Waiting on you — final gate open 2 h</span>
+      </div>
+    </div>
+
+    <!-- ep05: assets, actively running + a queued run (per-episode serialization) -->
+    <div class="ep">
+      <div class="id">
+        <span class="num">Episode 05</span>
+        <span class="title">The Quiet Deck</span>
+        <span class="note">$8.16 spent so far</span>
+      </div>
+      <div class="track">
+        <div class="stage done"><span class="pip"></span><span class="lbl">premise</span></div>
+        <div class="stage done"><span class="pip"></span><span class="lbl">outline</span></div>
+        <div class="stage done"><span class="pip"></span><span class="lbl">script</span></div>
+        <div class="stage now live"><span class="pip"></span><span class="lbl">assets</span></div>
+        <div class="stage"><span class="pip"></span><span class="lbl">assembled</span></div>
+        <div class="stage"><span class="pip"></span><span class="lbl">published</span></div>
+      </div>
+      <div class="status">
+        <div class="running">
+          <span class="live-h">Generating · holds image-api lock</span>
+          <span class="what">Shot 8 of 14 — scene 2, the corridor</span>
+          <span class="stream">“emergency lighting dies section by section down the spine of the ship…”</span>
+        </div>
+        <span class="queued"><b>Queued behind it:</b> produce ep05 TTS takes — waits for this run (one run per episode)</span>
+      </div>
+    </div>
+
+    <!-- ep06: script gate open (mirrors needs-you) -->
+    <div class="ep">
+      <div class="id">
+        <span class="num">Episode 06</span>
+        <span class="title">Cold Ledger</span>
+        <span class="note">$6.40 spent · round 2</span>
+      </div>
+      <div class="track">
+        <div class="stage done"><span class="pip"></span><span class="lbl">premise</span></div>
+        <div class="stage done"><span class="pip"></span><span class="lbl">outline</span></div>
+        <div class="stage now"><span class="pip"></span><span class="lbl">script</span></div>
+        <div class="stage"><span class="pip"></span><span class="lbl">assets</span></div>
+        <div class="stage"><span class="pip"></span><span class="lbl">assembled</span></div>
+        <div class="stage"><span class="pip"></span><span class="lbl">published</span></div>
+      </div>
+      <div class="status">
+        <span class="waiting-gate">◆ Waiting on you — script gate, 3 findings</span>
+        <span class="queued">assets stage blocked by the red continuity finding until resolved</span>
+      </div>
+    </div>
+
+    <!-- ep07: idle at outline, legal next action with cost -->
+    <div class="ep">
+      <div class="id">
+        <span class="num">Episode 07</span>
+        <span class="title">Meridian</span>
+        <span class="note">$0.31 spent · premise ratified Jul 30</span>
+      </div>
+      <div class="track">
+        <div class="stage done"><span class="pip"></span><span class="lbl">premise</span></div>
+        <div class="stage now"><span class="pip"></span><span class="lbl">outline</span></div>
+        <div class="stage"><span class="pip"></span><span class="lbl">script</span></div>
+        <div class="stage"><span class="pip"></span><span class="lbl">assets</span></div>
+        <div class="stage"><span class="pip"></span><span class="lbl">assembled</span></div>
+        <div class="stage"><span class="pip"></span><span class="lbl">published</span></div>
+      </div>
+      <div class="status">
+        <button class="btn">Write the ep07 outline<span class="cost">1 Opus call · ~$0.85 · loads 4 core entities + arc1 @ waypoint2</span></button>
+      </div>
+    </div>
+
+    <!-- ep08: precondition not met — blocked action shows its reason in words -->
+    <div class="ep">
+      <div class="id">
+        <span class="num">Episode 08</span>
+        <span class="title">Undertow</span>
+        <span class="note">premise drafted, not yet greenlit</span>
+      </div>
+      <div class="track">
+        <div class="stage now"><span class="pip"></span><span class="lbl">premise</span></div>
+        <div class="stage"><span class="pip"></span><span class="lbl">outline</span></div>
+        <div class="stage"><span class="pip"></span><span class="lbl">script</span></div>
+        <div class="stage"><span class="pip"></span><span class="lbl">assets</span></div>
+        <div class="stage"><span class="pip"></span><span class="lbl">assembled</span></div>
+        <div class="stage"><span class="pip"></span><span class="lbl">published</span></div>
+      </div>
+      <div class="status">
+        <button class="btn">Greenlight the ep08 premise<span class="cost">your ruling · no cost · opens outline work</span></button>
+        <button class="btn blocked" disabled>Write the ep08 outline<span class="cost">blocked — the premise isn’t greenlit yet</span></button>
+      </div>
+    </div>
+
+    <!-- ep03: recently published, dimmed -->
+    <div class="ep published">
+      <div class="id">
+        <span class="num">Episode 03</span>
+        <span class="title">Hull Song</span>
+        <span class="note">$14.05 total</span>
+      </div>
+      <div class="track">
+        <div class="stage done"><span class="pip"></span><span class="lbl">premise</span></div>
+        <div class="stage done"><span class="pip"></span><span class="lbl">outline</span></div>
+        <div class="stage done"><span class="pip"></span><span class="lbl">script</span></div>
+        <div class="stage done"><span class="pip"></span><span class="lbl">assets</span></div>
+        <div class="stage done"><span class="pip"></span><span class="lbl">assembled</span></div>
+        <div class="stage done"><span class="pip"></span><span class="lbl">published</span></div>
+      </div>
+      <div class="status">
+        <span class="epcost">Published Jul 29 · 11 facts ratified into canon</span>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Honest empty state / what's next -->
+  <div class="pool">
+    <span class="txt"><b>Nothing else in flight.</b> The S1 idea pool holds 3 greenlit premises and 2 parked.</span>
+    <button class="btn">Start ep09 from “the beacon lies”<span class="cost">creates the episode · no cost until you write</span></button>
+  </div>
+
+  <footer>Mockup · the floor (screen 5.1) · not wired</footer>
+</div>
+</body>
+</html>

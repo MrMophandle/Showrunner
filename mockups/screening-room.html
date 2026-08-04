@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Showrunner — Screening Room · ep04</title>
+<style>
+  :root {
+    --page: #0d0d0d;
+    --card: #1a1a19;
+    --card-raised: #222220;
+    --line: #2c2c2a;
+    --ink: #ffffff;
+    --ink-2: #c3c2b7;
+    --muted: #898781;
+    --good: #0ca30c;
+    --warn: #fab219;
+    --serious: #ec835a;
+    --critical: #d03b3b;
+    --live: #6db3f2;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--page);
+    color: var(--ink-2);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    padding: 28px 40px 110px;
+  }
+  .wrap { max-width: 1280px; margin: 0 auto; }
+
+  .crumb { font-size: 12.5px; color: var(--muted); margin-bottom: 10px; }
+  .crumb a { color: var(--muted); text-decoration: none; border-bottom: 1px solid var(--line); }
+  .top { display: flex; align-items: baseline; gap: 14px; margin-bottom: 20px; flex-wrap: wrap; }
+  h1 { font-size: 22px; font-weight: 650; color: var(--ink); }
+  .gatechip {
+    font-size: 12px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase;
+    color: var(--warn); border: 1px solid #5c4c16; border-radius: 6px; padding: 2px 10px;
+  }
+  .meta { font-size: 13px; color: var(--muted); }
+
+  .cols { display: grid; grid-template-columns: 1fr 360px; gap: 20px; align-items: start; }
+
+  /* ── Player ── */
+  .player { background: var(--card); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+  .frame { display: block; width: 100%; aspect-ratio: 16/9; }
+  .chrome { padding: 12px 18px 14px; }
+  /* scrub bar with scene markers */
+  .scrub { position: relative; height: 22px; cursor: pointer; }
+  .scrub .bar { position: absolute; top: 9px; left: 0; right: 0; height: 4px; border-radius: 2px; background: #2e2e2c; }
+  .scrub .played { position: absolute; top: 9px; left: 0; width: 36.6%; height: 4px; border-radius: 2px; background: var(--ink-2); }
+  .scrub .head { position: absolute; top: 3px; left: 36.6%; width: 16px; height: 16px; margin-left: -8px; border-radius: 50%; background: var(--ink); border: 3px solid var(--page); box-shadow: 0 0 0 1px var(--line); }
+  .scrub .scene-mark { position: absolute; top: 6px; width: 2px; height: 10px; background: #4e4e49; }
+  .scrub .note-mark { position: absolute; top: 0; width: 8px; height: 8px; border-radius: 50%; background: var(--warn); border: 1px solid #1a1400; }
+  .ctl { display: flex; align-items: center; gap: 14px; margin-top: 8px; font-size: 13px; }
+  .playbtn {
+    width: 38px; height: 38px; border-radius: 50%; border: 1px solid #4e4e49; background: var(--card-raised);
+    color: var(--ink); font-size: 15px; cursor: pointer; display: flex; align-items: center; justify-content: center;
+  }
+  .time { font-variant-numeric: tabular-nums; color: var(--ink); font-weight: 600; }
+  .time .total { color: var(--muted); font-weight: 400; }
+  .binding { margin-left: auto; text-align: right; font-size: 12.5px; color: var(--muted); line-height: 1.45; }
+  .binding b { color: var(--ink); font-weight: 600; }
+  .key {
+    font: 11px/1 ui-monospace, Menlo, monospace; color: var(--ink); background: var(--card-raised);
+    border: 1px solid #4e4e49; border-bottom-width: 2px; border-radius: 5px; padding: 3px 6px;
+  }
+
+  /* ── Notes ── */
+  .panel { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; margin-bottom: 16px; }
+  .panel-h { font-size: 12px; letter-spacing: .16em; text-transform: uppercase; color: var(--muted); margin-bottom: 11px; display: flex; align-items: baseline; gap: 8px; }
+  .panel-h .sub { text-transform: none; letter-spacing: 0; font-size: 12.5px; }
+  .notes-panel { margin-top: 16px; }
+  .note-row { display: flex; gap: 12px; padding: 10px 0; border-bottom: 1px solid #232321; align-items: baseline; }
+  .note-row:last-child { border-bottom: none; }
+  .note-row .ts { font-variant-numeric: tabular-nums; color: var(--ink); font-weight: 650; font-size: 13.5px; white-space: nowrap; }
+  .note-row .bind { font-size: 12px; color: var(--muted); white-space: nowrap; }
+  .note-row .txt { font-size: 13.5px; color: var(--ink-2); flex: 1; }
+  .depth { font-size: 11px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; border-radius: 5px; padding: 1px 8px; white-space: nowrap; }
+  .depth.take { color: var(--live); border: 1px solid #23405a; }
+  .depth.image { color: var(--warn); border: 1px solid #5c4c16; }
+  .depth.scene { color: var(--serious); border: 1px solid #5c3a20; }
+  .dropbtn {
+    display: block; width: 100%; margin-top: 12px; border-radius: 9px; padding: 9px 14px;
+    font-size: 13.5px; font-weight: 600; cursor: pointer; text-align: left; line-height: 1.35;
+    border: 1px dashed #4e4e49; background: none; color: var(--ink);
+  }
+  .dropbtn:hover { border-color: var(--muted); }
+  .dropbtn .cost { display: block; font-weight: 400; font-size: 12px; color: var(--muted); }
+
+  /* ── Synced script ── */
+  .script { font-family: "Courier New", Courier, monospace; font-size: 13px; line-height: 1.7; color: var(--muted); max-height: 460px; overflow: hidden; position: relative; }
+  .script .slug { color: var(--ink-2); font-weight: 700; font-size: 12.5px; margin: 10px 0 4px; }
+  .script p { margin-bottom: 8px; }
+  .script .cue { text-align: center; color: var(--ink-2); font-weight: 700; margin-bottom: 0; }
+  .script .dlg { margin: 0 auto 8px; max-width: 72%; }
+  .script .now { color: var(--ink); background: #14202b; border-left: 3px solid var(--live); padding: 4px 8px; border-radius: 0 6px 6px 0; margin-left: -11px; }
+  .script .fadeout { position: absolute; bottom: 0; left: 0; right: 0; height: 60px; background: linear-gradient(180deg, transparent, var(--card)); }
+  .sync-hint { font-size: 12px; color: var(--muted); margin-top: 10px; }
+
+  /* riding proposals reminder */
+  .riding { font-size: 13px; color: var(--ink-2); }
+  .riding b { color: var(--ink); }
+  .riding .item { padding: 7px 0; border-bottom: 1px solid #232321; }
+  .riding .item:last-child { border-bottom: none; }
+  .riding .st { font-size: 11.5px; color: var(--live); text-transform: uppercase; letter-spacing: .07em; }
+
+  /* ── Ruling bar ── */
+  .dock {
+    position: fixed; left: 0; right: 0; bottom: 0;
+    background: rgba(13,13,13,.92); backdrop-filter: blur(8px);
+    border-top: 1px solid var(--line); padding: 13px 40px;
+  }
+  .dock-inner { max-width: 1280px; margin: 0 auto; display: flex; gap: 16px; align-items: center; }
+  .dock .headline { font-size: 12.5px; color: var(--muted); flex: 1; min-width: 300px; }
+  .dock .headline b { color: var(--ink); }
+  .dbtn {
+    border-radius: 9px; padding: 10px 17px; font-size: 13.5px; font-weight: 650; cursor: pointer;
+    border: 1px solid var(--line); background: var(--card-raised); color: var(--ink);
+    text-align: left; line-height: 1.3; flex: 0 1 auto; max-width: 430px;
+  }
+  .dbtn .cost { display: block; font-weight: 400; font-size: 11.5px; color: var(--muted); }
+  .dbtn.approve { background: #16240e; border-color: #2e4d1d; }
+  .dbtn.approve:hover { border-color: var(--good); }
+  .dbtn.reject { background: #2c1210; border-color: #5c2620; }
+  .dbtn.reject:hover { border-color: var(--serious); }
+
+  footer { margin-top: 26px; font-size: 12px; color: #5c5b55; text-align: center; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="crumb"><a href="floor.html">← the floor</a> · <a href="#">ep04 “Signal Fade”</a> · Dead Light S1</div>
+  <div class="top">
+    <h1>ep04 “Signal Fade” — the screening</h1>
+    <span class="gatechip">Final gate · non-delegable</span>
+    <span class="meta">assembled 2 h ago · 21 min 14 s · built fresh — every artifact current</span>
+  </div>
+
+  <div class="cols">
+
+    <!-- ── LEFT: the player + notes ── -->
+    <div>
+      <div class="player">
+        <!-- Mock frame: exterior drift, scene 3 -->
+        <svg class="frame" viewBox="0 0 1280 720" preserveAspectRatio="xMidYMid slice" role="img" aria-label="Mock frame: the ship adrift, beacon light far off">
+          <defs>
+            <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#060a12"/><stop offset="1" stop-color="#0b0f18"/>
+            </linearGradient>
+            <radialGradient id="beacon" cx=".5" cy=".5" r=".5">
+              <stop offset="0" stop-color="#f2d9a0" stop-opacity=".9"/><stop offset=".2" stop-color="#e8c87e" stop-opacity=".35"/><stop offset="1" stop-color="#000" stop-opacity="0"/>
+            </radialGradient>
+          </defs>
+          <rect width="1280" height="720" fill="url(#sky)"/>
+          <circle cx="180" cy="120" r="1.6" fill="#cfe2f2"/><circle cx="420" cy="80" r="1.2" fill="#8fb3cf"/>
+          <circle cx="700" cy="150" r="1.8" fill="#cfe2f2"/><circle cx="980" cy="90" r="1.3" fill="#8fb3cf"/>
+          <circle cx="1180" cy="200" r="1.5" fill="#cfe2f2"/><circle cx="320" cy="260" r="1.1" fill="#8fb3cf"/>
+          <circle cx="860" cy="300" r="1.4" fill="#cfe2f2"/><circle cx="120" cy="420" r="1.2" fill="#8fb3cf"/>
+          <!-- beacon far off -->
+          <circle cx="1010" cy="240" r="90" fill="url(#beacon)"/>
+          <circle cx="1010" cy="240" r="4" fill="#f7ecd2"/>
+          <!-- the ship, adrift, lower left -->
+          <g transform="translate(310 470) rotate(-8)">
+            <path d="M0 0 h250 l50 26 -50 26 h-250 q-30 -26 0 -52 z" fill="#182130"/>
+            <rect x="60" y="-20" width="90" height="22" rx="6" fill="#131b27"/>
+            <path d="M0 0 h250 l50 26" stroke="#e8c87e" stroke-opacity=".38" stroke-width="2.5" fill="none"/>
+            <path d="M60 -20 h90" stroke="#e8c87e" stroke-opacity=".22" stroke-width="2" fill="none"/>
+            <circle cx="92" cy="14" r="5" fill="#2e5474"/><circle cx="130" cy="14" r="5" fill="#2e5474"/>
+            <circle cx="168" cy="14" r="5" fill="#4a4326"/>
+            <path d="M250 8 l70 -3 v42 l-70 -3 z" fill="#070a0e"/>
+          </g>
+          <rect width="1280" height="720" fill="#000" opacity=".08"/>
+        </svg>
+
+        <div class="chrome">
+          <div class="scrub">
+            <div class="bar"></div>
+            <div class="played"></div>
+            <!-- scene markers at their in-points -->
+            <div class="scene-mark" style="left:0%"></div>
+            <div class="scene-mark" style="left:16%"></div>
+            <div class="scene-mark" style="left:33%"></div>
+            <div class="scene-mark" style="left:52%"></div>
+            <div class="scene-mark" style="left:71%"></div>
+            <div class="scene-mark" style="left:88%"></div>
+            <!-- dropped notes -->
+            <div class="note-mark" style="left:15%"></div>
+            <div class="note-mark" style="left:36.2%"></div>
+            <div class="note-mark" style="left:66%"></div>
+            <div class="head"></div>
+          </div>
+          <div class="ctl">
+            <button class="playbtn">⏸</button>
+            <span class="time">07:42 <span class="total">/ 21:14</span></span>
+            <span style="color:var(--muted);font-size:12.5px"><span class="key">space</span> pause · <span class="key">←</span><span class="key">→</span> scene · <span class="key">N</span> drop a note</span>
+            <span class="binding">under the playhead:<br><b>scene 3 · shot s03-drift · take t03-vessa-02</b></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Notes dropped this screening -->
+      <div class="panel notes-panel">
+        <div class="panel-h">Notes this screening · 3 <span class="sub">each binds to what was under the playhead · each carries its depth</span></div>
+        <div class="note-row">
+          <span class="ts">03:12</span>
+          <span class="bind">scene 1 · take t01-ferro-01</span>
+          <span class="txt">Ferro’s “enough is a unit” reads flat — more gravel, slower.</span>
+          <span class="depth take">new take</span>
+        </div>
+        <div class="note-row">
+          <span class="ts">07:42</span>
+          <span class="bind">scene 3 · shot s03-drift</span>
+          <span class="txt">The station reads too bright against the drift field — kill half the windows.</span>
+          <span class="depth image">new image</span>
+        </div>
+        <div class="note-row">
+          <span class="ts">14:05</span>
+          <span class="bind">scene 5</span>
+          <span class="txt">The reveal lands two beats early — hold the beacon answer until Vessa sits.</span>
+          <span class="depth scene">scene rewrite</span>
+        </div>
+        <button class="dropbtn">Drop a note at 07:42 — binds to scene 3, shot s03-drift, take t03-vessa-02<span class="cost">N · pauses playback · you pick the depth when you write it</span></button>
+      </div>
+    </div>
+
+    <!-- ── RIGHT: synced script + what rides on approval ── -->
+    <div>
+      <div class="panel">
+        <div class="panel-h">Synced script <span class="sub">follows the playhead</span></div>
+        <div class="script">
+          <div class="slug">SCENE 3 — EXT. THE DRIFT</div>
+          <p>The ship hangs where the tow line died. Beyond it, the beacon does what it
+          has done for nine years: it asks.</p>
+          <p class="cue">VESSA (V.O.)</p>
+          <p class="dlg">Everything out here repeats itself. That’s how you know it’s machinery.</p>
+          <p class="now">The station light crosses the drift field, and for one frame the
+          hull answers it — a signal fading as it wakes.</p>
+          <p class="cue">FERRO</p>
+          <p class="dlg">Tell me you didn’t reply.</p>
+          <p class="cue">VESSA</p>
+          <p class="dlg">I didn’t reply. The ship did.</p>
+          <div class="fadeout"></div>
+        </div>
+        <div class="sync-hint">click any line to jump the playhead to it · the highlighted line is playing now</div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-h">Riding on your approval</div>
+        <div class="riding">
+          <div class="item"><span class="st">proposal</span><br><b>The beacon predates the settlement</b> — raised at the ep04 script gate, deferred to here.</div>
+          <div class="item"><span class="st">proposal</span><br><b>Vessa keeps the dead tow line</b> — raised by the writer, scene 6.</div>
+          <div class="item"><span class="st">completion sweep</span><br>Implicit facts established this episode become proposals for one last ruling — runs on approve.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <footer>Mockup · the screening room (screen 5.6) · not wired</footer>
+</div>
+
+<!-- ── Ruling bar: one ruling at the end ── -->
+<div class="dock">
+  <div class="dock-inner">
+    <span class="headline"><b>One ruling, at the end.</b> Your 3 notes are held until you rule —
+    reject routes them by depth; nothing rewinds.</span>
+    <button class="dbtn reject">Reject ep04 with your 3 notes<span class="cost">routed, not rewound · 1 take + 1 image + 1 scene rewrite → its 2 shots, 3 takes, remix · ~$0.62 · everything else untouched</span></button>
+    <button class="dbtn approve">Approve ep04 “Signal Fade”<span class="cost">runs the ratification sweep — 2 proposals + completion sweep — then clear for publish</span></button>
+  </div>
+</div>
+</body>
+</html>

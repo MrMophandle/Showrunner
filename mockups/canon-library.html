@@ -1,0 +1,344 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Showrunner — Canon Library · Ferro</title>
+<style>
+  :root {
+    --page: #0d0d0d;
+    --card: #1a1a19;
+    --card-raised: #222220;
+    --line: #2c2c2a;
+    --ink: #ffffff;
+    --ink-2: #c3c2b7;
+    --muted: #898781;
+    --good: #0ca30c;
+    --warn: #fab219;
+    --serious: #ec835a;
+    --critical: #d03b3b;
+    --live: #6db3f2;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--page);
+    color: var(--ink-2);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    padding: 28px 40px 60px;
+  }
+  .wrap { max-width: 1280px; margin: 0 auto; }
+  .crumb { font-size: 12.5px; color: var(--muted); margin-bottom: 10px; }
+  .crumb a { color: var(--muted); text-decoration: none; border-bottom: 1px solid var(--line); }
+
+  .top { display: flex; align-items: center; gap: 16px; margin-bottom: 20px; }
+  h1 { font-size: 22px; font-weight: 650; color: var(--ink); }
+  .search {
+    margin-left: auto; background: var(--card); border: 1px solid var(--line); border-radius: 9px;
+    color: var(--muted); font-size: 13.5px; padding: 8px 14px; width: 280px;
+  }
+  /* point-in-time control */
+  .pit {
+    display: flex; align-items: center; gap: 8px; background: var(--card); border: 1px solid var(--line);
+    border-radius: 9px; padding: 8px 14px; font-size: 13px; cursor: pointer;
+  }
+  .pit b { color: var(--ink); }
+  .pit .car { color: var(--muted); font-size: 10px; }
+
+  .cols { display: grid; grid-template-columns: 240px minmax(0, 1fr) 330px; gap: 20px; align-items: start; }
+  @media (max-width: 1150px) {
+    body { padding: 24px 20px 60px; }
+    .cols { grid-template-columns: 220px minmax(0, 1fr); }
+    .cols > div:last-child { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; align-items: start; }
+  }
+  @media (max-width: 820px) {
+    .cols, .cols > div:last-child { grid-template-columns: minmax(0, 1fr); }
+  }
+
+  /* ── Sidebar: categories ── */
+  .side { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px 0; font-size: 14px; }
+  .queue {
+    margin: 0 14px 12px; display: flex; align-items: center; gap: 8px; font-weight: 600; color: var(--ink);
+    background: #232013; border: 1px solid #4a3d14; border-radius: 9px; padding: 9px 12px; font-size: 13.5px; cursor: pointer;
+  }
+  .queue .n { background: var(--warn); color: #1a1400; font-weight: 700; font-size: 12px; border-radius: 99px; padding: 0 8px; margin-left: auto; }
+  .cat { padding: 7px 18px; color: var(--ink-2); cursor: pointer; display: flex; }
+  .cat:hover { color: var(--ink); }
+  .cat .n { margin-left: auto; color: var(--muted); font-size: 12.5px; }
+  .cat.open { color: var(--ink); font-weight: 600; }
+  .ent { padding: 5px 18px 5px 32px; font-size: 13.5px; color: var(--muted); cursor: pointer; display: flex; align-items: baseline; }
+  .ent:hover { color: var(--ink-2); }
+  .ent.sel { color: var(--ink); font-weight: 600; border-left: 3px solid var(--warn); padding-left: 29px; background: #201d12; }
+  .ent .tag { margin-left: auto; font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; }
+  .ent .tag.cand { color: var(--live); border: 1px dashed #23405a; border-radius: 5px; padding: 0 6px; }
+  .ent .tag.ret { color: var(--muted); }
+
+  /* ── Main: entity page ── */
+  .panel { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 18px 22px; margin-bottom: 16px; }
+  .panel-h { font-size: 12px; letter-spacing: .16em; text-transform: uppercase; color: var(--muted); margin-bottom: 12px; display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+  .panel-h .sub { text-transform: none; letter-spacing: 0; font-size: 12.5px; }
+  .panel-h .sub-break { flex-basis: 100%; margin-top: 2px; }
+  .panel-h a { white-space: nowrap; }
+
+  .ident { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; margin-bottom: 6px; }
+  .ident h2 { font-size: 26px; font-weight: 700; color: var(--ink); }
+  .ident .alias { font-size: 13.5px; color: var(--muted); font-style: italic; }
+  .chip { font-size: 11px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; border-radius: 5px; padding: 1px 8px; }
+  .chip.active { color: var(--good); border: 1px solid #1d4d1d; }
+  .chip.standing { color: var(--ink-2); border: 1px solid #4e4e49; }
+  .chip.species { color: var(--live); border: 1px solid #23405a; text-transform: none; letter-spacing: 0; font-weight: 600; font-size: 12px; }
+  .chip.species a { color: var(--live); text-decoration: none; border-bottom: 1px dashed #23405a; }
+  .ident-sub { font-size: 12.5px; color: var(--muted); }
+
+  .prose h3 { font-size: 12px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); margin: 14px 0 4px; }
+  .prose p { font-size: 14.5px; color: var(--ink-2); }
+
+  /* facts table */
+  /* auto layout: the narrow columns claim their content width (nowrap below),
+     statement takes the slack, lineage wraps into what's left — no column can
+     be starved into overlapping its neighbour at any window width */
+  table.facts { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  table.facts th:nth-child(1), table.facts td:nth-child(1) { width: 38%; }
+  table.facts th:nth-child(2), table.facts td:nth-child(2),
+  table.facts th:nth-child(4), table.facts td:nth-child(4) { white-space: nowrap; }
+  table.facts td { overflow-wrap: anywhere; }
+  table.facts th {
+    text-align: left; font-size: 11px; letter-spacing: .1em; text-transform: uppercase;
+    color: var(--muted); font-weight: 600; padding: 4px 10px 8px; border-bottom: 1px solid var(--line);
+  }
+  table.facts td { padding: 9px 10px; border-bottom: 1px solid #232321; vertical-align: top; }
+  table.facts tr:last-child td { border-bottom: none; }
+  .facts .st { color: var(--ink); }
+  .facts .lin { color: var(--muted); font-size: 12.5px; }
+  .fst { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; border-radius: 5px; padding: 1px 7px; white-space: nowrap; }
+  .fst.rat { color: var(--good); border: 1px solid #1d4d1d; }
+  .fst.prov { color: var(--live); border: 1px solid #23405a; }
+  .touch { display: inline-block; margin-top: 4px; font-size: 12px; color: var(--warn); }
+
+  /* ── Right rail ── */
+  .refrow { display: flex; gap: 12px; align-items: flex-start; padding: 9px 0; border-bottom: 1px solid #232321; }
+  .refrow:last-child { border-bottom: none; }
+  .refthumb { width: 74px; aspect-ratio: 1; border-radius: 8px; border: 1px solid #4e4e49; flex: none; }
+  .refinfo { font-size: 12.5px; color: var(--muted); line-height: 1.5; }
+  .refinfo b { color: var(--ink); font-weight: 600; display: block; font-size: 13px; }
+  .lock { display: inline-block; font-size: 10.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--good); border: 1px solid #1d4d1d; border-radius: 5px; padding: 0 6px; }
+  .asp { display: inline-block; font-size: 10.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); border: 1px dashed var(--line); border-radius: 5px; padding: 0 6px; }
+  .playv { width: 34px; height: 34px; border-radius: 50%; border: 1px solid #4e4e49; background: var(--card-raised); color: var(--ink); cursor: pointer; flex: none; display: flex; align-items: center; justify-content: center; font-size: 12px; }
+
+  .rel { display: flex; gap: 8px; align-items: baseline; padding: 6px 0; font-size: 13.5px; border-bottom: 1px solid #232321; flex-wrap: wrap; }
+  .rel:last-child { border-bottom: none; }
+  .rel .kind { font-size: 11.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; min-width: 96px; flex: none; }
+  .rel a { white-space: nowrap; }
+  .rel .rnote { flex-basis: 100%; padding-left: 104px; color: var(--muted); font-size: 12px; }
+  .rel a { color: var(--ink); text-decoration: none; border-bottom: 1px dashed var(--line); }
+
+  .apps { display: flex; gap: 6px; flex-wrap: wrap; }
+  .app { font-size: 12px; border: 1px solid #4e4e49; border-radius: 6px; padding: 2px 9px; color: var(--ink-2); }
+  .app.inflight { border-style: dashed; color: var(--muted); }
+  .apps-note { font-size: 12px; color: var(--muted); margin-top: 8px; }
+
+  .way { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  .wp { font-size: 12px; border: 1px solid var(--line); border-radius: 6px; padding: 2px 9px; color: var(--muted); }
+  .wp.done { color: var(--ink-2); border-color: #4e4e49; }
+  .wp.here { color: #1a1400; background: var(--warn); border-color: var(--warn); font-weight: 700; }
+  .way .sep { color: var(--line); }
+  .arc-note { font-size: 12px; color: var(--muted); margin-top: 5px; }
+
+  footer { margin-top: 26px; font-size: 12px; color: #5c5b55; text-align: center; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="crumb"><a href="floor.html">← the floor</a> · Dead Light S1 · the canon library</div>
+  <div class="top">
+    <h1>Canon library</h1>
+    <div class="pit">Canon as of · <b>now</b> <span class="car">▼</span>
+      <span style="color:var(--muted)">· point-in-time: any gate, any date — facts carry validity ranges</span>
+    </div>
+    <input class="search" value="" placeholder="Search canon — entities, facts, aliases…">
+  </div>
+
+  <div class="cols">
+
+    <!-- ── LEFT: browse by category ── -->
+    <div class="side">
+      <div class="queue">Proposal queue <span class="n">4</span></div>
+      <div class="cat open">Characters <span class="n">6</span></div>
+      <div class="ent">Vessa</div>
+      <div class="ent sel">Ferro</div>
+      <div class="ent">Mara</div>
+      <div class="ent">Trent</div>
+      <div class="ent">The Passenger <span class="tag cand">candidate</span></div>
+      <div class="ent">Old Sette <span class="tag ret">retired</span></div>
+      <div class="cat">Locations <span class="n">4</span></div>
+      <div class="cat">Factions <span class="n">2</span></div>
+      <div class="cat">Species <span class="n">3</span></div>
+      <div class="cat">Technology <span class="n">3</span></div>
+      <div class="cat">Timeline <span class="n">18 events</span></div>
+      <div class="cat">House style <span class="n">1</span></div>
+      <div class="cat">World rules <span class="n">7</span></div>
+    </div>
+
+    <!-- ── CENTER: the entity page ── -->
+    <div>
+      <div class="panel">
+        <div class="ident">
+          <h2>Ferro</h2>
+          <span class="alias">“the dockman”</span>
+          <span class="chip active">active</span>
+          <span class="chip standing">standing · recurring</span>
+          <span class="chip species">species · <a href="#">Hab-born human</a></span>
+        </div>
+        <div class="ident-sub">character · standing is declared intent; appearances below are computed from provenance ·
+          species is required on every character — its facts load with him into every check</div>
+        <div class="prose">
+          <h3>Appearance</h3>
+          <p>Built like the work found him early. The rust-brown dock jacket in every
+          light; a dock-suit worn half unsealed indoors, as if the outside never quite
+          lets go of him.</p>
+          <h3>Voice &amp; manner</h3>
+          <p>Gravel kept low. Says numbers the way other men say names. Enters rooms
+          without knocking because docks don’t knock.</p>
+          <h3>History</h3>
+          <p>Nine years on the Meridian Spur docks; before that, nothing he offers.
+          Knows hull-frost by sound. Trusts ledgers over stations and Vessa over
+          ledgers — lately, and not all the way.</p>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-h">Facts <span class="sub">atomic and checkable · lineage kept forever</span></div>
+        <table class="facts">
+          <tr><th>Statement</th><th>Field</th><th>Lineage</th><th>Status</th></tr>
+          <tr>
+            <td class="st">Wears the rust-brown dock jacket</td>
+            <td>appearance</td>
+            <td class="lin">est. ep01 · ratified S1E01 gate · Jul 2</td>
+            <td><span class="fst rat">ratified</span></td>
+          </tr>
+          <tr>
+            <td class="st">Refuses to carry arms
+              <br><span class="touch">◆ 1 pending proposal touches this — the ep06 coil-pistol, at its script gate</span></td>
+            <td>conduct</td>
+            <td class="lin">est. ep02 · ratified S1E02 gate · Jul 8</td>
+            <td><span class="fst rat">ratified</span></td>
+          </tr>
+          <tr>
+            <td class="st">Worked the Meridian Spur docks nine years</td>
+            <td>history</td>
+            <td class="lin">est. ep01 · ratified S1E01 gate · Jul 2</td>
+            <td><span class="fst rat">ratified</span></td>
+          </tr>
+          <tr>
+            <td class="st">Hears hull-frost before instruments do</td>
+            <td>trait</td>
+            <td class="lin">est. ep03 · ratified S1E03 gate · Jul 18</td>
+            <td><span class="fst rat">ratified</span></td>
+          </tr>
+          <tr>
+            <td class="st">Keeps his dock-suit half unsealed indoors</td>
+            <td>manner</td>
+            <td class="lin">est. ep06 script · rides ep06, visible to checks</td>
+            <td><span class="fst prov">provisional</span></td>
+          </tr>
+        </table>
+      </div>
+
+      <div class="panel">
+        <div class="panel-h">Inherited from species · <a href="#" style="color:var(--live);text-decoration:none;border-bottom:1px dashed #23405a">Hab-born human</a>
+          <span class="sub sub-break">not his facts — they load with him and checks read them</span></div>
+        <table class="facts">
+          <tr><th>Statement</th><th>Field</th><th>Lineage</th><th>Status</th></tr>
+          <tr>
+            <td class="st">Requires a suit or containment field in vacuum</td>
+            <td>physiology</td>
+            <td class="lin">species sheet · ratified Jul 1</td>
+            <td><span class="fst rat">ratified</span></td>
+          </tr>
+          <tr>
+            <td class="st">Reads spin-gravity as normal; free-fall costs him a beat</td>
+            <td>physiology</td>
+            <td class="lin">species sheet · ratified Jul 1</td>
+            <td><span class="fst rat">ratified</span></td>
+          </tr>
+          <tr>
+            <td class="st">Lifespan and aging as baseline human</td>
+            <td>physiology</td>
+            <td class="lin">species sheet · ratified Jul 1</td>
+            <td><span class="fst rat">ratified</span></td>
+          </tr>
+        </table>
+        <div style="font-size:12.5px;color:var(--muted);margin-top:10px">
+          Editing these edits the species, not Ferro — every Hab-born human inherits the change.
+          An individual exception is a fact on <b style="color:var(--ink-2)">him</b> that names what it overrides.
+        </div>
+      </div>
+    </div>
+
+    <!-- ── RIGHT: references, relations, appearances, arcs ── -->
+    <div>
+      <div class="panel">
+        <div class="panel-h">References</div>
+        <div class="refrow">
+          <svg class="refthumb" viewBox="0 0 120 120" role="img" aria-label="Ferro reference sheet thumbnail">
+            <rect width="120" height="120" fill="#141210"/>
+            <circle cx="60" cy="38" r="20" fill="#191512"/>
+            <path d="M28 62 q32 -20 64 0 l8 58 h-80 z" fill="#7a4630"/>
+            <path d="M46 60 l14 12 14 -13" stroke="#241d18" stroke-width="4" fill="none"/>
+          </svg>
+          <div class="refinfo"><b>Reference sheet</b><span class="lock">locked · Jun 30</span><br>
+          conditions every character shot of him (D20)</div>
+        </div>
+        <div class="refrow">
+          <button class="playv">▶</button>
+          <div class="refinfo"><b>Voice</b><span class="lock">locked · Jul 5</span><br>
+          cast at the review desk · every TTS take uses it</div>
+        </div>
+        <div class="refrow">
+          <svg class="refthumb" viewBox="0 0 120 120" role="img" aria-label="Style board thumbnail">
+            <rect width="120" height="120" fill="#10141b"/>
+            <rect x="12" y="12" width="44" height="44" fill="#1c2733"/>
+            <rect x="64" y="12" width="44" height="44" fill="#232013"/>
+            <rect x="12" y="64" width="44" height="44" fill="#241412"/>
+            <rect x="64" y="64" width="44" height="44" fill="#141a22"/>
+          </svg>
+          <div class="refinfo"><b>Style board</b><span class="asp">aspirational</span><br>
+          gathered from the pile · not yet binding</div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-h">Relations <span class="sub">typed — blast radius is computable</span></div>
+        <div class="rel"><span class="kind">species</span><a href="#">Hab-born human</a>
+          <span class="rnote">required on every character · 3 facts inherited</span></div>
+        <div class="rel"><span class="kind">crewmate-of</span><a href="#">Vessa</a></div>
+        <div class="rel"><span class="kind">employed-at</span><a href="#">Meridian Spur</a> <span style="color:var(--muted);font-size:12px">· docks</span></div>
+        <div class="rel"><span class="kind">keeps</span><a href="#">the Kestrel</a> <span style="color:var(--muted);font-size:12px">· in dock, unpaid</span></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-h">Appearances <span class="sub">computed from provenance</span></div>
+        <div class="apps">
+          <span class="app">ep01</span><span class="app">ep02</span><span class="app">ep03</span>
+          <span class="app">ep04</span><span class="app">ep05</span><span class="app inflight">ep06 · in flight</span>
+        </div>
+        <div class="apps-note">standing says recurring; the record agrees — 6 of 6 episodes touch him</div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-h">Arcs</div>
+        <div class="way">
+          <span class="wp done">distrusts</span><span class="sep">→</span>
+          <span class="wp here">listens, double-checks</span><span class="sep">→</span>
+          <span class="wp">trusts</span>
+        </div>
+        <div class="arc-note">Vessa ↔ Ferro · trust (character · show) · at waypoint 2 as of ep05 · ep06 declares waypoint 2 again</div>
+      </div>
+    </div>
+  </div>
+
+  <footer>Mockup · the canon library (screen 5.4) · not wired</footer>
+</div>
+</body>
+</html>
