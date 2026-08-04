@@ -12,7 +12,7 @@ afterEach(() => {
   store.close()
 })
 
-/** The tables E1-2 owns. E2 adds to this list; it never alters what is here. */
+/** The tables E1-2 owns. A later epic adds to this list; it never alters what is here. */
 const SPINE_TABLE = [
   'arc',
   'arc_edit',
@@ -25,10 +25,14 @@ const SPINE_TABLE = [
   'episode',
   'episode_arc_position',
   'scene',
-  'schema_migration',
   'season',
   'show',
 ]
+
+/** The tables E1-3 owns: the run ledger and the named locks. No pipeline lives here. */
+const RUNNER_TABLE = ['resource_lock', 'run', 'step', 'step_attempt']
+
+const EVERY_TABLE = [...SPINE_TABLE, ...RUNNER_TABLE, 'schema_migration'].sort()
 
 function tableNames(s: Store): string[] {
   return s
@@ -58,10 +62,10 @@ describe('the migrations runner', () => {
     expect(migrate(store)).toEqual([])
   })
 
-  it('creates exactly the spine tables E1-2 owns', () => {
+  it('creates exactly the spine tables and the run ledger, and nothing else', () => {
     migrate(store)
 
-    expect(tableNames(store)).toEqual(SPINE_TABLE)
+    expect(tableNames(store)).toEqual(EVERY_TABLE)
   })
 
   it('leaves E2’s reserved names unclaimed', () => {
