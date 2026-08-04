@@ -10,7 +10,7 @@ was ruled and why.
 | `concept-and-architecture.md` | The ruled design: domain, orchestration, canon, checks, screens, build plan. Decisions **D1–D19** in-section, **D20–D24** in the addendum at the end. | **The source of truth.** Nothing overrides it except a later ruling from Ryan. |
 | `D20-image-backends.md` | The image-generation carry-forward from the Dead Light console, in detail — backends, routing, lock semantics, and the operational rules that made it work. | Expands D20. Read before writing E6. |
 | `E1-spine-issues.md` | The E1 issue file, as originally drafted. | **Superseded** — the GitHub issues are authoritative (see below). |
-| `../CLAUDE.md` | The distilled standing brief, pre-dating E1-0. | Draft. E1-0 (issue #1) writes the real one at repo root. |
+| `../../CLAUDE.md` | The standing brief — invariants, domain nouns, Archon rule, conventions, commands. Written by E1-0 (issue #1). | **Binding on every session.** The `handoff/CLAUDE.md` draft is retired and now just points here. |
 | `../../mockups/` | Eight approved screen mockups + their README. | Approved. E5 builds to them. |
 
 **Rulings after the export live in the addendum**, not in the sections they amend.
