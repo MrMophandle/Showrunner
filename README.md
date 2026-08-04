@@ -4,8 +4,32 @@ A containerized web app for multi-show episodic video production — writing, ca
 keeping, image and audio generation, assembly, and publishing, with the showrunner
 ruling at every gate.
 
-**Status: design complete, implementation not started.** The ruled design and eight
-approved screen mockups are in the repo; E1 (the spine) is filed and ready to build.
+**Status: E1 in progress.** The scaffold stands — one container serving a hello page
+on :4400, with the library volume mounted. The domain schema, runner, gates, and
+event log are the rest of E1.
+
+## Running it
+
+```
+docker compose up          # the app on http://localhost:4400
+```
+
+Everything durable lands in `./library` on the host — `showrunner.db` plus artifacts
+as plain files (D2). The directory is gitignored; compose creates it on first run.
+
+Working on it without the container:
+
+```
+npm install
+npm run build              # the SPA
+npm start                  # the app process on :4400
+npm run dev:web            # the SPA with HMR on :4401, API proxied to :4400
+npm test && npm run typecheck   # CI — run both before claiming done
+```
+
+Node 24+ is required: the server runs its TypeScript directly, and SQLite comes from
+`node:sqlite` rather than a native module. GPU steps will run on a native Mac worker
+outside the container (D5) — nothing GPU-related belongs in compose.
 
 ## Where things are
 

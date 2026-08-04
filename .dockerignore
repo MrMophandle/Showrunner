@@ -1,0 +1,14 @@
+# The library volume is mounted at runtime — it must never be baked into the image (D2).
+library/
+
+.git/
+.agent-logs/
+.claude/
+node_modules/
+dist/
+handoff/
+mockups/
+*.md
+**/*.test.ts
+**/*.test.tsx
+.DS_Store

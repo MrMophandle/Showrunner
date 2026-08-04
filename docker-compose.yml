@@ -1,0 +1,26 @@
+# One `docker compose up` (2.5): the app container plus the mounted library volume.
+services:
+  app:
+    build: .
+    image: showrunner
+    container_name: showrunner
+    ports:
+      - '4400:4400'
+    volumes:
+      # D2 — the SQLite file and every artifact live on the host, human-readable
+      # and git-versionable. Compose creates ./library if it isn't there.
+      - ./library:/app/library
+    environment:
+      PORT: '4400'
+      LIBRARY_DIR: /app/library
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:4400/api/health').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))"
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
