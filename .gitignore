@@ -1,5 +1,6 @@
-# Local agent session telemetry — not project content
+# Local agent session telemetry and machine-local settings — not project content
 .agent-logs/
+.claude/settings.local.json
 
 # Runtime library volume (SQLite + heavy artifacts live here, per D2)
 /library/

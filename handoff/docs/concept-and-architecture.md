@@ -94,6 +94,8 @@ functions; changing one is a code change with a test.
 - **No "Launch"** — verb + object + scope + cost on every button, always.
 - **Per-episode serialization, cross-episode parallelism** — named locks for scarce
   resources (GPU, image API); contention shows as "waiting on GPU (held by ep05)".
+  → **Amended by D20:** `gpu` covers local image generation *and* TTS (they must never
+  run concurrently); `image-api` covers cloud image steps, which parallelize with audio.
 - **Bounded self-correction** — failed check re-runs the step with findings as notes,
   max twice, then reaches Ryan with the loop history.
 - **Crash-proof** — step state persists before/after; killed process resumes; open
@@ -126,10 +128,14 @@ native worker (Macs can't pass the GPU into containers).
 - **References** — locked reference images, voice clips, style boards; each marked
   locked or aspirational.
 - **Relations** — typed edges (member-of, located-in…). Makes blast radius computable.
+  → **Amended by D23:** relation types are *declared per category* (name, target category,
+  cardinality, inverse name); an undeclared type is invalid.
+  → **Amended by D22:** every character declares a `species` relation — required, exactly
+  one; the species' facts load into check scope with the character.
 
 ### 3.2 Categories as data
 A category declares: name, structured fields (which are checkable), applicable
-artifact kinds, and check instructions. Ships with: characters, locations, factions,
+artifact kinds, and check instructions — **and, per D23, its allowed relation types.** Ships with: characters, locations, factions,
 species, technology, **timeline** (ordered events), **house style** (narrator voice,
 pacing, content constraints), **world rules** (physics/environment invariants —
 space-not-sea, vacuum requires suit or containment field, sound doesn't carry
@@ -244,6 +250,8 @@ Seven screens; the organizing principle: the app always knows what needs Ryan.
   recreate / reject) — never batch. Promote-to-pile is a tag during review (exclude
   by default); tagged images become candidate canon references via proposals.
   Voice casting queue: listen before locking; locked voice becomes a canon reference.
+  → **Amended by D21:** *reject* is routed, not rewound — the note picks its depth
+  (the shot's prompt / the scene / hold the slot for a hand-made still).
 - **5.6 The screening room** — the final gate as a place: assembled episode + synced
   script; drop notes at timestamps; each note binds to the scene/shot/take under the
   playhead and carries routing depth. One ruling at the end.
@@ -251,6 +259,11 @@ Seven screens; the organizing principle: the app always knows what needs Ryan.
   vanilla episodes visibly vanilla; hanging-thread detection (time since arc last
   touched vs. next waypoint, long gaps loud); the idea pool; "pitch a premise against
   canon" runs checks against an idea pre-episode.
+- **5.8 The arc page** (added by D24) — an arc's own screen, reached from the season
+  map's arc names and the canon library: prose statement (what the arc is, the question
+  it asks), ordered waypoints each with meaning + what landing looks like, entities and
+  episodes involved, how the arc is checked (D8 with a worked example), edit history.
+  **The screen set is eight, not seven.**
 
 Killed: the old Discussion feature (no run-state visibility) — its job is covered by
 rejection notes with visible loop state and direct scene edits. Publish destination
@@ -277,17 +290,28 @@ done-condition. Repo CLAUDE.md carries the invariants. Fixtures before features
   operated end-to-end incl. kill-and-resume.
 - **E2 · Canon** — entities, categories, proposals, ratification, point-in-time,
   arcs/waypoints, schema doc. Ends: create entity, rule a proposal, query "canon as of."
+  → **Scope grew (D22, D23):** per-category relation-type declarations with inverses;
+  required `species` on characters; species facts loading into check scope with their
+  members; inherited facts edited at the species, individual exceptions naming what they
+  override. Arc statements + per-waypoint landing criteria (D24) are E2's to author-edit,
+  though the tables are E1-2's.
 - **E3 · Checks** — generic checker, findings, continuity board + deterministic
   checks, correction loop, panels + story-craft, cried-wolf tracking. Ends: planted
   contradiction produces an anchored finding whose rewrite remediation fixes it.
 - **E4 · The writing line** — premise → outline → script with scene delineation,
   writer context assembly, outline/script gates, direct editing + staleness. Ends:
   full fixture episode written incl. a rejection round-trip.
-- **E5 · The cockpit** — the seven screens to the approved mockups. Ends: E4 run
-  entirely from the cockpit, from the couch.
+- **E5 · The cockpit** — the screens, built to the approved mockups in `mockups/`.
+  Ends: E4 run entirely from the cockpit, from the couch.
+  → **Scope grew (D24): eight screens, not seven** — the arc page is the eighth.
+  All eight mockups are approved and in the repo; see `mockups/README.md` for the
+  screen→epic map and for design intent ruled but not rendered.
 - **E6 · The media line** — shot manifests, GPU worker, image gen, TTS + mix, review
   desk, image checks, timeline + render, screening room, publish kit + configurable
   destination. Ends: fixture episode premise → watchable file.
+  → **Scope grew (D20, D21):** one `ImageAdapter` with three backends routed per shot
+  (see `D20-image-backends.md` for the full carry-forward from the Dead Light console,
+  including the operational rules that made it work); routed reject at the review desk.
 - **E7 · Dead Light moves in** — canon import (facts extracted, reviewed), eps 1–4 as
   published history, in-flight episode at its true position, arcs reconstructed.
   Old repo read-only forever. Ends: a real S1 episode finished on the new platform.

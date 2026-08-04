@@ -1,5 +1,19 @@
 # Epic 1 — The Spine
 
+> ## ⚠️ SUPERSEDED — read the GitHub issues instead
+>
+> This file is the original draft. It was used to file **issues #1–#9** under the
+> `E1 · The spine` milestone, and **six of those issues were amended on Aug 4 2026**
+> to absorb rulings D20–D24 (arc statement + waypoint landing criteria in the schema;
+> `gpu` covering TTS as well as local image gen; routed reject notes; token-less cost
+> rows; species and declared relation types in the fixture; the addendum added to
+> E1-0's context).
+>
+> **The GitHub issues are authoritative.** This file is kept for provenance only —
+> do not build from it, and don't bother syncing it.
+>
+> `gh issue list -R MrMophandle/Showrunner --milestone "E1 · The spine"`
+
 > Milestone `E1 · The spine` on `MrMophandle/Showrunner`. One issue = one Opus session.
 > Every issue below ends with a machine-checkable done-condition. If a session can't
 > finish its issue, it leaves the repo green (tests pass) and a `HANDOFF.md` note —
