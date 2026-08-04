@@ -44,8 +44,25 @@ not all up front. When it's E2's turn:
 2. **Check §6.2 for that epic's `→ Scope grew` note.** E2, E5, and E6 all gained
    scope after the original export.
 3. **Check what E1 reserved but didn't build.** E1-2 (issue #3) reserves table names
-   for facts, proposals, relations, and relation-type declarations — E2 fills them,
-   and should not need to alter E1's tables.
+   for facts, proposals, relations, relation-type declarations, and canon categories —
+   E2 fills them, and should not need to alter E1's tables.
+
+   **`canon_entity` already exists, and `registerEntity` is not ratification.** E1-2
+   built a deliberately thin entity table so `artifact_provenance` could carry a real
+   foreign key from day one — an unenforced provenance reference loads *nothing* into
+   check scope, and E3 would then report a clean check on an artifact it never checked.
+   E2 grows that table additively (`ADD COLUMN` for standing, status, prose body,
+   `category_id`) rather than rebuilding it; SQLite has no `ADD CONSTRAINT`, which is
+   why the key had to exist up front.
+
+   The trap this leaves: **`registerEntity` inserts an identity row without going
+   through a proposal.** That is correct for fixtures and tests, and wrong for
+   everything else. Invariant 1 names imports and migrations among the things that must
+   never write canon, and `registerEntity` is exactly the convenient function an E7
+   Dead Light import would reach for. E2 owns the rule and must state it: an entity
+   becomes canon only by ratified proposal; `registerEntity` stays the low-level insert
+   beneath that flow, never a way around it. E7's import raises proposals — it does not
+   bulk-register.
 4. **Write one issue per Opus session** (6.1). Every issue carries three parts:
    - **Context to load** — the exact sections and prior artifacts, so the session
      doesn't have to hunt.
