@@ -334,3 +334,15 @@ just before each epic starts.
   candidate like the Passenger), never left blank. Non-character categories are
   unaffected. Gap found while reviewing the canon-library mockup: 3.2 shipped
   Species as a category but nothing linked a character to one.
+- **D23 · Relation types are declared per category** (ruled Aug 4, 2026): a
+  category declares its allowed relation types the same way it declares fields —
+  data, not code. Each declaration carries: the type name, the target category,
+  cardinality (and whether required), and its **inverse name**, so an edge is
+  navigable and blast radius computable from both ends. The app ships a sensible
+  default set per category; adding one is an edit, not engineering (consistent
+  with 3.5). A relation whose type isn't declared by the category is invalid —
+  free verbs are rejected, because a checker can't traverse what it can't
+  interpret. D22's `species` is the first such declaration: target Species,
+  required, exactly one. Gap found when Ryan asked what the mockup's invented
+  `keeps` relation meant — 3.1 listed "member-of, located-in…" and never said
+  who owns that list.

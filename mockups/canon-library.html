@@ -309,12 +309,19 @@
       </div>
 
       <div class="panel">
-        <div class="panel-h">Relations <span class="sub">typed — blast radius is computable</span></div>
+        <div class="panel-h">Relations <span class="sub">types declared by the character category · every edge names its inverse</span></div>
         <div class="rel"><span class="kind">species</span><a href="#">Hab-born human</a>
-          <span class="rnote">required on every character · 3 facts inherited</span></div>
-        <div class="rel"><span class="kind">crewmate-of</span><a href="#">Vessa</a></div>
-        <div class="rel"><span class="kind">employed-at</span><a href="#">Meridian Spur</a> <span style="color:var(--muted);font-size:12px">· docks</span></div>
-        <div class="rel"><span class="kind">keeps</span><a href="#">the Kestrel</a> <span style="color:var(--muted);font-size:12px">· in dock, unpaid</span></div>
+          <span class="rnote">→ species · required, exactly one · 3 facts inherited</span></div>
+        <div class="rel"><span class="kind">crewmate-of</span><a href="#">Vessa</a>
+          <span class="rnote">→ character · inverse: crewmate-of</span></div>
+        <div class="rel"><span class="kind">employed-at</span><a href="#">Meridian Spur</a>
+          <span class="rnote">→ location · inverse: employs</span></div>
+        <div class="rel"><span class="kind">crews</span><a href="#">the Kestrel</a>
+          <span class="rnote">→ technology · inverse: crewed-by</span></div>
+        <div style="font-size:12px;color:var(--muted);margin-top:10px;padding-top:10px;border-top:1px solid #232321">
+          An undeclared type can’t be used — a checker can’t traverse what it can’t interpret.
+          <a href="#" style="color:var(--ink-2);text-decoration:none;border-bottom:1px dashed var(--line)">Edit the character category’s relation types</a>
+        </div>
       </div>
 
       <div class="panel">
