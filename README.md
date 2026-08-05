@@ -13,7 +13,7 @@ ends E1 is below** — it is Ryan's to perform, not a test's to simulate.
 ## Running it
 
 ```
-cp .env.example .env                  # once — put your ANTHROPIC_API_KEY in it
+cp -n .env.example .env               # once; -n so it never overwrites an existing one
 docker compose up                     # the app on http://localhost:4455
 ```
 
@@ -57,11 +57,12 @@ of real money. Nothing below needs the code read.
 npm install
 npm run build
 npm run fixture:load
-cp .env.example .env                   # once — put your key in it, or leave it empty
-docker compose up                      # to use the claude CLI instead
+cp -n .env.example .env                # -n: never overwrites a .env you already have
+docker compose up
 ```
 
-If you already have a `.env`, skip that line — there is nothing to export.
+Put your `ANTHROPIC_API_KEY` in `.env`, or leave it empty to use the `claude` CLI instead.
+Nothing to export, in this shell or any other.
 
 Open <http://localhost:4455>.
 
