@@ -36,6 +36,25 @@ export interface StepContext {
   readonly attempt: number
   /** The output of an earlier step in this run. Must be named in this step's `inputs`. */
   input<T>(stepName: string): T
+  /**
+   * What this step is doing right now, in Ryan's words — "Shot 8 of 14 — scene 2, the
+   * corridor". Appends a `step-progress` event.
+   *
+   * **Latest-wins.** The floor and the episode room render the most recent one and
+   * discard what came before; every one is kept in the log, but only the last is on
+   * screen. A step name alone cannot say this, which is why the method exists.
+   */
+  progress(text: string): void
+  /**
+   * A piece of live model output, for the italic line under the progress line — "streams,
+   * not spinners" (2.3). Appends a `step-chunk` event.
+   *
+   * **Accumulating.** Chunks concatenate in order into one growing line, unlike
+   * `progress`. Coalesce at the producer: E1-6's `LLMAdapter` calls this once per
+   * sentence-ish piece, not once per token, because a sentence is what the line wants and
+   * because the event log stores what it is handed rather than second-guessing it.
+   */
+  chunk(text: string): void
 }
 
 export interface Step<Out = unknown> {

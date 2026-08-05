@@ -61,7 +61,13 @@ doc except a later ruling from Ryan.
   at artifact boundaries. A finding has an anchor, concern, severity, confidence,
   and remediation actions.
 - **Event** — append-only log of every transition. Drives the live UI over SSE
-  and is the audit trail.
+  and is the audit trail. **The record, never the state:** `run`, `step`, and
+  `resource_lock` are the source of truth; nothing rebuilds state by replaying
+  events, and the runner never reads its own log back. Order by the monotonic
+  `seq`, never by the timestamp — `at` is for humans. A step narrates itself
+  with `progress()` (the "what" line, latest-wins) and `chunk()` (streamed
+  output, accumulating). Append-only is enforced by SQLite triggers, so there is
+  no update path and no delete path to find.
 
 ## The five invariants — never violate
 

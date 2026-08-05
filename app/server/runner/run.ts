@@ -410,6 +410,17 @@ export function releaseLocksHeldBy(store: Store, runId: string): LockName[] {
 
 // ── Crash recovery ──────────────────────────────────────────────────────────────
 
+/** What a boot found in flight and put right — one of these per run it reclaimed. */
+export interface Reclamation {
+  runId: string
+  episodeId: string
+  stage: string
+  /** Locks the dead process was holding for this run. */
+  locks: LockName[]
+  /** Names of the steps whose attempt died mid-flight. */
+  abandonedSteps: string[]
+}
+
 /**
  * Everything a fresh process must fix before it can be trusted, done from the database
  * alone: no process holds a lock at boot, an attempt whose process died gets an honest
@@ -418,14 +429,32 @@ export function releaseLocksHeldBy(store: Store, runId: string): LockName[] {
  *
  * Paused runs are left exactly where they are — an open gate survives a reboot, and it is
  * still Ryan's, not the runner's (invariant 5).
+ *
+ * It returns what it changed so the runner can record it in the event log. It does not
+ * write those events itself: this module is the ledger, it decides nothing and publishes
+ * nothing, and a boot that silently rewrote rows would leave the audit trail with a gap
+ * exactly where the crash was.
  */
-export function reclaimAfterCrash(store: Store): void {
-  store.transaction(() => {
+export function reclaimAfterCrash(store: Store): Reclamation[] {
+  return store.transaction(() => {
+    const interrupted = store.all<{ id: string; episode_id: string; stage: string }>(
+      "SELECT id, episode_id, stage FROM run WHERE status = 'running'",
+    )
+    const locksOf = new Map<string, LockName[]>()
+    for (const held of store.all<{ name: LockName; held_by_run_id: string }>(
+      'SELECT name, held_by_run_id FROM resource_lock',
+    )) {
+      locksOf.set(held.held_by_run_id, [...(locksOf.get(held.held_by_run_id) ?? []), held.name])
+    }
     store.run('DELETE FROM resource_lock')
 
-    for (const step of store.all<{ id: string; started_at: string | null }>(
-      "SELECT id, started_at FROM step WHERE status = 'running'",
-    )) {
+    const abandonedOf = new Map<string, string[]>()
+    for (const step of store.all<{
+      id: string
+      run_id: string
+      name: string
+      started_at: string | null
+    }>("SELECT id, run_id, name, started_at FROM step WHERE status = 'running'")) {
       recordAttempt(store, {
         stepId: step.id,
         attempt: nextAttemptNumber(store, step.id),
@@ -433,6 +462,7 @@ export function reclaimAfterCrash(store: Store): void {
         failure: 'the process running this step died',
         startedAt: step.started_at ?? now(store),
       })
+      abandonedOf.set(step.run_id, [...(abandonedOf.get(step.run_id) ?? []), step.name])
     }
 
     store.run(
@@ -440,6 +470,14 @@ export function reclaimAfterCrash(store: Store): void {
         WHERE status IN ('running','waiting-on-lock')`,
     )
     store.run("UPDATE run SET status = 'queued' WHERE status = 'running'")
+
+    return interrupted.map((run) => ({
+      runId: run.id,
+      episodeId: run.episode_id,
+      stage: run.stage,
+      locks: locksOf.get(run.id) ?? [],
+      abandonedSteps: abandonedOf.get(run.id) ?? [],
+    }))
   })
 }
 
