@@ -111,6 +111,25 @@ character shot to a cloud image API, and those rate-limit routinely. When it bit
 fix is a bounded transport retry in the runner — honoring `retry-after`, counted
 separately from the correction budget — not raising the correction bound.
 
+### The fixture's planted defects are E3's test data (E1-7, issue #8)
+
+`fixtures/greyharbor/episode/01-the-long-pier/script.md` carries two defects planted on
+purpose — a world-rules violation in scene 4, dual presence across scenes 5 and 6 — and
+**says nothing about either inside itself**, because a script that announced its own bugs
+would test a checker's reading of a hint. The write-up lives beside it in `episode.md`:
+what is wrong, which entities have to be in scope for it to be a violation at all, and
+which check should fire. Treat those scenes as fixed points; a tidy-up to the prose is a
+silent break of tests that have not been written yet. Rules 2 and 3 of *The hull and the
+void* are obeyed everywhere in that script on purpose — they are the cried-wolf control,
+and a run reporting them is the measurement E3 wants.
+
+The other half: `app/server/fixture/read.ts` parses the facts, relations and standings off
+the sheets and validates them (a character with no species is refused, D22; an undeclared
+relation type is refused, D23), and then writes **none of it** — `load.ts` calls
+`registerEntity` and stops. E2 grows that into the proposal flow. Whatever E2 or E7 build
+on top, the sheets stay drafts until a gate rules on them, which is the same trap as
+`registerEntity` above, one level up.
+
 ## Working agreements that bind every session
 
 - One issue, one session. Leave the repo green; if unfinished, write `HANDOFF.md`.
