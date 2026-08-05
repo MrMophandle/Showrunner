@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { migrate } from '../db/migrate.ts'
+import { eventsOfRun } from '../events.ts'
 import { openStore, type Store } from '../db/store.ts'
 import { createEpisode, createSeason, createShow } from '../domain/spine.ts'
 import {
@@ -219,6 +220,18 @@ describe('the runner — bounded retry', () => {
       [1, 'failed', 'the GPU worker went away (attempt 1)'],
       [2, 'failed', 'the GPU worker went away (attempt 2)'],
       [3, 'failed', 'the GPU worker went away (attempt 3)'],
+    ])
+
+    // The floor counts the budget it is actually spending. A re-entry that spent none of
+    // it — a gate round — says the step's name and nothing more (gate.test.ts).
+    expect(
+      eventsOfRun(store, run.id)
+        .filter((event) => event.kind === 'step-started')
+        .map((event) => event.summary),
+    ).toEqual([
+      'generate-shot-08',
+      'generate-shot-08 — attempt 2 of 3',
+      'generate-shot-08 — attempt 3 of 3',
     ])
   })
 

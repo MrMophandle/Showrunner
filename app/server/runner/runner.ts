@@ -1,6 +1,15 @@
 import type { Store } from '../db/store.ts'
 import { createEventLog, type EventLog } from '../events.ts'
 import {
+  gateOfStep,
+  gateStanding,
+  openGateOfStep,
+  openedSentence,
+  presentForRuling,
+  type GateDraft,
+  type GateStanding,
+} from './gate.ts'
+import {
   beginStepAttempt,
   completeStep,
   failStep,
@@ -29,7 +38,15 @@ import {
   waitingOn,
   type Run,
 } from './run.ts'
-import { RunPaused, type LockName, type Stage, type StageCatalogue, type Step, type StepContext } from './step.ts'
+import {
+  pauseRun,
+  RunPaused,
+  type LockName,
+  type Stage,
+  type StageCatalogue,
+  type Step,
+  type StepContext,
+} from './step.ts'
 
 /**
  * The runner. It starts runs Ryan asked for, executes their steps in order, arbitrates the
@@ -57,6 +74,13 @@ import { RunPaused, type LockName, type Stage, type StageCatalogue, type Step, t
  * for Ryan's screen and the audit trail. A runner that consulted its own log would have
  * two answers to "what is the state of this run" and crash-resume would eventually pick
  * the wrong one.
+ *
+ * ── Gates are the pause, not a second mechanism ─────────────────────────────────
+ * `context.openGate` writes the gate and then throws `RunPaused` like anything else that
+ * parks a run — one pause protocol, caught in one place below. The runner knows nothing
+ * about rounds, verdicts, or notes; it knows that a step parked and that `resumeRun` sends
+ * it back into the same step. What it does police is the inverse: a step that opened a
+ * gate and returned anyway swallowed its own pause, and that fails the run loudly.
  *
  * ── Nothing runs without a click ────────────────────────────────────────────────
  * A run exists only because `enqueueRun` was called, which is only ever behind a button.
@@ -226,14 +250,54 @@ export function createRunner(
           runId: run.id,
           stepId,
           episodeId: run.episodeId,
+          // The sentence counts FAILURES, not entries. A step re-entered because Ryan
+          // ruled on its gate is on its second (or fifth) round, not its second of three
+          // tries — and rendering "attempt 3 of 3" over his third opinion would say the
+          // system is about to give up on him. Only a spent retry budget says so.
           summary:
-            attempt === 1
+            failures === 0
               ? definition.name
-              : `${definition.name} — attempt ${attempt} of ${MAX_ATTEMPTS_PER_STEP}`,
+              : `${definition.name} — attempt ${failures + 1} of ${MAX_ATTEMPTS_PER_STEP}`,
           detail: { step: definition.name, attempt, lock: definition.lock ?? null },
         })
         try {
           const output = await definition.execute(contextFor(run, definition, stepId, attempt))
+
+          // A step that opened a gate and still returned caught its own RunPaused — the
+          // most natural thing to write around an LLM call is a try/catch, and RunPaused
+          // is an Error. The gate row was written before the throw, which is how this is
+          // detectable at all. It fails the run instead of parking it, because the step
+          // did not finish and its output is garbage; and it fails WITHOUT spending the
+          // retry budget, because the bug is deterministic and the retry is another Opus
+          // call that will land in the same catch.
+          const swallowed = openGateOfStep(store, stepId)
+          if (swallowed) {
+            const failure =
+              `${definition.name} opened a gate and then returned — it caught the RunPaused ` +
+              'that parks the run. Never catch that: the gate is open, the step did not ' +
+              'finish, and what it returned cannot be trusted.'
+            recordAttempt(store, { stepId, attempt, outcome: 'failed', failure, startedAt })
+            failStep(store, stepId, failure)
+            markRunFailed(store, run.id, failure)
+            events.append({
+              kind: 'step-failed',
+              runId: run.id,
+              stepId,
+              episodeId: run.episodeId,
+              summary: failure,
+              detail: { step: definition.name, attempt, failure, gateId: swallowed.id },
+            })
+            events.append({
+              kind: 'run-failed',
+              runId: run.id,
+              stepId,
+              episodeId: run.episodeId,
+              summary: failure,
+              detail: { stage: run.stage, step: definition.name, failure },
+            })
+            return 'failed'
+          }
+
           completeStep(store, stepId, output)
           recordAttempt(store, { stepId, attempt, outcome: 'succeeded', startedAt })
           events.append({
@@ -361,6 +425,35 @@ export function createRunner(
           summary: text,
           detail: { step: definition.name, attempt },
         })
+      },
+      gate(): GateStanding | undefined {
+        const gate = gateOfStep(store, stepId)
+        return gate && gateStanding(store, gate.id)
+      },
+      openGate(draft: GateDraft): never {
+        const standing = presentForRuling(
+          store,
+          { runId: run.id, stepId, episodeId: run.episodeId },
+          draft,
+        )
+        events.append({
+          kind: 'gate-opened',
+          runId: run.id,
+          stepId,
+          episodeId: run.episodeId,
+          summary: openedSentence(standing),
+          detail: {
+            gateId: standing.gate.id,
+            round: standing.round,
+            step: definition.name,
+            artifactId: standing.gate.artifactId,
+            artifactVersion: standing.rounds.at(-1)!.artifactVersion,
+          },
+        })
+        // Through the one seam. `pauseRun` throws RunPaused, `executeStep` catches it and
+        // persists the step and the run as paused, and the ruling is what brings the run
+        // back into this same step (step.ts, on RunPaused).
+        pauseRun(draft.reason ?? openedSentence(standing))
       },
     }
   }

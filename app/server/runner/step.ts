@@ -1,4 +1,5 @@
 import type { Store } from '../db/store.ts'
+import type { GateDraft, GateStanding } from './gate.ts'
 
 /**
  * What a step IS (2.2): a TypeScript function that declares its inputs and outputs, is
@@ -55,6 +56,32 @@ export interface StepContext {
    * because the event log stores what it is handed rather than second-guessing it.
    */
   chunk(text: string): void
+  /**
+   * This step's gate as it stands, or undefined if it has never opened one — its rounds,
+   * their rulings, and the notes on them.
+   *
+   * A step reads this on the way back IN. It is how a step that was resumed tells why:
+   * `standing.ruling` is the latest round's verdict, so an approval (or an override) means
+   * carry on, and a rejection means do the work again with `standing.ruling.notes` as
+   * input and present the next round.
+   */
+  gate(): GateStanding | undefined
+  /**
+   * Present the artifact for Ryan's ruling and park the run. **Never returns.**
+   *
+   * It writes the gate (or re-presents into the round already open), appends `gate-opened`,
+   * and then throws `RunPaused` — the same seam, the same catch site in the runner, one
+   * pause protocol rather than two. A gate IS a run paused on a decision (2.2), so there is
+   * deliberately no way to open one and keep working.
+   *
+   * Do not wrap this in a `try/catch`. `RunPaused` is an Error, and a `catch` around a
+   * step's work — the most natural thing to write around an LLM call — will swallow the
+   * pause and leave a gate open on a run that carried on without it. The runner checks for
+   * exactly that after every step that returns normally, and fails the run loudly rather
+   * than parking it quietly: a step that caught its own pause did not finish, so whatever
+   * it returned is meaningless.
+   */
+  openGate(draft: GateDraft): never
 }
 
 export interface Step<Out = unknown> {

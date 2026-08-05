@@ -99,7 +99,19 @@ if (phase === 'start') {
   store.close()
 }
 
-/** Keeps the `start` process alive for the kill. */
+/**
+ * Keeps the `start` process alive for the kill.
+ *
+ * The timer is load-bearing. A never-resolving promise does not hold Node open on its own —
+ * neither this one nor the one the step above is parked on: the event loop empties, Node
+ * calls it an unsettled top-level await and exits 13. The parent normally wins that race
+ * by microseconds, and when it loses, the test kills a process that had already died of
+ * its own accord and proves nothing about surviving anything. A flaky durability test is
+ * the worst kind: it goes red, everyone assumes the test is wrong, and the suite starts
+ * being re-run until green. The handle makes the process wait to be killed.
+ */
 function hangForever(): Promise<never> {
-  return new Promise<never>(() => {})
+  return new Promise<never>(() => {
+    setInterval(() => {}, 1_000)
+  })
 }

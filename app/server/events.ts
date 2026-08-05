@@ -26,9 +26,16 @@ import type { Store } from './db/store.ts'
  */
 
 /**
- * Every kind of event, and the only ones the `kind` column will accept — 0003_event.sql
- * carries the same list as a CHECK constraint, and `events.test.ts` asserts the two lists
- * are identical, because two lists of seventeen strings in different files drift.
+ * Every kind of event, and the only ones the `kind` column will accept — the `event_kind`
+ * table carries the same list, `kind` is a foreign key into it, and `events.test.ts`
+ * asserts the two lists are identical, because two lists of twenty-one strings in
+ * different places drift.
+ *
+ * Adding a kind is a row in `event_kind` (a one-line migration) AND a member here AND a
+ * sentence something renders. It was a CHECK constraint until 0004: SQLite cannot ALTER
+ * one, and `event` is the fastest-growing table in the database because it persists every
+ * chunk, so widening it meant copying the whole log. The lookup table is not a seam for
+ * describing kinds in data (the Archon rule) — it is the database's half of a code change.
  *
  * A const array and a union type, never a TS `enum`: the server runs its TypeScript under
  * Node's type stripping, which only erases.
@@ -49,6 +56,14 @@ export const EVENT_KIND = [
   'lock-waiting',
   'lock-acquired',
   'lock-released',
+  // gate transitions (E1-4). 'gate-opened' is one round being presented — round 2 is the
+  // same kind, with the round in `detail`. The three verdicts are three kinds because an
+  // override is an approval OVER something (invariant 3) and a log that cannot tell it
+  // from a plain approval has lost the only record that Ryan overrode anything.
+  'gate-opened',
+  'gate-approved',
+  'gate-rejected',
+  'gate-overridden',
   'step-progress',
   'step-chunk',
 ] as const
