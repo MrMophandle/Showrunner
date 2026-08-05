@@ -42,6 +42,13 @@ import {
  *     is worse than one that admits a gap.
  */
 
+/**
+ * The executable this backend spawns. Exported so `choose.ts` probes for the same binary
+ * this file will actually run — a readiness check looking for a different name than the
+ * adapter spawns is a readiness check that lies.
+ */
+export const CLAUDE_CLI_COMMAND = 'claude'
+
 export interface ClaudeCliOptions {
   /** The executable. `claude` on PATH by default. */
   command?: string
@@ -60,7 +67,7 @@ export interface ClaudeCliOptions {
 }
 
 export function createClaudeCliAdapter(options: ClaudeCliOptions = {}): LLMAdapter {
-  const command = options.command ?? 'claude'
+  const command = options.command ?? CLAUDE_CLI_COMMAND
   const cwd = options.cwd ?? tmpdir()
 
   return {

@@ -6,6 +6,8 @@ import { openStore, type Store } from './db/store.ts'
 import { createEpisode, createSeason, createShow } from './domain/spine.ts'
 import { createEventLog, eventsOfRun, transitionsOfRun, type EventLog } from './events.ts'
 import { libraryPaths } from './library.ts'
+import { describeLLMBackend } from './llm/choose.ts'
+import { createRulings } from './runner/gate.ts'
 import { createRunner, type Runner } from './runner/runner.ts'
 import { pauseRun, type StageCatalogue, type Step } from './runner/step.ts'
 
@@ -47,7 +49,18 @@ beforeEach(() => {
   store = openStore(':memory:')
   migrate(store)
   events = createEventLog(store)
-  app = createApp(PATHS, store, events)
+  // The subject here is the stream, and each test builds the stage it wants — so the
+  // runner is read through a getter rather than handed over before it exists. Nothing
+  // below calls a run or a gate endpoint.
+  app = createApp(PATHS, store, events, {
+    get runner() {
+      return runner
+    },
+    get rulings() {
+      return createRulings(store, events, runner)
+    },
+    readiness: () => describeLLMBackend({ PATH: '' }),
+  })
   const show = createShow(store, { key: 'greyharbor', title: 'Grey Harbor' })
   const season = createSeason(store, { showId: show.id, number: 1 })
   ep05 = createEpisode(store, { seasonId: season.id, number: 5, title: 'The Quiet Deck' }).id

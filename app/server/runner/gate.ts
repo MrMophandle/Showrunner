@@ -352,6 +352,19 @@ export function gateOfStep(store: Store, stepId: string): Gate | undefined {
 }
 
 /**
+ * The newest gate this run opened, ruled or not — what a screen showing one run renders
+ * under it. Newest rather than only-open, because a run that has been ruled on and
+ * finished still has a decision worth reading back.
+ */
+export function gateOfRun(store: Store, runId: string): Gate | undefined {
+  const row = store.get<GateRow>(
+    'SELECT * FROM gate WHERE run_id = ? ORDER BY seq DESC LIMIT 1',
+    runId,
+  )
+  return row && hydrateGate(row)
+}
+
+/**
  * This step's gate if it is waiting on a ruling right now. The runner asks after every
  * step that returns normally, because a step that swallowed its own pause leaves exactly
  * this behind — an open decision on a run that sailed past it.

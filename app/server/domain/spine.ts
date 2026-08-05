@@ -79,6 +79,14 @@ export function findShowByKey(store: Store, key: string): Show | undefined {
   return row && hydrateShow(row)
 }
 
+/**
+ * Every show in this library, oldest first. Multi-show is the point (1.1) — a screen that
+ * asked for "the show" would be the first hardcoded one, and there is none anywhere.
+ */
+export function shows(store: Store): Show[] {
+  return store.all<ShowRow>('SELECT * FROM show ORDER BY created_at, key').map(hydrateShow)
+}
+
 // ── Season ──────────────────────────────────────────────────────────────────────
 
 export function createSeason(
@@ -129,6 +137,29 @@ export function episodesOf(store: Store, seasonId: string): Episode[] {
     .all<EpisodeRow>('SELECT * FROM episode WHERE season_id = ? ORDER BY number', seasonId)
     .map(hydrateEpisode)
 }
+
+/**
+ * An episode with the season and show it belongs to. Every sentence about an episode
+ * needs all three — "the Grey Harbor ep01 premise-brief" names a show, a number, and a
+ * thing — and a step composing a file path needs the show key and both numbers.
+ */
+export interface EpisodeInShow {
+  show: Show
+  season: Season
+  episode: Episode
+}
+
+export function episodeInShow(store: Store, episodeId: string): EpisodeInShow | undefined {
+  const episode = findEpisode(store, episodeId)
+  if (!episode) return undefined
+  const season = hydrateSeason(
+    store.get<SeasonRow>('SELECT * FROM season WHERE id = ?', episode.seasonId)!,
+  )
+  return { show: findShow(store, season.showId)!, season, episode }
+}
+
+/** "ep01" — the episode as every screen, every path, and every log line names it. */
+export const episodeLabel = (number: number): string => `ep${String(number).padStart(2, '0')}`
 
 export function moveLifecycleTo(
   store: Store,

@@ -79,6 +79,14 @@ export const TRANSITION_KIND: readonly EventKind[] = EVENT_KIND.filter(
   (kind) => kind !== 'step-progress' && kind !== 'step-chunk',
 )
 
+/**
+ * The complement: the two kinds a step emits from inside itself. Derived rather than
+ * listed, because a third list of these strings would be a third thing to keep in step.
+ */
+export const PROSE_KIND: readonly EventKind[] = EVENT_KIND.filter(
+  (kind) => !TRANSITION_KIND.includes(kind),
+)
+
 export interface EventRecord {
   /** Monotonic. The order of the log, and the SSE `id:` a reconnecting browser resumes from. */
   seq: number

@@ -130,6 +130,37 @@ relation type is refused, D23), and then writes **none of it** — `load.ts` cal
 on top, the sheets stay drafts until a gate rules on them, which is the same trap as
 `registerEntity` above, one level up.
 
+### The adapter tile cannot say "connected" (E1-8, issue #9)
+
+`mockups/floor.html`'s first tile reads **"Claude adapter — Anthropic API · connected"**,
+with a green dot. E1-8 built what feeds it — `describeLLMBackend` in `llm/choose.ts`,
+served on `/api/health` and `/api/operating` — and it deliberately cannot answer that
+question, because nothing can answer it for free.
+
+What it knows is **presence**: an `ANTHROPIC_API_KEY` is set, or a `claude` binary is on
+PATH. A key can be revoked and a CLI can be logged out, and the only way to find out is to
+spend money. So `ready` means "there is something here to call with", every sentence it
+composes says so in those words, and **invariant 4 forbids rendering that as a green
+checkmark**. E5 gets to choose the phrasing; it does not get to promise reach it has not
+verified. If a live "connected" is genuinely wanted, that is a deliberate cheap call on a
+schedule, with a cost row like everything else — a decision for Ryan, not a tile that
+quietly implies it.
+
+The same shape holds for the launch button E5 replaces: the sentence and the reason a
+button is blocked are composed in `app/server/operating.ts`, where they have tests, and
+the API refuses a launch with the *same string* the disabled button was showing. Keep
+those two coming out of one composer. The moment they are written twice, a precondition
+becomes a failure after the click, which is exactly what D15 forbids.
+
+### The `demo` stage is a drill, and it spends real money (E1-8, issue #9)
+
+`runner/stages.ts` holds one stage, `demo`, which E1 needs so Ryan has something to
+operate: one small Opus call, one artifact on the volume, one gate, one ledger row. It is
+not a mock and not a test — `npm test` drives it through the fake backend, and the button
+on the page drives it through the real one. It stays until E3's real stages give the drill
+something better to run on, and whoever removes it should move the kill-and-resume drill in
+`README.md` onto whatever replaces it rather than deleting both.
+
 ## Working agreements that bind every session
 
 - One issue, one session. Leave the repo green; if unfinished, write `HANDOFF.md`.
