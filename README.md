@@ -13,9 +13,14 @@ ends E1 is below** — it is Ryan's to perform, not a test's to simulate.
 ## Running it
 
 ```
-export ANTHROPIC_API_KEY=sk-ant-...   # optional; compose passes it through
+cp .env.example .env                  # once — put your ANTHROPIC_API_KEY in it
 docker compose up                     # the app on http://localhost:4400
 ```
+
+`.env` is gitignored and read automatically by `docker compose up`, `npm start`, and
+`npm run dev` — there is nothing to export, in this shell or any other. Leave
+`ANTHROPIC_API_KEY` empty in it to use D6's other backend, the `claude` CLI, which works
+outside the container where you are signed in.
 
 Everything durable lands in `./library` on the host — `showrunner.db` plus artifacts
 as plain files (D2). The directory is gitignored; compose creates it on first run.
@@ -36,8 +41,8 @@ Node 24+ is required: the server runs its TypeScript directly, and SQLite comes 
 outside the container (D5) — nothing GPU-related belongs in compose.
 
 **Which backend it will use** (D6): `SHOWRUNNER_LLM_BACKEND` decides when it is set;
-unset, an `ANTHROPIC_API_KEY` in the environment means the API and no key means the
-`claude` CLI. Whichever it picks, it checks that the thing is actually there and says so
+unset, an `ANTHROPIC_API_KEY` means the API and no key means the `claude` CLI. Both are
+read from `.env` (or the environment, which wins). Whichever it picks, it checks that the thing is actually there and says so
 at boot and on `/api/health` — a container with neither is a legitimate state that
 reports itself, not a crash and not a surprise on the first model call.
 
@@ -52,9 +57,11 @@ of real money. Nothing below needs the code read.
 npm install
 npm run build
 npm run fixture:load
-export ANTHROPIC_API_KEY=sk-ant-...    # or leave it unset to use the claude CLI
-docker compose up
+cp .env.example .env                   # once — put your key in it, or leave it empty
+docker compose up                      # to use the claude CLI instead
 ```
+
+If you already have a `.env`, skip that line — there is nothing to export.
 
 Open <http://localhost:4400>.
 
@@ -160,8 +167,7 @@ case it keeps that file and does not pay twice.
 
 ```
 docker compose down
-unset ANTHROPIC_API_KEY
-docker compose up
+ANTHROPIC_API_KEY= docker compose up   # empties it for this run only; .env is untouched
 ```
 
 The boot log prints `!! LLM backend: claude-cli — NOT READY`, `/api/health` returns

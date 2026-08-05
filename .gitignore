@@ -10,3 +10,7 @@ node_modules/
 dist/
 *.log
 .DS_Store
+
+# Local credentials — never committed. Copy .env.example to .env and fill it in.
+.env
+.env.local
