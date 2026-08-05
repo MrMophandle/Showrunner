@@ -12,12 +12,12 @@ RUN npm run build
 FROM node:24-alpine
 WORKDIR /app
 ENV NODE_ENV=production \
-    PORT=4400 \
+    PORT=4455 \
     LIBRARY_DIR=/app/library
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 # Node strips the server's types itself; only the SPA needs a build.
 COPY app/server ./app/server
 COPY --from=build /app/dist/web ./dist/web
-EXPOSE 4400
+EXPOSE 4455
 CMD ["node", "--disable-warning=ExperimentalWarning", "app/server/index.ts"]

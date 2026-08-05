@@ -5,13 +5,13 @@ services:
     image: showrunner
     container_name: showrunner
     ports:
-      - '4400:4400'
+      - '4455:4455'
     volumes:
       # D2 — the SQLite file and every artifact live on the host, human-readable
       # and git-versionable. Compose creates ./library if it isn't there.
       - ./library:/app/library
     environment:
-      PORT: '4400'
+      PORT: '4455'
       LIBRARY_DIR: /app/library
       # D6's two backends, from your shell. Without these lines the container could not
       # reach a model at all and did not say so: `choose.ts` picks the `claude` CLI
@@ -29,7 +29,7 @@ services:
         - CMD
         - node
         - -e
-        - "fetch('http://127.0.0.1:4400/api/health').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))"
+        - "fetch('http://127.0.0.1:4455/api/health').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))"
       interval: 10s
       timeout: 3s
       retries: 3

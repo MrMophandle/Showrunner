@@ -14,7 +14,7 @@ ends E1 is below** — it is Ryan's to perform, not a test's to simulate.
 
 ```
 cp .env.example .env                  # once — put your ANTHROPIC_API_KEY in it
-docker compose up                     # the app on http://localhost:4400
+docker compose up                     # the app on http://localhost:4455
 ```
 
 `.env` is gitignored and read automatically by `docker compose up`, `npm start`, and
@@ -31,8 +31,8 @@ Working on it without the container:
 npm install
 npm run build              # the SPA
 npm run fixture:load       # seed Grey Harbor; spends nothing, safe to run twice
-npm start                  # the app process on :4400
-npm run dev:web            # the SPA with HMR on :4401, API proxied to :4400
+npm start                  # the app process on :4455
+npm run dev:web            # the SPA with HMR on :4456, API proxied to :4455
 npm test && npm run typecheck   # CI — run both before claiming done
 ```
 
@@ -63,13 +63,13 @@ docker compose up                      # to use the claude CLI instead
 
 If you already have a `.env`, skip that line — there is nothing to export.
 
-Open <http://localhost:4400>.
+Open <http://localhost:4455>.
 
-> **If the Dead Light console is running, stop it first.** It is also on 4400, and the two
-> do not collide the way you would want: the console takes IPv4 and the container takes
-> IPv6, both come up healthy, and `localhost:4400` then serves whichever one your browser
-> resolves to. If you would rather leave it running, skip compose and use
-> `PORT=4455 npm start`, then read <http://localhost:4455> everywhere below.
+> **Leave the Dead Light console running if you like.** Showrunner is on 4455 precisely so
+> it doesn't fight the console on 4400. They used to collide in a way that was worse than
+> a clean failure — the console took IPv4, the container took IPv6, both reported healthy,
+> and `localhost:4400` served whichever one your browser resolved to. Nothing to stop, and
+> nothing to work around.
 
 ### 1 · Check the adapter before you spend anything
 
@@ -115,7 +115,7 @@ In another terminal:
 
 ```
 docker compose kill -s SIGKILL app      # or, without compose:  pkill -f 'app/server/index.ts'
-curl -s http://localhost:4400/api/health    # should refuse the connection
+curl -s http://localhost:4455/api/health    # should refuse the connection
 ```
 
 ### 5 · Restart, and check it resumed rather than started over

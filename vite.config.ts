@@ -12,10 +12,10 @@ export default defineConfig({
   },
   server: {
     // `npm run dev:web` serves the SPA with HMR and proxies the API to the app process.
-    port: 4401,
+    port: 4456,
     proxy: {
       '/api': {
-        target: 'http://localhost:4400',
+        target: 'http://localhost:4455',
         changeOrigin: true,
       },
     },
