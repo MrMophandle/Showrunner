@@ -169,7 +169,7 @@ npm test          # vitest
 npm run typecheck # tsc --noEmit
 npm test && npm run typecheck   # CI; run both before claiming done
 npm run fixture:load            # seed the Grey Harbor fixture (idempotent)
-docker compose up               # app on :4400
+docker compose up               # app on :4455
 
 npm run smoke:llm -- --backend claude-cli      # SPENDS REAL MONEY. One call, by hand.
 npm run smoke:llm -- --backend anthropic-api   # the other backend, same deal.

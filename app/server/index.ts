@@ -8,7 +8,7 @@ import { createRunner } from './runner/runner.ts'
 import { stageCatalogue } from './runner/stages.ts'
 
 const paths = initLibrary()
-const port = Number(process.env.PORT ?? 4400)
+const port = Number(process.env.PORT ?? 4455)
 
 // One process, one store, held open for its lifetime (2.1). The runner reclaims on
 // construction: a killed process leaves behind locks nothing holds and runs nothing is
