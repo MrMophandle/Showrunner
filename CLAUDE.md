@@ -136,7 +136,14 @@ this project exists to escape. Either party may say "Archon" and the other stops
 - Crash-proof: killed processes resume from the last completed step; open gates
   survive reboots. Long steps stream — streams, not spinners.
 - Cost ledger: every LLM call and generation records tokens/dollars against
-  step, run, episode, and show (2.4).
+  step, run, episode, and show (2.4). **One table (`cost_entry`), one write path
+  (`recordCost`), one dated price table (`MODEL_PRICE`)** — E6's image and audio
+  calls are rows in it, not a second ledger, and its `kind` already accepts them.
+  A row records **dollars always, tokens optionally**, and says how it was priced
+  (`rate-card` / `reported` / `unpriced`) so a gap never renders as a zero. It is
+  append-only in SQLite; a correction is another row. `usage.input_tokens` is the
+  **uncached remainder** of the prompt, not its size — read `app/server/cost.ts`
+  before touching the arithmetic.
 
 ## Naming conventions
 
@@ -150,7 +157,8 @@ this project exists to escape. Either party may say "Archon" and the other stops
 - Migrations are plain numbered SQL files, applied in order.
 - Paths: `app/` for the application, `library/` for the mounted volume (SQLite
   file + artifacts), `fixtures/greyharbor/` for the fixture show,
-  `handoff/docs/` for the design docs, `mockups/` for the approved screens.
+  `handoff/docs/` for the design docs, `mockups/` for the approved screens,
+  `scripts/` for the manual scripts that must never run in CI.
 
 ## Commands
 
@@ -162,7 +170,16 @@ npm run typecheck # tsc --noEmit
 npm test && npm run typecheck   # CI; run both before claiming done
 npm run fixture:load            # seed the Grey Harbor fixture (idempotent)
 docker compose up               # app on :4400
+
+npm run smoke:llm -- --backend claude-cli      # SPENDS REAL MONEY. One call, by hand.
+npm run smoke:llm -- --backend anthropic-api   # the other backend, same deal.
 ```
+
+`smoke:llm` is the only thing in this repo that spends money, and it is never run by
+`npm test` or by CI. Run it after touching either backend: the fake adapter proves the
+wiring and the arithmetic, and only a real call proves the numbers that arithmetic is
+fed. `SHOWRUNNER_LLM_BACKEND` picks the backend everywhere else; unset, the app uses the
+API when `ANTHROPIC_API_KEY` is set and the `claude` CLI otherwise.
 
 ## Working agreements
 
