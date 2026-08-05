@@ -63,6 +63,16 @@ not all up front. When it's E2's turn:
    becomes canon only by ratified proposal; `registerEntity` stays the low-level insert
    beneath that flow, never a way around it. E7's import raises proposals — it does not
    bulk-register.
+
+   **Runs are episode-scoped, and the ruled design isn't.** E1-3 declared
+   `run.episode_id NOT NULL`, and E1-5's `event.episode_id` follows it. But 2.2 scopes a
+   run to "one episode **or season**", 2.1 lists **season review** among the stages, and
+   5.7's "pitch a premise against canon" runs checks *pre-episode* — against an idea that
+   has no episode yet. All three want a run with no episode, and today's schema refuses.
+   This was found during E1-5 and deliberately not churned: matching the existing table
+   was right for that issue. Whoever needs the first season-scoped or episode-less run
+   relaxes both columns in one migration, and should check that nothing has come to rely
+   on the column being non-null in the meantime.
 4. **Write one issue per Opus session** (6.1). Every issue carries three parts:
    - **Context to load** — the exact sections and prior artifacts, so the session
      doesn't have to hunt.
