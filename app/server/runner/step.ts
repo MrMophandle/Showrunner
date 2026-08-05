@@ -1,4 +1,5 @@
 import type { Store } from '../db/store.ts'
+import type { BoundLLM } from '../llm/adapter.ts'
 import type { GateDraft, GateStanding } from './gate.ts'
 
 /**
@@ -32,9 +33,21 @@ export type LockName = (typeof LOCK_NAME)[number]
 export interface StepContext {
   readonly runId: string
   readonly episodeId: string
+  /** This step's row. It is what a cost is charged to — the narrowest of 2.4's four levels. */
+  readonly stepId: string
   readonly store: Store
   /** Which try this is, 1-based. A step that streams can say "attempt 2 of 3". */
   readonly attempt: number
+  /**
+   * Claude, already tied to this step (D6). What it streams goes to `chunk`; what it
+   * costs lands on this step, this run, this episode, and this show before `complete`
+   * returns.
+   *
+   * Bound rather than imported so that a step cannot make a call that streams nowhere or
+   * bills nowhere — there is no unbound adapter in reach of a step, and the ledger is
+   * therefore complete by construction rather than by everyone remembering.
+   */
+  readonly llm: BoundLLM
   /** The output of an earlier step in this run. Must be named in this step's `inputs`. */
   input<T>(stepName: string): T
   /**

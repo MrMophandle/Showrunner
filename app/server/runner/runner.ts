@@ -1,5 +1,7 @@
 import type { Store } from '../db/store.ts'
 import { createEventLog, type EventLog } from '../events.ts'
+import { bindLLM, type LLMAdapter } from '../llm/adapter.ts'
+import { chooseLLMAdapter } from '../llm/choose.ts'
 import {
   gateOfStep,
   gateStanding,
@@ -111,11 +113,18 @@ export interface Runner {
  * `events` defaults to a log over the same store so a test whose subject is scheduling
  * does not have to build one. It is a default, not an off switch: every runner writes its
  * transitions, and the app process passes the same log it serves SSE from.
+ *
+ * `llm` is the same shape of default (D6): the backend named by the environment, built on
+ * first use rather than here — so a test that never calls a model never constructs a
+ * client, and a process with no credentials still boots and runs everything else. A test
+ * that DOES care passes `createFakeLLM(...)`, which is the only backend allowed to run in
+ * `npm test`.
  */
 export function createRunner(
   store: Store,
   stages: StageCatalogue,
   events: EventLog = createEventLog(store),
+  llm: LLMAdapter = chooseLLMAdapter(),
 ): Runner {
   // A fresh process holds no locks and owns no running step. Fix the database first, so
   // everything below reads a world that is true — then say so in the log, because a boot
@@ -388,11 +397,32 @@ export function createRunner(
 
   function contextFor(run: Run, definition: Step, stepId: string, attempt: number): StepContext {
     const declared = new Set(definition.inputs ?? [])
+    const chunk = (text: string): void => {
+      events.append({
+        kind: 'step-chunk',
+        runId: run.id,
+        stepId,
+        episodeId: run.episodeId,
+        summary: text,
+        detail: { step: definition.name, attempt },
+      })
+    }
     return {
       runId: run.id,
       episodeId: run.episodeId,
+      stepId,
       store,
       attempt,
+      // The adapter is handed where to stream and what to charge, once, here — which is
+      // why `context.llm` needs no arguments about either and a step cannot get them wrong.
+      llm: bindLLM(llm, {
+        store,
+        stepId,
+        runId: run.id,
+        episodeId: run.episodeId,
+        attempt,
+        chunk,
+      }),
       input<T>(stepName: string): T {
         if (!declared.has(stepName)) {
           throw new Error(
@@ -416,16 +446,7 @@ export function createRunner(
           detail: { step: definition.name, attempt },
         })
       },
-      chunk(text: string): void {
-        events.append({
-          kind: 'step-chunk',
-          runId: run.id,
-          stepId,
-          episodeId: run.episodeId,
-          summary: text,
-          detail: { step: definition.name, attempt },
-        })
-      },
+      chunk,
       gate(): GateStanding | undefined {
         const gate = gateOfStep(store, stepId)
         return gate && gateStanding(store, gate.id)

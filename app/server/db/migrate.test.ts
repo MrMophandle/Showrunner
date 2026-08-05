@@ -43,11 +43,19 @@ const EVENT_TABLE = ['event', 'event_kind']
 /** The tables E1-4 owns: the decision object, its rounds, their rulings, and the notes. */
 const GATE_TABLE = ['gate', 'gate_note', 'gate_round', 'gate_ruling']
 
+/**
+ * The tables E1-6 owns: what every call cost, and what a show may spend in a week. E6
+ * writes its image and audio rows into `cost_entry` too — that is why there is no second
+ * table waiting to be added for them.
+ */
+const COST_TABLE = ['cost_entry', 'show_budget']
+
 const EVERY_TABLE = [
   ...SPINE_TABLE,
   ...RUNNER_TABLE,
   ...EVENT_TABLE,
   ...GATE_TABLE,
+  ...COST_TABLE,
   'schema_migration',
 ].sort()
 
@@ -145,7 +153,13 @@ describe('0004 · rebuilding the event log', () => {
     writeThreeEvents()
     const before = store.all('SELECT * FROM event ORDER BY seq')
 
-    expect(migrate(store).map((m) => m.number)).toEqual([4])
+    // Everything from 0004 on, whatever has been added since — the subject here is that
+    // 0004 ran against a log with rows in it, not how many migrations exist today.
+    expect(migrate(store).map((m) => m.number)).toEqual(
+      migrationsOnDisk()
+        .map((m) => m.number)
+        .filter((number) => number > 3),
+    )
 
     expect(store.all('SELECT * FROM event ORDER BY seq')).toEqual(before)
     // AUTOINCREMENT reads sqlite_sequence, and the explicit-seq copy has to have moved it —

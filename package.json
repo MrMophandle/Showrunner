@@ -13,9 +13,11 @@
     "build": "vite build",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "ci": "npm test && npm run typecheck"
+    "ci": "npm test && npm run typecheck",
+    "smoke:llm": "node --disable-warning=ExperimentalWarning scripts/smoke-llm.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.115.0",
     "@hono/node-server": "^2.1.0",
     "hono": "^4.13.0"
   },
