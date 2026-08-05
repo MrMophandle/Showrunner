@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import type { Readable } from 'node:stream'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { openStore, type Store } from '../db/store.ts'
+import { eventsOfRun } from '../events.ts'
 import { attemptsOf, findRun, stepsOf } from './run.ts'
 
 /** A fixture process: no stdin, both output streams piped back here. */
@@ -104,6 +105,44 @@ describe('the runner — crash-resume', () => {
       ],
       // The lock the dead process held was reclaimed; a fresh boot holds nothing.
       locks: [],
+    })
+
+    // ── The audit trail spans the kill ──────────────────────────────────────────
+    // Two processes, one log. The first process's events are still there — nothing
+    // rewrote or tidied them — and the second process's boot is recorded rather than
+    // silently rewriting rows where the crash was.
+    const log = readLibrary(libraryDir, (store) =>
+      eventsOfRun(store, onlyRun(store).id).map((e) => [e.kind, e.summary, e.detail] as const),
+    )
+    expect(log.map(([kind]) => kind)).toEqual([
+      // The first process, up to the moment it died mid-step.
+      'run-queued',
+      'run-started',
+      'step-started', //   build-shot-manifest
+      'step-done',
+      'lock-acquired', //  image-api, for generate-shots
+      'step-started', //   generate-shots — and then SIGKILL. No release, no completion.
+      // The second process, which has only ever seen the database.
+      'run-reclaimed',
+      'run-started',
+      'lock-acquired',
+      'step-started', //   generate-shots again, attempt 2
+      'step-done',
+      'lock-released',
+      'step-started', //   assemble
+      'step-done',
+      'run-done',
+    ])
+
+    const reclaimed = log[6]!
+    expect(reclaimed[1]).toBe(
+      "produce-shot-images died inside generate-shots — back in its episode's queue",
+    )
+    // The lock the dead process was holding is named, not merely dropped.
+    expect(reclaimed[2]).toEqual({
+      stage: 'produce-shot-images',
+      locks: ['image-api'],
+      abandonedSteps: ['generate-shots'],
     })
   }, 60_000)
 })

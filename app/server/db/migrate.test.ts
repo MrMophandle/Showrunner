@@ -32,7 +32,10 @@ const SPINE_TABLE = [
 /** The tables E1-3 owns: the run ledger and the named locks. No pipeline lives here. */
 const RUNNER_TABLE = ['resource_lock', 'run', 'step', 'step_attempt']
 
-const EVERY_TABLE = [...SPINE_TABLE, ...RUNNER_TABLE, 'schema_migration'].sort()
+/** The table E1-5 owns: the append-only log. One table, no topic or subscription beside it. */
+const EVENT_TABLE = ['event']
+
+const EVERY_TABLE = [...SPINE_TABLE, ...RUNNER_TABLE, ...EVENT_TABLE, 'schema_migration'].sort()
 
 function tableNames(s: Store): string[] {
   return s

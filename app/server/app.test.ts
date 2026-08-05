@@ -1,10 +1,17 @@
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { createApp } from './app.ts'
+import { migrate } from './db/migrate.ts'
+import { openStore } from './db/store.ts'
+import { createEventLog } from './events.ts'
 import { libraryPaths } from './library.ts'
 
-// No library is touched here — the app only reports the paths it was handed.
-const app = createApp(libraryPaths(join('/tmp', 'showrunner-app-test')))
+// No library is touched here — the app only reports the paths it was handed. The store is
+// a throwaway in-memory one; what the stream actually carries is proven in
+// event-stream.test.ts, with a runner behind it.
+const store = openStore(':memory:')
+migrate(store)
+const app = createApp(libraryPaths(join('/tmp', 'showrunner-app-test')), store, createEventLog(store))
 
 describe('the app process', () => {
   it('reports health with the library paths it will use', async () => {
@@ -16,18 +23,18 @@ describe('the app process', () => {
     expect(body.library.databaseFile).toMatch(/showrunner\.db$/)
   })
 
-  it('streams a hello event down the SSE stub', async () => {
+  it('opens the event stream saying which sequence it resumed from', async () => {
     const controller = new AbortController()
-    const res = await app.request('/api/events', { signal: controller.signal })
+    const res = await app.request('/api/events?since=7', { signal: controller.signal })
 
     expect(res.headers.get('content-type')).toContain('text/event-stream')
 
     const reader = res.body!.getReader()
     try {
       const { value } = await reader.read()
-      const chunk = new TextDecoder().decode(value)
-      expect(chunk).toContain('event: hello')
-      expect(chunk).toContain('E1-5')
+      const frame = new TextDecoder().decode(value)
+      expect(frame).toContain('event: open')
+      expect(frame).toContain('"since":7')
     } finally {
       controller.abort()
       await reader.cancel()

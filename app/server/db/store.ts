@@ -23,6 +23,13 @@ export interface Store {
   exec(sql: string): void
   /** Runs `body` in a transaction; any throw rolls the whole thing back. */
   transaction<T>(body: () => T): T
+  /**
+   * Whether a transaction is open right now. Exists for one reason: the event log
+   * (E1-5) notifies its subscribers synchronously as it appends, and an append inside a
+   * transaction that later rolls back would have told a live browser about something the
+   * database no longer contains. `append` refuses rather than lie.
+   */
+  readonly inTransaction: boolean
   close(): void
 }
 
@@ -72,6 +79,9 @@ export function openStore(databaseFile: string): Store {
       } finally {
         depth -= 1
       }
+    },
+    get inTransaction() {
+      return depth > 0
     },
     close() {
       db.close()
