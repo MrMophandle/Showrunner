@@ -168,6 +168,10 @@ docker compose up               # app on :4400
 
 - **One issue, one session.** Leave the repo green; if unfinished, write
   `HANDOFF.md` — never a half-open migration or a red main.
+- **Design reasoning lives in the code it describes** — module headers, migration
+  comments, comments on the type. Not a separate spec file: this repo has no `docs/`
+  tree, and a spec drifts from the code the day after it's written. What binds OTHER
+  epics goes here in CLAUDE.md instead, where every session loads it.
 - Branch; don't commit to `main`. Don't push without asking Ryan.
 - Issues live in GitHub Issues on `MrMophandle/Showrunner`, one milestone per
   epic (E1–E8) (D18). Ryan gates epics, not issues.

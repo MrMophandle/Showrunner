@@ -1,7 +1,5 @@
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
 import { beforeEach, describe, expect, it } from 'vitest'
-import { MIGRATION_DIR, migrate } from './db/migrate.ts'
+import { migrate } from './db/migrate.ts'
 import { openStore, type Store } from './db/store.ts'
 import { createShow, createSeason, createEpisode } from './domain/spine.ts'
 import {
@@ -225,17 +223,28 @@ describe('the event log — replay', () => {
 })
 
 describe('the event log — the two kind lists', () => {
-  it('carries the same kinds in the SQL CHECK and the TypeScript union', () => {
-    // Two lists of seventeen strings in two files drift. This is the only thing stopping
+  it('carries the same kinds in the event_kind table and the TypeScript union', () => {
+    // Two lists of twenty-one strings in two places drift. This is the only thing stopping
     // them: a kind added to one and not the other fails here rather than at 2am when an
-    // append hits a CHECK constraint nobody was thinking about.
-    const sql = readFileSync(join(MIGRATION_DIR, '0003_event.sql'), 'utf8')
-    const clause = /CHECK \(kind IN \(([\s\S]*?)\)\)/.exec(sql)
-    expect(clause, 'the kind CHECK constraint moved — this test can no longer find it').not.toBeNull()
+    // append hits a foreign key nobody was thinking about.
+    //
+    // It asks the live schema rather than parsing a migration file, because the question
+    // is "what will this database accept", and the answer moves whenever a later migration
+    // adds a row — which is now the ONLY way a kind is added (0004).
+    const declared = store.all<{ kind: string }>('SELECT kind FROM event_kind ORDER BY kind')
+      .map((row) => row.kind)
 
-    const declared = [...clause![1]!.replace(/--[^\n]*/g, '').matchAll(/'([a-z-]+)'/g)].map((m) => m[1])
-
-    expect(declared.slice().sort()).toEqual([...EVENT_KIND].sort())
+    expect(declared).toEqual([...EVENT_KIND].sort())
     expect(declared).toHaveLength(EVENT_KIND.length)
+  })
+
+  it('refuses a kind that is not one of them', () => {
+    expect(() =>
+      store.run(
+        "INSERT INTO event (kind, run_id, episode_id) VALUES ('gate-ratified', ?, ?)",
+        runId,
+        episodeId,
+      ),
+    ).toThrow(/FOREIGN KEY/i)
   })
 })
