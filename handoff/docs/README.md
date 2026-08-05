@@ -43,36 +43,9 @@ not all up front. When it's E2's turn:
    mockups; E6 → Section 5.5/5.6 + `D20-image-backends.md`).
 2. **Check §6.2 for that epic's `→ Scope grew` note.** E2, E5, and E6 all gained
    scope after the original export.
-3. **Check what E1 reserved but didn't build.** E1-2 (issue #3) reserves table names
-   for facts, proposals, relations, relation-type declarations, and canon categories —
-   E2 fills them, and should not need to alter E1's tables.
-
-   **`canon_entity` already exists, and `registerEntity` is not ratification.** E1-2
-   built a deliberately thin entity table so `artifact_provenance` could carry a real
-   foreign key from day one — an unenforced provenance reference loads *nothing* into
-   check scope, and E3 would then report a clean check on an artifact it never checked.
-   E2 grows that table additively (`ADD COLUMN` for standing, status, prose body,
-   `category_id`) rather than rebuilding it; SQLite has no `ADD CONSTRAINT`, which is
-   why the key had to exist up front.
-
-   The trap this leaves: **`registerEntity` inserts an identity row without going
-   through a proposal.** That is correct for fixtures and tests, and wrong for
-   everything else. Invariant 1 names imports and migrations among the things that must
-   never write canon, and `registerEntity` is exactly the convenient function an E7
-   Dead Light import would reach for. E2 owns the rule and must state it: an entity
-   becomes canon only by ratified proposal; `registerEntity` stays the low-level insert
-   beneath that flow, never a way around it. E7's import raises proposals — it does not
-   bulk-register.
-
-   **Runs are episode-scoped, and the ruled design isn't.** E1-3 declared
-   `run.episode_id NOT NULL`, and E1-5's `event.episode_id` follows it. But 2.2 scopes a
-   run to "one episode **or season**", 2.1 lists **season review** among the stages, and
-   5.7's "pitch a premise against canon" runs checks *pre-episode* — against an idea that
-   has no episode yet. All three want a run with no episode, and today's schema refuses.
-   This was found during E1-5 and deliberately not churned: matching the existing table
-   was right for that issue. Whoever needs the first season-scoped or episode-less run
-   relaxes both columns in one migration, and should check that nothing has come to rely
-   on the column being non-null in the meantime.
+3. **Read "Constraints E1 leaves behind" below.** They are the things one epic decided
+   that bind a later one, and every session that skipped them lost time rediscovering
+   the reasoning.
 4. **Write one issue per Opus session** (6.1). Every issue carries three parts:
    - **Context to load** — the exact sections and prior artifacts, so the session
      doesn't have to hunt.
@@ -82,6 +55,61 @@ not all up front. When it's E2's turn:
 5. **Sequence the issues** and state the dependencies at the end of the file, as E1 does.
 6. **State the epic exit** at the top: the thing *Ryan operates*, not reads about.
    Ryan gates epics, not issues (6.1).
+
+## Constraints E1 leaves behind
+
+Decisions one epic made that bind a later one. Each was correct where it was made and
+is a trap somewhere else. They live here because each was first written down only after
+a session had already lost time rediscovering it.
+
+### Reserved table names (E1-2, issue #3)
+
+`facts`, `proposals`, `relations`, relation-type declarations, and canon categories are
+reserved but unbuilt. E2 fills them and should not need to alter E1's tables.
+
+### `canon_entity` exists, and `registerEntity` is not ratification
+
+E1-2 built a deliberately thin entity table so `artifact_provenance` could carry a real
+foreign key from day one — an unenforced provenance reference loads *nothing* into check
+scope, and E3 would then report a clean check on an artifact it never checked. E2 grows
+that table additively (`ADD COLUMN` for standing, status, prose body, `category_id`)
+rather than rebuilding it; SQLite has no `ADD CONSTRAINT`, which is why the key had to
+exist up front.
+
+The trap: **`registerEntity` inserts an identity row without going through a proposal.**
+Correct for fixtures and tests, wrong for everything else. Invariant 1 names imports and
+migrations among the things that must never write canon, and `registerEntity` is exactly
+the convenient function an E7 Dead Light import would reach for. E2 owns the rule and
+must state it: an entity becomes canon only by ratified proposal; `registerEntity` stays
+the low-level insert beneath that flow, never a way around it. **E7's import raises
+proposals — it does not bulk-register.**
+
+### Runs are episode-scoped; the ruled design isn't
+
+E1-3 declared `run.episode_id NOT NULL`, and E1-5's `event.episode_id` follows it. But
+2.2 scopes a run to "one episode **or season**", 2.1 lists **season review** among the
+stages, and 5.7's "pitch a premise against canon" runs checks *pre-episode* — against an
+idea with no episode yet. All three want a run with no episode, and today's schema
+refuses. Found during E1-5 and deliberately not churned. Whoever needs the first
+season-scoped or episode-less run relaxes both columns in one migration, and should check
+that nothing has come to rely on the column being non-null.
+
+### Transport retry is not correction retry (E1-6, issue #7)
+
+The Anthropic SDK ships with `maxRetries: 0` so the runner owns one visible retry policy
+rather than two nested invisible ones. That is right — but it means a rate limit now
+spends the **correction** budget.
+
+Invariant 5 and 4.4 bound the correction loop: re-running a step *because its output was
+wrong*, with findings as notes. A 429 is transport — nothing was produced, nothing was
+judged, and there is no ruling for Ryan to make. As built, three quick rate limits
+exhaust a step and surface in "needs you" as a decision he cannot make, which is noise in
+the one place the design insists stays meaningful.
+
+Harmless today, because nothing rate-limits. **Not harmless in E6:** D20 routes every
+character shot to a cloud image API, and those rate-limit routinely. When it bites, the
+fix is a bounded transport retry in the runner — honoring `retry-after`, counted
+separately from the correction budget — not raising the correction bound.
 
 ## Working agreements that bind every session
 
