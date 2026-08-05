@@ -472,6 +472,32 @@ export function money(microDollars: number): string {
   return `$${(microDollars / 1e6).toFixed(2)}`
 }
 
+/**
+ * What was actually spent, in one sentence — "2 Opus calls, $0.02" is the projection's
+ * job; this is the ledger's, after the fact.
+ *
+ * A gap and a zero must never read alike, so an unpriced call turns the total into a
+ * stated floor, and a call that burned tokens and returned nothing usable is named rather
+ * than folded into the count. Both caveats are the same rule as `remainingThisWeek`'s.
+ */
+export function spentSentence(totals: CostTotals): string {
+  if (totals.calls === 0) return 'nothing spent — no call was made'
+
+  const caveats: string[] = []
+  if (totals.unpricedCalls > 0) {
+    caveats.push(
+      `at least — ${totals.unpricedCalls} ${plural(totals.unpricedCalls, 'call')} nobody could price`,
+    )
+  }
+  if (totals.failedCalls > 0) {
+    caveats.push(
+      `${totals.failedCalls} of them failed and cost money anyway`,
+    )
+  }
+  const spend = `${totals.calls} ${plural(totals.calls, 'call')} · ${money(totals.microDollars)}`
+  return caveats.length === 0 ? spend : `${spend} (${caveats.join('; ')})`
+}
+
 const plural = (n: number, word: string): string => (n === 1 ? word : `${word}s`)
 
 // ── Derivation ──────────────────────────────────────────────────────────────────

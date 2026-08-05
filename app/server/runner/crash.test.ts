@@ -149,45 +149,76 @@ describe('the runner — crash-resume', () => {
 
 // ── Test kit ────────────────────────────────────────────────────────────────────
 
+/**
+ * Everything each fixture has said, kept from the moment it was spawned.
+ *
+ * Kept from the start, and never per-wait. The `restart` phase says two things and then
+ * exits, and this file waits for them one after another — so a buffer that began when the
+ * second `lineFrom` was called would miss a line that arrived in the same chunk as the
+ * first, and the process would then exit with the wait still outstanding. That is a test
+ * that fails perhaps one run in ten, on timing, saying nothing true about crash-resume.
+ */
+const heard = new WeakMap<Fixture, Transcript>()
+
+interface Transcript {
+  out: string
+  err: string
+  /** Re-checked on every chunk and once the streams close. */
+  waiters: Set<() => void>
+}
+
 function spawnFixture(phase: 'start' | 'restart'): Fixture {
   const child = spawn(
     process.execPath,
     ['--disable-warning=ExperimentalWarning', FIXTURE, libraryDir, phase],
     { stdio: ['ignore', 'pipe', 'pipe'] },
   )
+  const transcript: Transcript = { out: '', err: '', waiters: new Set() }
+  heard.set(child, transcript)
+
+  const wake = (): void => {
+    for (const waiter of [...transcript.waiters]) waiter()
+  }
   child.stdout.setEncoding('utf8')
   child.stderr.setEncoding('utf8')
+  child.stdout.on('data', (chunk: string) => {
+    transcript.out += chunk
+    wake()
+  })
+  child.stderr.on('data', (chunk: string) => {
+    transcript.err += chunk
+  })
+  // 'close' rather than 'exit': it fires once the streams are drained, so a line the
+  // process wrote on its way out is in hand before anything gives up on it.
+  child.once('close', wake)
+
   children.push(child)
   return child
 }
 
-/** Resolves with the first stdout line matching `want`; rejects if the child dies first. */
+/** The first stdout line matching `want` — including one the child has already said. */
 function lineFrom(child: Fixture, want: string | RegExp): Promise<string> {
   const matches = (line: string) => (typeof want === 'string' ? line === want : want.test(line))
+  const transcript = heard.get(child)!
   return new Promise((resolve, reject) => {
-    let buffer = ''
-    let stderr = ''
-    const onStderr = (chunk: string) => {
-      stderr += chunk
+    const look = (): void => {
+      const found = transcript.out.split('\n').find(matches)
+      if (found !== undefined) {
+        transcript.waiters.delete(look)
+        resolve(found)
+        return
+      }
+      if (child.exitCode !== null || child.signalCode !== null) {
+        transcript.waiters.delete(look)
+        reject(
+          new Error(
+            `the fixture exited before saying ${String(want)}\n${transcript.out}\n${transcript.err}`,
+          ),
+        )
+      }
     }
-    const onExit = () =>
-      finish(() => reject(new Error(`the fixture exited before saying ${String(want)}\n${stderr}`)))
-    const onData = (chunk: string) => {
-      buffer += chunk
-      const lines = buffer.split('\n')
-      buffer = lines.pop() ?? ''
-      for (const line of lines) if (matches(line)) return finish(() => resolve(line))
-    }
-    const finish = (settle: () => void) => {
-      child.stdout.off('data', onData)
-      child.stderr.off('data', onStderr)
-      child.off('exit', onExit)
-      settle()
-    }
-
-    child.stdout.on('data', onData)
-    child.stderr.on('data', onStderr)
-    child.on('exit', onExit)
+    transcript.waiters.add(look)
+    look()
   })
 }
 

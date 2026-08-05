@@ -13,6 +13,16 @@ services:
     environment:
       PORT: '4400'
       LIBRARY_DIR: /app/library
+      # D6's two backends, from your shell. Without these lines the container could not
+      # reach a model at all and did not say so: `choose.ts` picks the `claude` CLI
+      # whenever there is no key — right on Ryan's Mac, wrong in an image that has no
+      # `claude` binary in it — and the failure landed on the first LLM call, inside a
+      # step, mid-run. Now the key comes through, and when nothing can reach a model the
+      # process says so at boot and on /api/health rather than at the worst moment.
+      #
+      # `:-` means "empty when unset", which is what both readers already treat as unset.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      SHOWRUNNER_LLM_BACKEND: ${SHOWRUNNER_LLM_BACKEND:-}
     restart: unless-stopped
     healthcheck:
       test:

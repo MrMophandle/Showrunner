@@ -148,6 +148,21 @@ export function stepsOf(store: Store, runId: string): StepRecord[] {
     .map(hydrateStep)
 }
 
+/**
+ * This episode's runs, newest first — the episode room's run list, and what a launch
+ * button reads to find out whether it may offer itself at all. Ordered by `seq` rather
+ * than `requested_at`, for the same reason the event log is: the timestamp is for humans.
+ */
+export function runsOfEpisode(store: Store, episodeId: string, limit = 20): Run[] {
+  return store
+    .all<RunRow>(
+      'SELECT * FROM run WHERE episode_id = ? ORDER BY seq DESC LIMIT ?',
+      episodeId,
+      limit,
+    )
+    .map(hydrateRun)
+}
+
 export function findStepByName(store: Store, runId: string, name: string): StepRecord | undefined {
   const row = store.get<StepRow>('SELECT * FROM step WHERE run_id = ? AND name = ?', runId, name)
   return row && hydrateStep(row)
