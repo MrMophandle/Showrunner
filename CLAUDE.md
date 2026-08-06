@@ -31,16 +31,17 @@ doc except a later ruling from Ryan.
   technology, timeline, house style, world rules), defined as *data*: fields,
   applicable artifact kinds, check instructions, allowed relation types. Adding
   a category is an edit, not engineering.
-- **Entity** — one instance: identity + standing (core / recurring / one-shot /
-  retired), prose body, facts, references, relations.
+- **Entity** — one instance: identity + standing (core / recurring / one-shot / retired),
+  prose body, facts, references, relations. Registering one makes a **`candidate`**.
 - **Fact** — an atomic checkable statement with lineage (established-in, ratified-at)
   and status (ratified / provisional / reverted). Append-only with validity
   ranges, so "canon as of episode 4" is answerable (D9).
-- **Relation** — a *typed* edge. Relation types are **declared per category**
-  with a target category, cardinality, and an inverse name; an undeclared type
-  is invalid (D23). Every character declares exactly one `species` relation,
-  required, `unknown` if unknown — never blank (D22). A character's species
-  facts load into check scope with the character.
+- **Relation** — a *typed* edge. Relation types are **declared per category** with a
+  target category, cardinality, and an inverse name; an undeclared type is invalid (D23).
+  Every character declares exactly one `species` relation, required, `unknown` if unknown
+  — never blank (D22); **`unknown` is a relation row with a NULL target**, never a
+  sentinel entity. A species' facts load into check scope with its members. The write
+  enforces type, target and cardinality; **`required` is enforced at ratification**.
 - **Proposal** — the only way canon changes. Five parts: the change, usage
   context, implications (blast radius), alternatives, origin & disposition.
   Provisional proposals ride their episode and are visible to checks.
@@ -163,8 +164,6 @@ this project exists to escape. Either party may say "Archon" and the other stops
   `scripts/` for the manual scripts that must never run in CI.
 
 ## Commands
-
-Wired by E1-1 (issue #2) — until it lands, they don't exist yet.
 
 ```
 npm test          # vitest

@@ -74,12 +74,17 @@ describe('loading the Grey Harbor fixture', () => {
     // The sheets carry facts, relations, standings and prose bodies. None of that is in
     // the database, because writing it would be canon written by an import — which is
     // the one thing the first invariant names outright. E2's proposal flow puts it in.
+    //
+    // E2-0 built the tables it would go in, so the check is now that they are EMPTY rather
+    // than absent — and that every entity is still a bare `candidate` with no standing.
+    // E2-4 is what changes this test: the loader starts raising promotion proposals (D25).
     expect(report.entities.created).toBe(6)
-    expect(
-      store.all<{ name: string }>(
-        "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('fact','relation','relation_type','proposal','canon_category')",
-      ),
-    ).toEqual([])
+    for (const table of ['canon_category', 'relation_type', 'relation', 'entity_reference']) {
+      expect(store.get<{ n: number }>(`SELECT COUNT(*) AS n FROM ${table}`)).toEqual({ n: 0 })
+    }
+    for (const entity of entitiesOfShow(store, report.show.id)) {
+      expect(entity).toMatchObject({ standing: null, status: 'candidate', aliases: [], body: '' })
+    }
   })
 
   it('derives episode 1’s scenes from its script, in order, with their summaries', () => {

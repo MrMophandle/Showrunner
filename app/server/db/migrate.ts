@@ -13,16 +13,13 @@ import type { Store } from './store.ts'
 export const MIGRATION_DIR = join(import.meta.dirname, 'migrations')
 
 /**
- * Table names E2 owns. E1-2 must not create them — that is what keeps E2 from having to
- * ALTER (or in SQLite, rebuild) E1-2's tables to fit canon in. See 0001_spine.sql.
+ * Table names E2 owns and has not built yet. E1-2 must not create them — that is what keeps
+ * E2 from having to ALTER (or in SQLite, rebuild) E1-2's tables to fit canon in. See
+ * 0001_spine.sql, whose reserved block lists all five and is not edited: 0006 took
+ * `relation`, `relation_type` and `canon_category`, and says so in its own header. What is
+ * left is `fact` (E2-1) and `proposal` (E2-2).
  */
-export const RESERVED_TABLE_NAME: readonly string[] = [
-  'fact',
-  'proposal',
-  'relation',
-  'relation_type',
-  'canon_category',
-]
+export const RESERVED_TABLE_NAME: readonly string[] = ['fact', 'proposal']
 
 export interface Migration {
   number: number

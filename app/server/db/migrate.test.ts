@@ -50,12 +50,27 @@ const GATE_TABLE = ['gate', 'gate_note', 'gate_round', 'gate_ruling']
  */
 const COST_TABLE = ['cost_entry', 'show_budget']
 
+/**
+ * The tables E2-0 owns: the canon graph. `canon_entity` is NOT here — 0006 grows E1-2's
+ * table with ADD COLUMN and never rebuilds it, because `artifact_provenance` holds a
+ * foreign key into it and SQLite has no ADD CONSTRAINT.
+ */
+const CANON_TABLE = [
+  'canon_category',
+  'category_artifact_kind',
+  'category_field',
+  'entity_reference',
+  'relation',
+  'relation_type',
+]
+
 const EVERY_TABLE = [
   ...SPINE_TABLE,
   ...RUNNER_TABLE,
   ...EVENT_TABLE,
   ...GATE_TABLE,
   ...COST_TABLE,
+  ...CANON_TABLE,
   'schema_migration',
 ].sort()
 
@@ -93,15 +108,16 @@ describe('the migrations runner', () => {
     expect(tableNames(store)).toEqual(EVERY_TABLE)
   })
 
-  it('leaves E2’s reserved names unclaimed', () => {
+  it('leaves the names still reserved unclaimed, and claims the three 0006 took', () => {
     migrate(store)
 
+    // What is left: E2-1's facts and E2-2's proposals. 0006 took the other three.
     const claimed = tableNames(store).filter((name) => RESERVED_TABLE_NAME.includes(name))
     expect(claimed).toEqual([])
     expect(RESERVED_TABLE_NAME).toContain('fact')
     expect(RESERVED_TABLE_NAME).toContain('proposal')
-    expect(RESERVED_TABLE_NAME).toContain('relation')
-    expect(RESERVED_TABLE_NAME).toContain('relation_type')
+    expect(RESERVED_TABLE_NAME).not.toContain('relation')
+    expect(tableNames(store)).toEqual(expect.arrayContaining(['relation', 'relation_type', 'canon_category']))
   })
 })
 
@@ -111,22 +127,22 @@ describe('the migrations runner', () => {
  * history, so it is proved rather than trusted: a log written under 0003 has to come out
  * the other side byte for byte, still numbered the same, still un-editable.
  */
-describe('0004 · rebuilding the event log', () => {
-  /** Everything up to `upTo`, applied by hand, so 0004 can be applied to a log with rows in it. */
-  function applyThrough(upTo: number): void {
-    store.exec(`CREATE TABLE IF NOT EXISTS schema_migration (
-      number INTEGER PRIMARY KEY, name TEXT NOT NULL,
-      applied_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')))`)
-    for (const migration of migrationsOnDisk().filter((m) => m.number <= upTo)) {
-      store.exec(readFileSync(join(MIGRATION_DIR, migration.file), 'utf8'))
-      store.run(
-        'INSERT INTO schema_migration (number, name) VALUES (?, ?)',
-        migration.number,
-        migration.name,
-      )
-    }
+/** Everything up to `upTo`, applied by hand, so a later migration meets a library with rows in it. */
+function applyThrough(upTo: number): void {
+  store.exec(`CREATE TABLE IF NOT EXISTS schema_migration (
+    number INTEGER PRIMARY KEY, name TEXT NOT NULL,
+    applied_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')))`)
+  for (const migration of migrationsOnDisk().filter((m) => m.number <= upTo)) {
+    store.exec(readFileSync(join(MIGRATION_DIR, migration.file), 'utf8'))
+    store.run(
+      'INSERT INTO schema_migration (number, name) VALUES (?, ?)',
+      migration.number,
+      migration.name,
+    )
   }
+}
 
+describe('0004 · rebuilding the event log', () => {
   function writeThreeEvents(): void {
     store.run("INSERT INTO show (id, key, title) VALUES ('show1', 'greyharbor', 'Grey Harbor')")
     store.run("INSERT INTO season (id, show_id, number) VALUES ('season1', 'show1', 1)")
@@ -183,5 +199,60 @@ describe('0004 · rebuilding the event log', () => {
     )
     expect(() => store.run('DELETE FROM event WHERE seq = 1')).toThrow(/append-only/)
     expect(store.get<{ n: number }>('SELECT COUNT(*) AS n FROM event')).toEqual({ n: 3 })
+  })
+})
+
+/**
+ * 0006 grows `canon_entity` rather than rebuilding it. The reason is one table over:
+ * `artifact_provenance` carries a foreign key into it, put there in E1-2 precisely because
+ * SQLite has no ADD CONSTRAINT — rebuild the entity table and that edge is what breaks.
+ * Ryan's library already holds entities and provenance from the E1 drill, so this is proved
+ * against rows rather than against an empty file.
+ */
+describe('0006 · growing canon_entity, not rebuilding it', () => {
+  function writeAnEntityWithProvenance(): void {
+    store.run("INSERT INTO show (id, key, title) VALUES ('show1', 'greyharbor', 'Grey Harbor')")
+    store.run("INSERT INTO season (id, show_id, number) VALUES ('season1', 'show1', 1)")
+    store.run("INSERT INTO episode (id, season_id, number, title) VALUES ('ep1', 'season1', 1, 'The Long Pier')")
+    store.run(
+      "INSERT INTO canon_entity (id, show_id, category_key, name) VALUES ('ent1', 'show1', 'character', 'Tobin Wick')",
+    )
+    store.run("INSERT INTO artifact (id, episode_id, kind) VALUES ('art1', 'ep1', 'script')")
+    store.run("INSERT INTO artifact_provenance (artifact_id, entity_id) VALUES ('art1', 'ent1')")
+  }
+
+  it('keeps every entity row and the provenance edge pointing at it', () => {
+    applyThrough(5)
+    writeAnEntityWithProvenance()
+
+    expect(migrate(store).map((m) => m.number)).toEqual(
+      migrationsOnDisk().map((m) => m.number).filter((number) => number > 5),
+    )
+
+    expect(store.get('SELECT id, show_id, category_key, name FROM canon_entity')).toEqual({
+      id: 'ent1',
+      show_id: 'show1',
+      category_key: 'character',
+      name: 'Tobin Wick',
+    })
+    expect(store.get('SELECT * FROM artifact_provenance')).toEqual({
+      artifact_id: 'art1',
+      entity_id: 'ent1',
+    })
+    // The edge is still ENFORCED, not merely still present: RESTRICT is what makes an
+    // entity an episode was built on undeletable, and a rebuilt table loses it silently.
+    expect(() => store.run("DELETE FROM canon_entity WHERE id = 'ent1'")).toThrow(/FOREIGN KEY/i)
+  })
+
+  it('gives an entity registered before E2 the anatomy it never declared', () => {
+    applyThrough(5)
+    writeAnEntityWithProvenance()
+    migrate(store)
+
+    // `candidate` is the truthful default: nothing ratified this row (invariant 1). Standing
+    // is NULL because "not declared yet" and "declared one-shot" are different states.
+    expect(
+      store.get('SELECT category_id, standing, status, aliases, body FROM canon_entity'),
+    ).toEqual({ category_id: null, standing: null, status: 'candidate', aliases: '', body: '' })
   })
 })
