@@ -64,6 +64,14 @@ const CANON_TABLE = [
   'relation_type',
 ]
 
+/**
+ * The tables E2-1 owns: the facts, the closures that end their validity ranges, and the
+ * ruling anchor their lineage points at. `canon_ruling` is deliberately thin — E2-2 grows
+ * it into the full disposition ledger by ADD COLUMN rather than adding a sibling, which is
+ * why no `proposal_ruling` or `disposition` is waiting to be added to this list.
+ */
+const FACT_TABLE = ['canon_ruling', 'fact', 'fact_closure']
+
 const EVERY_TABLE = [
   ...SPINE_TABLE,
   ...RUNNER_TABLE,
@@ -71,6 +79,7 @@ const EVERY_TABLE = [
   ...GATE_TABLE,
   ...COST_TABLE,
   ...CANON_TABLE,
+  ...FACT_TABLE,
   'schema_migration',
 ].sort()
 
@@ -108,16 +117,16 @@ describe('the migrations runner', () => {
     expect(tableNames(store)).toEqual(EVERY_TABLE)
   })
 
-  it('leaves the names still reserved unclaimed, and claims the three 0006 took', () => {
+  it('leaves the names still reserved unclaimed, and claims the four 0006 and 0007 took', () => {
     migrate(store)
 
-    // What is left: E2-1's facts and E2-2's proposals. 0006 took the other three.
+    // What is left of 0001's block: E2-2's proposals. 0006 took three, 0007 took `fact`.
     const claimed = tableNames(store).filter((name) => RESERVED_TABLE_NAME.includes(name))
     expect(claimed).toEqual([])
-    expect(RESERVED_TABLE_NAME).toContain('fact')
-    expect(RESERVED_TABLE_NAME).toContain('proposal')
-    expect(RESERVED_TABLE_NAME).not.toContain('relation')
-    expect(tableNames(store)).toEqual(expect.arrayContaining(['relation', 'relation_type', 'canon_category']))
+    expect(RESERVED_TABLE_NAME).toEqual(['proposal'])
+    expect(tableNames(store)).toEqual(
+      expect.arrayContaining(['relation', 'relation_type', 'canon_category', 'fact']),
+    )
   })
 })
 
@@ -254,5 +263,74 @@ describe('0006 · growing canon_entity, not rebuilding it', () => {
     expect(
       store.get('SELECT category_id, standing, status, aliases, body FROM canon_entity'),
     ).toEqual({ category_id: null, standing: null, status: 'candidate', aliases: '', body: '' })
+  })
+})
+
+/**
+ * 0007 grows `relation_type` the same way, and for the same kind of reason one table over:
+ * `relation` holds a foreign key into it. 0006 shipped and applies on real volumes, so the
+ * added column is proved against a graph with edges in it rather than an empty file.
+ */
+describe('0007 · growing relation_type, not rebuilding it', () => {
+  function writeADeclaredEdge(): void {
+    store.run("INSERT INTO show (id, key, title) VALUES ('show1', 'greyharbor', 'Grey Harbor')")
+    store.run(
+      "INSERT INTO canon_category (id, show_id, key, name) VALUES ('cat1', 'show1', 'character', 'Character')",
+    )
+    store.run(
+      "INSERT INTO canon_category (id, show_id, key, name) VALUES ('cat2', 'show1', 'species', 'Species')",
+    )
+    store.run(
+      `INSERT INTO relation_type (id, category_id, name, target_category_id, cardinality, required, inverse_name)
+            VALUES ('rt1', 'cat1', 'species', 'cat2', 'exactly-one', 1, 'members')`,
+    )
+    store.run(
+      `INSERT INTO canon_entity (id, show_id, category_key, category_id, name)
+            VALUES ('ent1', 'show1', 'character', 'cat1', 'Tobin Wick')`,
+    )
+    store.run(
+      `INSERT INTO canon_entity (id, show_id, category_key, category_id, name)
+            VALUES ('ent2', 'show1', 'species', 'cat2', 'Halvani')`,
+    )
+    store.run(
+      "INSERT INTO relation (id, relation_type_id, from_entity_id, to_entity_id) VALUES ('rel1', 'rt1', 'ent1', 'ent2')",
+    )
+  }
+
+  it('keeps every declaration and the edges written under it', () => {
+    applyThrough(6)
+    writeADeclaredEdge()
+
+    expect(migrate(store).map((m) => m.number)).toEqual(
+      migrationsOnDisk().map((m) => m.number).filter((number) => number > 6),
+    )
+
+    expect(store.get('SELECT id, name, cardinality, required, inverse_name FROM relation_type')).toEqual({
+      id: 'rt1',
+      name: 'species',
+      cardinality: 'exactly-one',
+      required: 1,
+      inverse_name: 'members',
+    })
+    expect(store.get('SELECT id, from_entity_id, to_entity_id FROM relation')).toEqual({
+      id: 'rel1',
+      from_entity_id: 'ent1',
+      to_entity_id: 'ent2',
+    })
+    // Still ENFORCED, not merely still present — a rebuilt table loses the edge silently.
+    expect(() => store.run("DELETE FROM relation_type WHERE id = 'rt1'")).toThrow(/FOREIGN KEY/i)
+  })
+
+  it('leaves an edge declared before E2-1 carrying no facts, and refuses a third answer', () => {
+    applyThrough(6)
+    writeADeclaredEdge()
+    migrate(store)
+
+    // The honest default: nobody declared that facts travel this edge, so they do not. The
+    // fixture's character sheet is what turns it on for `species` (D22).
+    expect(store.get('SELECT inherits_facts FROM relation_type')).toEqual({ inherits_facts: 0 })
+    expect(() =>
+      store.run("UPDATE relation_type SET inherits_facts = 2 WHERE id = 'rt1'"),
+    ).toThrow(/inherits_facts is 0 or 1/)
   })
 })

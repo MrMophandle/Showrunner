@@ -16,10 +16,11 @@ export const MIGRATION_DIR = join(import.meta.dirname, 'migrations')
  * Table names E2 owns and has not built yet. E1-2 must not create them — that is what keeps
  * E2 from having to ALTER (or in SQLite, rebuild) E1-2's tables to fit canon in. See
  * 0001_spine.sql, whose reserved block lists all five and is not edited: 0006 took
- * `relation`, `relation_type` and `canon_category`, and says so in its own header. What is
- * left is `fact` (E2-1) and `proposal` (E2-2).
+ * `relation`, `relation_type` and `canon_category` and 0007 took `fact`, each saying so in
+ * its own header. What is left is `proposal` (E2-2) — and when it lands it grows 0007's
+ * `canon_ruling` rather than adding a second disposition table beside it.
  */
-export const RESERVED_TABLE_NAME: readonly string[] = ['fact', 'proposal']
+export const RESERVED_TABLE_NAME: readonly string[] = ['proposal']
 
 export interface Migration {
   number: number

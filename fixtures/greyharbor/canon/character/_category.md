@@ -18,11 +18,12 @@
 
 Declared here, per D23, because a checker cannot traverse an edge whose meaning
 nobody wrote down. Each declaration carries the type name, the category it points
-at, its cardinality, whether it is required, and its **inverse name** — so blast
-radius is computable from both ends. A relation whose type is not on this list is
-invalid; free verbs are rejected rather than guessed at.
+at, its cardinality, whether it is required, its **inverse name** — so blast
+radius is computable from both ends — and whether **facts travel it**. A relation
+whose type is not on this list is invalid; free verbs are rejected rather than
+guessed at.
 
-- species → species · cardinality: exactly-one · required: yes · inverse: members
+- species → species · cardinality: exactly-one · required: yes · inverse: members · inherits facts: yes
 - stationed-at → location · cardinality: at-most-one · required: no · inverse: crew
 - carries → technology · cardinality: any · required: no · inverse: carried-by
 
@@ -32,6 +33,16 @@ something in scope says what Tobin Wick is. When a character's species genuinely
 isn't decided yet, the sheet declares it as the literal word `unknown` — legal,
 tracked, and visible on the canon library's gaps list. It is never left blank,
 because a blank is indistinguishable from a sheet nobody finished.
+
+`inherits facts: yes` is the other half of D22, and it is on this line rather than
+in the code because a category is data (3.2): the Halvani sheet's physiology facts
+load into check scope with every character that declares Halvani. Facts travel the
+declared edge only, one way — a character inherits from its species, a species
+inherits nothing from its members, and two Halvani inherit nothing from each other.
+The two edges below carry no facts, which is the default and the reason it is not
+written on them: a dockworker does not inherit the harbour's facts by standing in
+it. When an inherited fact is wrong for one character, the fix is a fact on that
+character naming what it overrides — never a quiet edit to the species.
 
 An inverse is not a second declaration. `members` is navigable from the species
 side because this line names it; the species category does not declare `members`

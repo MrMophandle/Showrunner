@@ -33,15 +33,22 @@ doc except a later ruling from Ryan.
   a category is an edit, not engineering.
 - **Entity** — one instance: identity + standing (core / recurring / one-shot / retired),
   prose body, facts, references, relations. Registering one makes a **`candidate`**.
-- **Fact** — an atomic checkable statement with lineage (established-in, ratified-at)
-  and status (ratified / provisional / reverted). Append-only with validity
-  ranges, so "canon as of episode 4" is answerable (D9).
+- **Fact** — an atomic checkable statement with lineage (established-in episode,
+  ratified-at ruling) and a validity range, so "canon as of episode 4" is answerable (D9).
+  **Rows are immutable and status is derived**; the only state change is a closure row,
+  and a supersession closes the predecessor and opens the successor at one ruling — so
+  ratifying a provisional fact writes a new row. Ranges count in `canon_ruling.seq`, the
+  monotonic clock canon is read by; **a date maps onto a ruling, never the reverse**.
+  `canonAsOf` is ratified facts only; provisional facts ride their episode and reach
+  checks via the scope helper. **E2-2 grows `canon_ruling` by ADD COLUMN, never a sibling.**
 - **Relation** — a *typed* edge. Relation types are **declared per category** with a
   target category, cardinality, and an inverse name; an undeclared type is invalid (D23).
   Every character declares exactly one `species` relation, required, `unknown` if unknown
   — never blank (D22); **`unknown` is a relation row with a NULL target**, never a
-  sentinel entity. A species' facts load into check scope with its members. The write
-  enforces type, target and cardinality; **`required` is enforced at ratification**.
+  sentinel entity. A declaration also says whether **facts travel** it (`inherits facts`),
+  one way, declarer → target — so D22's inheritance is data, and an exception displaces
+  the *lineage*: a species edit carries the exception onto the successor, visibly stale.
+  The write enforces type, target and cardinality; **`required` is enforced at ratification**.
 - **Proposal** — the only way canon changes. Five parts: the change, usage
   context, implications (blast radius), alternatives, origin & disposition.
   Provisional proposals ride their episode and are visible to checks.
@@ -166,33 +173,26 @@ this project exists to escape. Either party may say "Archon" and the other stops
 ## Commands
 
 ```
-npm test          # vitest
-npm run typecheck # tsc --noEmit
-npm test && npm run typecheck   # CI; run both before claiming done
+npm test && npm run typecheck   # CI — run both before claiming done
 npm run fixture:load            # seed the Grey Harbor fixture (idempotent)
 docker compose up               # app on :4455
-
-npm run smoke:llm -- --backend claude-cli      # SPENDS REAL MONEY. One call, by hand.
-npm run smoke:llm -- --backend anthropic-api   # the other backend, same deal.
+npm run smoke:llm -- --backend claude-cli|anthropic-api   # SPENDS REAL MONEY, by hand
 ```
 
-`smoke:llm` is the only thing in this repo that spends money, and it is never run by
-`npm test` or by CI. Run it after touching either backend: the fake adapter proves the
-wiring and the arithmetic, and only a real call proves the numbers that arithmetic is
-fed. `SHOWRUNNER_LLM_BACKEND` picks the backend everywhere else; unset, the app uses the
-API when `ANTHROPIC_API_KEY` is set and the `claude` CLI otherwise.
+`smoke:llm` is the only thing that spends money and CI never runs it; use it after
+touching a backend — the fake adapter proves the wiring, a real call proves the numbers
+it is fed. `SHOWRUNNER_LLM_BACKEND` forces a backend; unset, a key means the API and no
+key means the `claude` CLI.
 
 ## Working agreements
 
-- **One issue, one session.** Leave the repo green; if unfinished, write
-  `HANDOFF.md` — never a half-open migration or a red main.
+- **One issue, one session.** Leave the repo green; if unfinished, write `HANDOFF.md`.
 - **Design reasoning lives in the code it describes** — module headers, migration
   comments, comments on the type. Not a separate spec file: this repo has no `docs/`
   tree, and a spec drifts from the code the day after it's written. What binds OTHER
   epics goes here in CLAUDE.md instead, where every session loads it.
 - Branch; don't commit to `main`. Don't push without asking Ryan.
-- Issues live in GitHub Issues on `MrMophandle/Showrunner`, one milestone per
-  epic (E1–E8) (D18). Ryan gates epics, not issues.
+- Issues live on GitHub, one milestone per epic (D18). Ryan gates epics, not issues.
 - **Fixtures before features.** The Grey Harbor fixture backs all tests. Never
   burn real generation money in a test.
 - Dead Light (Ryan's live show) ships on the old stack until E7; that repo is
