@@ -22,12 +22,13 @@ import { field, fields, parseSheet, section, type Section, type Sheet } from './
  * waypoint that says what it is called and not what landing it looks like (D24). Each
  * of those is a load-time error naming the file, not a silently thinner fixture.
  *
- * What this module does NOT do is write canon. It reads relations, facts, standings and
- * check instructions off disk, validates them, and hands them to `load.ts`, which
- * registers entity IDENTITIES and nothing else. Facts, relations and standing are E2's
- * tables and arrive only through ratified proposals (invariant 1); the sheets here are
- * the drafts that flow will carry to a gate. Nothing in this file may become an insert
- * into a canon table, however convenient that would be for E7's Dead Light import.
+ * What this module does NOT do is write anything. It reads relations, facts, standings and
+ * check instructions off disk, validates them, and hands them to `load.ts` — which declares
+ * the categories straight (schema is data, 3.2) and turns every entity sheet into a
+ * PROMOTION PROPOSAL (D25). Facts, relations and standing reach a table only when Ryan
+ * ratifies one; the sheets here are the drafts that flow carries to a gate. Nothing in this
+ * file may become an insert into a canon table, however convenient that would be for E7's
+ * Dead Light import.
  */
 
 export const FIXTURE_DIR = join(import.meta.dirname, '../../../fixtures/greyharbor')

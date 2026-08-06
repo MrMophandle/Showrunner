@@ -5,10 +5,13 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { Store } from '../db/store.ts'
 import { arcsOf, isVanilla, positionsOf, waypointsOf } from '../domain/arc.ts'
 import { artifactsOf, provenanceOf } from '../domain/artifact.ts'
-import { entitiesOfShow } from '../domain/canon.ts'
+import { entitiesOfShow, findEntity } from '../domain/canon.ts'
+import { categoriesOf, findCategory } from '../domain/category.ts'
+import { openProposals, proposalsOfEntity } from '../domain/proposal.ts'
 import { episodesOf, findShowByKey, scenesOf, seasonsOf } from '../domain/spine.ts'
 import { initLibrary, libraryPaths, openLibraryStore, type LibraryPaths } from '../library.ts'
 import { loadFixture } from './load.ts'
+import { readFixture } from './read.ts'
 
 /**
  * `npm run fixture:load`, against a real library volume in a temp directory.
@@ -59,32 +62,112 @@ describe('loading the Grey Harbor fixture', () => {
     ])
   })
 
-  it('registers six canon entity identities — and only identities (invariant 1)', () => {
+  /**
+   * The first of the two legalities (D25). A category is SCHEMA, declared as data (3.2),
+   * and the loader writes it straight — routing it through a proposal is not merely
+   * ceremony, it is impossible, because a proposal's subject is an entity and a category
+   * is not one. What a category may never carry across that line is an entity's sheet.
+   */
+  it('declares the show’s categories and their relation types directly (3.2, D23)', () => {
+    const report = loadFixture(store, paths)
+
+    expect(categoriesOf(store, report.show.id).map((c) => c.key)).toEqual([
+      'character',
+      'location',
+      'species',
+      'technology',
+      'world-rules',
+    ])
+    expect(report.categories).toEqual({ created: 5, found: 0 })
+    expect(report.relationTypes.created).toBe(7)
+
+    const character = findCategory(store, report.show.id, 'character')!
+    expect(character.fields.map((f) => f.name)).toEqual(['standing', 'status', 'aliases'])
+    expect(character.appliesTo).toContain('script')
+    expect(character.checkInstructions).toMatch(/a finding anchored at the\s+scene/)
+    // `inherits facts` is parsed off the sheet and has to reach the declaration, or Grey
+    // Harbor's characters silently stop inheriting Halvani physiology and the world-rules
+    // check reports clean on a scene it never really read (invariant 2).
+    expect(
+      character.relationTypes.map((t) => [t.name, t.required, t.inheritsFacts]),
+    ).toEqual([
+      ['species', true, true],
+      ['stationed-at', false, false],
+      ['carries', false, false],
+    ])
+  })
+
+  it('registers every sheet’s identity, and raises a promotion for each active one (D25)', () => {
     const report = loadFixture(store, paths)
 
     expect(entitiesOfShow(store, report.show.id).map((e) => [e.categoryKey, e.name])).toEqual([
       ['character', 'Ilse Renn'],
+      ['character', 'Sefa Doule'],
       ['character', 'Tobin Wick'],
       ['location', 'Grey Harbor Station'],
       ['species', 'Halvani'],
       ['technology', 'Kestrel-pattern containment collar'],
       ['world-rules', 'The hull and the void'],
     ])
+    expect(report.entities).toEqual({ created: 7, found: 0 })
+    expect(report.promotions).toEqual({ created: 6, found: 0 })
 
-    // The sheets carry facts, relations, standings and prose bodies. None of that is in
-    // the database, because writing it would be canon written by an import — which is
-    // the one thing the first invariant names outright. E2's proposal flow puts it in.
-    //
-    // E2-0 built the tables it would go in, so the check is now that they are EMPTY rather
-    // than absent — and that every entity is still a bare `candidate` with no standing.
-    // E2-4 is what changes this test: the loader starts raising promotion proposals (D25).
-    expect(report.entities.created).toBe(6)
-    for (const table of ['canon_category', 'relation_type', 'relation', 'entity_reference']) {
+    // LOADING RAISES; IT NEVER RULES (invariant 5, D25). Six proposals stand in the
+    // queue with nobody's ruling on them, and until Ryan rules one the database still
+    // says what it said before: bare candidates, no standing, no facts, no edges.
+    const raised = openProposals(store, report.show.id)
+    expect(raised.map((p) => [p.kind, p.raisedBy, p.status, p.episodeId])).toEqual(
+      Array.from({ length: 6 }, () => ['promotion', 'loader', 'raised', null]),
+    )
+    for (const table of ['relation', 'entity_reference', 'fact', 'canon_ruling']) {
       expect(store.get<{ n: number }>(`SELECT COUNT(*) AS n FROM ${table}`)).toEqual({ n: 0 })
     }
     for (const entity of entitiesOfShow(store, report.show.id)) {
       expect(entity).toMatchObject({ standing: null, status: 'candidate', aliases: [], body: '' })
     }
+  })
+
+  it('carries the whole sheet into the promotion — standing, prose, facts and edges', () => {
+    const report = loadFixture(store, paths)
+    const tobin = findEntity(store, {
+      showId: report.show.id,
+      categoryKey: 'character',
+      name: 'Tobin Wick',
+    })!
+    const promotion = proposalsOfEntity(store, tobin.id)[0]!
+
+    expect(promotion.change.standing).toBe('core')
+    expect(promotion.change.aliases).toEqual(['Wick'])
+    expect(promotion.change.body).toMatch(/He is careful in the way people who work in vacuum/)
+    expect(promotion.change.facts.map((f) => f.statement)).toEqual(
+      readFixture().entities.find((e) => e.name === 'Tobin Wick')!.facts,
+    )
+    expect(promotion.change.relations.map((r) => [r.op, r.typeName])).toEqual([
+      ['add', 'species'],
+      ['add', 'stationed-at'],
+      ['add', 'carries'],
+    ])
+    expect(promotion.usageContext).toMatch(/canon\/character\/tobin-wick\.md/)
+    expect(promotion.alternatives.length).toBeGreaterThan(0)
+  })
+
+  /**
+   * The other half of the candidate ruling (E2-4): a sheet that says `candidate` is a
+   * draft nobody has proposed, so the loader registers the identity and raises NOTHING.
+   * Raising its promotion would put it in the founding stack, founding would ratify it,
+   * and the sheet and the database would then disagree about the one line that differs.
+   */
+  it('raises nothing for the candidate sheet — its identity, and no proposal', () => {
+    const report = loadFixture(store, paths)
+    const sefa = findEntity(store, {
+      showId: report.show.id,
+      categoryKey: 'character',
+      name: 'Sefa Doule',
+    })!
+
+    expect(sefa.status).toBe('candidate')
+    expect(proposalsOfEntity(store, sefa.id)).toEqual([])
+    expect(report.candidates).toEqual(['Sefa Doule'])
   })
 
   it('derives episode 1’s scenes from its script, in order, with their summaries', () => {
@@ -168,12 +251,20 @@ describe('loading the Grey Harbor fixture twice', () => {
 
     // Not a guard: the second load walked the whole fixture and found what the first
     // one wrote. An `if (alreadyLoaded) return` would report nothing found at all.
-    expect(first.entities).toEqual({ created: 6, found: 0 })
-    expect(second.entities).toEqual({ created: 0, found: 6 })
+    expect(first.entities).toEqual({ created: 7, found: 0 })
+    expect(second.entities).toEqual({ created: 0, found: 7 })
     expect(second.episodes).toEqual({ created: 0, found: 2 })
     expect(second.waypoints).toEqual({ created: 0, found: 3 })
     expect(second.artifacts).toEqual({ created: 0, found: 3 })
     expect(second.scenes).toBe(6)
+
+    // Idempotency now spans the proposal lifecycle. Six promotions stand open, and the
+    // second load finds all six rather than raising a second stack beside them — which
+    // is what "duplicates nothing" has to mean once the loader raises anything at all.
+    expect(second.categories).toEqual({ created: 0, found: 5 })
+    expect(second.relationTypes).toEqual({ created: 0, found: 7 })
+    expect(second.promotions).toEqual({ created: 0, found: 6 })
+    expect(openProposals(store, first.show.id)).toHaveLength(6)
   })
 
   it('keeps the artifact files it already wrote, and says so', () => {

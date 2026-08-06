@@ -50,32 +50,56 @@ describe('the Grey Harbor fixture — the show', () => {
     ])
   })
 
-  it('has six entities across five categories', () => {
+  it('has seven entities across five categories, one of them a candidate', () => {
     const show = readFixture()
 
     expect(show.entities.map((e) => `${e.categoryKey}/${e.name}`)).toEqual([
       'character/Ilse Renn',
+      'character/Sefa Doule',
       'character/Tobin Wick',
       'location/Grey Harbor Station',
       'species/Halvani',
       'technology/Kestrel-pattern containment collar',
       'world-rules/The hull and the void',
     ])
+    expect(show.entities.filter((e) => e.status === 'candidate').map((e) => e.name)).toEqual([
+      'Sefa Doule',
+    ])
+  })
+
+  /**
+   * The candidate is a whole sheet nobody has ruled on, and it is in the fixture so
+   * candidate-vs-active is testable end to end (E2-4). Everything an active sheet
+   * carries is on it — standing, prose, facts, an edge — and the one line that differs
+   * is `status`, which is what the loader reads to decide whether to raise its promotion.
+   */
+  it('the candidate carries a full sheet and declares its species `unknown` (D22)', () => {
+    const sefa = readFixture().entities.find((e) => e.name === 'Sefa Doule')!
+
+    expect(sefa).toMatchObject({ categoryKey: 'character', standing: 'recurring', status: 'candidate' })
+    expect(sefa.relations).toEqual([{ type: 'species', target: 'unknown' }])
+    expect(sefa.facts.length).toBeGreaterThan(2)
+    expect(sefa.body).not.toBe('')
   })
 })
 
 describe('the Grey Harbor fixture — the shapes that must be complete', () => {
-  it('every character declares a species, and it resolves to the species entity (D22)', () => {
+  it('every character declares a species — an entity, or the word `unknown` (D22)', () => {
     const show = readFixture()
     const characters = show.entities.filter((e) => e.categoryKey === 'character')
 
-    expect(characters).toHaveLength(2)
+    expect(characters).toHaveLength(3)
     for (const character of characters) {
       const declared = character.relations.filter((r) => r.type === 'species')
       expect(declared).toHaveLength(1)
+      // The two legal answers, and the fixture carries both. Blank is neither.
+      if (declared[0]!.target === 'unknown') continue
       const species = show.entities.find((e) => e.name === declared[0]!.target)
       expect(species?.categoryKey).toBe('species')
     }
+    expect(
+      characters.filter((c) => c.relations.some((r) => r.target === 'unknown')).map((c) => c.name),
+    ).toEqual(['Sefa Doule'])
   })
 
   it('every category declares the fields its sheets carry (3.2)', () => {

@@ -1,7 +1,8 @@
 # Grey Harbor — the fixture show
 
-A synthetic mini-show: one season, two episodes, six canon entities across five
-categories, one arc, and two defects planted in a script on purpose.
+A synthetic mini-show: one season, two episodes, seven canon entities across five
+categories (six of them ruled, one a candidate), one arc, and two defects planted
+in a script on purpose.
 
 It is not test data. It is two things:
 
@@ -46,6 +47,7 @@ episode/<nn>-<slug>/
 | **s01e01** | *The Long Pier* — mid-script: premise, outline, script at draft 1, six scenes, on the arc at waypoint 2 |
 | **s01e02** | *Dry Stores* — un-started: a number and a title, no artifacts, **vanilla** (touches no arc) |
 | **Characters** | Ilse Renn, Tobin Wick — both declare `species: Halvani` (D22) |
+| **The candidate** | Sefa Doule — `status: candidate`, `species: unknown`. The loader registers the identity and raises **no** promotion; the sheet stays a draft until somebody proposes it |
 | **The rest** | Grey Harbor Station (location), Halvani (species), Kestrel-pattern containment collar (technology), The hull and the void (world rules) |
 | **Arc** | *What the harbor is for* — season scope, character kind, three waypoints |
 
@@ -100,12 +102,20 @@ can be measured.
 - **Nothing generates.** No LLM call, no image, no TTS, in the fixture or its
   loader. The script was typed by hand and lives in the repository. Fixtures
   before features exists so tests never spend money.
-- **Identities only.** `fixture:load` calls `registerEntity` and stops there.
-  The facts, relations, standings and prose on these sheets are drafts; they
-  become canon when a proposal is ratified at a gate, and by no other route
-  (invariant 1). E2 grows the loader into that flow. **Nothing here may become a
-  bulk insert into a canon table**, however convenient it would be for E7's Dead
-  Light import.
+- **The loader raises; it never rules** (D25). `fixture:load` declares the
+  categories — schema is data (3.2), and a proposal's subject is an entity, so a
+  category could not go through one — and turns every entity sheet into a
+  **promotion proposal** that rides nothing. The facts, relations, standings and
+  prose on these sheets are drafts until Ryan ratifies that proposal, and by no
+  other route (invariant 1). **Nothing here may become a bulk insert into a canon
+  table**, however convenient it would be for E7's Dead Light import.
+- **Founding is a separate, deliberate act.** `foundCanon` (`domain/founding.ts`)
+  ratifies the stack through the same ruling API the gate room uses, one at a
+  time. It is Ryan's call at the bench, or a test's; the CLI has no flag for it.
+- **The sheets are founding documents, not a sync source.** After founding, canon
+  lives in the database and moves by proposals. Edit a sheet afterwards and it
+  diverges silently — that is correct. Re-loading never raises a second stack and
+  never reconciles canon back out of files.
 - **One path into the database.** The loader uses the same typed domain
   functions the app does. There are no hand-written INSERTs in it and there must
   not be — a loader with its own SQL is the one that never gets updated.
@@ -119,13 +129,18 @@ can be measured.
 
 ## Using it from a test
 
-Tests that need a show *with canon in it* load the fixture:
+Tests that need a show *with canon in it* found the fixture — load raises the
+promotions, founding rules them, and only then are there facts to check against:
 
 ```ts
 const paths = initLibrary(mkdtempSync(join(tmpdir(), 'showrunner-')))
 const store = openLibraryStore(paths)
-const report = loadFixture(store, paths)
+const harbor = greyHarborFounded(store, paths)   // app/server/fixture/founded.ts
+harbor.entity('Tobin Wick')                      // active, with Halvani in scope
 ```
+
+Tests about the *raising* — a queue with proposals in it, a candidate nobody has
+ruled — call `loadFixture` and stop, which is what `fixture:load` itself does.
 
 Tests that need only somewhere to hang a run, a cost row or an event on do not —
 `createShow` / `createSeason` / `createEpisode` is three lines and keeps the test

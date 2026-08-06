@@ -14,6 +14,12 @@ import { loadFixture, type LoadReport, type Tally } from './load.ts'
  *
  * Run it twice; the second run is the interesting one. It walks the whole fixture, finds
  * everything already there, and writes nothing.
+ *
+ * **It raises; it does not rule.** Since E2-4 the load ends with a stack of promotion
+ * proposals standing in the queue and no canon written (D25). Founding them is a separate,
+ * deliberate act — Ryan's, at the canon bench (E2-6) — and this command deliberately has no
+ * flag for it. A `--found` here would be auto-ratification wearing a switch: nothing in
+ * this app writes canon without a click (invariant 5), least of all a shell script.
  */
 
 const root = process.argv[2] ?? libraryRoot()
@@ -33,7 +39,10 @@ function render(report: LoadReport, root: string): string {
     '',
     row('seasons', report.seasons),
     row('episodes', report.episodes),
+    row('categories', report.categories, 'declared'),
+    row('relation types', report.relationTypes, 'declared'),
     row('canon entities', report.entities, 'registered'),
+    row('promotions', report.promotions, 'raised'),
     row('arcs', report.arcs),
     row('waypoints', report.waypoints),
     row('arc positions', report.positions, 'declared'),
@@ -52,12 +61,22 @@ function render(report: LoadReport, root: string): string {
     )
   }
 
-  // Identities only, every time — the sentence that stops this command becoming an
-  // import that writes canon (invariant 1).
+  // A candidate sheet is a draft nobody has proposed, so the loader raises nothing for it
+  // and says which ones those were — otherwise "6 promotions from 7 sheets" reads as a bug.
+  for (const name of report.candidates) {
+    lines.push(
+      '',
+      `  · ${name} is a candidate sheet. Its identity is registered and NO promotion was`,
+      '    raised — promoting it is somebody deciding to, at the bench.',
+    )
+  }
+
+  // The sentence that stops this command becoming an import that writes canon (invariant 1),
+  // and the one that says what is now waiting on Ryan.
   lines.push(
     '',
-    'Entities are identities only: the facts, relations and prose on the sheets stay on',
-    'the sheets until a proposal carries them to a gate. Nothing here generated anything.',
+    'Nothing here was ratified and nothing generated. The sheets are on the queue as',
+    'promotion proposals; canon moves when Ryan rules them, and by no other route (D25).',
     '',
   )
   return lines.join('\n')

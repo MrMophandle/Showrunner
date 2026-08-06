@@ -58,10 +58,16 @@ import { episodeLabel, findEpisode, markAbandoned, type Episode } from './spine.
  *     call to change and the reverts above are untouched by it.**
  *
  * **The landing** is the wrapper D8 asked for, and `declarePosition` in arc.ts stays the
- * dumb write beneath it — the same shape `establishFact` has under ratification. The
- * fixture loader calls `declarePosition` and raises nothing (E2-4 is what changes that,
- * deliberately); a writer run declaring a position calls this, and gets the landing
- * proposal riding the episode so the sweep collects it.
+ * dumb write beneath it — the same shape `establishFact` has under ratification. A writer
+ * run declaring a position calls this, and gets the landing proposal riding the episode so
+ * the sweep collects it.
+ *
+ * **The fixture loader still calls `declarePosition` and raises no landing**, and E2-4 left
+ * it that way on purpose after founding the sheets around it. A landing is a fact, so it
+ * needs a SUBJECT entity, and the arc sheet does not carry one — "which character or place
+ * is ep01 @ waypoint 2 a claim about" is a writing judgement (see the README's E2-3
+ * constraint). E4's writer step is where that answer comes from; inventing one in a loader
+ * would have put a fact in the fixture nobody decided.
  *
  * A landing is a fact, and a fact is about an ENTITY — so the caller says which one the
  * landing reads on. There is no entity on `arc`: an arc is a shape a season makes, and
@@ -279,8 +285,8 @@ export interface LandingDraft {
  * Declares the episode's position on an arc AND raises the landing proposal for it (D8).
  *
  * The two halves are deliberately separable. `declarePosition` is the write — it moves the
- * episode's pin on the arc, and the fixture loader calls it directly and raises nothing
- * (load.test.ts pins that loading registers identities only; E2-4 is what changes it). THIS
+ * episode's pin on the arc, and the fixture loader calls it directly and raises no landing
+ * (the header says why: a landing needs a subject the arc sheet does not carry). THIS
  * is the flow above it, and it is what a writer run calls: the pin moves and, beside it, a
  * proposal saying "arc X reached waypoint Y in epZ" rides the episode to its sweep. Until
  * Ryan rules it the landing is a claim — visible to checks, invisible to `canonAsOf`.
