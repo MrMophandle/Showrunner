@@ -2,6 +2,13 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { ARC_KIND, ARC_SCOPE, type ArcKind, type ArcScope } from '../domain/arc.ts'
 import { ARTIFACT_KIND, type ArtifactKind } from '../domain/artifact.ts'
+import { ENTITY_STANDING, ENTITY_STATUS, type EntityStanding, type EntityStatus } from '../domain/canon.ts'
+import {
+  RELATION_CARDINALITY,
+  type CategoryField,
+  type RelationTypeDeclaration,
+} from '../domain/category.ts'
+import { UNKNOWN_TARGET } from '../domain/relation.ts'
 import { EPISODE_LIFECYCLE, type EpisodeLifecycle } from '../domain/spine.ts'
 import { field, fields, parseSheet, section, type Section, type Sheet } from './sheet.ts'
 
@@ -25,34 +32,18 @@ import { field, fields, parseSheet, section, type Section, type Sheet } from './
 
 export const FIXTURE_DIR = join(import.meta.dirname, '../../../fixtures/greyharbor')
 
-/** Standing and status from 3.1. E2 owns the real vocabulary; this is the copy the fixture is held to. */
-const ENTITY_STANDING = ['core', 'recurring', 'one-shot', 'retired'] as const
-const ENTITY_STATUS = ['active', 'historical', 'candidate'] as const
-
-/** A relation type's cardinality (D23). `required` is declared separately, as the ruling says. */
-const RELATION_CARDINALITY = ['exactly-one', 'at-most-one', 'any'] as const
-export type RelationCardinality = (typeof RELATION_CARDINALITY)[number]
-
-/**
- * The one legal non-entity target: a character whose species is genuinely undecided
- * declares it as `unknown` (D22) — legal, tracked, never blank, because a blank is
- * indistinguishable from a sheet nobody finished.
- */
-export const UNKNOWN_TARGET = 'unknown'
-
-export interface RelationTypeDeclaration {
-  name: string
-  targetCategory: string
-  cardinality: RelationCardinality
-  required: boolean
-  /** The name the edge is navigable by from the far end — blast radius from both sides. */
-  inverse: string
-}
+// The vocabularies a sheet is held to — standing and status (3.1), cardinality (D23), and
+// `unknown`, the one legal non-entity target (D22) — are imported from the domain now that
+// E2-0 has built the tables that store them. This module validates against those rather
+// than keeping a second copy: a sheet the reader accepts and the store then refuses is the
+// worst of both, and that is what two copies of one vocabulary eventually produce.
 
 export interface FixtureCategory {
   key: string
   name: string
   blurb: string
+  /** The fields the category's sheets carry, in sheet order (3.2). */
+  fields: CategoryField[]
   appliesTo: ArtifactKind[]
   relationTypes: RelationTypeDeclaration[]
   checkInstructions: string
@@ -68,8 +59,8 @@ export interface FixtureEntity {
   categoryKey: string
   name: string
   blurb: string
-  standing: (typeof ENTITY_STANDING)[number]
-  status: (typeof ENTITY_STATUS)[number]
+  standing: EntityStanding
+  status: EntityStatus
   aliases: string[]
   relations: FixtureRelation[]
   body: string
@@ -187,6 +178,12 @@ function readCategories(dir: string): FixtureCategory[] {
       key,
       name: sheet.title,
       blurb: sheet.quote,
+      // The fields the sheets of this category carry (3.2). They are what an entity's prose
+      // body is sectioned by, and what E2-1's facts name when they say what they are about.
+      fields: fields(require_(sheet, 'Fields')).map(({ key: name, value }) => ({
+        name,
+        description: value,
+      })),
       appliesTo: requireField(sheet, declared, 'applies to')
         .split(',')
         .map((kind) => kind.trim())

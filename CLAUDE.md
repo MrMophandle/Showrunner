@@ -32,7 +32,9 @@ doc except a later ruling from Ryan.
   applicable artifact kinds, check instructions, allowed relation types. Adding
   a category is an edit, not engineering.
 - **Entity** — one instance: identity + standing (core / recurring / one-shot /
-  retired), prose body, facts, references, relations.
+  retired), prose body, facts, references, relations. A registered identity is a
+  **`candidate` with no standing** until a promotion proposal is ratified —
+  `registerEntity` is the insert beneath that flow, never a way around it.
 - **Fact** — an atomic checkable statement with lineage (established-in, ratified-at)
   and status (ratified / provisional / reverted). Append-only with validity
   ranges, so "canon as of episode 4" is answerable (D9).
@@ -40,7 +42,13 @@ doc except a later ruling from Ryan.
   with a target category, cardinality, and an inverse name; an undeclared type
   is invalid (D23). Every character declares exactly one `species` relation,
   required, `unknown` if unknown — never blank (D22). A character's species
-  facts load into check scope with the character.
+  facts load into check scope with the character. Two E2-0 rulings bind
+  everything above the store: **`unknown` is a relation row with a NULL target**,
+  never a sentinel entity — no row means nobody finished the sheet, a null target
+  means somebody looked and the world has not decided; and **the declared type,
+  its target category and its cardinality are enforced at the write, while
+  `required` is enforced at ratification** — canon must be complete, a candidate
+  is allowed to be ragged on the way there.
 - **Proposal** — the only way canon changes. Five parts: the change, usage
   context, implications (blast radius), alternatives, origin & disposition.
   Provisional proposals ride their episode and are visible to checks.

@@ -1,5 +1,5 @@
 import type { Store } from '../db/store.ts'
-import type { CanonEntity } from './canon.ts'
+import { entitiesByIds, type CanonEntity } from './canon.ts'
 import { newId } from './id.ts'
 
 /**
@@ -171,29 +171,22 @@ export function declareProvenance(store: Store, artifactId: string, entityIds: s
   })
 }
 
+/**
+ * The entities this artifact declares it touches (invariant 2), hydrated by canon.ts —
+ * which owns what a `CanonEntity` is. E2-0 grew that shape with standing, status, aliases
+ * and a prose body, and a second hand-rolled hydration here would have quietly kept
+ * handing checks an entity with none of it.
+ */
 export function provenanceOf(store: Store, artifactId: string): CanonEntity[] {
-  return store
-    .all<{
-      id: string
-      show_id: string
-      category_key: string
-      name: string
-      created_at: string
-    }>(
-      `SELECT e.id, e.show_id, e.category_key, e.name, e.created_at
-         FROM artifact_provenance p
-         JOIN canon_entity e ON e.id = p.entity_id
-        WHERE p.artifact_id = ?
-        ORDER BY e.category_key, e.name`,
-      artifactId,
-    )
-    .map((row) => ({
-      id: row.id,
-      showId: row.show_id,
-      categoryKey: row.category_key,
-      name: row.name,
-      createdAt: row.created_at,
-    }))
+  return entitiesByIds(
+    store,
+    store
+      .all<{ entity_id: string }>(
+        'SELECT entity_id FROM artifact_provenance WHERE artifact_id = ?',
+        artifactId,
+      )
+      .map((row) => row.entity_id),
+  )
 }
 
 /**

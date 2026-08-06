@@ -78,6 +78,16 @@ describe('the Grey Harbor fixture — the shapes that must be complete', () => {
     }
   })
 
+  it('every category declares the fields its sheets carry (3.2)', () => {
+    const character = readFixture().categories.find((c) => c.key === 'character')!
+
+    expect(character.fields.map((f) => f.name)).toEqual(['standing', 'status', 'aliases'])
+    expect(character.fields[0]!.description).toMatch(/core \/ recurring \/ one-shot \/ retired/)
+    expect(character.fields[2]!.description).toBe(
+      'what else the scripts call them, comma separated.',
+    )
+  })
+
   it('every category declares its relation types with target, cardinality and inverse (D23)', () => {
     const show = readFixture()
 
@@ -202,6 +212,12 @@ describe('the Grey Harbor fixture — what the reader refuses', () => {
     expect(afterEditing('canon/character/tobin-wick.md', '- species: Halvani\n', '')).toThrow(
       /tobin-wick\.md: declares no `species`.*requires exactly one/i,
     )
+  })
+
+  it('a category that stopped declaring the fields its sheets carry (3.2)', () => {
+    expect(
+      afterEditing('canon/character/_category.md', '## Fields', '## Fields (draft)'),
+    ).toThrow(/_category\.md: has no `## Fields` section/)
   })
 
   it('a relation type the category never declared (D23)', () => {
