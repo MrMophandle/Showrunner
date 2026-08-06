@@ -27,10 +27,9 @@ doc except a later ruling from Ryan.
   legal, tracked, never a failure state. Arcs have their own screen (D24).
 
 **Canon**
-- **Category** — a kind of canon (character, location, faction, species,
-  technology, timeline, house style, world rules), defined as *data*: fields,
-  applicable artifact kinds, check instructions, allowed relation types. Adding
-  a category is an edit, not engineering.
+- **Category** — a kind of canon (character, location, faction, species, technology,
+  timeline, house style, world rules), defined as *data*: fields, applicable artifact kinds,
+  check instructions, allowed relation types. Adding one is an edit, not engineering.
 - **Entity** — one instance: identity + standing (core / recurring / one-shot / retired),
   prose body, facts, references, relations. Registering one makes a **`candidate`**.
 - **Fact** — an atomic checkable statement with lineage (established-in episode,
@@ -40,7 +39,8 @@ doc except a later ruling from Ryan.
   ratifying a provisional fact writes a new row. Ranges count in `canon_ruling.seq`, the
   monotonic clock canon is read by; **a date maps onto a ruling, never the reverse**.
   `canonAsOf` is ratified facts only; provisional facts ride their episode and reach
-  checks via the scope helper. **E2-2 grows `canon_ruling` by ADD COLUMN, never a sibling.**
+  checks via the scope helper. `canon_ruling` **is** the disposition ledger every kind of
+  ruling lands on — grow it by ADD COLUMN, never a sibling.
 - **Relation** — a *typed* edge. Relation types are **declared per category** with a
   target category, cardinality, and an inverse name; an undeclared type is invalid (D23).
   Every character declares exactly one `species` relation, required, `unknown` if unknown
@@ -49,35 +49,41 @@ doc except a later ruling from Ryan.
   one way, declarer → target — so D22's inheritance is data, and an exception displaces
   the *lineage*: a species edit carries the exception onto the successor, visibly stale.
   The write enforces type, target and cardinality; **`required` is enforced at ratification**.
-- **Proposal** — the only way canon changes. Five parts: the change, usage
-  context, implications (blast radius), alternatives, origin & disposition.
-  Provisional proposals ride their episode and are visible to checks.
+- **Proposal** — the only way canon changes. Five parts: the change (a fact delta, a
+  relation delta, or a promotion carrying the full sheet), usage context, implications,
+  alternatives, origin & disposition. **Implications are computed at read time** from
+  relations + provenance + facts — never stored, the freshness pattern. A proposal with an
+  episode rides it (its facts written provisional, visible to checks); **`episode_id` is
+  nullable and founding is the reason** — no run, gate, or episode is a precondition for a
+  ruling. Relations never ride: an edge is written only by ratification.
 - **Ratification** — Ryan approving a proposal at its gate. This, and only this,
   writes canon. Founding is no exception (D25): fixtures, imports (E7), and new
   shows raise **promotion proposals** ruled through the same API — no path writes
   ratified rows directly, and tests exercise the flow rather than bypassing it.
+  **One ruling API — ratify / reject-with-notes / defer — convened by every surface**
+  (a gate says where Ryan stood, never whether he may rule). A proposal is ruled once and
+  every disposition is kept forever: a rejection's note is read back by later writer runs,
+  a deferral parks it and stops it riding. Ratification writes relations, then the sheet,
+  then facts, then references, and **refuses an incomplete sheet** — a character with no
+  `species` (D22); `unknown` satisfies it, absent does not.
 
 **Production**
-- **Artifact** — anything produced (outline, script, scene text, shot image, TTS
-  take, mix, timeline, render, publish kit). Carries **provenance** (which canon
-  entities it touches), a version, and freshness edges. Staleness is *computed*,
-  never remembered.
+- **Artifact** — anything produced (outline, script, scene text, shot image, TTS take, mix,
+  timeline, render, publish kit). Carries **provenance** (which canon entities it touches),
+  a version, and freshness edges. Staleness is *computed*, never remembered.
 - **Run / Step** — a stage in motion. Steps are code, declare inputs and outputs,
   are idempotent, and persist state before and after.
-- **Gate** — a first-class decision object: artifact under review, findings,
-  round history, ruling (approve / reject-with-notes / override-with-record).
-  A gate always renders its artifact — never a filename.
-- **Check / Finding** — one reviewer pass, parameterized by canon category, fired
-  at artifact boundaries. A finding has an anchor, concern, severity, confidence,
-  and remediation actions.
-- **Event** — append-only log of every transition. Drives the live UI over SSE
-  and is the audit trail. **The record, never the state:** `run`, `step`, and
-  `resource_lock` are the source of truth; nothing rebuilds state by replaying
-  events, and the runner never reads its own log back. Order by the monotonic
-  `seq`, never by the timestamp — `at` is for humans. A step narrates itself
-  with `progress()` (the "what" line, latest-wins) and `chunk()` (streamed
-  output, accumulating). Append-only is enforced by SQLite triggers, so there is
-  no update path and no delete path to find.
+- **Gate** — a first-class decision object: artifact under review, findings, round history,
+  ruling (approve / reject-with-notes / override-with-record). It renders its artifact.
+- **Check / Finding** — one reviewer pass, parameterized by canon category, fired at
+  artifact boundaries. A finding has an anchor, concern, severity, confidence, remediations.
+- **Event** — append-only log of every transition. Drives the live UI over SSE and is the
+  audit trail. **The record, never the state:** `run`, `step`, and `resource_lock` are the
+  source of truth; nothing rebuilds state by replaying events, and the runner never reads
+  its own log back. Order by the monotonic `seq`, never by the timestamp — `at` is for
+  humans. A step narrates itself with `progress()` (the "what" line, latest-wins) and
+  `chunk()` (streamed output, accumulating). Append-only is enforced by SQLite triggers,
+  so there is no update path and no delete path to find.
 
 ## The five invariants — never violate
 
@@ -93,17 +99,17 @@ doc except a later ruling from Ryan.
 4. **Honest confidence.** Text checks gate hard; image checks flag for his eye;
    audio checks verify words only and queue a listen. Never render a weak check
    as a green checkmark.
-5. **Nothing runs without a click.** Retries are bounded at **2** — that is **three
-   attempts in all**, the first plus two re-runs — everywhere,
-   including image generation — then it reaches Ryan with the full attempt history.
+5. **Nothing runs without a click.** Retries are bounded at **2** — **three attempts in
+   all**, the first plus two re-runs — everywhere, including image generation; then it
+   reaches Ryan with the full attempt history.
 
 ## The Archon rule (binding)
 
-**No workflow DSL. No configurable workflow engine.** Pipeline stages (write,
-produce, canon, assemble, season review) are TypeScript functions in this app;
-changing one is a code change with a test. If you find yourself building a
-generic or configurable workflow system, **stop** — that is the failure mode
-this project exists to escape. Either party may say "Archon" and the other stops.
+**No workflow DSL. No configurable workflow engine.** Pipeline stages (write, produce,
+canon, assemble, season review) are TypeScript functions in this app; changing one is a
+code change with a test. If you find yourself building a generic or configurable workflow
+system, **stop** — that is the failure mode this project exists to escape. Either party
+may say "Archon" and the other stops.
 
 ## UI rules
 
@@ -117,12 +123,12 @@ this project exists to escape. Either party may say "Archon" and the other stops
 - **Run state is always visible**: what's thinking, what changed, what waits on Ryan.
 - **The HIL contract**: everything pertinent, present, zero archaeology. If Ryan
   has to go find context, the screen has failed.
-- **Reject is routed, not rewound** (D21, 4.7): the note picks its depth — the
-  shot's prompt, the scene, the premise, or hold the slot for a hand-made asset.
-  Nothing regenerates until the route lands.
-- Eight screens (D24): floor · episode room · gate room · canon library ·
-  review desk · screening room · season map · **arc page**. Approved mockups
-  live in `mockups/`; E5 builds to them.
+- **Reject is routed, not rewound** (D21, 4.7): the note picks its depth — the shot's
+  prompt, the scene, the premise, or hold the slot for a hand-made asset. Nothing
+  regenerates until the route lands.
+- Eight screens (D24): floor · episode room · gate room · canon library · review desk ·
+  screening room · season map · **arc page**. Approved mockups live in `mockups/`; E5
+  builds to them.
 
 ## Architecture rulings
 
@@ -132,28 +138,25 @@ this project exists to escape. Either party may say "Archon" and the other stops
 - Native Mac GPU worker for GPU steps; the container calls it (D5).
 - One `LLMAdapter`, two backends: Anthropic API and the `claude` CLI (D6).
   Subprocess calls pass an argv array, never a shell string.
-- One `ImageAdapter`, three backends routed **per shot** in the shot manifest
-  (D20): `nano-banana-pro` (cloud) for character shots, `z-image-turbo` (local)
-  for ambient, `qwen-image-edit` (local) for hero/identity shots. See
-  `handoff/docs/D20-image-backends.md` before writing E6.
-- **Named locks.** `gpu` covers local image generation **and** TTS — they must
-  never run concurrently (the Metal corruption lesson). `image-api` covers cloud
-  image steps, which parallelize with audio. Contention surfaces as
-  "waiting on GPU (held by ep05)". Per-episode serialization, cross-episode
-  parallelism (D7, D20).
+- One `ImageAdapter`, three backends routed **per shot** in the shot manifest (D20):
+  `nano-banana-pro` (cloud) for character shots, `z-image-turbo` (local) for ambient,
+  `qwen-image-edit` (local) for hero/identity. Read `handoff/docs/D20-image-backends.md`.
+- **Named locks.** `gpu` covers local image generation **and** TTS — never concurrently
+  (the Metal corruption lesson). `image-api` covers cloud image steps, which parallelize
+  with audio. Contention surfaces as "waiting on GPU (held by ep05)". Per-episode
+  serialization, cross-episode parallelism (D7, D20).
 - **A hand-made asset always wins.** Existing files are never overwritten;
   re-runs fill gaps only. Re-rolls are explicit (D20).
 - Crash-proof: killed processes resume from the last completed step; open gates
   survive reboots. Long steps stream — streams, not spinners.
-- Cost ledger: every LLM call and generation records tokens/dollars against
-  step, run, episode, and show (2.4). **One table (`cost_entry`), one write path
-  (`recordCost`), one dated price table (`MODEL_PRICE`)** — E6's image and audio
-  calls are rows in it, not a second ledger, and its `kind` already accepts them.
-  A row records **dollars always, tokens optionally**, and says how it was priced
-  (`rate-card` / `reported` / `unpriced`) so a gap never renders as a zero. It is
-  append-only in SQLite; a correction is another row. `usage.input_tokens` is the
-  **uncached remainder** of the prompt, not its size — read `app/server/cost.ts`
-  before touching the arithmetic.
+- Cost ledger: every LLM call and generation records tokens/dollars against step, run,
+  episode, and show (2.4). **One table (`cost_entry`), one write path (`recordCost`), one
+  dated price table (`MODEL_PRICE`)** — E6's image and audio calls are rows in it, not a
+  second ledger, and its `kind` already accepts them. A row records **dollars always,
+  tokens optionally**, and says how it was priced (`rate-card` / `reported` / `unpriced`)
+  so a gap never renders as a zero. Append-only; a correction is another row.
+  `usage.input_tokens` is the **uncached remainder** of the prompt, not its size — read
+  `app/server/cost.ts` before touching the arithmetic.
 
 ## Naming conventions
 
@@ -165,10 +168,9 @@ this project exists to escape. Either party may say "Archon" and the other stops
 - Adapter interfaces are `XAdapter` (`LLMAdapter`, `ImageAdapter`); backend and
   lock ids are `kebab-case` (`gpu`, `image-api`, `z-image-turbo`).
 - Migrations are plain numbered SQL files, applied in order.
-- Paths: `app/` for the application, `library/` for the mounted volume (SQLite
-  file + artifacts), `fixtures/greyharbor/` for the fixture show,
-  `handoff/docs/` for the design docs, `mockups/` for the approved screens,
-  `scripts/` for the manual scripts that must never run in CI.
+- Paths: `app/` for the application, `library/` for the mounted volume (SQLite file +
+  artifacts), `fixtures/greyharbor/` for the fixture show, `handoff/docs/` for the design
+  docs, `mockups/` for the approved screens, `scripts/` for manual scripts, never CI.
 
 ## Commands
 
@@ -179,18 +181,16 @@ docker compose up               # app on :4455
 npm run smoke:llm -- --backend claude-cli|anthropic-api   # SPENDS REAL MONEY, by hand
 ```
 
-`smoke:llm` is the only thing that spends money and CI never runs it; use it after
-touching a backend — the fake adapter proves the wiring, a real call proves the numbers
-it is fed. `SHOWRUNNER_LLM_BACKEND` forces a backend; unset, a key means the API and no
-key means the `claude` CLI.
+`smoke:llm` is the only thing that spends money and CI never runs it; use it after touching
+a backend — the fake adapter proves the wiring, a real call proves the numbers it is fed.
+`SHOWRUNNER_LLM_BACKEND` forces one; unset, a key means the API and no key means the CLI.
 
 ## Working agreements
 
 - **One issue, one session.** Leave the repo green; if unfinished, write `HANDOFF.md`.
-- **Design reasoning lives in the code it describes** — module headers, migration
-  comments, comments on the type. Not a separate spec file: this repo has no `docs/`
-  tree, and a spec drifts from the code the day after it's written. What binds OTHER
-  epics goes here in CLAUDE.md instead, where every session loads it.
+- **Design reasoning lives in the code it describes** — module headers, migration comments,
+  comments on the type. Not a separate spec file: this repo has no `docs/` tree and a spec
+  drifts the day after. What binds OTHER epics goes here, where every session loads it.
 - Branch; don't commit to `main`. Don't push without asking Ryan.
 - Issues live on GitHub, one milestone per epic (D18). Ryan gates epics, not issues.
 - **Fixtures before features.** The Grey Harbor fixture backs all tests. Never

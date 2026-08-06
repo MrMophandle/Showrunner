@@ -64,6 +64,14 @@ export const EVENT_KIND = [
   'gate-approved',
   'gate-rejected',
   'gate-overridden',
+  // canon dispositions (E2-2). Three, for the same reason the gate has four: "ratified the
+  // Mara proposal" WROTE CANON and "deferred the Mara proposal" wrote nothing at all, and a
+  // log that cannot tell them apart has lost the only record of when canon moved. A ruling
+  // convened away from a gate — the bench, the founding queue — leaves no event, because
+  // `event.run_id` is NOT NULL and neither has a run; the ledger is its record.
+  'proposal-ratified',
+  'proposal-rejected',
+  'proposal-deferred',
   'step-progress',
   'step-chunk',
 ] as const

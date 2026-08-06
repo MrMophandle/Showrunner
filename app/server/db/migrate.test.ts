@@ -72,6 +72,19 @@ const CANON_TABLE = [
  */
 const FACT_TABLE = ['canon_ruling', 'fact', 'fact_closure']
 
+/**
+ * The tables E2-2 owns: the proposal and the four parts of the change it carries.
+ * `canon_ruling` is NOT here — 0008 grows E2-1's ledger with ADD COLUMN, which is the one
+ * structural mistake this migration could have made and the reason 0007's header says so.
+ */
+const PROPOSAL_TABLE = [
+  'proposal',
+  'proposal_alternative',
+  'proposal_fact',
+  'proposal_reference',
+  'proposal_relation',
+]
+
 const EVERY_TABLE = [
   ...SPINE_TABLE,
   ...RUNNER_TABLE,
@@ -80,6 +93,7 @@ const EVERY_TABLE = [
   ...COST_TABLE,
   ...CANON_TABLE,
   ...FACT_TABLE,
+  ...PROPOSAL_TABLE,
   'schema_migration',
 ].sort()
 
@@ -117,15 +131,21 @@ describe('the migrations runner', () => {
     expect(tableNames(store)).toEqual(EVERY_TABLE)
   })
 
-  it('leaves the names still reserved unclaimed, and claims the four 0006 and 0007 took', () => {
+  it('has claimed every reserved name — 0008 took the last one', () => {
     migrate(store)
 
-    // What is left of 0001's block: E2-2's proposals. 0006 took three, 0007 took `fact`.
-    const claimed = tableNames(store).filter((name) => RESERVED_TABLE_NAME.includes(name))
-    expect(claimed).toEqual([])
-    expect(RESERVED_TABLE_NAME).toEqual(['proposal'])
+    // 0001's block is spent: 0006 took three, 0007 took `fact`, 0008 took `proposal`. The
+    // list stays here and stays empty, because it is what a later epic adds to when it
+    // reserves a name of its own — and what proves nothing is quietly squatting on one.
+    expect(RESERVED_TABLE_NAME).toEqual([])
     expect(tableNames(store)).toEqual(
-      expect.arrayContaining(['relation', 'relation_type', 'canon_category', 'fact']),
+      expect.arrayContaining([
+        'relation',
+        'relation_type',
+        'canon_category',
+        'fact',
+        'proposal',
+      ]),
     )
   })
 })
@@ -332,5 +352,91 @@ describe('0007 · growing relation_type, not rebuilding it', () => {
     expect(() =>
       store.run("UPDATE relation_type SET inherits_facts = 2 WHERE id = 'rt1'"),
     ).toThrow(/inherits_facts is 0 or 1/)
+  })
+})
+
+/**
+ * 0008 does to `canon_ruling` what 0007 did to `relation_type` and 0006 did to
+ * `canon_entity`: ADD COLUMN, never a rebuild. The reason is two tables over — `fact` and
+ * `fact_closure` both hold foreign keys into the ledger, and `seq` IS the clock canon is
+ * read by, so a rebuilt ledger is a renumbered history. A sibling disposition table would
+ * be the same failure by another route: half an order is no order.
+ */
+describe('0008 · growing canon_ruling, not rebuilding it', () => {
+  function writeARatifiedFact(): void {
+    store.run("INSERT INTO show (id, key, title) VALUES ('show1', 'greyharbor', 'Grey Harbor')")
+    store.run("INSERT INTO season (id, show_id, number) VALUES ('season1', 'show1', 1)")
+    store.run(
+      "INSERT INTO episode (id, season_id, number, title) VALUES ('ep2', 'season1', 2, 'Dry Stores')",
+    )
+    store.run(
+      "INSERT INTO canon_entity (id, show_id, category_key, name) VALUES ('ent1', 'show1', 'character', 'Mara')",
+    )
+    store.run("INSERT INTO canon_ruling (kind) VALUES ('ratification')")
+    store.run(
+      `INSERT INTO fact (id, entity_id, field, statement, established_in, ratified_by)
+            VALUES ('fact1', 'ent1', 'conduct', 'Mara refuses to carry arms.', 'ep2', 1)`,
+    )
+  }
+
+  it('keeps every ruling at its seq, and the lineage pointing at it', () => {
+    applyThrough(7)
+    writeARatifiedFact()
+
+    expect(migrate(store).map((m) => m.number)).toEqual(
+      migrationsOnDisk()
+        .map((m) => m.number)
+        .filter((number) => number > 7),
+    )
+
+    // The number a validity range is measured in. A rebuild that renumbered it would have
+    // moved every fact in the library to a different moment in time.
+    expect(store.get('SELECT seq, kind FROM canon_ruling')).toEqual({
+      seq: 1,
+      kind: 'ratification',
+    })
+    expect(store.get('SELECT id, ratified_by FROM fact')).toEqual({
+      id: 'fact1',
+      ratified_by: 1,
+    })
+    // Still ENFORCED, not merely still present.
+    expect(() => store.run('DELETE FROM canon_ruling WHERE seq = 1')).toThrow(
+      /a ruling is history/,
+    )
+  })
+
+  it('gives a ruling made before E2-2 the disposition columns it never carried', () => {
+    applyThrough(7)
+    writeARatifiedFact()
+    migrate(store)
+
+    // A ruling from before proposals existed disposed of nothing and was convened at no
+    // gate. NULL says exactly that, and '' is the empty note rather than a missing one.
+    expect(store.get('SELECT proposal_id, gate_id, note FROM canon_ruling')).toEqual({
+      proposal_id: null,
+      gate_id: null,
+      note: '',
+    })
+  })
+
+  it('rules a proposal once — a second disposition is a constraint violation', () => {
+    migrate(store)
+    store.run("INSERT INTO show (id, key, title) VALUES ('show1', 'greyharbor', 'Grey Harbor')")
+    store.run(
+      "INSERT INTO canon_entity (id, show_id, category_key, name) VALUES ('ent1', 'show1', 'character', 'Mara')",
+    )
+    store.run(
+      "INSERT INTO proposal (id, entity_id, kind, raised_by) VALUES ('prop1', 'ent1', 'fact-delta', 'writer')",
+    )
+    store.run("INSERT INTO canon_ruling (kind, proposal_id) VALUES ('rejection', 'prop1')")
+
+    expect(() =>
+      store.run("INSERT INTO canon_ruling (kind, proposal_id) VALUES ('ratification', 'prop1')"),
+    ).toThrow(/UNIQUE/i)
+    // The partial index leaves the ledger's own rulings alone — E2-1's ratifications and
+    // E2-3's reverts dispose of no proposal, and there may be any number of them.
+    store.run("INSERT INTO canon_ruling (kind) VALUES ('ratification')")
+    store.run("INSERT INTO canon_ruling (kind) VALUES ('revert')")
+    expect(store.get('SELECT COUNT(*) AS n FROM canon_ruling')).toEqual({ n: 3 })
   })
 })
