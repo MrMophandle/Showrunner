@@ -173,33 +173,26 @@ this project exists to escape. Either party may say "Archon" and the other stops
 ## Commands
 
 ```
-npm test          # vitest
-npm run typecheck # tsc --noEmit
-npm test && npm run typecheck   # CI; run both before claiming done
+npm test && npm run typecheck   # CI — run both before claiming done
 npm run fixture:load            # seed the Grey Harbor fixture (idempotent)
 docker compose up               # app on :4455
-
-npm run smoke:llm -- --backend claude-cli      # SPENDS REAL MONEY. One call, by hand.
-npm run smoke:llm -- --backend anthropic-api   # the other backend, same deal.
+npm run smoke:llm -- --backend claude-cli|anthropic-api   # SPENDS REAL MONEY, by hand
 ```
 
-`smoke:llm` is the only thing in this repo that spends money, and it is never run by
-`npm test` or by CI. Run it after touching either backend: the fake adapter proves the
-wiring and the arithmetic, and only a real call proves the numbers that arithmetic is
-fed. `SHOWRUNNER_LLM_BACKEND` picks the backend everywhere else; unset, the app uses the
-API when `ANTHROPIC_API_KEY` is set and the `claude` CLI otherwise.
+`smoke:llm` is the only thing that spends money and CI never runs it; use it after
+touching a backend — the fake adapter proves the wiring, a real call proves the numbers
+it is fed. `SHOWRUNNER_LLM_BACKEND` forces a backend; unset, a key means the API and no
+key means the `claude` CLI.
 
 ## Working agreements
 
-- **One issue, one session.** Leave the repo green; if unfinished, write
-  `HANDOFF.md` — never a half-open migration or a red main.
+- **One issue, one session.** Leave the repo green; if unfinished, write `HANDOFF.md`.
 - **Design reasoning lives in the code it describes** — module headers, migration
   comments, comments on the type. Not a separate spec file: this repo has no `docs/`
   tree, and a spec drifts from the code the day after it's written. What binds OTHER
   epics goes here in CLAUDE.md instead, where every session loads it.
 - Branch; don't commit to `main`. Don't push without asking Ryan.
-- Issues live in GitHub Issues on `MrMophandle/Showrunner`, one milestone per
-  epic (E1–E8) (D18). Ryan gates epics, not issues.
+- Issues live on GitHub, one milestone per epic (D18). Ryan gates epics, not issues.
 - **Fixtures before features.** The Grey Harbor fixture backs all tests. Never
   burn real generation money in a test.
 - Dead Light (Ryan's live show) ships on the old stack until E7; that repo is
