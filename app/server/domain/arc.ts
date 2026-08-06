@@ -313,6 +313,7 @@ export function episodesNeedingRecheck(store: Store, arcId: string): RecheckFlag
     .all<RecheckRow>(
       `SELECT p.declared_ordinal, p.declared_at,
               e.id AS episode_id, e.season_id AS episode_season_id, e.number, e.title, e.lifecycle,
+              e.abandoned_at AS episode_abandoned_at,
               e.created_at AS episode_created_at, e.updated_at AS episode_updated_at,
               a.id AS arc_id, a.show_id, a.season_id, a.scope, a.kind,
               a.name AS arc_name, a.statement, a.created_at AS arc_created_at,
@@ -339,6 +340,7 @@ export function episodesNeedingRecheck(store: Store, arcId: string): RecheckFlag
           number: row.number,
           title: row.title,
           lifecycle: row.lifecycle,
+          abandonedAt: row.episode_abandoned_at,
           createdAt: row.episode_created_at,
           updatedAt: row.episode_updated_at,
         },
@@ -463,6 +465,7 @@ interface RecheckRow extends ArcJoin {
   number: number
   title: string
   lifecycle: Episode['lifecycle']
+  episode_abandoned_at: string | null
   episode_created_at: string
   episode_updated_at: string
 }

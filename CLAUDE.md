@@ -16,14 +16,19 @@ doc except a later ruling from Ryan.
 - **Show** — owns its canon store, check categories, house style. Everything is
   scoped to a show; no hardcoded show or season anywhere.
 - **Season** — story arcs, ordered episodes, and an idea pool (greenlit / parked / spiked).
-- **Episode** — the unit of production, telling its own story. Lifecycle:
-  premise → outline → script → assets → assembled → published.
+- **Episode** — the unit of production, telling its own story. Lifecycle: premise → outline
+  → script → assets → assembled → published. At approval the **completion sweep** collects
+  every proposal still riding it into one final ruling pass. **`abandoned_at` is a column
+  beside that enum, never a member of it** — an episode dies at any stage and keeps the one
+  it reached; abandoning parks the claims still riding and raises one **revert proposal per
+  ratified fact** it established, ruled one by one (3.3), never a revert-all.
 - **Scene** — first-class and addressable, but **derived from** the written
   episode, never prescribed to the writer. `num_scenes` is an output, never an
   input. Scenes anchor findings, own their images/audio, scope re-checks.
-- **Arc** — first-class, with a scope (show or season), a kind (character or
-  story), a prose statement, and ordered **waypoints**. Episodes declare
-  positions ("arc1 @ waypoint2"). An episode touching no arc is **vanilla** —
+- **Arc** — first-class, with a scope (show or season), a kind (character or story), a prose
+  statement, and ordered **waypoints**. Episodes declare positions ("arc1 @ waypoint2");
+  declaring one raises the **landing proposal**, and only ratifying it makes "arc1 reached
+  waypoint2 in ep01" a fact with lineage (D8). An episode touching no arc is **vanilla** —
   legal, tracked, never a failure state. Arcs have their own screen (D24).
 
 **Canon**
@@ -49,23 +54,23 @@ doc except a later ruling from Ryan.
   one way, declarer → target — so D22's inheritance is data, and an exception displaces
   the *lineage*: a species edit carries the exception onto the successor, visibly stale.
   The write enforces type, target and cardinality; **`required` is enforced at ratification**.
-- **Proposal** — the only way canon changes. Five parts: the change (a fact delta, a
-  relation delta, or a promotion carrying the full sheet), usage context, implications,
-  alternatives, origin & disposition. **Implications are computed at read time** from
-  relations + provenance + facts — never stored, the freshness pattern. A proposal with an
-  episode rides it (its facts written provisional, visible to checks); **`episode_id` is
+- **Proposal** — the only way canon changes. Five parts: the change (a fact delta, a relation
+  delta, a promotion carrying the full sheet, a **revert** overturning one ratified fact, or
+  a waypoint **landing**), usage context, implications, alternatives, origin & disposition.
+  Kinds are a TypeScript union, never a SQL CHECK. **Implications are computed at read time**
+  from relations + provenance + facts — never stored, the freshness pattern. A proposal with
+  an episode rides it (its facts written provisional, visible to checks); **`episode_id` is
   nullable and founding is the reason** — no run, gate, or episode is a precondition for a
   ruling. Relations never ride: an edge is written only by ratification.
-- **Ratification** — Ryan approving a proposal at its gate. This, and only this,
-  writes canon. Founding is no exception (D25): fixtures, imports (E7), and new
-  shows raise **promotion proposals** ruled through the same API — no path writes
-  ratified rows directly, and tests exercise the flow rather than bypassing it.
-  **One ruling API — ratify / reject-with-notes / defer — convened by every surface**
-  (a gate says where Ryan stood, never whether he may rule). A proposal is ruled once and
-  every disposition is kept forever: a rejection's note is read back by later writer runs,
-  a deferral parks it and stops it riding. Ratification writes relations, then the sheet,
-  then facts, then references, and **refuses an incomplete sheet** — a character with no
-  `species` (D22); `unknown` satisfies it, absent does not.
+- **Ratification** — Ryan approving a proposal at its gate. This, and only this, writes canon.
+  Founding is no exception (D25): fixtures, imports (E7), and new shows raise **promotion
+  proposals** ruled through the same API — no path writes ratified rows directly, and tests
+  exercise the flow rather than bypassing it. **One ruling API — ratify / reject-with-notes /
+  defer — convened by every surface** (a gate says where Ryan stood, never whether he may
+  rule). A proposal is ruled once and every disposition is kept forever: a rejection's note
+  is read back by later writer runs, a deferral parks it and stops it riding. Ratification
+  writes relations, then the sheet, then facts, then references, and **refuses an incomplete
+  sheet** — a character with no `species` (D22); `unknown` satisfies it, absent does not.
 
 **Production**
 - **Artifact** — anything produced (outline, script, scene text, shot image, TTS take, mix,
@@ -82,8 +87,8 @@ doc except a later ruling from Ryan.
   source of truth; nothing rebuilds state by replaying events, and the runner never reads
   its own log back. Order by the monotonic `seq`, never by the timestamp — `at` is for
   humans. A step narrates itself with `progress()` (the "what" line, latest-wins) and
-  `chunk()` (streamed output, accumulating). Append-only is enforced by SQLite triggers,
-  so there is no update path and no delete path to find.
+  `chunk()` (streamed output, accumulating). Append-only is enforced by SQLite triggers —
+  there is no update path and no delete path to find.
 
 ## The five invariants — never violate
 
@@ -92,32 +97,28 @@ doc except a later ruling from Ryan.
    A ratification is Ryan's approval of a proposal at a gate.
 2. **Every artifact declares provenance.** Checks load exactly the entities in
    scope — never the whole bible.
-3. **Checks argue, never veto.** A red finding makes an artifact loud; Ryan's
-   approval over it is recorded as an explicit override. One exception (D12):
-   **deterministic** findings (continuity board, canon graph) block the *next
-   stage*, but never his gate.
-4. **Honest confidence.** Text checks gate hard; image checks flag for his eye;
-   audio checks verify words only and queue a listen. Never render a weak check
-   as a green checkmark.
+3. **Checks argue, never veto.** A red finding makes an artifact loud; Ryan's approval over
+   it is recorded as an explicit override. One exception (D12): **deterministic** findings
+   (continuity board, canon graph) block the *next stage*, but never his gate.
+4. **Honest confidence.** Text checks gate hard; image checks flag for his eye; audio checks
+   verify words only and queue a listen. Never render a weak check as a green checkmark.
 5. **Nothing runs without a click.** Retries are bounded at **2** — **three attempts in
    all**, the first plus two re-runs — everywhere, including image generation; then it
    reaches Ryan with the full attempt history.
 
 ## The Archon rule (binding)
 
-**No workflow DSL. No configurable workflow engine.** Pipeline stages (write, produce,
-canon, assemble, season review) are TypeScript functions in this app; changing one is a
-code change with a test. If you find yourself building a generic or configurable workflow
-system, **stop** — that is the failure mode this project exists to escape. Either party
-may say "Archon" and the other stops.
+**No workflow DSL. No configurable workflow engine.** Pipeline stages (write, produce, canon,
+assemble, season review) are TypeScript functions; changing one is a code change with a test.
+If you find yourself building a configurable workflow system, **stop** — that is the failure
+mode this project exists to escape. Either party may say "Archon" and the other stops.
 
 ## UI rules
 
-- **No generic verbs.** Every action button states **verb + object + scope +
-  cost**: "Write the ep07 outline — 1 Opus call, ~$0.85". Never "Launch", "Run",
-  "Go", "Do".
-- **Preconditions before the button.** A blocked action renders disabled with the
-  reason in words — never a failure after launch.
+- **No generic verbs.** Every action button states **verb + object + scope + cost**: "Write
+  the ep07 outline — 1 Opus call, ~$0.85". Never "Launch", "Run", "Go", "Do".
+- **Preconditions before the button.** A blocked action renders disabled with the reason in
+  words — never a failure after launch.
 - **One artifact, one ruling.** Media review is one at a time; no batch verdicts.
 - **Gates render the artifact** — readable script, viewable image, playable take.
 - **Run state is always visible**: what's thinking, what changed, what waits on Ryan.
@@ -151,12 +152,11 @@ may say "Archon" and the other stops.
   survive reboots. Long steps stream — streams, not spinners.
 - Cost ledger: every LLM call and generation records tokens/dollars against step, run,
   episode, and show (2.4). **One table (`cost_entry`), one write path (`recordCost`), one
-  dated price table (`MODEL_PRICE`)** — E6's image and audio calls are rows in it, not a
-  second ledger, and its `kind` already accepts them. A row records **dollars always,
-  tokens optionally**, and says how it was priced (`rate-card` / `reported` / `unpriced`)
-  so a gap never renders as a zero. Append-only; a correction is another row.
-  `usage.input_tokens` is the **uncached remainder** of the prompt, not its size — read
-  `app/server/cost.ts` before touching the arithmetic.
+  dated price table (`MODEL_PRICE`)** — E6's image and audio rows go in it, not a second
+  ledger; its `kind` already accepts them. A row records **dollars always, tokens
+  optionally**, and says how it was priced (`rate-card` / `reported` / `unpriced`) so a gap
+  never renders as a zero. Append-only; a correction is another row. `usage.input_tokens` is
+  the **uncached remainder** of the prompt, not its size — read `app/server/cost.ts` first.
 
 ## Naming conventions
 
