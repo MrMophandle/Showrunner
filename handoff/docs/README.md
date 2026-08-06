@@ -7,7 +7,7 @@ was ruled and why.
 
 | Document | What it is | Authority |
 |---|---|---|
-| `concept-and-architecture.md` | The ruled design: domain, orchestration, canon, checks, screens, build plan. Decisions **D1–D19** in-section, **D20–D24** in the addendum at the end. | **The source of truth.** Nothing overrides it except a later ruling from Ryan. |
+| `concept-and-architecture.md` | The ruled design: domain, orchestration, canon, checks, screens, build plan. Decisions **D1–D19** in-section, **D20–D25** in the addendum at the end. | **The source of truth.** Nothing overrides it except a later ruling from Ryan. |
 | `D20-image-backends.md` | The image-generation carry-forward from the Dead Light console, in detail — backends, routing, lock semantics, and the operational rules that made it work. | Expands D20. Read before writing E6. |
 | `E1-spine-issues.md` | The E1 issue file, as originally drafted. | **Superseded** — the GitHub issues are authoritative (see below). |
 | `../../CLAUDE.md` | The standing brief — invariants, domain nouns, Archon rule, conventions, commands. Written by E1-0 (issue #1). | **Binding on every session.** The `handoff/CLAUDE.md` draft is retired and now just points here. |
@@ -15,7 +15,7 @@ was ruled and why.
 
 **Rulings after the export live in the addendum**, not in the sections they amend.
 The sections carry `→ Amended by D…` pointers where a ruling changed them — follow
-them. The addendum holds five rulings, all made during the mockup review:
+them. The addendum holds six rulings — five from the mockup review, one from filing E2:
 
 - **D20** image generation: three backends routed per shot; `gpu` covers local image
   gen *and* TTS; hand-made assets always win; retries bounded at 2.
@@ -23,6 +23,9 @@ them. The addendum holds five rulings, all made during the mockup review:
 - **D22** every character declares a species (required typed relation).
 - **D23** relation types are declared per category, with inverses.
 - **D24** arcs get their own page — the screen set is eight, not seven.
+- **D25** canon is founded by proposals, never imported — no bulk-write path for
+  fixtures, E7's migration, or E8's onboarding; loaders raise promotion proposals
+  and the real ruling API ratifies them.
 
 ## Where the issues live
 
@@ -33,13 +36,15 @@ Ryan on Aug 5 2026 rather than merely tested (see the drill in the root `README.
 the worked example of the issue format; read the closed issues, not `E1-spine-issues.md`,
 which was superseded when six of the nine were amended to absorb D20–D24.
 
-**E2 · Canon is next**, and its issue file does not exist yet. Writing it is the first
-piece of work. Follow the procedure below.
+**E2 · Canon is filed and in progress** — issues #23–#29 under the "E2 · Canon"
+milestone, sequenced E2-0 → E2-1 → E2-2 → {E2-3, E2-4} → E2-5 → E2-6, ending with
+the canon bench Ryan operates. There is **no intermediate markdown file** for E2 or
+any later epic — see step 5 of the procedure below.
 
 ## Writing an epic's issue file
 
 Per 6.3, issue files are written **epic-by-epic, just before the epic starts** —
-not all up front. It is E2's turn now.
+not all up front. E2's are filed; E3's turn comes when E2's exit is operated.
 
 1. **Read the whole concept doc, addendum included.** Then re-read the sections that
    epic owns (E2 → Section 3; E3 → Section 4; E4 → 1.1 + 4; E5 → Section 5 + the
@@ -61,8 +66,13 @@ not all up front. It is E2's turn now.
    - **Deliverable** — what exists when it's done, concretely.
    - **Done** — a *machine-checkable* condition. "Tests pass" is not one; "a planted
      contradiction produces an anchored finding whose rewrite remediation fixes it" is.
-5. **Sequence the issues** and state the dependencies at the end of the file, as E1 does.
-6. **State the epic exit** at the top: the thing *Ryan operates*, not reads about.
+5. **File straight to GitHub — there is no intermediate markdown file.** (Ruled while
+   filing E2: E1's file went stale the moment its issues were amended and is kept only
+   as provenance.) Create the epic's milestone first (D18); put the **epic exit and the
+   sequence in the milestone description**; repeat the sequence as a footer in the last
+   issue. Show Ryan the draft set *before* filing — the review happens in conversation,
+   and the filed issues are the only copy.
+6. **State the epic exit** in the milestone: the thing *Ryan operates*, not reads about.
    Ryan gates epics, not issues (6.1).
 
 ## What E1 built, and where

@@ -5,7 +5,7 @@ writing, canon keeping, image and audio generation, assembly, publishing — wit
 Ryan (the showrunner) ruling at every gate.
 
 This file is the distilled brief. The **ruled design** is
-`handoff/docs/concept-and-architecture.md` (D1–D19 in-section, **D20–D24 in the
+`handoff/docs/concept-and-architecture.md` (D1–D19 in-section, **D20–D25 in the
 addendum at the end** — read the addendum, it amends earlier sections). Start at
 `handoff/docs/README.md` for what's authoritative. Nothing overrides the concept
 doc except a later ruling from Ryan.
@@ -45,7 +45,9 @@ doc except a later ruling from Ryan.
   context, implications (blast radius), alternatives, origin & disposition.
   Provisional proposals ride their episode and are visible to checks.
 - **Ratification** — Ryan approving a proposal at its gate. This, and only this,
-  writes canon.
+  writes canon. Founding is no exception (D25): fixtures, imports (E7), and new
+  shows raise **promotion proposals** ruled through the same API — no path writes
+  ratified rows directly, and tests exercise the flow rather than bypassing it.
 
 **Production**
 - **Artifact** — anything produced (outline, script, scene text, shot image, TTS

@@ -387,3 +387,12 @@ just before each epic starts.
   editable and insertable — inserting re-checks episodes that declare a later
   position. Gap found when Ryan said he'd forgotten what "The beacon" was and
   had nowhere to look.
+- **D25 · Canon is founded by proposals, never imported** (ruled Aug 6, 2026):
+  there is no import path that writes ratified facts directly — not for the
+  fixture, not for E7's Dead Light migration, not for E8's empty-show onboarding.
+  Bootstrap canon enters as **promotion proposals** (an entity's full initial
+  sheet as the change) raised by loaders and ruled through the same ruling API
+  Ryan uses; tests exercise that API rather than bypassing it. Invariant 1 stays
+  whole with no carve-outs, and E7's import becomes bulk *raising* plus efficient
+  ruling surfaces rather than a sanctioned breach. Ruled while filing E2's
+  issues; enforced by E2-2 (issue #25) and exercised by E2-4 (issue #27).
