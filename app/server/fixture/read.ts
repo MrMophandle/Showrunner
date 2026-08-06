@@ -197,7 +197,16 @@ function readCategories(dir: string): FixtureCategory[] {
   })
 }
 
-/** `species → species · cardinality: exactly-one · required: yes · inverse: members` */
+/**
+ * `species → species · cardinality: exactly-one · required: yes · inverse: members ·
+ * inherits facts: yes`
+ *
+ * Every part but the last is required (D23). `inherits facts` is optional because its
+ * absence is an answer — facts do not travel that edge — and writing `no` on the edges that
+ * carry nothing would be noise on every sheet to state the default. Present, it is `yes` or
+ * `no` and nothing else: a typo there would silently mean "no", and a character quietly
+ * missing its species' facts is a check reporting clean on something it never read.
+ */
 function readRelationType(sheet: Sheet, bullet: string): RelationTypeDeclaration {
   const [head, ...rest] = bullet.split(' · ')
   const [name, targetCategory] = head!.split(' → ')
@@ -219,12 +228,22 @@ function readRelationType(sheet: Sheet, bullet: string): RelationTypeDeclaration
     return value
   }
 
+  const inherits = declared.get('inherits facts')
+  if (inherits !== undefined && inherits !== 'yes' && inherits !== 'no') {
+    fail(
+      sheet,
+      `relation type \`${name}\` declares \`inherits facts: ${inherits}\` — it is \`yes\`, ` +
+        '`no`, or left off entirely (which means no).',
+    )
+  }
+
   return {
     name: name!.trim(),
     targetCategory: targetCategory!.trim(),
     cardinality: oneOf(sheet, RELATION_CARDINALITY, need('cardinality'), 'cardinality'),
     required: need('required') === 'yes',
     inverse: need('inverse'),
+    inheritsFacts: inherits === 'yes',
   }
 }
 

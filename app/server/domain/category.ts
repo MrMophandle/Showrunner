@@ -28,6 +28,14 @@ import { newId } from './id.ts'
  * to be incomplete, and canon is not. What this module and relation.ts *do* enforce is
  * everything answerable from one write: the type is declared, the target is the right
  * category, and there is room for the edge under its cardinality.
+ *
+ * **A declaration also says whether facts travel it** (`inheritsFacts`, E2-1). D22 rules
+ * that a species' facts load into check scope with its members; the mechanism is general
+ * and the word `species` is not, so the category declares it the way it declares an
+ * inverse. Facts travel the declared edge only, one way — a character inherits from the
+ * species it points at, a species inherits nothing from its members. Left off, facts do not
+ * travel: legal, visible in the declaration, and the honest way for it to fail. The
+ * traversal itself is `factsInScope` in domain/fact.ts.
  */
 
 /** How many edges of one type an entity may declare (D23). `required` is separate, by ruling. */
@@ -52,6 +60,11 @@ export interface RelationTypeDeclaration {
   required: boolean
   /** The name the edge is navigable by from the far end — blast radius from both sides. */
   inverse: string
+  /**
+   * Whether the target's facts load into check scope with the entity that declares this
+   * edge (D22, E2-1). Absent means no, which is what a sheet that never mentions it means.
+   */
+  inheritsFacts?: boolean
 }
 
 /** A declaration once it is in the store, with the ids the graph is actually wired by. */
@@ -59,6 +72,7 @@ export interface RelationType extends RelationTypeDeclaration {
   id: string
   categoryId: string
   targetCategoryId: string
+  inheritsFacts: boolean
 }
 
 export interface CanonCategory {
@@ -174,8 +188,9 @@ export function declareRelationType(
     const id = newId('rtype')
     store.run(
       `INSERT INTO relation_type
-              (id, category_id, name, target_category_id, cardinality, required, inverse_name)
-            VALUES (?, ?, ?, ?, ?, ?, ?)`,
+              (id, category_id, name, target_category_id, cardinality, required, inverse_name,
+               inherits_facts)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       id,
       categoryId,
       declaration.name,
@@ -183,6 +198,7 @@ export function declareRelationType(
       declaration.cardinality,
       declaration.required ? 1 : 0,
       declaration.inverse,
+      declaration.inheritsFacts === true ? 1 : 0,
     )
     return findRelationTypeById(store, id)!
   })
@@ -299,11 +315,12 @@ interface RelationTypeRow {
   cardinality: RelationCardinality
   required: number
   inverse_name: string
+  inherits_facts: number
 }
 
 const SELECT_TYPE = `
   SELECT t.id, t.category_id, t.name, t.target_category_id, t.cardinality, t.required,
-         t.inverse_name, c.key AS target_category_key
+         t.inverse_name, t.inherits_facts, c.key AS target_category_key
     FROM relation_type t
     JOIN canon_category c ON c.id = t.target_category_id`
 
@@ -339,6 +356,7 @@ const hydrateRelationType = (row: RelationTypeRow): RelationType => ({
   cardinality: row.cardinality,
   required: row.required === 1,
   inverse: row.inverse_name,
+  inheritsFacts: row.inherits_facts === 1,
 })
 
 export function findRelationTypeById(store: Store, id: string): RelationType | undefined {

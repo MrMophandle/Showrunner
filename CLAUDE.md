@@ -33,15 +33,22 @@ doc except a later ruling from Ryan.
   a category is an edit, not engineering.
 - **Entity** — one instance: identity + standing (core / recurring / one-shot / retired),
   prose body, facts, references, relations. Registering one makes a **`candidate`**.
-- **Fact** — an atomic checkable statement with lineage (established-in, ratified-at)
-  and status (ratified / provisional / reverted). Append-only with validity
-  ranges, so "canon as of episode 4" is answerable (D9).
+- **Fact** — an atomic checkable statement with lineage (established-in episode,
+  ratified-at ruling) and a validity range, so "canon as of episode 4" is answerable (D9).
+  **Rows are immutable and status is derived**; the only state change is a closure row,
+  and a supersession closes the predecessor and opens the successor at one ruling — so
+  ratifying a provisional fact writes a new row. Ranges count in `canon_ruling.seq`, the
+  monotonic clock canon is read by; **a date maps onto a ruling, never the reverse**.
+  `canonAsOf` is ratified facts only; provisional facts ride their episode and reach
+  checks via the scope helper. **E2-2 grows `canon_ruling` by ADD COLUMN, never a sibling.**
 - **Relation** — a *typed* edge. Relation types are **declared per category** with a
   target category, cardinality, and an inverse name; an undeclared type is invalid (D23).
   Every character declares exactly one `species` relation, required, `unknown` if unknown
   — never blank (D22); **`unknown` is a relation row with a NULL target**, never a
-  sentinel entity. A species' facts load into check scope with its members. The write
-  enforces type, target and cardinality; **`required` is enforced at ratification**.
+  sentinel entity. A declaration also says whether **facts travel** it (`inherits facts`),
+  one way, declarer → target — so D22's inheritance is data, and an exception displaces
+  the *lineage*: a species edit carries the exception onto the successor, visibly stale.
+  The write enforces type, target and cardinality; **`required` is enforced at ratification**.
 - **Proposal** — the only way canon changes. Five parts: the change, usage
   context, implications (blast radius), alternatives, origin & disposition.
   Provisional proposals ride their episode and are visible to checks.

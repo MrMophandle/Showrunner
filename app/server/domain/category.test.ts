@@ -110,6 +110,11 @@ describe('the relation types a category declares (D23)', () => {
         cardinality: 'exactly-one',
         required: true,
         inverse: 'members',
+        // D22's other half, and it is DATA: the Halvani sheet's facts load into check scope
+        // with every character that declares Halvani because this line says so, not because
+        // domain/fact.ts knows the word `species` (E2-1). This assertion is what pins it —
+        // delete the words from the sheet and this test is what notices.
+        inheritsFacts: true,
       }),
       expect.objectContaining({
         name: 'stationed-at',
@@ -117,6 +122,9 @@ describe('the relation types a category declares (D23)', () => {
         cardinality: 'at-most-one',
         required: false,
         inverse: 'crew',
+        // A dockworker does not inherit the harbour's facts by standing in it. Absence on
+        // the sheet is an answer, and it is this one.
+        inheritsFacts: false,
       }),
       expect.objectContaining({
         name: 'carries',
@@ -124,6 +132,7 @@ describe('the relation types a category declares (D23)', () => {
         cardinality: 'any',
         required: false,
         inverse: 'carried-by',
+        inheritsFacts: false,
       }),
     ])
   })
@@ -145,6 +154,7 @@ describe('the relation types a category declares (D23)', () => {
           cardinality: t.cardinality,
           required: t.required,
           inverse: t.inverse,
+          inheritsFacts: t.inheritsFacts,
         })),
       ).toEqual(category.relationTypes)
     }

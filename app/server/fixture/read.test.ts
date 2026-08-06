@@ -107,7 +107,8 @@ describe('the Grey Harbor fixture — the shapes that must be complete', () => {
       }
     }
 
-    // D22's species declaration is the first of them, and it is the required one.
+    // D22's species declaration is the first of them, it is the required one, and it is the
+    // only one facts travel (E2-1) — the sheet is where that is said, not the code.
     const character = show.categories.find((c) => c.key === 'character')!
     expect(character.relationTypes.find((t) => t.name === 'species')).toEqual({
       name: 'species',
@@ -115,7 +116,21 @@ describe('the Grey Harbor fixture — the shapes that must be complete', () => {
       cardinality: 'exactly-one',
       required: true,
       inverse: 'members',
+      inheritsFacts: true,
     })
+    expect(
+      character.relationTypes.filter((t) => t.inheritsFacts).map((t) => t.name),
+    ).toEqual(['species'])
+  })
+
+  it('refuses a third answer to `inherits facts`, because a typo would mean “no”', () => {
+    expect(
+      afterEditing(
+        'canon/character/_category.md',
+        '· inherits facts: yes',
+        '· inherits facts: sometimes',
+      ),
+    ).toThrow(/inherits facts: sometimes/)
   })
 
   it('the arc carries a statement, and every waypoint what it means and what landing looks like (D24)', () => {
