@@ -15,7 +15,7 @@ was ruled and why.
 
 **Rulings after the export live in the addendum**, not in the sections they amend.
 The sections carry `→ Amended by D…` pointers where a ruling changed them — follow
-them. As of Aug 4 2026 the addendum holds:
+them. The addendum holds five rulings, all made during the mockup review:
 
 - **D20** image generation: three backends routed per shot; `gpu` covers local image
   gen *and* TTS; hand-made assets always win; retries bounded at 2.
@@ -27,25 +27,34 @@ them. As of Aug 4 2026 the addendum holds:
 ## Where the issues live
 
 GitHub Issues on `MrMophandle/Showrunner`, one milestone per epic (D18).
-**E1 · The spine** is filed as issues #1–#9 and is the worked example of the format.
 
-The GitHub issues are authoritative over `E1-spine-issues.md`: six of the nine were
-amended on Aug 4 2026 to absorb D20–D24 (see each issue's body). If you need the E1
-format as a template, read the live issues, not the file.
+**E1 · The spine is done** — issues #1–#9, all closed, and the epic exit was operated by
+Ryan on Aug 5 2026 rather than merely tested (see the drill in the root `README.md`). It is
+the worked example of the issue format; read the closed issues, not `E1-spine-issues.md`,
+which was superseded when six of the nine were amended to absorb D20–D24.
+
+**E2 · Canon is next**, and its issue file does not exist yet. Writing it is the first
+piece of work. Follow the procedure below.
 
 ## Writing an epic's issue file
 
 Per 6.3, issue files are written **epic-by-epic, just before the epic starts** —
-not all up front. When it's E2's turn:
+not all up front. It is E2's turn now.
 
 1. **Read the whole concept doc, addendum included.** Then re-read the sections that
    epic owns (E2 → Section 3; E3 → Section 4; E4 → 1.1 + 4; E5 → Section 5 + the
    mockups; E6 → Section 5.5/5.6 + `D20-image-backends.md`).
 2. **Check §6.2 for that epic's `→ Scope grew` note.** E2, E5, and E6 all gained
    scope after the original export.
-3. **Read "Constraints E1 leaves behind" below.** They are the things one epic decided
-   that bind a later one, and every session that skipped them lost time rediscovering
-   the reasoning.
+3. **Read "What E1 built, and where" and "Constraints E1 leaves behind" below.** The
+   first tells you which module a new issue extends rather than rebuilds; the second is
+   the things one epic decided that bind a later one, and every session that skipped
+   them lost time rediscovering the reasoning.
+   **Size each issue by how many distinct surfaces it touches, not by how hard it is.**
+   E1's hardest issue (the runner) went smoothly because it was one idea; its longest
+   (the operating page) sprawled because it was a server API, a browser, a new stage,
+   and a config fix at once. A deferral counts as a surface — E1-4 shipped no HTTP
+   routes and quietly loaded all of them onto E1-8.
 4. **Write one issue per Opus session** (6.1). Every issue carries three parts:
    - **Context to load** — the exact sections and prior artifacts, so the session
      doesn't have to hunt.
@@ -55,6 +64,51 @@ not all up front. When it's E2's turn:
 5. **Sequence the issues** and state the dependencies at the end of the file, as E1 does.
 6. **State the epic exit** at the top: the thing *Ryan operates*, not reads about.
    Ryan gates epics, not issues (6.1).
+
+## What E1 built, and where
+
+The map an epic-writer needs before deciding what a new issue has to build versus extend.
+Everything below exists, is tested, and was operated end to end. Read the module, not this
+summary, before writing an issue against it — but read this first to know which module.
+
+**The one seam onto SQLite.** `db/store.ts` is the only file that imports `node:sqlite`;
+everything else takes a `Store`. `db/migrate.ts` applies plain numbered SQL from
+`db/migrations/` (five so far: spine, runner, event, gate, cost). Keep both true — the
+driver swap stays a swap only while nothing else holds a handle.
+
+**The spine** (`domain/`). `spine.ts` — show, season, episode, scene. `artifact.ts` —
+artifacts with provenance, inputs, revisions, and **computed** freshness (`staleArtifacts`,
+`artifactFreshness`; there is no `is_stale` column and never will be). `arc.ts` — arcs with
+prose statements, waypoints carrying descriptions and landing criteria, episode positions,
+`isVanilla`, `episodesNeedingRecheck`, and an append-only edit history. `canon.ts` —
+deliberately thin: `registerEntity`, `findEntity`, `entitiesOfShow`, and nothing else.
+
+**The runner** (`runner/`). `step.ts` — the `Step`/`Stage` types, `LockName`, and
+`pauseRun`, which throws `RunPaused` to park a run on a decision. `runner.ts` — scheduling,
+per-episode serialization, named locks, bounded retry, crash reclaim. `run.ts` — the run
+ledger. `gate.ts` — gates, rounds, rulings, routed reject notes. `stages.ts` — the
+name→code catalogue; one stage in it (`demo`), and adding one is a code change with a test.
+
+**The record** (`events.ts`). Append-only, enforced by triggers, ordered by a monotonic
+`seq` rather than a clock. `EventLog.append` + `subscribe`; `eventsOfRun`,
+`transitionsOfRun`, `eventsSince`. The runner writes to it and never reads it back — state
+lives in the runner's own tables.
+
+**Models and money** (`llm/`, `cost.ts`). One `LLMAdapter`, two backends (`anthropic.ts`,
+`cli.ts`) chosen by `choose.ts`, which also reports whether the choice can actually reach a
+model. `fake.ts` is the test path — no test may touch the network. `cost.ts` prices the
+**three** input token counts at their three different rates and rolls up to step, run,
+episode, and show.
+
+**The fixture** (`fixture/`). `sheet.ts` parses the markdown format, `read.ts` turns sheets
+into types **and refuses anything incomplete**, `load.ts` reconciles into the database
+through the domain functions above. `read.ts` already parses facts, relations, and
+standings and validates them — it just has nowhere to put them yet, which is E2's seam
+rather than E2's rewrite.
+
+**The surface** (`app.ts`, `operating.ts`, `app/web/`). Six HTTP endpoints and one unstyled
+page. `operating.ts` composes the button sentences server-side where they have tests, and
+`POST /api/run` refuses with the same string the disabled button was already showing.
 
 ## Constraints E1 leaves behind
 

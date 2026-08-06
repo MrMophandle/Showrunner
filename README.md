@@ -4,16 +4,21 @@ A containerized web app for multi-show episodic video production — writing, ca
 keeping, image and audio generation, assembly, and publishing, with the showrunner
 ruling at every gate.
 
-**Status: E1 complete, pending Ryan's ruling on the epic.** The spine stands: the domain
-schema, the runner with its named locks and crash-resume, the gate primitive, the
-append-only event log over SSE, the Claude adapter and cost ledger, the Grey Harbor
-fixture, and a bare-bones operating page to drive the whole thing from. **The drill that
-ends E1 is below** — it is Ryan's to perform, not a test's to simulate.
+**Status: E1 complete and operated.** The spine stands: the domain schema, the runner with
+its named locks and crash-resume, the gate primitive, the append-only event log over SSE,
+the Claude adapter and cost ledger, the Grey Harbor fixture, and a bare-bones operating
+page to drive the whole thing from.
+
+**The drill below was run for real on Aug 5 2026 and passed.** A run called the model once,
+opened a gate, and parked; the process was `SIGKILL`ed; on restart the gate was still open
+at the same round with the same paragraph and the same run id; approving it carried the run
+to done **without a second call**. One call in, one call out, across a kill — which is the
+whole thing E1 exists to prove. E2 (canon) is next.
 
 ## Running it
 
 ```
-cp .env.example .env                  # once — put your ANTHROPIC_API_KEY in it
+cp -n .env.example .env               # once; -n so it never overwrites an existing one
 docker compose up                     # the app on http://localhost:4455
 ```
 
@@ -57,11 +62,12 @@ of real money. Nothing below needs the code read.
 npm install
 npm run build
 npm run fixture:load
-cp .env.example .env                   # once — put your key in it, or leave it empty
-docker compose up                      # to use the claude CLI instead
+cp -n .env.example .env                # -n: never overwrites a .env you already have
+docker compose up
 ```
 
-If you already have a `.env`, skip that line — there is nothing to export.
+Put your `ANTHROPIC_API_KEY` in `.env`, or leave it empty to use the `claude` CLI instead.
+Nothing to export, in this shell or any other.
 
 Open <http://localhost:4455>.
 
