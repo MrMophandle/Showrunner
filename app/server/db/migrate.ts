@@ -13,14 +13,17 @@ import type { Store } from './store.ts'
 export const MIGRATION_DIR = join(import.meta.dirname, 'migrations')
 
 /**
- * Table names E2 owns and has not built yet. E1-2 must not create them — that is what keeps
- * E2 from having to ALTER (or in SQLite, rebuild) E1-2's tables to fit canon in. See
- * 0001_spine.sql, whose reserved block lists all five and is not edited: 0006 took
- * `relation`, `relation_type` and `canon_category` and 0007 took `fact`, each saying so in
- * its own header. What is left is `proposal` (E2-2) — and when it lands it grows 0007's
- * `canon_ruling` rather than adding a second disposition table beside it.
+ * Table names an epic owns and has not built yet. The epic before it must not create them —
+ * that is what keeps a later epic from having to ALTER (or in SQLite, rebuild) an earlier
+ * one's tables. 0001_spine.sql reserved five for E2 and is not edited: 0006 took `relation`,
+ * `relation_type` and `canon_category`, 0007 took `fact`, and 0008 took `proposal` — the
+ * last of them — each saying so in its own header.
+ *
+ * **Empty is the correct state, not a dead constant.** A reserved name that nothing has
+ * built is the only thing the migration test can prove is still unclaimed, so an epic that
+ * reserves one adds it here, and the test that reads it stays where it is.
  */
-export const RESERVED_TABLE_NAME: readonly string[] = ['proposal']
+export const RESERVED_TABLE_NAME: readonly string[] = []
 
 export interface Migration {
   number: number

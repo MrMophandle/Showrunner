@@ -89,12 +89,17 @@ import { relationsFrom } from './relation.ts'
  */
 
 /**
- * The dispositions that touch a fact's validity. E2-2 grows this union as it grows
- * `canon_ruling` — 3.3's `rejected` and `deferred` close a provisional fact that was only
- * ever riding an episode. Adding one is a code change with a test (the Archon rule), which
- * is why there is no CHECK on the column and no kinds table.
+ * Every disposition Ryan makes, and all four are kept forever (3.3). E2-1 wrote the two
+ * that touch a fact's validity from above (`ratification` opens one, `revert` closes one
+ * with nothing in its place); E2-2 added the two that put down a claim that was only ever
+ * riding an episode. Adding one is a code change with a test (the Archon rule), which is
+ * why there is no CHECK on the column and no kinds table.
+ *
+ * Only a `ratification` writes canon. A `rejection` and a `deferral` write nothing at all —
+ * they close the provisional facts their proposal was riding with, and the note on the
+ * ruling is what E4's writer context reads back.
  */
-export const CANON_RULING_KIND = ['ratification', 'revert'] as const
+export const CANON_RULING_KIND = ['ratification', 'revert', 'rejection', 'deferral'] as const
 export type CanonRulingKind = (typeof CANON_RULING_KIND)[number]
 
 /** Ryan approving or overturning something, and the clock canon is read by. */
@@ -104,6 +109,12 @@ export interface CanonRuling {
   kind: CanonRulingKind
   /** For humans, and for `rulingAsOfDate`. Never for ordering. */
   at: string
+  /** The proposal this disposed of (E2-2). NULL on a ruling made without one. */
+  proposalId: string | null
+  /** The gate it was convened at, when one convened it. NULL from the bench or founding. */
+  gateId: string | null
+  /** Ryan's words. Kept forever — a rejection's note is read by future writer runs. */
+  note: string
 }
 
 /** What a fact is at a moment. Derived from lineage and closure, never stored. */
@@ -161,21 +172,35 @@ export type CanonScope = { entityId: string } | { showId: string }
 
 /**
  * Records a ruling — the anchor a fact's lineage points at, and one tick of the clock canon
- * is read by. E2-2's ruling API is what calls this; it is not itself a ruling any more than
- * `registerEntity` is a ratification, and E2-2 grows the row it writes (the proposal it
- * disposed of, the gate it was ruled at, Ryan's note) by ADD COLUMN on the same table.
+ * is read by. **domain/proposal.ts's ruling API is what calls this**, and this is not itself
+ * a ruling any more than `registerEntity` is a ratification: the disposition it carries is
+ * what makes it one, and there is exactly one place that supplies it.
+ *
+ * The disposition columns arrived with 0008, by ADD COLUMN on this same table, because a
+ * second ledger beside it would fork the one order canon is read by.
  */
-export function recordRuling(store: Store, kind: CanonRulingKind): CanonRuling {
+export function recordRuling(
+  store: Store,
+  kind: CanonRulingKind,
+  disposition?: { proposalId?: string; gateId?: string; note?: string },
+): CanonRuling {
   const row = store.get<RulingRow>(
-    'INSERT INTO canon_ruling (kind) VALUES (?) RETURNING seq, kind, at',
+    `INSERT INTO canon_ruling (kind, proposal_id, gate_id, note) VALUES (?, ?, ?, ?)
+     RETURNING ${RULING_COLUMNS}`,
     kind,
+    disposition?.proposalId ?? null,
+    disposition?.gateId ?? null,
+    disposition?.note ?? '',
   )!
-  return { seq: row.seq, kind: row.kind, at: row.at }
+  return hydrateRuling(row)
 }
 
 export function findRuling(store: Store, seq: number): CanonRuling | undefined {
-  const row = store.get<RulingRow>('SELECT seq, kind, at FROM canon_ruling WHERE seq = ?', seq)
-  return row && { seq: row.seq, kind: row.kind, at: row.at }
+  const row = store.get<RulingRow>(
+    `SELECT ${RULING_COLUMNS} FROM canon_ruling WHERE seq = ?`,
+    seq,
+  )
+  return row && hydrateRuling(row)
 }
 
 /**
@@ -185,10 +210,10 @@ export function findRuling(store: Store, seq: number): CanonRuling | undefined {
  */
 export function rulingAsOfDate(store: Store, date: string): CanonRuling | undefined {
   const row = store.get<RulingRow>(
-    'SELECT seq, kind, at FROM canon_ruling WHERE at <= ? ORDER BY at DESC, seq DESC LIMIT 1',
+    `SELECT ${RULING_COLUMNS} FROM canon_ruling WHERE at <= ? ORDER BY at DESC, seq DESC LIMIT 1`,
     date,
   )
-  return row && { seq: row.seq, kind: row.kind, at: row.at }
+  return row && hydrateRuling(row)
 }
 
 // ── Writing facts ───────────────────────────────────────────────────────────────
@@ -271,22 +296,31 @@ export function supersedeFact(
 }
 
 /**
- * Closes a fact with nothing in its place. The ruling's kind says why: a `revert` ruling
- * over ratified canon — an abandoned episode's facts are reverted one by one, never removed
- * (3.3) — or, once E2-2 exists, a rejection or deferral putting down a provisional fact that
- * was only riding an episode. Structurally the same act, which is why there is one function
- * and the lineage carries the difference.
+ * Closes a fact. The ruling's kind says why: a `revert` over ratified canon — an abandoned
+ * episode's facts are reverted one by one, never removed (3.3) — or a `rejection` or
+ * `deferral` putting down a provisional fact that was only riding an episode (E2-2).
+ * Structurally the same act, which is why there is one function and the lineage carries the
+ * difference.
  *
- * The fact does not disappear. It stops being valid, and a read as of any earlier ruling
- * still returns it.
+ * **`supersededBy` names a successor that already exists**, which is the one thing
+ * `supersedeFact` cannot do, and E2-2's ratification is why it is here: ratifying a claim
+ * that replaces standing canon closes TWO facts at one ruling — the provisional claim and
+ * the ratified predecessor — and both give way to the ONE canon fact the ruling wrote. Left
+ * out, the closure has no successor, which is the revert.
+ *
+ * The fact does not disappear either way. It stops being valid, and a read as of any earlier
+ * ruling still returns it.
  */
 export function closeFact(
   store: Store,
-  closure: { factId: string; ruling: number; note?: string },
+  closure: { factId: string; ruling: number; note?: string; supersededBy?: string },
 ): Fact {
   return store.transaction(() => {
     const fact = requireOpen(store, closure.factId)
-    close(store, fact.id, closure.ruling, null, closure.note ?? '')
+    if (closure.supersededBy !== undefined && !findFact(store, closure.supersededBy)) {
+      throw new Error(`No such fact: ${closure.supersededBy}`)
+    }
+    close(store, fact.id, closure.ruling, closure.supersededBy ?? null, closure.note ?? '')
     return findFact(store, fact.id)!
   })
 }
@@ -591,7 +625,21 @@ interface RulingRow {
   seq: number
   kind: CanonRulingKind
   at: string
+  proposal_id: string | null
+  gate_id: string | null
+  note: string
 }
+
+const RULING_COLUMNS = 'seq, kind, at, proposal_id, gate_id, note'
+
+const hydrateRuling = (row: RulingRow): CanonRuling => ({
+  seq: row.seq,
+  kind: row.kind,
+  at: row.at,
+  proposalId: row.proposal_id,
+  gateId: row.gate_id,
+  note: row.note,
+})
 
 interface FactRow {
   id: string
