@@ -42,6 +42,12 @@ export interface Episode {
   number: number
   title: string
   lifecycle: EpisodeLifecycle
+  /**
+   * When Ryan put the episode down (E2-3). NULL is alive, and this is deliberately NOT a
+   * member of `EPISODE_LIFECYCLE`: an episode dies at any stage, so abandonment is
+   * orthogonal to the stage it reached, which it keeps.
+   */
+  abandonedAt: string | null
   createdAt: string
   updatedAt: string
 }
@@ -174,6 +180,36 @@ export function moveLifecycleTo(
   return findEpisode(store, episodeId)!
 }
 
+/**
+ * Writes the moment an episode was put down. **The dumb write beneath the flow** — the
+ * house pattern `declarePosition` and `establishFact` already hold: this moves one column,
+ * and `abandonEpisode` (domain/episode-canon.ts) is what raises the revert proposals and
+ * parks the claims that were riding. Calling this directly abandons an episode and leaves
+ * the canon it established standing, which is a half-abandonment nobody asked for.
+ *
+ * Refuses the second one. Abandonment is not a toggle: the reverts it raised are already in
+ * Ryan's queue, and putting the episode down twice would raise them again.
+ */
+export function markAbandoned(store: Store, episodeId: string): Episode {
+  const episode = findEpisode(store, episodeId)
+  if (!episode) throw new Error(`No such episode: ${episodeId}`)
+  if (episode.abandonedAt !== null) {
+    throw new Error(
+      `${episodeLabel(episode.number)} “${episode.title}” was already abandoned at ` +
+        `${episode.abandonedAt}. Its reverts are already raised; ruling them is what is left.`,
+    )
+  }
+
+  store.run(
+    `UPDATE episode
+        SET abandoned_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'),
+            updated_at   = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+      WHERE id = ?`,
+    episodeId,
+  )
+  return findEpisode(store, episodeId)!
+}
+
 // ── Scene ───────────────────────────────────────────────────────────────────────
 
 /**
@@ -244,6 +280,7 @@ interface EpisodeRow {
   number: number
   title: string
   lifecycle: EpisodeLifecycle
+  abandoned_at: string | null
   created_at: string
   updated_at: string
 }
@@ -277,6 +314,7 @@ const hydrateEpisode = (row: EpisodeRow): Episode => ({
   number: row.number,
   title: row.title,
   lifecycle: row.lifecycle,
+  abandonedAt: row.abandoned_at,
   createdAt: row.created_at,
   updatedAt: row.updated_at,
 })

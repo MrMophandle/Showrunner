@@ -85,7 +85,16 @@ const PROPOSAL_TABLE = [
   'proposal_relation',
 ]
 
+/**
+ * The one table E2-3 owns. Its three flows are otherwise pure proposal-raising, and the two
+ * proposal kinds they add (`revert`, `landing`) cost no SQL at all — which is what 0007 and
+ * 0008 bought by refusing a CHECK on `kind`. `episode` is not rebuilt either: `abandoned_at`
+ * is an ADD COLUMN, because an episode dies at any lifecycle stage.
+ */
+const EPISODE_CANON_TABLE = ['proposal_landing']
+
 const EVERY_TABLE = [
+  ...EPISODE_CANON_TABLE,
   ...SPINE_TABLE,
   ...RUNNER_TABLE,
   ...EVENT_TABLE,
@@ -438,5 +447,89 @@ describe('0008 · growing canon_ruling, not rebuilding it', () => {
     store.run("INSERT INTO canon_ruling (kind) VALUES ('ratification')")
     store.run("INSERT INTO canon_ruling (kind) VALUES ('revert')")
     expect(store.get('SELECT COUNT(*) AS n FROM canon_ruling')).toEqual({ n: 3 })
+  })
+})
+
+/**
+ * 0009 grows `episode` the way 0008 grew `canon_ruling` and 0006 grew `canon_entity`: ADD
+ * COLUMN, never a rebuild. Four tables hold foreign keys into `episode` — `scene`,
+ * `artifact`, `episode_arc_position`, `proposal` — and SQLite has no ADD CONSTRAINT, so a
+ * rebuilt episode table is a rebuilt half of the schema. The tempting alternative was
+ * widening 0001's `CHECK (lifecycle IN (…))` to admit 'abandoned', which would have cost
+ * exactly that rebuild AND said the wrong thing: an episode dies at any stage and keeps the
+ * stage it reached.
+ */
+describe('0009 · abandonment is a column on episode, not a lifecycle stage', () => {
+  it('gives a populated episode table the column, keeping every row where it was', () => {
+    applyThrough(8)
+    store.run("INSERT INTO show (id, key, title) VALUES ('show1', 'greyharbor', 'Grey Harbor')")
+    store.run("INSERT INTO season (id, show_id, number) VALUES ('season1', 'show1', 1)")
+    store.run(
+      `INSERT INTO episode (id, season_id, number, title, lifecycle)
+            VALUES ('ep1', 'season1', 1, 'The Long Pier', 'script')`,
+    )
+    store.run("INSERT INTO scene (id, episode_id, ordinal, heading) VALUES ('sc1', 'ep1', 1, 'EXT.')")
+
+    expect(migrate(store).map((m) => m.number)).toEqual(
+      migrationsOnDisk()
+        .map((m) => m.number)
+        .filter((number) => number > 8),
+    )
+
+    // The stage it reached is still there, and NULL is alive.
+    expect(store.get('SELECT id, lifecycle, abandoned_at FROM episode')).toEqual({
+      id: 'ep1',
+      lifecycle: 'script',
+      abandoned_at: null,
+    })
+    // The foreign key a rebuild would have had to re-point still points.
+    expect(store.get('SELECT episode_id FROM scene')).toEqual({ episode_id: 'ep1' })
+  })
+
+  it('leaves the lifecycle CHECK exactly as 0001 wrote it — abandonment is orthogonal', () => {
+    migrate(store)
+    store.run("INSERT INTO show (id, key, title) VALUES ('show1', 'greyharbor', 'Grey Harbor')")
+    store.run("INSERT INTO season (id, show_id, number) VALUES ('season1', 'show1', 1)")
+
+    expect(() =>
+      store.run(
+        `INSERT INTO episode (id, season_id, number, title, lifecycle)
+              VALUES ('ep1', 'season1', 1, 'The Long Pier', 'abandoned')`,
+      ),
+    ).toThrow(/CHECK constraint failed/)
+
+    // An episode abandoned at 'premise' keeps 'premise'. That is the whole point.
+    store.run(
+      `INSERT INTO episode (id, season_id, number, title, abandoned_at)
+            VALUES ('ep1', 'season1', 1, 'The Long Pier', '2026-08-06T00:00:00.000Z')`,
+    )
+    expect(store.get('SELECT lifecycle, abandoned_at FROM episode')).toEqual({
+      lifecycle: 'premise',
+      abandoned_at: '2026-08-06T00:00:00.000Z',
+    })
+  })
+
+  it('takes no CHECK-widening for its two new proposal kinds — the payoff 0007 bought', () => {
+    migrate(store)
+    store.run("INSERT INTO show (id, key, title) VALUES ('show1', 'greyharbor', 'Grey Harbor')")
+    store.run(
+      "INSERT INTO canon_entity (id, show_id, category_key, name) VALUES ('ent1', 'show1', 'character', 'Mara')",
+    )
+
+    // `revert` and `landing` are a widened TypeScript union in domain/proposal.ts and
+    // nothing else. Had 0008 put a CHECK on `kind`, this line would have been a rebuild.
+    for (const kind of ['revert', 'landing']) {
+      store.run(
+        'INSERT INTO proposal (id, entity_id, kind, raised_by) VALUES (?, ?, ?, ?)',
+        `prop_${kind}`,
+        'ent1',
+        kind,
+        'ryan',
+      )
+    }
+    expect(store.all('SELECT kind FROM proposal ORDER BY kind')).toEqual([
+      { kind: 'landing' },
+      { kind: 'revert' },
+    ])
   })
 })

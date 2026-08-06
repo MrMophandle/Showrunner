@@ -81,8 +81,25 @@ import { episodeLabel, findEpisode, type Episode } from './spine.ts'
  * unknown is legal canon, and absent is not.
  */
 
-/** What a proposal proposes. A promotion is the other two plus a sheet, raised together. */
-export const PROPOSAL_KIND = ['fact-delta', 'relation-delta', 'promotion'] as const
+/**
+ * What a proposal proposes. A promotion is the first two plus a sheet, raised together.
+ *
+ * **E2-3 widened this, and the widening cost no migration** — which is the whole reason
+ * 0007 and 0008 refused a CHECK on the column. `revert` overturns a ratified fact instead
+ * of writing one (3.3): abandoning an episode raises one per fact whose lineage names it,
+ * and ratifying one closes that fact with NO successor. `landing` is D8's — an episode
+ * declaring an arc position raises it, and Ryan ratifying it turns "arc1 reached waypoint2
+ * in ep01" into a fact with lineage. Both are raised by domain/episode-canon.ts and ruled
+ * by the same three verbs below, because there is one ruling API and a kind of change is
+ * not a surface.
+ */
+export const PROPOSAL_KIND = [
+  'fact-delta',
+  'relation-delta',
+  'promotion',
+  'revert',
+  'landing',
+] as const
 export type ProposalKind = (typeof PROPOSAL_KIND)[number]
 
 /**
@@ -234,6 +251,12 @@ export function raiseProposal(store: Store, draft: ProposalDraft): Proposal {
       throw new Error(
         `“${entity.name}” is already active canon, so there is nothing to promote. A change ` +
           'to an entity that has been ruled on is a fact or relation delta, with a before.',
+      )
+    }
+    if (draft.kind === 'revert' && facts.some((part) => part.supersedes === undefined)) {
+      throw new Error(
+        'A revert names the ratified fact it overturns — that is its whole content (3.3). ' +
+          'Put the fact in `supersedes`; there is no "after" to write.',
       )
     }
     for (const part of facts) {
@@ -699,6 +722,20 @@ function writeCanon(store: Store, proposal: Proposal, ruling: CanonRuling): void
   }
 
   for (const part of proposal.change.facts) {
+    // A REVERT overturns canon instead of writing it (3.3, E2-3). The part names a ratified
+    // fact in `supersedes` and this ruling closes it with NO SUCCESSOR — which is what
+    // `reverted` means and what makes an as-of read before the ruling still answer with it.
+    // No new row: there is no "after" to a revert, and writing one would make it a
+    // supersession wearing the wrong word. The rest of this function is a no-op for the
+    // kind — a revert carries no relations, no sheet and no references — so the branch is
+    // here, where the facts are, rather than as a second ratification path.
+    if (proposal.kind === 'revert') {
+      if (part.supersedes !== null) {
+        closeFact(store, { factId: part.supersedes, ruling: ruling.seq, note: ruling.note })
+      }
+      continue
+    }
+
     const written = establishFact(store, {
       entityId: entity.id,
       statement: part.statement,

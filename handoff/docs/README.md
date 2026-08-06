@@ -51,10 +51,10 @@ not all up front. E2's are filed; E3's turn comes when E2's exit is operated.
    mockups; E6 → Section 5.5/5.6 + `D20-image-backends.md`).
 2. **Check §6.2 for that epic's `→ Scope grew` note.** E2, E5, and E6 all gained
    scope after the original export.
-3. **Read "What E1 built, and where" and "Constraints E1 leaves behind" below.** The
-   first tells you which module a new issue extends rather than rebuilds; the second is
-   the things one epic decided that bind a later one, and every session that skipped
-   them lost time rediscovering the reasoning.
+3. **Read "What E1 built, and where" and both "Constraints … leaves behind" sections
+   below.** The first tells you which module a new issue extends rather than rebuilds; the
+   others are the things one epic decided that bind a later one, and every session that
+   skipped them lost time rediscovering the reasoning.
    **Size each issue by how many distinct surfaces it touches, not by how hard it is.**
    E1's hardest issue (the runner) went smoothly because it was one idea; its longest
    (the operating page) sprawled because it was a server API, a browser, a new stage,
@@ -224,6 +224,51 @@ not a mock and not a test — `npm test` drives it through the fake backend, and
 on the page drives it through the real one. It stays until E3's real stages give the drill
 something better to run on, and whoever removes it should move the kill-and-resume drill in
 `README.md` onto whatever replaces it rather than deleting both.
+
+## Constraints E2 leaves behind
+
+The same thing one epic down: decisions E2 made that are correct where they were made and
+are a trap somewhere else. E1's list above is the sibling, and it is the model — each of
+these is written here because the alternative is a later session rediscovering it.
+
+### A waypoint landing needs a subject entity (E2-3, issue #26)
+
+D8 says landing a waypoint becomes a fact through the proposal flow, and E2-3 built that:
+`landPosition` in `domain/episode-canon.ts` declares the position and raises the landing
+proposal beside it. But a fact is about an **entity**, and `proposal.entity_id` is
+`NOT NULL` — while `arc` carries no entity link at all, because an arc is a shape a season
+makes rather than a claim about one character.
+
+So the caller supplies it: `landPosition({ …, subject })`, the canon entity the landing
+reads on. **This lands on E4's writer step**, which is what will call `landPosition` when a
+run declares an episode's position — it has to answer "which character or place is this
+landing a claim about", and there is no default the schema can supply. For a character arc
+it is the character; for a story arc it is whatever the arc is actually about, and that is
+a writing judgement, not a lookup.
+
+Two roads were not taken, and knowing why saves re-opening them. Making `entity_id`
+nullable would have broken the one thing that makes blast radius answerable in a single
+query — every proposal has a subject. Putting a subject entity on `arc` would have forced
+one answer per arc at creation time, before anybody knows which of a story arc's several
+subjects an individual episode's landing reads on.
+
+### `sweepEpisode` is a read, and E4's approval gate is what calls it (E2-3, issue #26)
+
+The completion sweep collects every proposal still riding an episode into one final ruling
+pass (1.2). E2-3 built the collection and **deliberately built nothing that triggers it** —
+nothing in this app advances an episode's lifecycle yet, and inventing approval mechanics to
+exercise a sweep would have been E4's design made by the wrong epic. So `sweepEpisode` is a
+callable flow with a named seam, exactly as `pauseRun` was the seam E1-4 hung its gates off.
+
+**E4 wires it:** the final approval gate calls `sweepEpisode(store, episodeId)`, renders
+each `outstanding` proposal with its own `blastRadius`, and convenes E2-2's
+`createProposalRulings` on them **one at a time** — one artifact, one ruling. It rules none
+of them itself, and no bulk-approve belongs on that gate.
+
+The sweep collects **existing** proposals only. Extracting the implicit facts out of written
+prose is LLM work and is E3/E4's: those extractors raise proposals riding the episode, and
+this sweep collects them without a line changing here. That is the whole reason it was built
+as a collector rather than as something that also generates.
 
 ## Working agreements that bind every session
 
