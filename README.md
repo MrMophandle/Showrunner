@@ -4,11 +4,16 @@ A containerized web app for multi-show episodic video production — writing, ca
 keeping, image and audio generation, assembly, and publishing, with the showrunner
 ruling at every gate.
 
-**Status: E1 complete, pending Ryan's ruling on the epic.** The spine stands: the domain
-schema, the runner with its named locks and crash-resume, the gate primitive, the
-append-only event log over SSE, the Claude adapter and cost ledger, the Grey Harbor
-fixture, and a bare-bones operating page to drive the whole thing from. **The drill that
-ends E1 is below** — it is Ryan's to perform, not a test's to simulate.
+**Status: E1 complete and operated.** The spine stands: the domain schema, the runner with
+its named locks and crash-resume, the gate primitive, the append-only event log over SSE,
+the Claude adapter and cost ledger, the Grey Harbor fixture, and a bare-bones operating
+page to drive the whole thing from.
+
+**The drill below was run for real on Aug 5 2026 and passed.** A run called the model once,
+opened a gate, and parked; the process was `SIGKILL`ed; on restart the gate was still open
+at the same round with the same paragraph and the same run id; approving it carried the run
+to done **without a second call**. One call in, one call out, across a kill — which is the
+whole thing E1 exists to prove. E2 (canon) is next.
 
 ## Running it
 

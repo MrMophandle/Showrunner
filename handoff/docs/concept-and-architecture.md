@@ -288,6 +288,9 @@ done-condition. Repo CLAUDE.md carries the invariants. Fixtures before features
 - **E1 · The spine** — scaffold, domain schema, runner (run/step/gate/event,
   crash-resume, locks), Claude adapter, cost ledger, fixture. Ends: two-step run
   operated end-to-end incl. kill-and-resume.
+  → **DONE, Aug 5 2026.** Issues #1–#9 merged, and the exit was operated rather than
+  simulated: a run survived `SIGKILL` with its gate open and finished on one model call.
+  The drill is in the root `README.md`; what it built is mapped in `docs/README.md`.
 - **E2 · Canon** — entities, categories, proposals, ratification, point-in-time,
   arcs/waypoints, schema doc. Ends: create entity, rule a proposal, query "canon as of."
   → **Scope grew (D22, D23):** per-category relation-type declarations with inverses;
