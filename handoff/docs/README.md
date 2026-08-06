@@ -112,9 +112,9 @@ episode, and show.
 
 **The fixture** (`fixture/`). `sheet.ts` parses the markdown format, `read.ts` turns sheets
 into types **and refuses anything incomplete**, `load.ts` reconciles into the database
-through the domain functions above. `read.ts` already parses facts, relations, and
-standings and validates them — it just has nowhere to put them yet, which is E2's seam
-rather than E2's rewrite.
+through the domain functions above. *(E2-4 grew `load.ts` into the proposal flow: it now
+declares the categories straight and raises a promotion proposal per entity sheet;
+`founded.ts` is the "Grey Harbor, founded" helper every later epic's tests should use.)*
 
 **The surface** (`app.ts`, `operating.ts`, `app/web/`). Six HTTP endpoints and one unstyled
 page. `operating.ts` composes the button sentences server-side where they have tests, and
@@ -269,6 +269,40 @@ The sweep collects **existing** proposals only. Extracting the implicit facts ou
 prose is LLM work and is E3/E4's: those extractors raise proposals riding the episode, and
 this sweep collects them without a line changing here. That is the whole reason it was built
 as a collector rather than as something that also generates.
+
+### A `candidate` sheet raises nothing, and re-loading is not a sync (E2-4, issue #27)
+
+Two rulings E2-4 made that later loaders inherit, both about the same seam.
+
+**A sheet whose `status` is `candidate` registers its identity and raises no promotion.**
+The alternative — raise it, and have founding leave it unruled — needs founding to know
+which promotions are "really" founding documents, and the only ways to tell it are a new
+column or a loader-shaped `foundCanon`. Neither is worth it: `registerEntity` already
+produces exactly a candidate, so the sheet and the row agree with no mechanism at all.
+Promoting one later is the ordinary API, and `promotionFromSheet` (exported from
+`fixture/load.ts`) builds the identical draft, so **E2-6's bench can offer "promote from
+the sheet" without a second payload builder**. Grey Harbor carries one: Sefa Doule.
+
+**Re-loading never raises delta proposals.** After founding, canon lives in the database
+and moves by proposals; the sheets are provenance. A sheet edited afterwards diverges
+silently and that is correct. **E7's Dead Light import is where a diffing loader belongs**
+— it is a real design (what is a change vs. a new sheet, what supersedes what, who is the
+subject of each delta) and it was deliberately not smuggled in here as "idempotency".
+
+`foundCanon` is `domain/founding.ts`, not the fixture's: it rules `loader`- and
+`import`-raised promotions (`FOUNDING_ORIGIN`) through `createProposalRulings`, one at a
+time, in one transaction. A writer's pre-episode promotion (5.7) rides nothing either and
+is deliberately out of its reach.
+
+### The fixture's arc position still raises no landing (E2-4, issue #27)
+
+`load.ts` calls `declarePosition` directly, not `landPosition` — so ep01 @ waypoint 2 is a
+pin with no landing proposal behind it, and the two module headers that said "E2-4 changes
+that" now say why it did not. A landing is a fact, a fact is about an **entity**, and the
+arc sheet carries no subject (the E2-3 constraint above). Supplying one from a loader would
+put a claim in the fixture nobody decided. **E4's writer step answers it**; if the fixture
+should carry a landing before then, the honest change is a `subject` field on the arc sheet
+and a `read.ts` that requires it.
 
 ## Working agreements that bind every session
 

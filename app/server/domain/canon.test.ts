@@ -7,6 +7,7 @@ import {
   entitiesOfShow,
   findEntity,
   findEntityById,
+  linkCategory,
   referencesOf,
   registerEntity,
   removeReference,
@@ -57,6 +58,33 @@ describe('registering an identity (invariant 1)', () => {
     const character = declareCategory(store, { showId, key: 'character', name: 'Character' })
     const linked = registerEntity(store, { showId, categoryKey: 'character', name: 'Tobin Wick' })
     expect(linked.categoryId).toBe(character.id)
+  })
+
+  /**
+   * The repair for the case above, and it is not hypothetical: Ryan's library was seeded
+   * by E1-7's loader, so its six identities carry a `category_key` and no `category_id` at
+   * all. Once the categories arrive, an unlinked row cannot traverse an edge or inherit a
+   * fact — `relate` and `factsInScope` both start at `categoryId`.
+   */
+  it('links an identity registered before its show declared the category (0006)', () => {
+    const showId = seedShow()
+    const unlinked = registerEntity(store, { showId, categoryKey: 'character', name: 'Ilse Renn' })
+    const character = declareCategory(store, { showId, key: 'character', name: 'Character' })
+
+    expect(linkCategory(store, unlinked.id).categoryId).toBe(character.id)
+    // Idempotent, and it writes no canon: the key already said which category this is.
+    expect(linkCategory(store, unlinked.id)).toMatchObject({
+      categoryId: character.id,
+      standing: null,
+      status: 'candidate',
+    })
+  })
+
+  it('refuses to link an identity whose show still has no such category', () => {
+    const showId = seedShow()
+    const tobin = registerEntity(store, { showId, categoryKey: 'character', name: 'Tobin Wick' })
+
+    expect(() => linkCategory(store, tobin.id)).toThrow(/has not declared a `character` category/)
   })
 
   it('refuses a category_id that names a different category than the key does', () => {

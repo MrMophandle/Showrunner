@@ -29,9 +29,11 @@ function seedShow(): string {
 }
 
 /**
- * The fixture's five `_category.md` sheets, declared the way E2-4's loader will declare
- * them: every category first, then the relation types, because a declaration points at a
- * category that may be declared after it (and, for `part-of → location`, at its own).
+ * The fixture's five `_category.md` sheets, declared the way E2-4's loader declares them
+ * (`seedCategories`): every category first, then the relation types, because a declaration
+ * points at a category that may be declared after it (and, for `part-of → location`, at its
+ * own). This pins the API against real sheets; that the LOADER passes them through whole —
+ * `inheritsFacts` included — is pinned in fixture/load.test.ts, against the loader itself.
  */
 function declareFixtureCategories(showId: string): CanonCategory[] {
   const fixture = readFixture()

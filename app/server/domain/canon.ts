@@ -130,6 +130,36 @@ export function registerEntity(
 }
 
 /**
+ * Points an already-registered identity at its category. **This writes no canon**, and the
+ * distinction is worth being exact about: `category_key` has said which category this is
+ * since 0001, and `category_id` is the same answer as an edge the graph can join on. A row
+ * that has only the key is one registered before its show declared its categories — every
+ * E1-era library, including Ryan's — and nothing about it may be traversed or inherited
+ * until the link exists (`relate` and `factsInScope` both start at `categoryId`).
+ *
+ * Idempotent, and it refuses rather than clears: linking a row whose show still has no such
+ * category is a caller who declared nothing, not a row to blank.
+ */
+export function linkCategory(store: Store, id: string): CanonEntity {
+  return store.transaction(() => {
+    const entity = findEntityById(store, id)
+    if (!entity) throw new Error(`No such canon entity: ${id}`)
+
+    const category = findCategory(store, entity.showId, entity.categoryKey)
+    if (!category) {
+      throw new Error(
+        `“${entity.name}” is registered as a ${entity.categoryKey}, and this show has not ` +
+          `declared a \`${entity.categoryKey}\` category. Declare it first — a category is ` +
+          'data (3.2), so that is an edit rather than engineering.',
+      )
+    }
+
+    store.run('UPDATE canon_entity SET category_id = ? WHERE id = ?', category.id, id)
+    return findEntityById(store, id)!
+  })
+}
+
+/**
  * Writes the sheet onto an identity — standing, status, aliases, prose. **This is what a
  * ratified promotion proposal calls** (E2-2), and it is not itself a ratification: calling
  * it directly writes canon nobody ruled on, which is the one thing invariant 1 forbids.
