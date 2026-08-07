@@ -15,7 +15,10 @@ import {
   findFinding,
   findingsIn,
   findingsOfPass,
+  gapsAbout,
+  gapsOfPass,
   recordCheckPass,
+  scopeOfPass,
 } from './finding.ts'
 import { createEpisode, createSeason, createShow, delineateScenes, type Scene } from './spine.ts'
 
@@ -105,6 +108,9 @@ describe('a clean check pass leaves a record of having run', () => {
         sceneId: null,
         ranAt: pass.ranAt,
         findingCount: 0,
+        // And nothing it could not reach either (E3-2, 0012). Zero and zero is the clean
+        // run; zero findings beside a gap is a different sentence again.
+        gapCount: 0,
       },
     ])
   })
@@ -442,5 +448,109 @@ describe('the vocabularies, and where each one is enforced', () => {
         script.id,
       ),
     ).toThrow(/CHECK constraint/i)
+  })
+})
+
+/**
+ * E3-2's two records, added beside E3-0's (0012). Both are about the SCOPE a pass ran with
+ * rather than about the artifact, and both exist because a semantic check has a third answer
+ * the deterministic tier does not: it could not look.
+ */
+describe('what a pass was handed, and what it could not reach', () => {
+  it('keeps the facts a pass loaded, so a rule that said nothing is still on the record', () => {
+    const { script, narrator, voice } = bench()
+
+    const pass = recordCheckPass(store, {
+      checkKey: 'house-style',
+      tier: 'text',
+      artifactId: script.id,
+      scope: [{ factId: voice.id, entityId: narrator.id }],
+    })
+
+    expect(pass.findingCount).toEqual(0)
+    expect(scopeOfPass(store, pass.id)).toEqual([
+      { fact: expect.objectContaining({ id: voice.id }), entityId: narrator.id, via: '' },
+    ])
+  })
+
+  it('says which declaration an inherited fact travelled to get here (D22)', () => {
+    const { script, narrator, voice } = bench()
+
+    const pass = recordCheckPass(store, {
+      checkKey: 'house-style',
+      tier: 'text',
+      artifactId: script.id,
+      scope: [{ factId: voice.id, entityId: narrator.id, via: 'species' }],
+    })
+
+    expect(scopeOfPass(store, pass.id)[0]!.via).toEqual('species')
+  })
+
+  it('records a gap — neither a finding nor a silence', () => {
+    const { script, narrator } = bench()
+
+    const pass = recordCheckPass(store, {
+      checkKey: 'world-rules',
+      tier: 'text',
+      artifactId: script.id,
+      gaps: [
+        {
+          entityId: narrator.id,
+          reason: 'declared-unknown',
+          via: 'species',
+          detail: 'Could not check the vacuum rules — species undecided.',
+        },
+      ],
+    })
+
+    // Zero findings AND one gap. `findingCount` alone would call this a clean run, which is
+    // the collapse invariant 4 forbids one level up.
+    expect(pass.findingCount).toEqual(0)
+    expect(pass.gapCount).toEqual(1)
+    expect(gapsOfPass(store, pass.id)).toEqual([
+      {
+        id: expect.stringMatching(/^gap_/),
+        passId: pass.id,
+        checkKey: 'world-rules',
+        entityId: narrator.id,
+        reason: 'declared-unknown',
+        via: 'species',
+        detail: 'Could not check the vacuum rules — species undecided.',
+      },
+    ])
+  })
+
+  it('answers what could not be checked about one entity, across every pass', () => {
+    const { script, narrator } = bench()
+    const gap = {
+      entityId: narrator.id,
+      reason: 'declared-unknown' as const,
+      via: 'species',
+      detail: 'Could not check — species undecided.',
+    }
+
+    recordCheckPass(store, { checkKey: 'world-rules', tier: 'text', artifactId: script.id, gaps: [gap] })
+    recordCheckPass(store, { checkKey: 'character', tier: 'text', artifactId: script.id, gaps: [gap] })
+
+    // Every check that loaded this entity was handed the same hole, and each one says so —
+    // "which of my checks could not see all of Sefa" is the question, and it is queryable.
+    expect(gapsAbout(store, narrator.id).map((one) => one.checkKey)).toEqual([
+      'world-rules',
+      'character',
+    ])
+  })
+
+  it('leaves a pass with neither, and that is still the clean run 0010 built', () => {
+    const { script } = bench()
+
+    const pass = recordCheckPass(store, {
+      checkKey: 'house-style',
+      tier: 'text',
+      artifactId: script.id,
+    })
+
+    expect([pass.findingCount, pass.gapCount]).toEqual([0, 0])
+    expect(scopeOfPass(store, pass.id)).toEqual([])
+    expect(gapsOfPass(store, pass.id)).toEqual([])
   })
 })

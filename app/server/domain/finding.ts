@@ -61,6 +61,26 @@ import { newId } from './id.ts'
  * The anchor carries its own artifact because it is a different question from the pass's.
  * They agree in the ordinary case and diverge at the continuity board: E3-1's rules run
  * against the BOARD and land in the SCRIPT's scene 4, which is what the gate renders.
+ *
+ * ## A pass also records what it was HANDED, and what it could not reach (E3-2, 0012)
+ *
+ * The two additions above hold the semantic tier's third answer, which the deterministic
+ * tier does not have. A rule that reads rows either fires or does not; a check that reads a
+ * SCOPE can also fail to reach part of it, and 4.2's honest confidence is what that costs.
+ *
+ * `scope` is every fact the pass ran with, quoted or not. It is what makes a MEASURED
+ * silence different from an absent one: a `check_pass` row says the world-rules check ran,
+ * and only these rows say rule 2 was in front of it when it ran. That is this module's own
+ * argument for the pass row, applied one level down — and it is a historical record for
+ * `artifact_version`'s reason, since canon moves on and re-deriving the scope later answers
+ * a different question.
+ *
+ * `gaps` are the third kind of nothing. A gap is about the SCOPE, never about the artifact:
+ * "her species is undecided, so no physiology is in scope" is not a complaint a rewrite could
+ * answer, so it is not a finding, does not reach the verdict board, and does not land in
+ * D11's numerator where dismissing it would count against a check that was right to abstain.
+ * Nor is it a silence: a pass at zero findings with a gap on it is not a clean run, which is
+ * why `gapCount` sits beside `findingCount` rather than being folded into it.
  */
 
 /**
@@ -108,6 +128,46 @@ export interface CheckPass {
   ranAt: string
   /** Counted from the findings, never stored. **Zero is the measurement, not an absence.** */
   findingCount: number
+  /**
+   * How much of its scope it could not reach (E3-2). Counted the same way, and separate from
+   * `findingCount` on purpose: zero findings and one gap is not a clean run.
+   */
+  gapCount: number
+}
+
+/**
+ * One fact a pass was handed, whether or not any finding quoted it — the denominator of a
+ * measured silence, and invariant 2 kept as a record rather than only as a promise.
+ */
+export interface ScopeFact {
+  fact: Fact
+  /** Whose scope it was in. The same fact reaches one pass through two entities. */
+  entityId: string
+  /** The declaration it travelled (D22, D23). '' when it is the entity's own fact. */
+  via: string
+}
+
+/**
+ * Which kind of nothing a gap hit, from `INHERITANCE_CASE` in fact.ts — the same closed set,
+ * because a gap in a check's scope is a gap in what `factsInScope` could reach. A TypeScript
+ * union widened with a test, never a CHECK on the column (0007's reasoning).
+ */
+export const CHECK_GAP_REASON = ['declared-unknown', 'undeclared', 'source-has-no-facts'] as const
+export type CheckGapReason = (typeof CHECK_GAP_REASON)[number]
+
+/** What one check could not check, and why. A record about the scope, not about the artifact. */
+export interface CheckGap {
+  id: string
+  passId: string
+  /** From the pass that raised it, like a finding's. */
+  checkKey: string
+  /** Who could not be checked. NULL when the gap is about the artifact rather than an entity. */
+  entityId: string | null
+  reason: CheckGapReason
+  /** The declaration whose far end was empty. '' when the gap is not about an edge. */
+  via: string
+  /** The sentence Ryan reads — "could not check … — species undecided". */
+  detail: string
 }
 
 /** Where a finding lands (4.3). `quote` is '' when there is no span to highlight. */
@@ -164,6 +224,21 @@ export interface FindingDraft {
   factIds?: string[]
 }
 
+/** One fact the check was handed, as the composer of a scope reports it. */
+export interface ScopeFactDraft {
+  factId: string
+  entityId: string
+  /** The declaration it travelled. Left out for the entity's own facts. */
+  via?: string
+}
+
+export interface CheckGapDraft {
+  reason: CheckGapReason
+  detail: string
+  entityId?: string
+  via?: string
+}
+
 export interface CheckPassDraft {
   checkKey: string
   tier: CheckTier
@@ -174,6 +249,14 @@ export interface CheckPassDraft {
   sceneId?: string | null
   /** Left out or empty, the pass is a clean run, and the row saying so is the point. */
   findings?: FindingDraft[]
+  /**
+   * Every fact this check ran with, in the order it was composed. A deterministic rule
+   * leaves this off — it reads rows rather than a prompt, and `finding_fact` already says
+   * which of them it quoted.
+   */
+  scope?: ScopeFactDraft[]
+  /** What it could not reach. Left off, the pass reached everything it was given. */
+  gaps?: CheckGapDraft[]
 }
 
 // ── Recording ───────────────────────────────────────────────────────────────────
@@ -206,9 +289,36 @@ export function recordCheckPass(store: Store, draft: CheckPassDraft): CheckPass 
       draft.sceneId ?? null,
     )
 
+    // The scope first: what the check was handed is true before anything it said about it,
+    // and a pass whose findings were written and whose scope was not would be a report card
+    // with no exam paper behind it. One transaction, so that never happens.
+    ;(draft.scope ?? []).forEach((loaded, ordinal) => {
+      store.run(
+        'INSERT INTO check_pass_fact (pass_id, ordinal, fact_id, entity_id, via) VALUES (?, ?, ?, ?, ?)',
+        id,
+        ordinal,
+        loaded.factId,
+        loaded.entityId,
+        loaded.via ?? '',
+      )
+    })
     for (const finding of draft.findings ?? []) raiseFinding(store, id, checked, finding)
+    for (const gap of draft.gaps ?? []) recordGap(store, id, gap)
     return findCheckPass(store, id)!
   })
+}
+
+/** One thing the check could not reach. Private, for `raiseFinding`'s reason. */
+function recordGap(store: Store, passId: string, draft: CheckGapDraft): void {
+  store.run(
+    'INSERT INTO check_gap (id, pass_id, entity_id, reason, via, detail) VALUES (?, ?, ?, ?, ?, ?)',
+    newId('gap'),
+    passId,
+    draft.entityId ?? null,
+    draft.reason,
+    draft.via ?? '',
+    draft.detail,
+  )
 }
 
 /**
@@ -320,6 +430,50 @@ export function checkPassesOf(store: Store, artifactId: string): CheckPass[] {
     .map(hydratePass)
 }
 
+/**
+ * The facts this pass ran with, in the order they were composed — hydrated through
+ * `findFact`, so each arrives with the lineage the gate room renders beside it.
+ *
+ * This is what makes "rule 2 was checked and said nothing" a record rather than an
+ * inference. Read it against `findingsOfPass` and the difference between a rule that was in
+ * front of the check and one that never reached it is a set subtraction.
+ */
+export function scopeOfPass(store: Store, passId: string): ScopeFact[] {
+  return store
+    .all<{ fact_id: string; entity_id: string; via: string }>(
+      'SELECT fact_id, entity_id, via FROM check_pass_fact WHERE pass_id = ? ORDER BY ordinal',
+      passId,
+    )
+    .map((row) => ({
+      fact: findFact(store, row.fact_id)!,
+      entityId: row.entity_id,
+      via: row.via,
+    }))
+}
+
+/** What this pass could not reach. Empty is an answer, and `CheckPass.gapCount` already said. */
+export function gapsOfPass(store: Store, passId: string): CheckGap[] {
+  return store
+    .all<GapRow>(`${GAP_SELECT} WHERE g.pass_id = ? ORDER BY g.rowid`, passId)
+    .map(hydrateGap)
+}
+
+/**
+ * Everything any check has been unable to check about this entity, oldest first — the canon
+ * library's gaps list from the checking side, where D22's `declaredUnknowns` is the same
+ * question asked of the declaration.
+ *
+ * Every pass that loaded the entity records its own gap, because a gap is a property of the
+ * scope ONE pass ran with: the world-rules check and the character check were each handed
+ * the same hole, and each is entitled to say so. Folding them for a screen is the screen's
+ * business, and doing it here would lose which checks were affected.
+ */
+export function gapsAbout(store: Store, entityId: string): CheckGap[] {
+  return store
+    .all<GapRow>(`${GAP_SELECT} WHERE g.entity_id = ? ORDER BY p.ran_at, g.rowid`, entityId)
+    .map(hydrateGap)
+}
+
 export function findFinding(store: Store, id: string): Finding | undefined {
   const row = store.get<FindingRow>(`${FINDING_SELECT} WHERE f.id = ?`, id)
   return row && hydrate(store, row)
@@ -368,15 +522,18 @@ interface PassRow {
   scene_id: string | null
   ran_at: string
   finding_count: number
+  gap_count: number
 }
 
 /**
- * The count is a subquery rather than a column (0010). It cannot drift from the rows it
- * counts, and a pass that found nothing reports 0 rather than reporting nothing.
+ * The counts are subqueries rather than columns (0010). Neither can drift from the rows it
+ * counts, a pass that found nothing reports 0 rather than reporting nothing, and the two are
+ * separate numbers because "found nothing" and "could not look" are separate answers.
  */
 const PASS_SELECT = `
   SELECT p.id, p.check_key, p.tier, p.artifact_id, p.artifact_version, p.scene_id, p.ran_at,
-         (SELECT COUNT(*) FROM finding f WHERE f.pass_id = p.id) AS finding_count
+         (SELECT COUNT(*) FROM finding f WHERE f.pass_id = p.id) AS finding_count,
+         (SELECT COUNT(*) FROM check_gap g WHERE g.pass_id = p.id) AS gap_count
     FROM check_pass p`
 
 const hydratePass = (row: PassRow): CheckPass => ({
@@ -388,6 +545,33 @@ const hydratePass = (row: PassRow): CheckPass => ({
   sceneId: row.scene_id,
   ranAt: row.ran_at,
   findingCount: row.finding_count,
+  gapCount: row.gap_count,
+})
+
+interface GapRow {
+  id: string
+  pass_id: string
+  check_key: string
+  entity_id: string | null
+  reason: CheckGapReason
+  via: string
+  detail: string
+}
+
+/** The check's identity comes off the pass, as a finding's does — stored once, there. */
+const GAP_SELECT = `
+  SELECT g.id, g.pass_id, g.entity_id, g.reason, g.via, g.detail, p.check_key
+    FROM check_gap g
+    JOIN check_pass p ON p.id = g.pass_id`
+
+const hydrateGap = (row: GapRow): CheckGap => ({
+  id: row.id,
+  passId: row.pass_id,
+  checkKey: row.check_key,
+  entityId: row.entity_id,
+  reason: row.reason,
+  via: row.via,
+  detail: row.detail,
 })
 
 interface FindingRow {

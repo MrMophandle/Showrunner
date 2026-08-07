@@ -109,9 +109,18 @@ const CHECK_TABLE = ['check_pass', 'finding', 'finding_disposition', 'finding_fa
  */
 const BOARD_TABLE = ['board_hazard', 'board_presence', 'board_scene', 'board_transit']
 
+/**
+ * The two E3-2 owns: what a semantic check was HANDED, and what it could not reach. Both
+ * hang off `check_pass` and neither is state — `check_pass_fact` is the scope a pass ran
+ * with, kept because canon moves on afterwards, and `check_gap` is the third kind of
+ * nothing (fact.ts) that a zero-finding pass would otherwise be mistaken for.
+ */
+const SCOPE_TABLE = ['check_gap', 'check_pass_fact']
+
 const EVERY_TABLE = [
   ...BOARD_TABLE,
   ...CHECK_TABLE,
+  ...SCOPE_TABLE,
   ...EPISODE_CANON_TABLE,
   ...SPINE_TABLE,
   ...RUNNER_TABLE,
@@ -594,15 +603,15 @@ describe('0010 · findings, added beside a populated library', () => {
     )
 
     // Every table that existed before, with every row exactly where it was. The only new
-    // names are E3-0's four and E3-1's four — every migration past 9 adds tables and grows
-    // nothing, which is what it means for a check and a board to be new records rather than
-    // new state on something that already exists.
+    // names are E3-0's four, E3-1's four and E3-2's two — every migration past 9 adds tables
+    // and grows nothing, which is what it means for a check, a board and a check's own scope
+    // to be new records rather than new state on something that already exists.
     for (const [name, rows] of Object.entries(before)) {
       if (name === 'schema_migration') continue
       expect({ [name]: store.all<unknown>(`SELECT * FROM ${name}`) }).toEqual({ [name]: rows })
     }
     expect(tableNames(store).filter((name) => !(name in before))).toEqual(
-      [...BOARD_TABLE, ...CHECK_TABLE].sort(),
+      [...BOARD_TABLE, ...CHECK_TABLE, ...SCOPE_TABLE].sort(),
     )
   })
 
@@ -725,13 +734,19 @@ describe('0011 · the continuity board, added beside a populated library', () =>
       tableNames(store).map((name) => [name, store.all<unknown>(`SELECT * FROM ${name}`)]),
     )
 
-    expect(migrate(store).map((m) => m.number)).toEqual([11])
+    // Everything from 0011 on, whatever has been added since — the subject here is that the
+    // board landed on a populated library, not how many migrations exist today.
+    expect(migrate(store).map((m) => m.number)).toEqual(
+      migrationsOnDisk().map((m) => m.number).filter((number) => number > 10),
+    )
 
     for (const [name, rows] of Object.entries(before)) {
       if (name === 'schema_migration') continue
       expect({ [name]: store.all<unknown>(`SELECT * FROM ${name}`) }).toEqual({ [name]: rows })
     }
-    expect(tableNames(store).filter((name) => !(name in before))).toEqual(BOARD_TABLE)
+    expect(tableNames(store).filter((name) => !(name in before))).toEqual(
+      [...BOARD_TABLE, ...SCOPE_TABLE].sort(),
+    )
 
     expect(store.get('PRAGMA integrity_check')).toEqual({ integrity_check: 'ok' })
     expect(store.all('PRAGMA foreign_key_check')).toEqual([])
@@ -801,5 +816,123 @@ describe('0011 · the continuity board, added beside a populated library', () =>
     store.run("DELETE FROM scene WHERE id = 'sc6'")
     expect(store.get('SELECT COUNT(*) AS n FROM board_scene')).toEqual({ n: 0 })
     expect(store.get('SELECT COUNT(*) AS n FROM board_presence')).toEqual({ n: 0 })
+  })
+})
+
+/**
+ * 0012 lands on a library with an episode, a script, ratified canon and E3-0's check passes
+ * already in it — every foreign key the semantic tier's two records point at.
+ *
+ * What is under test is the pair of distinctions the tables exist for. A pass that quotes a
+ * fact in a finding and a pass that merely LOADED that fact are two different rows, so
+ * "rule 2 was checked and said nothing" survives as a record rather than being inferred from
+ * an absence. And a gap — "could not check, the species is undecided" — is neither of those
+ * and is not a finding, so it hangs off the pass in a table of its own.
+ */
+describe('0012 · what a check was handed, and what it could not reach', () => {
+  function writeAScriptWithCanonAndAPass(): void {
+    store.run("INSERT INTO show (id, key, title) VALUES ('show1', 'greyharbor', 'Grey Harbor')")
+    store.run("INSERT INTO season (id, show_id, number) VALUES ('season1', 'show1', 1)")
+    store.run(
+      "INSERT INTO episode (id, season_id, number, title) VALUES ('ep1', 'season1', 1, 'The Long Pier')",
+    )
+    store.run("INSERT INTO scene (id, episode_id, ordinal, heading) VALUES ('sc4', 'ep1', 4, 'EXT. THE LONG PIER')")
+    store.run(
+      `INSERT INTO canon_entity (id, show_id, category_key, name) VALUES
+         ('ent1', 'show1', 'species', 'Halvani'),
+         ('ent2', 'show1', 'character', 'Sefa Doule'),
+         ('ent3', 'show1', 'world-rules', 'The hull and the void')`,
+    )
+    store.run("INSERT INTO canon_ruling (kind) VALUES ('ratification')")
+    store.run(
+      `INSERT INTO fact (id, entity_id, statement, ratified_by) VALUES
+         ('fact1', 'ent1', 'A Halvani in unprotected vacuum dies inside two minutes.', 1),
+         ('fact2', 'ent3', 'Sound does not carry outside the hull.', 1),
+         ('fact3', 'ent3', 'The harbour language is idiom, not physics.', 1)`,
+    )
+    store.run(
+      "INSERT INTO artifact (id, episode_id, kind, file_path) VALUES ('art1', 'ep1', 'script', 'ep01/script.md')",
+    )
+    store.run("INSERT INTO artifact_provenance (artifact_id, entity_id) VALUES ('art1', 'ent3')")
+    store.run(
+      `INSERT INTO check_pass (id, check_key, tier, artifact_id, artifact_version)
+            VALUES ('pass1', 'world-rules', 'text', 'art1', 1)`,
+    )
+  }
+
+  it('adds its two tables, alters nothing, and leaves the file sound', () => {
+    applyThrough(11)
+    writeAScriptWithCanonAndAPass()
+    const before = Object.fromEntries(
+      tableNames(store).map((name) => [name, store.all<unknown>(`SELECT * FROM ${name}`)]),
+    )
+
+    expect(migrate(store).map((m) => m.number)).toEqual([12])
+
+    for (const [name, rows] of Object.entries(before)) {
+      if (name === 'schema_migration') continue
+      expect({ [name]: store.all<unknown>(`SELECT * FROM ${name}`) }).toEqual({ [name]: rows })
+    }
+    expect(tableNames(store).filter((name) => !(name in before))).toEqual(SCOPE_TABLE)
+
+    expect(store.get('PRAGMA integrity_check')).toEqual({ integrity_check: 'ok' })
+    expect(store.all('PRAGMA foreign_key_check')).toEqual([])
+    expect(migrate(store)).toEqual([])
+  })
+
+  it('keeps the scope a pass ran with, so a rule that said nothing is still on the record', () => {
+    migrate(store)
+    writeAScriptWithCanonAndAPass()
+
+    store.run(
+      `INSERT INTO check_pass_fact (pass_id, ordinal, fact_id, entity_id, via) VALUES
+         ('pass1', 0, 'fact2', 'ent3', ''),
+         ('pass1', 1, 'fact3', 'ent3', ''),
+         ('pass1', 2, 'fact1', 'ent2', 'species')`,
+    )
+
+    // The inherited one says which declaration it travelled — D22 in the record, not only in
+    // the prompt. The pass's own facts carry '' rather than a NULL: the empty edge, never a
+    // missing one, exactly as `quote` and `slot` elsewhere in this schema.
+    expect(store.all('SELECT fact_id, entity_id, via FROM check_pass_fact ORDER BY ordinal')).toEqual([
+      { fact_id: 'fact2', entity_id: 'ent3', via: '' },
+      { fact_id: 'fact3', entity_id: 'ent3', via: '' },
+      { fact_id: 'fact1', entity_id: 'ent2', via: 'species' },
+    ])
+
+    // A fact a pass was handed is not something anything else may take away underneath the
+    // record — the same RESTRICT every other edge into `fact` carries.
+    expect(() => store.run("DELETE FROM fact WHERE id = 'fact2'")).toThrow(/never deleted/)
+    expect(() => store.run("UPDATE check_pass_fact SET fact_id = 'fact1' WHERE ordinal = 0")).toThrow(
+      /what it was handed/,
+    )
+  })
+
+  it('records a gap as its own row — not a finding, and not a silence', () => {
+    migrate(store)
+    writeAScriptWithCanonAndAPass()
+
+    store.run(
+      `INSERT INTO check_gap (id, pass_id, entity_id, reason, via, detail)
+            VALUES ('gap1', 'pass1', 'ent2', 'declared-unknown', 'species',
+                    'Could not check Sefa Doule against the vacuum rules — species undecided.')`,
+    )
+
+    expect(store.get('SELECT reason, via, entity_id FROM check_gap')).toEqual({
+      reason: 'declared-unknown',
+      via: 'species',
+      entity_id: 'ent2',
+    })
+    // The pass it hangs off found nothing at all, and that is the point: zero findings and
+    // one gap is a third sentence, distinct from the clean run this would otherwise read as.
+    expect(store.get('SELECT COUNT(*) AS n FROM finding WHERE pass_id = ?', 'pass1')).toEqual({ n: 0 })
+
+    expect(() => store.run("UPDATE check_gap SET reason = 'inherited'")).toThrow(/could not check/)
+    expect(() => store.run("DELETE FROM canon_entity WHERE id = 'ent2'")).toThrow(/FOREIGN KEY/i)
+
+    // Both go with the pass, and the pass goes with the artifact — the cascade 0010 left open.
+    store.run("DELETE FROM artifact WHERE id = 'art1'")
+    expect(store.get('SELECT COUNT(*) AS n FROM check_gap')).toEqual({ n: 0 })
+    expect(store.get('SELECT COUNT(*) AS n FROM check_pass_fact')).toEqual({ n: 0 })
   })
 })

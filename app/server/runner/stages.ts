@@ -13,6 +13,7 @@ import { writeIfAbsent, type LibraryPaths } from '../library.ts'
 import type { LLMEffort } from '../llm/adapter.ts'
 import { boardStages } from './board-step.ts'
 import type { Stage, StageCatalogue, Step, StepContext } from './step.ts'
+import { textCheckStages } from './text-check-step.ts'
 
 /**
  * The stage catalogue: the map from a persisted `run.stage` back to the TypeScript that
@@ -99,7 +100,14 @@ export function stageCatalogue(library: LibraryPaths): StageCatalogue {
   // script with a model and costs money, `continuity-board-checks` re-runs the same
   // deterministic rules over the rows it wrote for nothing. Both are TypeScript in
   // `board-step.ts` — the catalogue is a lookup, never a place stages are described.
-  return { [DEMO_STAGE]: demoStage(library), ...boardStages(library) }
+  //
+  // E3-2's `text-checks` is the semantic tier beside them, and it has no free half: a
+  // category check is a reading, and every re-check is a call (`text-check-step.ts`).
+  return {
+    [DEMO_STAGE]: demoStage(library),
+    ...boardStages(library),
+    ...textCheckStages(library),
+  }
 }
 
 function demoStage(library: LibraryPaths): Stage {
