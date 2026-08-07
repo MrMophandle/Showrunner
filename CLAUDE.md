@@ -1,8 +1,7 @@
 # CLAUDE.md — Showrunner, the standing brief
 
-Showrunner is a containerized web app for multi-show episodic video production: writing,
-canon keeping, image and audio generation, assembly, publishing — with Ryan (the
-showrunner) ruling at every gate.
+Showrunner is a containerized web app for multi-show episodic video production — writing,
+canon, image and audio, assembly, publishing — with Ryan the showrunner ruling at every gate.
 
 This file is the distilled brief. The **ruled design** is
 `handoff/docs/concept-and-architecture.md` (D1–D19 in-section, **D20–D25 in the addendum at the
@@ -83,8 +82,10 @@ authoritative. Nothing overrides the concept doc except a later ruling from Ryan
   idempotent, and persist state before and after.
 - **Gate** — a first-class decision object: artifact under review, findings, round history,
   ruling (approve / reject-with-notes / override-with-record). It renders its artifact.
-- **Check / Finding** — one reviewer pass, parameterized by canon category, fired at
-  artifact boundaries. A finding has an anchor, concern, severity, confidence, remediations.
+- **Check / Finding** — one reviewer pass at an artifact boundary, parameterized by canon
+  category. A finding anchors by **quoted span + scene**, keeps **severity and confidence as
+  two values, never one**, and is a record, not state (status derives from its disposition;
+  D12's wall is computed). **A pass is recorded at zero findings** — that is D11's denominator.
 - **Event** — append-only log of every transition. Drives the live UI over SSE and is the audit
   trail. **The record, never the state:** `run`, `step`, and `resource_lock` are the source of
   truth; nothing rebuilds state by replaying events, and the runner never reads its own log
@@ -126,8 +127,7 @@ mode this project exists to escape. Either party may say "Archon" and the other 
 - **The HIL contract**: everything pertinent, present, zero archaeology. If Ryan has to go
   find context, the screen has failed.
 - **Reject is routed, not rewound** (D21, 4.7): the note picks its depth — the shot's prompt,
-  the scene, the premise, or hold the slot for a hand-made asset. Nothing regenerates until
-  the route lands.
+  the scene, the premise, or a slot held for hand-made work. Nothing regenerates until it lands.
 - Eight screens (D24): floor · episode room · gate room · canon library · review desk ·
   screening room · season map · **arc page**. Mockups live in `mockups/`; E5 builds to them.
 

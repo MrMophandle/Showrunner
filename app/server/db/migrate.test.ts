@@ -93,7 +93,16 @@ const PROPOSAL_TABLE = [
  */
 const EPISODE_CANON_TABLE = ['proposal_landing']
 
+/**
+ * The tables E3-0 owns: the record that a check ran, what it found, the facts a finding
+ * quotes, and what Ryan did about it. Nothing here is a lock — there is no `blocked` table
+ * and no `is_blocking` column, because D12's stage wall is a computation over open
+ * deterministic findings (E3-3), the way artifact staleness is a computation over edges.
+ */
+const CHECK_TABLE = ['check_pass', 'finding', 'finding_disposition', 'finding_fact']
+
 const EVERY_TABLE = [
+  ...CHECK_TABLE,
   ...EPISODE_CANON_TABLE,
   ...SPINE_TABLE,
   ...RUNNER_TABLE,
@@ -531,5 +540,126 @@ describe('0009 · abandonment is a column on episode, not a lifecycle stage', ()
       { kind: 'landing' },
       { kind: 'revert' },
     ])
+  })
+})
+
+/**
+ * 0010 is the first migration in a while that only ADDS tables — nothing here grows or
+ * rebuilds anything E1 or E2 applied, which is what it means for the finding to be a new
+ * record rather than a new state on something that already exists. What it is proved
+ * against is a library with an EPISODE, a SCRIPT, PROVENANCE and RATIFIED CANON already in
+ * it, because those are the four things a finding points at and every one of them is a
+ * foreign key that has to still hold afterwards.
+ */
+describe('0010 · findings, added beside a populated library', () => {
+  function writeAnEpisodeWithCanon(): void {
+    store.run("INSERT INTO show (id, key, title) VALUES ('show1', 'greyharbor', 'Grey Harbor')")
+    store.run("INSERT INTO season (id, show_id, number) VALUES ('season1', 'show1', 1)")
+    store.run(
+      "INSERT INTO episode (id, season_id, number, title) VALUES ('ep1', 'season1', 1, 'The Long Pier')",
+    )
+    store.run("INSERT INTO scene (id, episode_id, ordinal, heading) VALUES ('sc4', 'ep1', 4, 'EXT. HULL')")
+    store.run(
+      "INSERT INTO canon_entity (id, show_id, category_key, name) VALUES ('ent1', 'show1', 'species', 'Halvani')",
+    )
+    store.run("INSERT INTO canon_ruling (kind) VALUES ('ratification')")
+    store.run(
+      `INSERT INTO fact (id, entity_id, statement, ratified_by)
+            VALUES ('fact1', 'ent1', 'A Halvani in unprotected vacuum dies inside two minutes.', 1)`,
+    )
+    store.run("INSERT INTO artifact (id, episode_id, kind, file_path) VALUES ('art1', 'ep1', 'script', 'ep01/script.md')")
+    store.run("INSERT INTO artifact_provenance (artifact_id, entity_id) VALUES ('art1', 'ent1')")
+  }
+
+  it('adds its four tables and alters none of the nine migrations before it', () => {
+    applyThrough(9)
+    writeAnEpisodeWithCanon()
+    const before = Object.fromEntries(
+      tableNames(store).map((name) => [name, store.all<unknown>(`SELECT * FROM ${name}`)]),
+    )
+
+    expect(migrate(store).map((m) => m.number)).toEqual(
+      migrationsOnDisk()
+        .map((m) => m.number)
+        .filter((number) => number > 9),
+    )
+
+    // Every table that existed before, with every row exactly where it was. The only new
+    // names are E3-0's four.
+    for (const [name, rows] of Object.entries(before)) {
+      if (name === 'schema_migration') continue
+      expect({ [name]: store.all<unknown>(`SELECT * FROM ${name}`) }).toEqual({ [name]: rows })
+    }
+    expect(tableNames(store).filter((name) => !(name in before))).toEqual(CHECK_TABLE)
+  })
+
+  it('records a pass with no findings, and one anchored at a scene of the script', () => {
+    applyThrough(9)
+    writeAnEpisodeWithCanon()
+    migrate(store)
+
+    // The clean run first, because it is the one a schema is most likely to have made
+    // impossible: a check pass carries no finding and needs none.
+    store.run(
+      `INSERT INTO check_pass (id, check_key, tier, artifact_id, artifact_version)
+            VALUES ('pass1', 'world-rules', 'text', 'art1', 1)`,
+    )
+    expect(store.get('SELECT COUNT(*) AS n FROM finding WHERE pass_id = ?', 'pass1')).toEqual({ n: 0 })
+
+    store.run(
+      `INSERT INTO check_pass (id, check_key, tier, artifact_id, artifact_version)
+            VALUES ('pass2', 'world-rules', 'text', 'art1', 1)`,
+    )
+    store.run(
+      `INSERT INTO finding
+         (id, pass_id, artifact_id, artifact_version, scene_id, quote, concern, entity_id,
+          severity, confidence)
+       VALUES ('find1', 'pass2', 'art1', 1, 'sc4', 'three minutes in coveralls',
+               'Tobin is outside for three minutes; the Halvani fact says two.', 'ent1',
+               'high', 'high')`,
+    )
+    store.run("INSERT INTO finding_fact (finding_id, ordinal, fact_id) VALUES ('find1', 0, 'fact1')")
+    store.run(
+      "INSERT INTO finding_disposition (finding_id, disposition, note) VALUES ('find1', 'dismissed', 'the collar counts as protection')",
+    )
+
+    expect(store.get('SELECT severity, confidence FROM finding')).toEqual({
+      severity: 'high',
+      confidence: 'high',
+    })
+    expect(store.get('SELECT fact_id FROM finding_fact')).toEqual({ fact_id: 'fact1' })
+    expect(store.get('SELECT disposition, note FROM finding_disposition')).toEqual({
+      disposition: 'dismissed',
+      note: 'the collar counts as protection',
+    })
+  })
+
+  it('holds every edge a finding points at, and refuses to move once written', () => {
+    migrate(store)
+    writeAnEpisodeWithCanon()
+    store.run(
+      `INSERT INTO check_pass (id, check_key, tier, artifact_id, artifact_version)
+            VALUES ('pass1', 'world-rules', 'text', 'art1', 1)`,
+    )
+    store.run(
+      `INSERT INTO finding (id, pass_id, artifact_id, artifact_version, scene_id, concern, entity_id, severity, confidence)
+            VALUES ('find1', 'pass1', 'art1', 1, 'sc4', 'a concern', 'ent1', 'high', 'certain')`,
+    )
+    store.run("INSERT INTO finding_fact (finding_id, ordinal, fact_id) VALUES ('find1', 0, 'fact1')")
+
+    // Enforced, not merely declared: an entity a check has spoken about and a fact it quoted
+    // are not things anything else may take away underneath the record.
+    expect(() => store.run("DELETE FROM canon_entity WHERE id = 'ent1'")).toThrow(/FOREIGN KEY/i)
+    expect(() => store.run("DELETE FROM fact WHERE id = 'fact1'")).toThrow(/never deleted/)
+    expect(() => store.run("UPDATE finding SET concern = 'never said that'")).toThrow(
+      /a later pass/,
+    )
+
+    // But the cascade above stays open, which is the asymmetry `gate_ruling` carries in
+    // 0004: an artifact deleted with its episode takes its passes and findings with it.
+    store.run("DELETE FROM artifact WHERE id = 'art1'")
+    expect(store.get('SELECT COUNT(*) AS n FROM check_pass')).toEqual({ n: 0 })
+    expect(store.get('SELECT COUNT(*) AS n FROM finding')).toEqual({ n: 0 })
+    expect(store.get('SELECT COUNT(*) AS n FROM finding_fact')).toEqual({ n: 0 })
   })
 })
