@@ -5,10 +5,9 @@ canon keeping, image and audio generation, assembly, publishing — with Ryan (t
 showrunner) ruling at every gate.
 
 This file is the distilled brief. The **ruled design** is
-`handoff/docs/concept-and-architecture.md` (D1–D19 in-section, **D20–D25 in the addendum at
-the end** — read the addendum, it amends earlier sections). Start at
-`handoff/docs/README.md` for what's authoritative. Nothing overrides the concept doc except
-a later ruling from Ryan.
+`handoff/docs/concept-and-architecture.md` (D1–D19 in-section, **D20–D25 in the addendum at the
+end** — read it, it amends earlier sections). Start at `handoff/docs/README.md` for what's
+authoritative. Nothing overrides the concept doc except a later ruling from Ryan.
 
 ## The domain nouns — use these words, not synonyms
 
@@ -168,9 +167,9 @@ mode this project exists to escape. Either party may say "Archon" and the other 
 - SQL tables and columns `snake_case`, table names **singular** (`episode`, not `episodes`;
   `arc_waypoint`); TypeScript `camelCase` values, `PascalCase` types. Adapter interfaces are
   `XAdapter`; backend and lock ids are `kebab-case` (`gpu`, `image-api`, `z-image-turbo`).
-- Paths: `app/` for the application, `library/` for the mounted volume (SQLite file +
-  artifacts), `fixtures/greyharbor/` for the fixture show, `handoff/docs/` for the design
-  docs, `mockups/` for the approved screens, `scripts/` for manual scripts, never CI.
+- Paths: `app/` the application, `library/` the mounted volume (SQLite + artifacts),
+  `fixtures/greyharbor/` the fixture show, `docs/` shipped product documents, `handoff/docs/`
+  the design docs, `mockups/` the approved screens, `scripts/` manual scripts, never CI.
 
 ## Commands
 
@@ -189,8 +188,9 @@ a backend — the fake adapter proves the wiring, a real call proves the numbers
 
 - **One issue, one session.** Leave the repo green; if unfinished, write `HANDOFF.md`.
 - **Design reasoning lives in the code it describes** — module headers, migration comments,
-  comments on the type. Not a separate spec file: this repo has no `docs/` tree and a spec
-  drifts the day after. What binds OTHER epics goes here, where every session loads it.
+  comments on the type; never a spec file about our own code, which drifts the day after.
+  `docs/` is the narrow exception: **versioned deliverables for outside readers**, tested like
+  code (`canon-schema.md`, 3.5). What binds OTHER epics goes here, where every session loads it.
 - Branch; don't commit to `main`. Don't push without asking Ryan.
 - Issues live on GitHub, one milestone per epic (D18). Ryan gates epics, not issues.
 - **Fixtures before features.** The Grey Harbor fixture backs all tests; never burn real
