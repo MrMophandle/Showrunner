@@ -11,6 +11,7 @@ import { artifactsOf, recordArtifact, reviseArtifact, type Artifact } from '../d
 import { episodeInShow, episodeLabel, type EpisodeInShow } from '../domain/spine.ts'
 import { writeIfAbsent, type LibraryPaths } from '../library.ts'
 import type { LLMEffort } from '../llm/adapter.ts'
+import { boardStages } from './board-step.ts'
 import type { Stage, StageCatalogue, Step, StepContext } from './step.ts'
 
 /**
@@ -94,7 +95,11 @@ export interface DemoClose extends DemoDraft {
 }
 
 export function stageCatalogue(library: LibraryPaths): StageCatalogue {
-  return { [DEMO_STAGE]: demoStage(library) }
+  // E3-1's two, and the split between them is the point: `continuity-board` reads the
+  // script with a model and costs money, `continuity-board-checks` re-runs the same
+  // deterministic rules over the rows it wrote for nothing. Both are TypeScript in
+  // `board-step.ts` — the catalogue is a lookup, never a place stages are described.
+  return { [DEMO_STAGE]: demoStage(library), ...boardStages(library) }
 }
 
 function demoStage(library: LibraryPaths): Stage {

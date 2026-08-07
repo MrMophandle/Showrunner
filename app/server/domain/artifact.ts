@@ -218,6 +218,24 @@ export function recordInputs(store: Store, artifactId: string, inputs: ArtifactI
   })
 }
 
+/**
+ * Every edge this artifact declares, declared afresh — for a REBUILD, which consumed what it
+ * consumed and nothing it used to.
+ *
+ * `recordInputs` alone cannot say that: it moves the edges it is handed and leaves the rest
+ * standing. That is right for a step that fills a gap, and wrong for one that reads its
+ * source again from the top. E3-1's continuity board is the case that needs it — a script
+ * re-delineated shorter has fewer scenes, and an edge left behind for a scene that no longer
+ * exists degrades to a whole-artifact edge (`scene_id` SET NULLs) frozen at an old version,
+ * which makes the board permanently stale for a scene nobody can point at.
+ */
+export function replaceInputs(store: Store, artifactId: string, inputs: ArtifactInput[]): void {
+  store.transaction(() => {
+    store.run('DELETE FROM artifact_input WHERE artifact_id = ?', artifactId)
+    recordInputs(store, artifactId, inputs)
+  })
+}
+
 // ── Reading ─────────────────────────────────────────────────────────────────────
 
 export function findArtifact(store: Store, id: string): Artifact | undefined {

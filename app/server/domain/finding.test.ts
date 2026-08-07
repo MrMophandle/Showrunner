@@ -330,11 +330,19 @@ describe('dismissing a finding with a note (4.3, 4.4)', () => {
 
 describe('findings are records, and records do not move', () => {
   it('has no is_blocking or blocked column anywhere — D12 is a computation (E3-3)', () => {
+    // E3-1's board tables are in this list on purpose. The continuity board is the tier
+    // whose findings D12 actually walls the next stage with, so it is the one most likely
+    // to be handed a flag "for convenience" — and a stored wall is the freshness mistake
+    // (1.3) one level out, whichever migration writes it.
     const columns = store
       .all<{ name: string }>(
         `SELECT name FROM pragma_table_info('finding')
           UNION ALL SELECT name FROM pragma_table_info('check_pass')
-          UNION ALL SELECT name FROM pragma_table_info('finding_disposition')`,
+          UNION ALL SELECT name FROM pragma_table_info('finding_disposition')
+          UNION ALL SELECT name FROM pragma_table_info('board_scene')
+          UNION ALL SELECT name FROM pragma_table_info('board_presence')
+          UNION ALL SELECT name FROM pragma_table_info('board_transit')
+          UNION ALL SELECT name FROM pragma_table_info('board_hazard')`,
       )
       .map((row) => row.name)
 
