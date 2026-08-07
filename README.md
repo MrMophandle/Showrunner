@@ -9,11 +9,17 @@ its named locks and crash-resume, the gate primitive, the append-only event log 
 the Claude adapter and cost ledger, the Grey Harbor fixture, and a bare-bones operating
 page to drive the whole thing from.
 
-**The drill below was run for real on Aug 5 2026 and passed.** A run called the model once,
-opened a gate, and parked; the process was `SIGKILL`ed; on restart the gate was still open
-at the same round with the same paragraph and the same run id; approving it carried the run
-to done **without a second call**. One call in, one call out, across a kill — which is the
-whole thing E1 exists to prove. E2 (canon) is next.
+**The E1 drill below was run for real on Aug 5 2026 and passed.** A run called the model
+once, opened a gate, and parked; the process was `SIGKILL`ed; on restart the gate was still
+open at the same round with the same paragraph and the same run id; approving it carried the
+run to done **without a second call**. One call in, one call out, across a kill — which is the
+whole thing E1 exists to prove.
+
+**E2 · Canon is built, and its drill has not been run yet.** Categories, entities, facts with
+validity ranges, typed relations, proposals and the one ruling API, what episodes do to canon,
+the founding flow, the schema document, and a canon bench on the operating page to work all of
+it from. The E2 drill is below and it is the epic's exit: it costs nothing, it is Ryan's, and
+until he has run it E2 is finished code rather than a finished epic.
 
 ## Running it
 
@@ -182,6 +188,170 @@ reason beside it. The app is otherwise entirely up: the library is mounted, the 
 lists, past runs and gates all render. Nothing fails at the first model call, because
 nothing gets that far.
 
+## The E2 drill — founding a show, and moving its canon by proposal
+
+The canon epic's exit, as one sitting. It takes about ten minutes and costs **nothing at
+all**: every button on the canon bench says `No model call · $0.00`, and it means it.
+
+The whole epic is one sentence you are about to make true five times: **only ratification
+writes canon.** A loader raises. A form raises. A change to something already ratified
+raises. None of them writes a row. Your click at the bench does.
+
+### Before you start
+
+Your library is at migration 5 — the schema E1 left. **Booting migrates it 5 → 9 by
+itself**, in order, inside a transaction, and records what it applied; there is no migrate
+command to run and nothing to back up by hand that `library/` isn't already.
+
+```
+npm install
+npm run build
+npm start                      # or: docker compose up — either one migrates on the way up
+```
+
+Then, in another terminal:
+
+```
+npm run fixture:load           # spends nothing, safe to run twice
+```
+
+Read what it prints. It ends:
+
+> Nothing here was ratified and nothing generated. The sheets are on the queue as promotion
+> proposals; canon moves when Ryan rules them, and by no other route (D25).
+
+That is the load doing exactly half the job on purpose. **Loading raises; only founding
+rules.** Six sheets are now standing in a queue and Grey Harbor still has no canon in it.
+
+Open <http://localhost:4455> and scroll past the episodes to **Canon — Grey Harbor**.
+
+### 1 · Look at a show with no canon in it
+
+Under **Entities**, all seven are `candidate`, each with the same sentence under it:
+
+> “Ilse Renn” is a candidate — an identity registered, and a sheet nobody has ruled on. Not
+> canon, and no check reads it.
+
+Every one says **0 facts standing**. Under **The ledger**: *No ruling has been made on this
+show's canon yet.* Under **Proposal queue**: six promotions, each with its change, its usage
+context, its implications and its alternatives — the five parts of a proposal, on screen.
+
+Note the third verb on each. **Reject** is disabled, with the reason in words:
+
+> Blocked: Rejecting a proposal needs the reason — "reject with note" is the verb, and the
+> note is what the next writer run reads (3.3).
+
+Type a note into that proposal's box and watch the button come alive. That sentence is not
+decoration: it is the same string the API refuses with, so a precondition can never become a
+failure after the click.
+
+### 2 · Found the show
+
+Press:
+
+> Found Grey Harbor — ratify its 6 founding sheets, one ruling each on the ledger
+> *No model call · $0.00*
+
+Three things change at once, and the third is the point:
+
+1. The entities are `active`, each with its standing and a count of facts standing.
+2. The queue is empty, and the founding button is disabled: *Grey Harbor has no founding
+   sheets left to rule. Canon moves by proposal from here.*
+3. **The ledger has six rows** — one per sheet, newest first, each ending *convened at the
+   bench, no gate*.
+
+Six rows, not one. Founding is a deliberate act over documents you have already read, and it
+still rules them **one at a time** through the same API the queue uses. There is no bulk
+write in this app and this is the closest thing to one.
+
+Now look at the **Live** panel at the bottom. It has not moved, and that is correct: a bench
+ruling convenes no gate and no run, so it lands on `canon_ruling` — the append-only ledger
+canon is read by — rather than on the event stream. That was ruled on Aug 7 2026 (issue #29),
+and the ledger section above is where you read it back.
+
+### 3 · Promote the candidate
+
+**Sefa Doule is still a candidate**, alone among the seven, and visibly so. The fixture put
+him there for exactly this: `status: candidate` on his sheet told the loader to register the
+identity and raise nothing.
+
+Press **Open “Sefa Doule” below**. His sheet has no facts, no edges, no standing — a
+candidate is allowed to be that ragged, and canon is not.
+
+Under **Promote this candidate**, fill in what you want him to be:
+
+- standing: `recurring`
+- species: leave it on **`unknown` — declared, and a real answer**. Sefa came in on a tender
+  and nobody has asked. That is different from a blank, it satisfies the required `species`
+  at ratification, and it is tracked (D22).
+- facts: type one, e.g. *Sefa Doule files against the line office's ledger, not the
+  harbour's.*
+
+Press **Promote Sefa Doule — raise the sheet below as a promotion proposal, for your own
+ruling in the queue**. He is *still* a candidate; the sheet is now a proposal in the queue,
+raised by you. Scroll down and **Ratify** it. He is canon, `active`, standing recurring,
+with `species → unknown` on his edges and one fact standing.
+
+> Want to see the requirement bite? Promote him with the species left off — there is no way
+> to do that from the form, which always answers `unknown` — or ratify a promotion that has
+> no species and read the refusal: *cannot become canon without a `species` … `unknown` is a
+> real answer and satisfies this. A candidate may be half-written; canon may not.*
+
+### 4 · Create an entity, and rule its promotion
+
+Under **Create an entity**: category `character`, name `Ottilie Bray`, standing `recurring`,
+species `unknown`, and a fact — *Ottilie Bray keeps the harbour's only working lathe.*
+
+Press **Register a new character in Grey Harbor and raise its promotion — creating is
+proposing, and it stays a candidate until you rule it in the queue**.
+
+She appears in the entities list **immediately, as a candidate with 0 facts standing**, and
+a promotion appears in the queue *raised by you, at the bench*. That gap between the two is
+the whole invariant made visible: the identity exists, the sheet does not. **Ratify** it.
+
+### 5 · Change one ratified fact — a second proposal
+
+Press **Open “Ilse Renn” below**. Her facts each carry status and lineage:
+
+> established with no episode — a founding sheet … · ratified at ruling 1 · 2026-08-07T…
+
+Find *“Ilse has held the harbourmaster's post at Grey Harbor for eleven years.”* In the box
+under it, type what canon should say instead — *… for twelve years.* — and press
+
+> Propose a change to “…” — a second proposal, carrying this fact as its before, for your
+> ruling in the queue
+
+Before you rule it, read it in the queue. Its **Implications** line says *touches 1 ratified
+fact*, and it names which. That blast radius is computed the moment you look at it and never
+stored, so it cannot be stale.
+
+**Ratify** it. Now her sheet says twelve years, and under **Not standing here** the eleven
+year fact is present and `superseded`, with the ruling that closed it on its lineage.
+Nothing was deleted. Canon is append-only; a change is a new row and a closure row.
+
+### 6 · Read canon on the other side of that ruling
+
+At the top of the canon section, **Canon as of**. Pick the ruling immediately *before* the
+one you just made — the second entry in the list.
+
+Ilse's facts re-render, and the fact says **eleven years** again.
+
+Flip back to *now*: twelve. Flip to a date instead: it resolves to the last ruling made at or
+before that day and says so — *a date maps onto a ruling, never the reverse*.
+
+**That flip is the whole drill.** "Canon as of episode 4" is answerable because a fact is
+valid over a range of rulings rather than being edited in place, because the ledger is a
+monotonic clock rather than a timestamp, and because the only thing that moves it is you
+ruling a proposal. Founding, promoting, creating, changing — four different-looking acts, one
+ruling API, one ledger, one invariant.
+
+### What this drill deliberately does not do
+
+No model was called and no dollar was spent: the canon bench cannot spend. The **canon
+library** screen — the one you actually want, with the point-in-time chip and the sheet
+layout — is E5's, drawn in `mockups/canon-library.html`, and none of it was built here. What
+was built is every fact that screen renders and every act it convenes.
+
 ## Where things are
 
 | Path | What |
@@ -192,7 +362,9 @@ nothing gets that far.
 | `mockups/` | Eight approved screen mockups + their README. Serve that directory and open the floor screen — instructions in `mockups/README.md`. |
 
 Work is tracked in [GitHub Issues](https://github.com/MrMophandle/Showrunner/issues),
-one milestone per epic. **E1 · The spine** is issues #1–#9.
+one milestone per epic. **E1 · The spine** is issues #1–#9; **E2 · Canon** is issues #23–#29.
+The shipped product documents are in `docs/` — `canon-schema.md` is what an empty show is
+founded from (3.5), and it is tested like code.
 
 ## The data layer
 

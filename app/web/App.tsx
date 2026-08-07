@@ -1,10 +1,21 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import type { CanonBenchView } from '../server/canon-bench.ts'
 import type { EventRecord } from '../server/events.ts'
-import type { EpisodeOnThePage, Offer, OperatingView, RunView } from '../server/operating.ts'
+import type { EpisodeOnThePage, OperatingView, RunView } from '../server/operating.ts'
 import type { NoteDepth } from '../server/runner/gate.ts'
+import {
+  CanonBench,
+  EMPTY_BENCH,
+  type BenchDraft,
+  type CanonBenchProps,
+  type Edge,
+  type SheetForm,
+} from './CanonBench.tsx'
+import { ARTIFACT, Button, CARD, FAINT, needing, PAGE, STREAM } from './kit.tsx'
 
 /**
- * The bare-bones operating page (E1-8) — one page, and the last thing E1 builds.
+ * The bare-bones operating page (E1-8, grown by E2-6) — one page, and the last thing E1
+ * builds. Its canon section is `CanonBench.tsx`, and the same contract binds both.
  *
  * ── What it is not ──────────────────────────────────────────────────────────────
  * It is not the cockpit. The eight screens are E5's, they are already drawn in
@@ -58,6 +69,22 @@ export function App() {
   /** Which run is on screen, readable inside the stream's listener without re-subscribing. */
   const showing = useRef<string | null>(null)
 
+  // The canon bench (E2-6). Its own state, its own endpoint, and deliberately NOT on the
+  // event stream: a bench ruling convenes no gate and no run, so it lands on `canon_ruling`
+  // and the section re-reads from there after every act (#29, ruled Aug 7 2026).
+  const [benchShow, setBenchShow] = useState<string | null>(null)
+  const [canon, setCanon] = useState<CanonBenchView | null>(null)
+  const [entityId, setEntityId] = useState<string | null>(null)
+  const [asOf, setAsOf] = useState({ ruling: '', date: '' })
+  const [bench, setBench] = useState<BenchDraft>(EMPTY_BENCH)
+
+  /** Where the bench's controls stand, as the API reads them — a string, so an effect can watch it. */
+  const controls = new URLSearchParams({
+    ...(entityId !== null && { entity: entityId }),
+    ...(asOf.ruling !== '' && { ruling: asOf.ruling }),
+    ...(asOf.date !== '' && { date: asOf.date }),
+  }).toString()
+
   const loadView = useCallback(async (): Promise<OperatingView | null> => {
     try {
       const next = (await (await fetch('/api/operating')).json()) as OperatingView
@@ -75,6 +102,11 @@ export function App() {
     setRun(res.ok ? ((await res.json()) as RunView) : null)
   }, [])
 
+  const loadCanon = useCallback(async (showId: string, query: string): Promise<void> => {
+    const res = await fetch(`/api/canon/${showId}?${query}`)
+    setCanon(res.ok ? ((await res.json()) as CanonBenchView) : null)
+  }, [])
+
   // First load. It also picks up whatever this process came back to: a run left parked on
   // a gate by a killed process is still parked, and this is what puts it back on screen.
   useEffect(() => {
@@ -84,8 +116,16 @@ export function App() {
         .map((episode) => episode.run)
         .find((each) => each && ['queued', 'running', 'paused'].includes(each.status))
       if (unfinished) setRunId(unfinished.id)
+      const first = next?.shows[0]
+      if (first) setBenchShow((held) => held ?? first.id)
     })
   }, [loadView])
+
+  // The bench re-reads when a control moves, and on nothing else. A GET, so opening this
+  // page still starts nothing (invariant 5).
+  useEffect(() => {
+    if (benchShow) void loadCanon(benchShow, controls)
+  }, [benchShow, controls, loadCanon])
 
   useEffect(() => {
     showing.current = runId
@@ -168,6 +208,48 @@ export function App() {
     }
   }
 
+  /**
+   * One act at the bench, and the bench as the act left it. Every canon endpoint answers
+   * with the recomposed view, so the section — entities, facts, queue and ledger — re-renders
+   * off `canon_ruling` the moment a ruling lands, without a second round trip.
+   */
+  async function act(path: string, body: unknown): Promise<void> {
+    setBusy(true)
+    setProblem(null)
+    try {
+      const res = await fetch(`${path}?${controls}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      const payload: unknown = await res.json()
+      if (!res.ok) {
+        setProblem(
+          (payload as { error?: string }).error ?? 'The bench refused, and said nothing about why.',
+        )
+      } else {
+        setCanon(payload as CanonBenchView)
+        // The form is what the act consumed, so it empties: a create form left full is one
+        // that raises the same sheet twice. It takes the queue's notes with it, which is
+        // the cost of one draft object — the queue rules one proposal at a time anyway.
+        setBench(EMPTY_BENCH)
+      }
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const sheetBody = (form: SheetForm, relations: Edge[]): Record<string, unknown> => ({
+    categoryKey: form.categoryKey,
+    name: form.name,
+    standing: form.standing,
+    aliases: form.aliases,
+    facts: form.facts,
+    body: form.body,
+    usageContext: form.usageContext,
+    relations,
+  })
+
   if (!view) {
     return (
       <main style={PAGE}>
@@ -190,6 +272,40 @@ export function App() {
       onLaunch={(episode) => void launch(episode)}
       onShowRun={setRunId}
       onRule={(gateId, verdict) => void rule(gateId, verdict)}
+      onShowBench={(id) => {
+        setBenchShow(id)
+        setEntityId(null)
+      }}
+      bench={
+        canon === null || benchShow === null
+          ? null
+          : {
+              canon,
+              draft: bench,
+              busy,
+              asOf,
+              onDraft: (next) => setBench({ ...bench, ...next }),
+              onAsOf: setAsOf,
+              onShowEntity: setEntityId,
+              onFound: () => void act(`/api/canon/${benchShow}/found`, {}),
+              onCreate: (categoryKey, relations) =>
+                void act(
+                  `/api/canon/${benchShow}/entity`,
+                  sheetBody({ ...bench.create, categoryKey }, relations),
+                ),
+              onPromote: (id, relations) =>
+                void act(`/api/canon/entity/${id}/promote`, sheetBody(bench.promote, relations)),
+              onPropose: (factId) =>
+                void act(`/api/canon/fact/${factId}/propose`, {
+                  statement: bench.statements[factId] ?? '',
+                  usageContext: bench.changeContext,
+                }),
+              onRuleProposal: (proposalId, verdict) =>
+                void act(`/api/proposal/${proposalId}/${verdict}`, {
+                  note: bench.notes[proposalId] ?? '',
+                }),
+            }
+      }
     />
   )
 }
@@ -206,6 +322,18 @@ export interface PageProps {
   onLaunch(episode: EpisodeOnThePage): void
   onShowRun(runId: string): void
   onRule(gateId: string, verdict: 'approve' | 'reject'): void
+  /**
+   * The canon section, whole — its view, its draft and its handlers in one object rather
+   * than ten props threaded through a page that does nothing with any of them. Null until
+   * the bench has answered, and on a library with no show in it at all.
+   */
+  bench: CanonBenchProps | null
+  /**
+   * Which show the bench is standing at. Canon is scoped to a show and this page renders
+   * one bench, so a library with two shows needs a way to say which — never a first one
+   * picked silently.
+   */
+  onShowBench(showId: string): void
 }
 
 /** Markup, and nothing else. Every sentence on it was composed by the server. */
@@ -386,7 +514,7 @@ export function Page(props: PageProps) {
                 </label>
               </p>
               <Button
-                offer={withNote(run.gate.reject, draft.note)}
+                offer={needing(run.gate.reject, draft.note, GATE_NOTE_REQUIRED)}
                 busy={busy}
                 onClick={() => props.onRule(run.gate!.id, 'reject')}
               />
@@ -427,10 +555,27 @@ export function Page(props: PageProps) {
         </section>
       )}
 
+      {/* Canon (E2-6). It rules through the same API the gate above does, and renders its
+          rulings from the ledger rather than from the log — see the section's own note. */}
+      {view.shows.length > 1 && (
+        <p>
+          Canon is scoped to a show. The bench below is standing at{' '}
+          <strong>{props.bench?.canon.show.title ?? 'no show'}</strong>:{' '}
+          {view.shows.map((show) => (
+            <button key={show.id} type="button" onClick={() => props.onShowBench(show.id)}>
+              Stand at the {show.title} bench
+            </button>
+          ))}
+        </p>
+      )}
+      {props.bench && <CanonBench {...props.bench} />}
+
       <h2>Live</h2>
       <p>
         Every event this process has written, oldest first — replayed from the start when
         the page opens, so what a killed process wrote is still here after the restart.
+        Runs and gates: a canon ruling made at the bench convenes neither, so it is on the
+        ledger in the canon section above and not here.
       </p>
       <ol style={STREAM}>
         {live.map((event) => (
@@ -445,57 +590,10 @@ export function Page(props: PageProps) {
 }
 
 /**
- * A button, and the only way this page renders one. It states the sentence it was handed,
- * states its cost before the click, and when it cannot be pressed renders disabled with
- * the reason in words — never a failure after the click.
+ * The one precondition the gate section owns rather than reads: a rejection needs a note,
+ * and the note is in a textarea the server has never seen. The canon section states its
+ * three the same way, off the sentences the bench hands down (`refusals`).
  */
-function Button({ offer, busy, onClick }: { offer: Offer; busy: boolean; onClick: () => void }) {
-  return (
-    <div style={{ margin: '0.6rem 0' }}>
-      <button type="button" disabled={!offer.enabled || busy} onClick={onClick} style={BUTTON}>
-        {offer.sentence}
-        <br />
-        <small>{offer.cost}</small>
-      </button>
-      {offer.blockedBecause && (
-        <div>
-          <small>Blocked: {offer.blockedBecause}</small>
-        </div>
-      )}
-    </div>
-  )
-}
-
-/**
- * The one precondition this page owns rather than reads: a rejection needs a note, and
- * the note is in a textarea the server has never seen. Same shape as every other blocked
- * button — disabled, with the reason in words, before the click.
- */
-function withNote(reject: Offer, note: string): Offer {
-  if (!reject.enabled || note.trim() !== '') return reject
-  return {
-    ...reject,
-    enabled: false,
-    blockedBecause:
-      'Write the note first — "reject with notes" is the verb, and the note is what the ' +
-      'step reopens with.',
-  }
-}
-
-const PAGE = {
-  fontFamily: 'ui-monospace, monospace',
-  lineHeight: 1.6,
-  padding: '2rem',
-  maxWidth: '64rem',
-}
-const CARD = { border: '1px solid currentColor', padding: '0.8rem 1rem', margin: '1rem 0' }
-const BUTTON = { font: 'inherit', textAlign: 'left' as const, padding: '0.5rem 0.8rem' }
-const FAINT = { opacity: 0.5 }
-const ARTIFACT = {
-  border: '1px solid currentColor',
-  padding: '1rem',
-  whiteSpace: 'pre-wrap' as const,
-  maxHeight: '30rem',
-  overflow: 'auto',
-}
-const STREAM = { maxHeight: '24rem', overflow: 'auto', fontSize: '0.85rem' }
+const GATE_NOTE_REQUIRED =
+  'Write the note first — "reject with notes" is the verb, and the note is what the ' +
+  'step reopens with.'

@@ -1,7 +1,20 @@
 import { serveStatic } from '@hono/node-server/serve-static'
 import { Hono, type Context } from 'hono'
 import { streamSSE } from 'hono/streaming'
+import {
+  canonBenchView,
+  promoteCandidate,
+  proposeFactChange,
+  registerAndPropose,
+  type BenchStanding,
+  type SheetDraft,
+} from './canon-bench.ts'
 import type { Store } from './db/store.ts'
+import { ENTITY_STANDING, findEntityById } from './domain/canon.ts'
+import { findFact } from './domain/fact.ts'
+import { foundCanon } from './domain/founding.ts'
+import { createProposalRulings, findProposal } from './domain/proposal.ts'
+import { findShow } from './domain/spine.ts'
 import { eventsSince, type EventLog, type EventRecord } from './events.ts'
 import type { LibraryPaths } from './library.ts'
 import type { LLMReadiness } from './llm/choose.ts'
@@ -146,6 +159,125 @@ export function createApp(
     return rule(c, () => operating.rulings.reject(c.req.param('id'), { notes }))
   })
 
+  // ── The canon bench (E2-6) ────────────────────────────────────────────────────
+  //
+  // Six routes, and every one of them is Ryan's click. Five RAISE — founding aside, nothing
+  // here writes canon — and the sixth is the ruling API, convened from the queue exactly as
+  // the gate room convenes it over a script (proposal.ts: a gate says where he was standing,
+  // never whether he may rule).
+  //
+  // **Every one answers with the recomposed bench**, and the browser sends the state of its
+  // two controls along with the act, so the canon section re-renders from `canon_ruling`
+  // the moment a ruling lands. That is where a bench ruling is read back from and it is
+  // ruled (#29, Aug 7): no gate, no run, no event — the Live panel stays runs-and-gates.
+  //
+  // The show-scoped routes take the show id in the same position `entity` and `fact` take a
+  // literal, which cannot collide: ids are prefixed (`show_…`), so no show is called
+  // "entity". Nothing here spends a cent, which is why no route consults the LLM readiness.
+  const rulings = createProposalRulings(store, events)
+
+  /** Where the bench's two controls stand, off the query string the page sent with its act. */
+  const standingOf = (c: Context): BenchStanding => {
+    const entity = c.req.query('entity')
+    const ruling = Number(c.req.query('ruling'))
+    const date = c.req.query('date')
+    return {
+      ...(entity !== undefined && entity !== '' && { entityId: entity }),
+      ...(Number.isInteger(ruling) && ruling > 0 && { ruling }),
+      ...(date !== undefined && date !== '' && { date }),
+    }
+  }
+
+  /** The act, then the bench as the act left it. A refusal answers in the words it refused with. */
+  const bench = (c: Context, showId: string, act: () => void) => {
+    try {
+      act()
+    } catch (error) {
+      return c.json({ error: messageOf(error) }, 409)
+    }
+    return c.json(canonBenchView(store, showId, standingOf(c))!)
+  }
+
+  /** Entities, one sheet, the queue, the ledger, and the point-in-time control. */
+  app.get('/api/canon/:showId', (c) => {
+    const view = canonBenchView(store, c.req.param('showId'), standingOf(c))
+    if (!view) return c.json({ error: `No such show: ${c.req.param('showId')}` }, 404)
+    return c.json(view)
+  })
+
+  /**
+   * Founding (D25): one deliberate act, one ruling per sheet on the ledger. It rules only
+   * what a loader or an import raised — `foundCanon`'s own filter — so a proposal Ryan or a
+   * writer raised is never swept into it, and it is not a general bulk-approve.
+   */
+  app.post('/api/canon/:showId/found', (c) => {
+    const showId = c.req.param('showId')
+    if (!findShow(store, showId)) return c.json({ error: `No such show: ${showId}` }, 404)
+    return bench(c, showId, () => foundCanon(store, showId))
+  })
+
+  /** Creating is proposing: the identity is a candidate, the sheet is a proposal. */
+  app.post('/api/canon/:showId/entity', async (c) => {
+    const showId = c.req.param('showId')
+    if (!findShow(store, showId)) return c.json({ error: `No such show: ${showId}` }, 404)
+
+    const body = await json(c.req.raw)
+    return bench(c, showId, () =>
+      registerAndPropose(
+        store,
+        showId,
+        { categoryKey: text(body['categoryKey']), name: text(body['name']) },
+        sheetFrom(body),
+      ),
+    )
+  })
+
+  /** The candidate on the list, put to a ruling with the sheet Ryan typed for it. */
+  app.post('/api/canon/entity/:entityId/promote', async (c) => {
+    const entity = findEntityById(store, c.req.param('entityId'))
+    if (!entity) return c.json({ error: `No such canon entity: ${c.req.param('entityId')}` }, 404)
+
+    const body = await json(c.req.raw)
+    return bench(c, entity.showId, () => promoteCandidate(store, entity.id, sheetFrom(body)))
+  })
+
+  /** A change to a ratified fact, which is a SECOND proposal carrying the first as its before. */
+  app.post('/api/canon/fact/:factId/propose', async (c) => {
+    const fact = findFact(store, c.req.param('factId'))
+    if (!fact) return c.json({ error: `No such fact: ${c.req.param('factId')}` }, 404)
+    const entity = findEntityById(store, fact.entityId)!
+
+    const body = await json(c.req.raw)
+    const field = text(body['field'])
+    return bench(c, entity.showId, () =>
+      proposeFactChange(store, fact.id, {
+        statement: text(body['statement']),
+        ...(field !== '' && { field }),
+        ...(text(body['usageContext']) !== '' && { usageContext: text(body['usageContext']) }),
+      }),
+    )
+  })
+
+  /**
+   * The one ruling API, from the bench. All three dispositions are kept forever (3.3), and
+   * the rejection's missing note is refused by `createProposalRulings` in the same sentence
+   * the disabled button was already showing — one string, `REJECTION_NEEDS_A_NOTE`.
+   */
+  for (const verdict of ['ratify', 'reject', 'defer'] as const) {
+    app.post(`/api/proposal/:proposalId/${verdict}`, async (c) => {
+      const proposal = findProposal(store, c.req.param('proposalId'))
+      if (!proposal) {
+        return c.json({ error: `No such proposal: ${c.req.param('proposalId')}` }, 404)
+      }
+      const note = text((await json(c.req.raw))['note'])
+      return bench(c, proposal.showId, () => {
+        if (verdict === 'ratify') rulings.ratify(proposal.id, { note })
+        else if (verdict === 'defer') rulings.defer(proposal.id, { note })
+        else rulings.reject(proposal.id, { note })
+      })
+    })
+  }
+
   /**
    * The live stream: every event, in sequence order, forever.
    *
@@ -266,6 +398,59 @@ function notesFrom(value: unknown): NoteDraft[] {
       },
     ]
   })
+}
+
+/** A string field as it was typed, trimmed. Anything else was not typed at all. */
+const text = (value: unknown): string => (typeof value === 'string' ? value.trim() : '')
+
+/**
+ * The sheet a promotion carries, as the bench form sends it (1.2). Facts arrive as one
+ * textarea — one statement per line, blank lines dropped — because that is how a sheet's
+ * `## Facts` reads on disk, and the bench is not the place to invent a second shape for it.
+ */
+function sheetFrom(body: Record<string, unknown>): SheetDraft {
+  const lines = (value: unknown): string[] =>
+    typeof value === 'string'
+      ? value
+          .split('\n')
+          .map((line) => line.trim())
+          .filter((line) => line !== '')
+      : []
+
+  const standing = text(body['standing'])
+  const usageContext = text(body['usageContext'])
+  const prose = typeof body['body'] === 'string' ? body['body'].trim() : ''
+  const aliases = text(body['aliases'])
+    .split(',')
+    .map((alias) => alias.trim())
+    .filter((alias) => alias !== '')
+
+  // The vocabulary is the store's (0006 aborts on anything else), so a standing outside it
+  // is refused HERE, in words, rather than at the ratification it would abort three screens
+  // later. Left out entirely is legal and different: what a sheet does not say is left alone.
+  if (standing !== '' && !ENTITY_STANDING.includes(standing as SheetDraft['standing'] & string)) {
+    throw new Error(
+      `“${standing}” is not a standing. It is one of: ${ENTITY_STANDING.join(', ')} — declared ` +
+        'intent, not a count (3.1) — or left out, which says nothing rather than saying one-shot.',
+    )
+  }
+
+  return {
+    ...(standing !== '' && { standing: standing as SheetDraft['standing'] }),
+    ...(aliases.length > 0 && { aliases }),
+    ...(prose !== '' && { body: prose }),
+    facts: lines(body['facts']),
+    relations: Array.isArray(body['relations'])
+      ? body['relations'].flatMap((entry): { type: string; to: string }[] => {
+          if (typeof entry !== 'object' || entry === null) return []
+          const record = entry as Record<string, unknown>
+          const type = text(record['type'])
+          const to = text(record['to'])
+          return type === '' || to === '' ? [] : [{ type, to }]
+        })
+      : [],
+    ...(usageContext !== '' && { usageContext }),
+  }
 }
 
 const messageOf = (error: unknown): string =>
