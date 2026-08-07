@@ -33,6 +33,14 @@ docker compose up                     # the app on http://localhost:4455
 `ANTHROPIC_API_KEY` empty in it to use D6's other backend, the `claude` CLI, which works
 outside the container where you are signed in.
 
+> **A running container serves the past.** It keeps the image it was *born* from and the
+> environment it was *created* with — merging PRs, editing `.env`, and plain
+> `docker compose up` over a live container change nothing it serves. Whenever code or
+> `.env` has changed since the container started:
+> `docker compose down && docker compose up --build`. Both real incidents so far — a
+> rotated key the container didn't have, and a drill against a two-day-old page — were
+> this, and every drill below assumes a fresh container.
+
 Everything durable lands in `./library` on the host — `showrunner.db` plus artifacts
 as plain files (D2). The directory is gitignored; compose creates it on first run.
 
@@ -69,7 +77,7 @@ npm install
 npm run build
 npm run fixture:load
 cp -n .env.example .env                # -n: never overwrites a .env you already have
-docker compose up
+docker compose down && docker compose up --build   # always a FRESH container — see below
 ```
 
 Put your `ANTHROPIC_API_KEY` in `.env`, or leave it empty to use the `claude` CLI instead.
@@ -206,8 +214,12 @@ command to run and nothing to back up by hand that `library/` isn't already.
 ```
 npm install
 npm run build
-npm start                      # or: docker compose up — either one migrates on the way up
+docker compose down            # a running container keeps the image it was BORN from —
+docker compose up --build      # merging PRs changes nothing it serves until you do this
 ```
+
+Or, without the container: `npm start` (it reads the current code directly). Either way
+migrates on the way up.
 
 Then, in another terminal:
 
