@@ -101,7 +101,16 @@ const EPISODE_CANON_TABLE = ['proposal_landing']
  */
 const CHECK_TABLE = ['check_pass', 'finding', 'finding_disposition', 'finding_fact']
 
+/**
+ * The tables E3-1 owns: the continuity board (3.2b). Four, and each is a different question
+ * the free rules ask — the scene grid itself, who is in each scene, what the geography costs
+ * to cross, and which species the void kills. Nothing here is a flag either: a board finding
+ * is `deterministic` and D12's wall is still E3-3's computation.
+ */
+const BOARD_TABLE = ['board_hazard', 'board_presence', 'board_scene', 'board_transit']
+
 const EVERY_TABLE = [
+  ...BOARD_TABLE,
   ...CHECK_TABLE,
   ...EPISODE_CANON_TABLE,
   ...SPINE_TABLE,
@@ -585,12 +594,16 @@ describe('0010 · findings, added beside a populated library', () => {
     )
 
     // Every table that existed before, with every row exactly where it was. The only new
-    // names are E3-0's four.
+    // names are E3-0's four and E3-1's four — every migration past 9 adds tables and grows
+    // nothing, which is what it means for a check and a board to be new records rather than
+    // new state on something that already exists.
     for (const [name, rows] of Object.entries(before)) {
       if (name === 'schema_migration') continue
       expect({ [name]: store.all<unknown>(`SELECT * FROM ${name}`) }).toEqual({ [name]: rows })
     }
-    expect(tableNames(store).filter((name) => !(name in before))).toEqual(CHECK_TABLE)
+    expect(tableNames(store).filter((name) => !(name in before))).toEqual(
+      [...BOARD_TABLE, ...CHECK_TABLE].sort(),
+    )
   })
 
   it('records a pass with no findings, and one anchored at a scene of the script', () => {
@@ -661,5 +674,132 @@ describe('0010 · findings, added beside a populated library', () => {
     expect(store.get('SELECT COUNT(*) AS n FROM check_pass')).toEqual({ n: 0 })
     expect(store.get('SELECT COUNT(*) AS n FROM finding')).toEqual({ n: 0 })
     expect(store.get('SELECT COUNT(*) AS n FROM finding_fact')).toEqual({ n: 0 })
+  })
+})
+
+/**
+ * 0011 lands on a library that already has an episode, its scenes, a script with provenance,
+ * ratified canon and E3-0's checks in it — which is every foreign key the board points at.
+ * It adds four tables and grows nothing, and the proof is the same one 0010 got: the rows
+ * that were there are still there, byte for byte, and SQLite's own integrity and
+ * foreign-key checks pass on the far side.
+ */
+describe('0011 · the continuity board, added beside a populated library', () => {
+  function writeAScriptWithScenes(): void {
+    store.run("INSERT INTO show (id, key, title) VALUES ('show1', 'greyharbor', 'Grey Harbor')")
+    store.run("INSERT INTO season (id, show_id, number) VALUES ('season1', 'show1', 1)")
+    store.run(
+      "INSERT INTO episode (id, season_id, number, title) VALUES ('ep1', 'season1', 1, 'The Long Pier')",
+    )
+    store.run(
+      `INSERT INTO scene (id, episode_id, ordinal, heading) VALUES
+         ('sc5', 'ep1', 5, 'INT. HARBOURMASTER''S OFFICE — 07:20'),
+         ('sc6', 'ep1', 6, 'EXT. THE LONG PIER — CONTINUOUS')`,
+    )
+    store.run(
+      `INSERT INTO canon_entity (id, show_id, category_key, name) VALUES
+         ('ent1', 'show1', 'species', 'Halvani'),
+         ('ent2', 'show1', 'character', 'Ilse Renn'),
+         ('ent3', 'show1', 'location', 'Grey Harbor Station')`,
+    )
+    store.run("INSERT INTO canon_ruling (kind) VALUES ('ratification')")
+    store.run(
+      `INSERT INTO fact (id, entity_id, statement, ratified_by) VALUES
+         ('fact1', 'ent1', 'A Halvani in unprotected vacuum dies inside two minutes.', 1),
+         ('fact2', 'ent3', 'Cycling the No. 4 lock takes ninety seconds in either direction.', 1)`,
+    )
+    store.run(
+      "INSERT INTO artifact (id, episode_id, kind, file_path) VALUES ('art1', 'ep1', 'script', 'ep01/script.md')",
+    )
+    store.run("INSERT INTO artifact_provenance (artifact_id, entity_id) VALUES ('art1', 'ent1')")
+    store.run(
+      `INSERT INTO check_pass (id, check_key, tier, artifact_id, artifact_version)
+            VALUES ('pass1', 'stale-exception', 'deterministic', 'art1', 1)`,
+    )
+  }
+
+  it('adds its four tables, alters nothing, and leaves the file sound', () => {
+    applyThrough(10)
+    writeAScriptWithScenes()
+    const before = Object.fromEntries(
+      tableNames(store).map((name) => [name, store.all<unknown>(`SELECT * FROM ${name}`)]),
+    )
+
+    expect(migrate(store).map((m) => m.number)).toEqual([11])
+
+    for (const [name, rows] of Object.entries(before)) {
+      if (name === 'schema_migration') continue
+      expect({ [name]: store.all<unknown>(`SELECT * FROM ${name}`) }).toEqual({ [name]: rows })
+    }
+    expect(tableNames(store).filter((name) => !(name in before))).toEqual(BOARD_TABLE)
+
+    expect(store.get('PRAGMA integrity_check')).toEqual({ integrity_check: 'ok' })
+    expect(store.all('PRAGMA foreign_key_check')).toEqual([])
+    // The runner's own rule, said again where it matters most: a migration applied twice
+    // must be a no-op, because that is what every boot does.
+    expect(migrate(store)).toEqual([])
+  })
+
+  it('holds a grid row, who is in it, what the crossing costs, and what the void kills', () => {
+    migrate(store)
+    writeAScriptWithScenes()
+    store.run(
+      "INSERT INTO artifact (id, episode_id, kind) VALUES ('board1', 'ep1', 'continuity-board')",
+    )
+
+    store.run(
+      `INSERT INTO board_scene
+         (board_id, scene_id, location, location_entity_id, environment, ship_position,
+          elapsed_seconds, elapsed_label)
+       VALUES ('board1', 'sc6', 'The Long Pier', 'ent3', 'exposed', '', 26400, 'CONTINUOUS')`,
+    )
+    store.run(
+      `INSERT INTO board_presence (board_id, scene_id, character_name, entity_id, protection, arrives)
+            VALUES ('board1', 'sc6', 'Ilse Renn', 'ent2', 'hardsuit', 1)`,
+    )
+    store.run(
+      `INSERT INTO board_transit (board_id, from_location, to_location, seconds, fact_id)
+            VALUES ('board1', 'Harbourmaster''s office', 'The Long Pier', 90, 'fact2')`,
+    )
+    store.run(
+      `INSERT INTO board_hazard (board_id, entity_id, hazard, fact_id)
+            VALUES ('board1', 'ent1', 'lethal-in-vacuum', 'fact1')`,
+    )
+
+    expect(store.get('SELECT environment, elapsed_seconds, ship_position FROM board_scene')).toEqual({
+      environment: 'exposed',
+      elapsed_seconds: 26400,
+      ship_position: '',
+    })
+    expect(store.get('SELECT protection, arrives FROM board_presence')).toEqual({
+      protection: 'hardsuit',
+      arrives: 1,
+    })
+    expect(store.get('SELECT seconds, fact_id FROM board_transit')).toEqual({
+      seconds: 90,
+      fact_id: 'fact2',
+    })
+    expect(store.get('SELECT hazard, fact_id FROM board_hazard')).toEqual({
+      hazard: 'lethal-in-vacuum',
+      fact_id: 'fact1',
+    })
+
+    // A body cannot be present in a scene the board has no reading of — the composite edge
+    // back to `board_scene`, enforced rather than assumed.
+    expect(() =>
+      store.run(
+        `INSERT INTO board_presence (board_id, scene_id, character_name, protection)
+              VALUES ('board1', 'sc5', 'Tobin Wick', 'none')`,
+      ),
+    ).toThrow(/FOREIGN KEY/i)
+
+    // A fact a board quotes is not something anything else may take away underneath it.
+    expect(() => store.run("DELETE FROM fact WHERE id = 'fact1'")).toThrow(/never deleted/)
+
+    // But the board is derived, and it goes when what it was derived from goes: delete the
+    // scene and its grid row and everyone in it go with it (D3's re-delineation).
+    store.run("DELETE FROM scene WHERE id = 'sc6'")
+    expect(store.get('SELECT COUNT(*) AS n FROM board_scene')).toEqual({ n: 0 })
+    expect(store.get('SELECT COUNT(*) AS n FROM board_presence')).toEqual({ n: 0 })
   })
 })
