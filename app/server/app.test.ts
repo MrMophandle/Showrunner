@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { createApp } from './app.ts'
+import type { CanonBenchView } from './canon-bench.ts'
 import type { Store } from './db/store.ts'
 import { episodesOf, seasonsOf } from './domain/spine.ts'
 import { createEventLog, type EventLog } from './events.ts'
@@ -42,6 +43,7 @@ let runner: Runner
 let app: ReturnType<typeof createApp>
 let readiness: LLMReadiness
 let ep02: string
+let showId: string
 
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'showrunner-api-'))
@@ -60,6 +62,7 @@ beforeEach(() => {
   })
 
   const show = store.get<{ id: string }>("SELECT id FROM show WHERE key = 'greyharbor'")!
+  showId = show.id
   ep02 = episodesOf(store, seasonsOf(store, show.id)[0]!.id).find((e) => e.number === 2)!.id
 })
 
@@ -206,6 +209,183 @@ describe('the app process — ruling on a gate', () => {
     const again = await post<{ error: string }>(`/api/gate/${gateId}/approve`, {})
     expect(again.status).toBe(409)
     expect(again.body.error).toContain('A later opinion is a later round.')
+  })
+})
+
+describe('the app process — the canon bench', () => {
+  it('serves the bench a loaded show stands at: candidates, a full queue, an empty ledger', async () => {
+    const view = await get<CanonBenchView>(`/api/canon/${showId}`)
+
+    expect(view.show.key).toBe('greyharbor')
+    expect(view.entities.every((entity) => entity.status === 'candidate')).toBe(true)
+    expect(view.queue).toHaveLength(6)
+    expect(view.ledger).toEqual([])
+    expect(view.found.enabled).toBe(true)
+    expect(view.found.cost).toBe('No model call · $0.00')
+
+    const missing = await app.request('/api/canon/show_nope')
+    expect(missing.status).toBe(404)
+  })
+
+  it('founds the show, and the ledger it renders from carries one ruling per sheet', async () => {
+    const founded = await post<CanonBenchView>(`/api/canon/${showId}/found`, {})
+
+    expect(founded.status).toBe(200)
+    // The answer IS the recomposed bench: the section re-renders off `canon_ruling` without
+    // a second round trip, which is where a bench ruling is read back from (#29).
+    expect(founded.body.ledger).toHaveLength(6)
+    expect(founded.body.ledger.every((ruling) => ruling.kind === 'ratification')).toBe(true)
+    expect(founded.body.ledger[0]!.sentence).toContain('convened at the bench, no gate')
+    expect(founded.body.queue).toEqual([])
+    expect(founded.body.found.enabled).toBe(false)
+    expect(founded.body.entities.find((entity) => entity.name === 'Ilse Renn')!.status).toBe(
+      'active',
+    )
+    // Nothing about a canon ruling reaches the wire: the Live panel stays runs-and-gates.
+    expect(await get<{ shows: unknown[] }>('/api/operating')).toBeTruthy()
+    expect(llm.calls).toHaveLength(0)
+  })
+
+  it('round-trips all three ruling verbs, and each lands on the ledger', async () => {
+    const queue = (await get<CanonBenchView>(`/api/canon/${showId}`)).queue
+
+    const ratified = await post<CanonBenchView>(`/api/proposal/${queue[0]!.id}/ratify`, {
+      note: 'yes — that is the sheet.',
+    })
+    const rejected = await post<CanonBenchView>(`/api/proposal/${queue[1]!.id}/reject`, {
+      note: 'not yet; the harbour has no faction in it.',
+    })
+    const deferred = await post<CanonBenchView>(`/api/proposal/${queue[2]!.id}/defer`, {
+      note: 'later.',
+    })
+
+    expect([ratified.status, rejected.status, deferred.status]).toEqual([200, 200, 200])
+    expect(deferred.body.ledger.map((ruling) => ruling.kind)).toEqual([
+      'deferral',
+      'rejection',
+      'ratification',
+    ])
+    expect(deferred.body.ledger[0]!.note).toBe('later.')
+    // All three dispose of a proposal, so the queue is three shorter — and only the first
+    // wrote canon (invariant 1).
+    expect(deferred.body.queue).toHaveLength(3)
+
+    const again = await post<{ error: string }>(`/api/proposal/${queue[0]!.id}/ratify`, {})
+    expect(again.status).toBe(409)
+    expect(again.body.error).toContain('a proposal is ruled once')
+
+    const nothing = await app.request('/api/proposal/prop_nope/ratify', { method: 'POST' })
+    expect(nothing.status).toBe(404)
+  })
+
+  it('refuses a rejection with no note in the sentence the disabled button was showing', async () => {
+    const view = await get<CanonBenchView>(`/api/canon/${showId}`)
+    const onScreen = view.refusals.rejectNeedsNote
+
+    const refused = await post<{ error: string }>(`/api/proposal/${view.queue[0]!.id}/reject`, {
+      note: '   ',
+    })
+    expect(refused.status).toBe(409)
+    // Not "similar" — the same string, out of `REJECTION_NEEDS_A_NOTE`. The disabled button
+    // and the refusal cannot drift apart, which is what makes the precondition real.
+    expect(refused.body.error).toBe(onScreen)
+    expect(refused.body.error).toContain('reject with note')
+  })
+
+  it('creates an entity as a candidate and raises its promotion, and rules it in the queue', async () => {
+    await post(`/api/canon/${showId}/found`, {})
+
+    const created = await post<CanonBenchView>(`/api/canon/${showId}/entity`, {
+      categoryKey: 'character',
+      name: 'Ottilie Bray',
+      standing: 'recurring',
+      facts: 'Ottilie Bray keeps the harbour’s only working lathe.\n',
+      relations: [{ type: 'species', to: 'unknown' }],
+    })
+
+    expect(created.status).toBe(200)
+    const candidate = created.body.entities.find((entity) => entity.name === 'Ottilie Bray')!
+    expect(candidate.status).toBe('candidate')
+    expect(created.body.queue).toHaveLength(1)
+    expect(created.body.queue[0]!.sentence).toContain('raised by you, at the bench')
+
+    const ruled = await post<CanonBenchView>(
+      `/api/proposal/${created.body.queue[0]!.id}/ratify?entity=${candidate.id}`,
+      { note: 'she has been in the background for six episodes.' },
+    )
+    expect(ruled.body.entity!.status).toBe('active')
+    expect(ruled.body.entity!.facts).toHaveLength(1)
+
+    const blank = await post<{ error: string }>(`/api/canon/${showId}/entity`, {
+      categoryKey: 'character',
+      name: ' ',
+    })
+    expect(blank.status).toBe(409)
+    expect(blank.body.error).toBe(created.body.refusals.entityNeedsName)
+  })
+
+  it('promotes the candidate the loader left, with the sheet typed for it', async () => {
+    const founded = await post<CanonBenchView>(`/api/canon/${showId}/found`, {})
+    const sefa = founded.body.entities.find((entity) => entity.name === 'Sefa Doule')!
+    expect(sefa.status).toBe('candidate')
+    expect(sefa.promote.enabled).toBe(true)
+
+    const raised = await post<CanonBenchView>(
+      `/api/canon/entity/${sefa.id}/promote?entity=${sefa.id}`,
+      {
+        standing: 'recurring',
+        aliases: 'the assessor',
+        facts: 'Sefa Doule files against the line office’s ledger, not the harbour’s.',
+        relations: [{ type: 'species', to: 'unknown' }],
+      },
+    )
+    expect(raised.body.entity!.status).toBe('candidate')
+    expect(raised.body.queue).toHaveLength(1)
+
+    const ruled = await post<CanonBenchView>(
+      `/api/proposal/${raised.body.queue[0]!.id}/ratify?entity=${sefa.id}`,
+      { note: 'he is in ep03; put him on the books.' },
+    )
+    expect(ruled.body.entity!.status).toBe('active')
+    expect(ruled.body.entity!.relations[0]!.sentence).toContain('species → unknown')
+  })
+
+  it('changes one ratified fact by a second proposal, and the as-of control flips it back', async () => {
+    const founded = await post<CanonBenchView>(`/api/canon/${showId}/found`, {})
+    const ilse = founded.body.entities.find((entity) => entity.name === 'Ilse Renn')!
+
+    const sheet = await get<CanonBenchView>(`/api/canon/${showId}?entity=${ilse.id}`)
+    const fact = sheet.entity!.facts[0]!
+
+    const raised = await post<CanonBenchView>(
+      `/api/canon/fact/${fact.id}/propose?entity=${ilse.id}`,
+      { statement: 'Ilse Renn has not left the station in eleven years.' },
+    )
+    expect(raised.status).toBe(200)
+    // Raised is not ruled: canon still says what it said.
+    expect(raised.body.entity!.facts.map((each) => each.statement)).toContain(fact.statement)
+
+    const ruled = await post<CanonBenchView>(
+      `/api/proposal/${raised.body.queue[0]!.id}/ratify?entity=${ilse.id}`,
+      { note: 'eleven. the gap year counts.' },
+    )
+    const at = ruled.body.ledger[0]!.seq
+    expect(ruled.body.entity!.facts.map((each) => each.statement)).toContain(
+      'Ilse Renn has not left the station in eleven years.',
+    )
+
+    // The whole point of the ledger being the clock: read canon on the other side of it.
+    const before = await get<CanonBenchView>(
+      `/api/canon/${showId}?entity=${ilse.id}&ruling=${at - 1}`,
+    )
+    expect(before.entity!.facts.map((each) => each.statement)).toContain(fact.statement)
+    expect(before.entity!.facts.map((each) => each.statement)).not.toContain(
+      'Ilse Renn has not left the station in eleven years.',
+    )
+    expect(before.asOf.sentence).toContain(`Canon as of ruling ${at - 1}`)
+
+    const missing = await app.request('/api/canon/fact/fact_nope/propose', { method: 'POST' })
+    expect(missing.status).toBe(404)
   })
 })
 

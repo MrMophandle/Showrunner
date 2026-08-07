@@ -42,6 +42,18 @@ import { findShow } from './spine.ts'
  */
 export const FOUNDING_ORIGIN: readonly ProposalOrigin[] = ['loader', 'import']
 
+/**
+ * The stack `foundCanon` would rule, oldest raised first — a READ, and it writes nothing.
+ *
+ * It exists because the bench's founding button has to say how many sheets it is about to
+ * rule *before* it is pressed ("Found Grey Harbor — ratify its 6 founding sheets"), and a
+ * button that counted the stack its own way is a button that eventually states a different
+ * number from the one the click rules. Same filter, one place: `foundCanon` calls this too.
+ */
+export function foundingStack(store: Store, showId: string): Proposal[] {
+  return openProposals(store, showId).filter(isFounding)
+}
+
 export interface Founding {
   showId: string
   /** Ratified by this call, in the order they were ruled — oldest raised, first ruled. */
@@ -68,6 +80,8 @@ export function foundCanon(
   if (!show) throw new Error(`No such show: ${showId}`)
 
   const note = ruling.note ?? `founded ${show.title} from its sheets`
+  // `isFounding` is the same predicate `foundingStack` filters by, which is what the bench's
+  // button counted with — one walk here only so `left` falls out of it too.
   const open = openProposals(store, showId)
   const stack = open.filter(isFounding)
   const left = open.filter((proposal) => !isFounding(proposal))

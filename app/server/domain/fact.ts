@@ -204,6 +204,37 @@ export function findRuling(store: Store, seq: number): CanonRuling | undefined {
 }
 
 /**
+ * Every ruling this show's canon has been moved by, newest first — the ledger.
+ *
+ * **This is where a ruling is read back from, and E2-6 is why it is a function** (issue #29,
+ * ruled Aug 7 2026). A ruling convened at a gate also reaches the event stream; a ruling made
+ * at the bench or by founding convenes no gate and no run, `event.run_id` is NOT NULL, and so
+ * it never reaches the wire at all. `canon_ruling` is the one place BOTH land — append-only,
+ * trigger-enforced, and already the audit trail canon is read by — so the bench renders its
+ * rulings from here rather than from the log, and the episode-less-event migration stays
+ * deferred until a real production need pulls it.
+ *
+ * Scoped through the proposal it disposed of, which is the only thing that says which show a
+ * ruling belongs to. A ruling made with no proposal (E2-1's primitive, in tests) belongs to
+ * no show and is deliberately not listed — it is not a disposition of anything.
+ */
+export function rulingsOfShow(store: Store, showId: string): CanonRuling[] {
+  return store
+    .all<RulingRow>(
+      // Qualified, every one of them: `proposal` declares a `kind` of its own, and an
+      // unqualified one here would silently read the proposal's.
+      `SELECT r.seq, r.kind, r.at, r.proposal_id, r.gate_id, r.note
+         FROM canon_ruling r
+         JOIN proposal p ON p.id = r.proposal_id
+         JOIN canon_entity e ON e.id = p.entity_id
+        WHERE e.show_id = ?
+        ORDER BY r.seq DESC`,
+      showId,
+    )
+    .map(hydrateRuling)
+}
+
+/**
  * The last ruling made at or before `date` — how a date becomes a place on the clock. An
  * ISO-8601 string, compared as text the way every timestamp in this schema is stored.
  * `undefined` means no ruling had been made yet, and canon as of then was empty.

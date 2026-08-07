@@ -600,6 +600,18 @@ function radiusSentence(
 // ── Ruling ──────────────────────────────────────────────────────────────────────
 
 /**
+ * Why a rejection with nothing typed in the box is refused — the sentence the refusal
+ * throws AND the sentence the bench's disabled button shows (E2-6).
+ *
+ * It is a constant rather than a string literal for the reason `launchBlockedBecause` is a
+ * function: a precondition the API enforced in one wording and the button stated in another
+ * is a failure after a click wearing a different coat. One string, two readers.
+ */
+export const REJECTION_NEEDS_A_NOTE =
+  'Rejecting a proposal needs the reason — "reject with note" is the verb, and the note is ' +
+  'what the next writer run reads (3.3).'
+
+/**
  * The ruling API: three verbs, and the only thing in this app that writes canon.
  *
  * **Every surface convenes the same three.** The gate room rules a proposal riding the
@@ -644,10 +656,7 @@ export function createProposalRulings(store: Store, events: EventLog): ProposalR
       )
     }
     if (kind === 'rejection' && (given.note ?? '').trim() === '') {
-      throw new Error(
-        'Rejecting a proposal needs the reason — "reject with note" is the verb, and the ' +
-          'note is what the next writer run reads (3.3).',
-      )
+      throw new Error(REJECTION_NEEDS_A_NOTE)
     }
 
     const ruling = store.transaction(() => {

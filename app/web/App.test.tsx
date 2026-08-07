@@ -3,9 +3,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { renderToString } from 'react-dom/server'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { canonBenchView, type CanonBenchView } from '../server/canon-bench.ts'
 import type { Store } from '../server/db/store.ts'
 import { episodesOf, seasonsOf } from '../server/domain/spine.ts'
 import { createEventLog, eventsOfRun, type EventLog } from '../server/events.ts'
+import { greyHarborFounded } from '../server/fixture/founded.ts'
 import { loadFixture } from '../server/fixture/load.ts'
 import { initLibrary, openLibraryStore, type LibraryPaths } from '../server/library.ts'
 import { describeLLMBackend, type LLMReadiness } from '../server/llm/choose.ts'
@@ -15,6 +17,7 @@ import { openGates } from '../server/runner/gate.ts'
 import { createRunner, type Runner } from '../server/runner/runner.ts'
 import { DEMO_STAGE, stageCatalogue } from '../server/runner/stages.ts'
 import { App, Page } from './App.tsx'
+import { EMPTY_BENCH, type BenchDraft } from './CanonBench.tsx'
 
 /**
  * The page, rendered — with the real view objects the server composes, off a real library
@@ -41,6 +44,7 @@ let events: EventLog
 let llm: FakeLLM
 let runner: Runner
 let ep02: string
+let showId: string
 
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'showrunner-page-'))
@@ -52,6 +56,7 @@ beforeEach(() => {
   runner = createRunner(store, stageCatalogue(paths), events, llm)
 
   const show = store.get<{ id: string }>("SELECT id FROM show WHERE key = 'greyharbor'")!
+  showId = show.id
   ep02 = episodesOf(store, seasonsOf(store, show.id)[0]!.id).find((e) => e.number === 2)!.id
 })
 
@@ -153,6 +158,77 @@ describe('the operating page — the gate', () => {
   })
 })
 
+describe('the operating page — the canon bench, unfounded', () => {
+  it('renders every sheet as a candidate, the queue, and the button that founds the show', () => {
+    const html = renderBench(canonBenchView(store, showId)!)
+
+    expect(html).toContain('Canon — Grey Harbor')
+    expect(html).toContain('Canon as of now')
+
+    // Verb + object + scope, and the cost stated before the click — and it is $0.00,
+    // because nothing on this bench calls a model.
+    expect(html).toContain('Found Grey Harbor — ratify its 6 founding sheets, one ruling each')
+    expect(html).toContain('No model call · $0.00')
+
+    // Visibly unofficial: the word, and the sentence that says what it means.
+    expect(html).toContain('Sefa Doule')
+    expect(html).toContain('is a candidate — an identity registered, and a sheet nobody has ruled on')
+
+    // The queue, with its three verbs — and the rejection blocked until the note is typed,
+    // in the same sentence the API refuses with.
+    expect(html).toContain('Ratify the “Ilse Renn” promotion')
+    expect(html).toContain('Rejecting a proposal needs the reason')
+    expect(html).toContain('Defer the “Ilse Renn” promotion')
+
+    // Nothing has been ruled, so there is nothing on the ledger to render.
+    expect(html).toContain('No ruling has been made on this show')
+  })
+})
+
+describe('the operating page — the canon bench, founded', () => {
+  it('renders canon on the sheets, the ledger it was ruled onto, and the change form', () => {
+    const harbor = greyHarborFounded(store, paths)
+    const html = renderBench(
+      canonBenchView(store, harbor.show.id, { entityId: harbor.entity('Ilse Renn').id })!,
+    )
+
+    // Founding is done, and the button says so rather than offering to do it again.
+    expect(html).toContain('has no founding sheets left to rule')
+    expect(html).toContain('Nothing is waiting on a ruling')
+
+    // The sheet: facts, their status, and their lineage.
+    expect(html).toContain('Ilse Renn')
+    expect(html).toContain('ratified at ruling')
+    expect(html).toContain('species → Halvani · exactly-one, required · facts travel it (D22)')
+
+    // The affordance the epic exit turns on — blocked until the new statement is typed.
+    expect(html).toContain('Propose a change to')
+    expect(html).toContain('Write the new statement first')
+
+    // The ledger, which is where a bench ruling is read back from.
+    expect(html).toContain('ratification')
+    expect(html).toContain('convened at the bench, no gate')
+    expect(html).toContain('ruling 1 · ratification — the “Ilse Renn” promotion')
+    expect(html).toContain('founded Grey Harbor from the sheets in')
+  })
+
+  it('offers the candidate its promotion, and the create form its category', () => {
+    const harbor = greyHarborFounded(store, paths)
+    const html = renderBench(
+      canonBenchView(store, harbor.show.id, { entityId: harbor.entity('Sefa Doule').id })!,
+    )
+
+    expect(html).toContain(
+      'Promote Sefa Doule — raise the sheet below as a promotion proposal, for your own ruling',
+    )
+    // `unknown` is a real answer and satisfies the required species (D22) — and the word
+    // came down the wire rather than out of the browser bundle.
+    expect(html).toContain('unknown — declared, and a real answer')
+    expect(html).toContain('Register a new character in Grey Harbor and raise its promotion')
+    expect(html).toContain('Type the name first')
+  })
+})
+
 // ── Test kit ────────────────────────────────────────────────────────────────────
 
 /**
@@ -178,7 +254,33 @@ function render(
       onLaunch={() => undefined}
       onShowRun={() => undefined}
       onRule={() => undefined}
+      bench={null}
+      onShowBench={() => undefined}
       {...over}
     />,
   ).replaceAll('<!-- -->', '')
+}
+
+/**
+ * The canon section, with the real bench the server composed. Every handler is a no-op:
+ * what is under test is what Ryan READS — the sentences, the costs, and the reasons a
+ * blocked button gives before it is pressed.
+ */
+function renderBench(canon: CanonBenchView, draft: BenchDraft = EMPTY_BENCH): string {
+  return render(operatingView(store, paths, READY), {
+    bench: {
+      canon,
+      draft,
+      busy: false,
+      asOf: { ruling: '', date: '' },
+      onDraft: () => undefined,
+      onAsOf: () => undefined,
+      onShowEntity: () => undefined,
+      onFound: () => undefined,
+      onCreate: () => undefined,
+      onPromote: () => undefined,
+      onPropose: () => undefined,
+      onRuleProposal: () => undefined,
+    },
+  })
 }
