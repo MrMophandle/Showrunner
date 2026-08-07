@@ -293,6 +293,10 @@ done-condition. Repo CLAUDE.md carries the invariants. Fixtures before features
   The drill is in the root `README.md`; what it built is mapped in `docs/README.md`.
 - **E2 · Canon** — entities, categories, proposals, ratification, point-in-time,
   arcs/waypoints, schema doc. Ends: create entity, rule a proposal, query "canon as of."
+  → **DONE, Aug 7 2026.** Issues #23–#29 merged, D25 ruled (canon founded by proposals,
+  never imported), and the exit operated: Ryan founded Grey Harbor from the bench,
+  promoted and created entities by ruling, changed a ratified fact by a second proposal,
+  and watched canon-as-of flip across his own ruling on the ledger.
   → **Scope grew (D22, D23):** per-category relation-type declarations with inverses;
   required `species` on characters; species facts loading into check scope with their
   members; inherited facts edited at the species, individual exceptions naming what they
