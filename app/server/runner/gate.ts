@@ -475,6 +475,30 @@ export function roundsOf(store: Store, gateId: string): GateRound[] {
   return gateStanding(store, gateId)?.rounds ?? []
 }
 
+/**
+ * The newest version of this artifact Ryan approved as an explicit override, or null if he
+ * never has — what D12's wall reads to know whether he has already ruled over the red
+ * (`stage-wall.ts`).
+ *
+ * A version, not a boolean: an override is his opinion of the draft that was in front of him,
+ * and it must not license the next one. `approve` deliberately does not count. The two verbs
+ * are kept apart in the ledger precisely so that "he approved" and "he approved over
+ * something" stay different sentences forever (invariant 3), and folding them here would undo
+ * that at the one place it is load-bearing.
+ */
+export function overriddenThrough(store: Store, artifactId: string): number | null {
+  return (
+    store.get<{ version: number | null }>(
+      `SELECT MAX(r.artifact_version) AS version
+         FROM gate g
+         JOIN gate_round r ON r.gate_id = g.id
+         JOIN gate_ruling ru ON ru.gate_id = g.id AND ru.round = r.round
+        WHERE g.artifact_id = ? AND ru.verdict = 'override'`,
+      artifactId,
+    )?.version ?? null
+  )
+}
+
 // ── Rows ────────────────────────────────────────────────────────────────────────
 
 /** The round awaiting a verdict, or undefined when the latest one has been ruled. */

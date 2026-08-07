@@ -3,7 +3,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { Store } from './db/store.ts'
-import { episodesOf, seasonsOf } from './domain/spine.ts'
+import { artifactsOf } from './domain/artifact.ts'
+import { recordCheckPass } from './domain/finding.ts'
+import { episodesOf, scenesOf, seasonsOf } from './domain/spine.ts'
 import { createEventLog, type EventLog } from './events.ts'
 import { loadFixture } from './fixture/load.ts'
 import { initLibrary, openLibraryStore, type LibraryPaths } from './library.ts'
@@ -156,6 +158,39 @@ describe('the operating page — the launch button', () => {
     expect(launchBlockedBecause(store, READY, 'ep_nope')).toBe(
       'There is no episode ep_nope in this library.',
     )
+  })
+
+  /**
+   * D12's wall, on the button. The finding is planted through `recordCheckPass` — the only
+   * path that writes one — because what is being tested here is the SENTENCE the page shows
+   * and the API refuses with; which check produced the row is `stage-wall.test.ts`'s business,
+   * and it proves it against the real planted contradiction.
+   */
+  it('renders the wall a deterministic finding puts up, disabled and in words', () => {
+    const script = artifactsOf(store, ep01).find((artifact) => artifact.kind === 'script')!
+    recordCheckPass(store, {
+      checkKey: 'dual-presence',
+      tier: 'deterministic',
+      artifactId: script.id,
+      findings: [
+        {
+          concern: 'Ilse Renn is in two places at one time. Scenes 5 and 6 share one clock.',
+          severity: 'high',
+          confidence: 'certain',
+          anchor: { sceneId: scenesOf(store, ep01)[5]!.id, quote: '' },
+        },
+      ],
+    })
+
+    const episode = operatingView(store, paths, READY).shows[0]!.episodes[0]!
+    expect(episode.launch.enabled).toBe(false)
+    expect(episode.launch.blockedBecause).toContain('ep01 is blocked')
+    expect(episode.launch.blockedBecause).toContain('dual-presence')
+    expect(episode.launch.blockedBecause).toContain('Ilse Renn is in two places at one time.')
+    // Stated even when it is blocked: what it would have cost is not a secret.
+    expect(episode.launch.cost).toContain('1 Opus call')
+    // The API refuses with the same words. One composer, and they cannot drift.
+    expect(launchBlockedBecause(store, READY, ep01)).toBe(episode.launch.blockedBecause)
   })
 })
 
