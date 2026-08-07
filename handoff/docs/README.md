@@ -37,22 +37,30 @@ Ryan on Aug 5 2026 rather than merely tested (see the drill in the root `README.
 the worked example of the issue format; read the closed issues, not `E1-spine-issues.md`,
 which was superseded when six of the nine were amended to absorb D20–D24.
 
-**E2 · Canon is filed and in progress** — issues #23–#29 under the "E2 · Canon"
-milestone, sequenced E2-0 → E2-1 → E2-2 → {E2-3, E2-4} → E2-5 → E2-6, ending with
-the canon bench Ryan operates. There is **no intermediate markdown file** for E2 or
-any later epic — see step 5 of the procedure below.
+**E2 · Canon is done** — issues #23–#29 merged, and the exit operated by Ryan on
+Aug 7 2026: Grey Harbor founded from the bench, entities promoted and created by
+ruling, a ratified fact changed by a second proposal, canon-as-of flipped across his
+own ruling. Two deliberate loose ends stand as live test data: Sefa Doule remains a
+real candidate (E5's "visibly unofficial" rendering) and Ottilie Bray has no facts
+(issue #39).
+
+**E3 · Checks is filed and in progress** — issues #40–#47 plus #39 under the
+"E3 · Checks" milestone, sequenced E3-0 → E3-1 → E3-2 → E3-3 → {E3-4, E3-5} → E3-6 →
+#39 → E3-7, ending with the check bench and the planted defects of ep01 finally
+earning their keep. There is **no intermediate markdown file** for any epic — see
+step 5 of the procedure below.
 
 ## Writing an epic's issue file
 
 Per 6.3, issue files are written **epic-by-epic, just before the epic starts** —
-not all up front. E2's are filed; E3's turn comes when E2's exit is operated.
+not all up front. E3's are filed; E4's turn comes when E3's exit is operated.
 
 1. **Read the whole concept doc, addendum included.** Then re-read the sections that
    epic owns (E2 → Section 3; E3 → Section 4; E4 → 1.1 + 4; E5 → Section 5 + the
    mockups; E6 → Section 5.5/5.6 + `D20-image-backends.md`).
 2. **Check §6.2 for that epic's `→ Scope grew` note.** E2, E5, and E6 all gained
    scope after the original export.
-3. **Read "What E1 built, and where" and both "Constraints … leaves behind" sections
+3. **Read both "What … built" maps and both "Constraints … leaves behind" sections
    below.** The first tells you which module a new issue extends rather than rebuilds; the
    others are the things one epic decided that bind a later one, and every session that
    skipped them lost time rediscovering the reasoning.
@@ -120,6 +128,43 @@ declares the categories straight and raises a promotion proposal per entity shee
 **The surface** (`app.ts`, `operating.ts`, `app/web/`). Six HTTP endpoints and one unstyled
 page. `operating.ts` composes the button sentences server-side where they have tests, and
 `POST /api/run` refuses with the same string the disabled button was already showing.
+
+## What E2 built, and where
+
+Same purpose as E1's map above: which module an E3+ issue extends rather than rebuilds.
+Everything below is tested and was operated at the E2 exit.
+
+**The clock and the ledger** (`0007`, grown by `0008`). `canon_ruling` is the monotonic
+clock canon is read by AND the disposition ledger every ruling lands on — ratifications,
+rejections, deferrals, all kept forever, one row per ruling. Grow it by ADD COLUMN;
+never a sibling. Rulings with no gate never reach the event log (`event.run_id` is NOT
+NULL) — the ledger is their record, by ruling.
+
+**Facts and time** (`domain/fact.ts`). Immutable rows + closure rows; supersession
+closes predecessor and opens successor at one ruling; `canonAsOf` by ruling seq with
+dates mapped on. `factsInScope` is what checks read (invariant 2): own facts + declared
+inheritance (`relation_type.inherits_facts`, one-way) − overridden, and it refuses to
+collapse the **three kinds of nothing** (no species row / declared-`unknown` NULL
+target / species with no facts). `Override.stale` says the ground moved under an
+exception — **built for E3 to surface**.
+
+**The graph** (`0006`; `domain/category.ts`, `relation.ts`, `canon.ts`). Categories as
+data including per-category `check_instructions` — the generic checker is parameterized,
+never hardcoded. Relations typed, declared, inverse-navigable; `unknown` is a NULL
+target; `required` enforced at ratification only.
+
+**Change** (`domain/proposal.ts`, `episode-canon.ts`, `founding.ts`). Five-part
+proposals (fact delta / relation delta / promotion carrying the full sheet); ONE ruling
+API convened by any surface, no run/gate/episode precondition; blast radius computed at
+read time. The episode flows all *raise*: `sweepEpisode` (a read — E4's approval gate
+calls it), `abandonEpisode` (auto-defers riders, raises one revert proposal per fact),
+`landPosition` (wraps `declarePosition`, needs a subject entity — E4's writer supplies
+it). `foundCanon` rules loader-origin promotions only, one ruling each.
+
+**Surfaces** (`canon-bench.ts` behind `/api/canon/:showId`; `docs/canon-schema.md`).
+The bench renders rulings from the ledger, not events (ruled). The schema doc's examples
+are drift-proofed by tests — its example pack parses, founds, and pins the vocabularies
+the app enforces.
 
 ## Constraints E1 leaves behind
 
