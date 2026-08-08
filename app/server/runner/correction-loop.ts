@@ -10,6 +10,7 @@ import {
   type FindingConfidence,
   type FindingSeverity,
 } from '../domain/finding.ts'
+import { verdictBoard, type VerdictBoard } from '../domain/panel.ts'
 import { episodeLabel, findEpisode, scenesOf } from '../domain/spine.ts'
 import type { GateNote, GateRound } from './gate.ts'
 import type { Step, StepContext } from './step.ts'
@@ -54,6 +55,12 @@ import type { Step, StepContext } from './step.ts'
  * freshness pattern (1.3), one more time. The consequences are all the good kind: a resumed
  * step knows what it did, a re-check that has already been paid for is not paid for twice,
  * and the gate payload cannot disagree with the ledger it is composed from.
+ *
+ * **That predicate is why the check step is tier-atomic** (`text-check-step.ts`'s ruling).
+ * "Has this draft been read" is answered by "a pass exists at this version", and a panel that
+ * recorded some of its reviewers before failing would make it answer yes about a draft three
+ * reviewers never saw — on exactly the resumed path this design exists for. The loop stays
+ * generic and reads rows; the panel guarantees the rows are whole or absent.
  *
  * ## Nothing here blocks a gate
  *
@@ -121,6 +128,16 @@ export interface CorrectionReport {
   artifactId: string
   /** Every draft that has been read, in order — "every attempt kept" (4.4). */
   rounds: CorrectionRound[]
+  /**
+   * The verdict board for the draft this ends on — one row per convened reviewer (4.5, E3-4).
+   *
+   * A SNAPSHOT of a read, and never a source of truth. `verdictBoard` computes it fresh from
+   * rows every time anybody asks, and what lands in the payload is what Ryan was shown at
+   * this round — the same kind of record as `gate_round.artifact_version`. A disposition that
+   * lands afterwards changes the live answer and does not change this one, which is right:
+   * this is history, and the screen recomputes.
+   */
+  board: VerdictBoard
   /** The last draft read left no findings. An artifact nothing checks converges vacuously. */
   converged: boolean
   /** Converged, checked, and with nothing it could not look at. Never a synonym for the above. */
@@ -374,6 +391,9 @@ function reportOf(store: Store, artifactId: string, unchecked = false): Correcti
   return {
     artifactId,
     rounds,
+    // Computed here, at the moment the gate is presented, out of the same rows the rounds
+    // above came from — so the board and the history can never disagree about one draft.
+    board: verdictBoard(store, artifact),
     converged,
     // An artifact nothing read is not clean, and neither is one whose checks reached a hole.
     // "Never render a weak check as a green checkmark" is the same rule said about silence.

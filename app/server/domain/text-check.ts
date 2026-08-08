@@ -34,6 +34,12 @@ import { episodeInShow, scenesOf, type Scene } from './spine.ts'
  * and there is no sheet to put them on, and it argues from the arc's statement and its
  * waypoint descriptions rather than from facts.
  *
+ * The craft reviewers (D13, `craft.ts`) ride it too, and they are the proof that the
+ * parameterization is the whole parameterization: a reviewer that reads the artifact as
+ * CRAFT rather than against canon needed one more field on `CheckSubject` and not one line
+ * of a second composer or a second parser. `readsCanon: false` empties the closed sets below
+ * instead of exempting anything from them — see the field.
+ *
  * ## Nothing trusts the model — `board.ts`'s rule, one tier up
  *
  * The board refuses an invented entity rather than dropping it, because the prompt handed the
@@ -45,7 +51,10 @@ import { episodeInShow, scenesOf, type Scene } from './spine.ts'
  *     by quote (4.3), so a quote that has been re-flowed would land nowhere;
  *   * the **scene** it names must be a scene this episode has, and the span must be inside it;
  *   * the **fact** it quotes must be one of the facts this check was handed, and the
- *     **entity** it is about must be in the artifact's provenance.
+ *     **entity** it is about must be in the artifact's provenance. A craft reviewer was
+ *     handed neither, so both sets are empty and anything it cites is refused by this same
+ *     line — a finding that cites NOTHING is legal by kind, and one that cites ANYTHING is
+ *     invented by definition. Two different nothings, told apart with no waiver.
  *
  * A reply that fails any of them **fails the step**. It is not filtered down to the findings
  * that survive and it is never recorded as a clean pass: recording a broken read as "ran,
@@ -97,7 +106,7 @@ export const WAYPOINT_CHECK_KEY = 'waypoint-drift'
  * tell them apart, and that is the property this issue is for.
  */
 export interface CheckSubject {
-  /** The `check_pass.check_key` — a category's key, or `waypoint-drift`. */
+  /** The `check_pass.check_key` — a category's key, `waypoint-drift`, or a craft reviewer's. */
   key: string
   /** How the check names itself in a prompt heading and in a gap's prose. */
   label: string
@@ -107,6 +116,21 @@ export interface CheckSubject {
   reference: string[]
   /** The entities in provenance this check is ABOUT. Empty for a check with no canon subject. */
   subjectEntityIds: string[]
+  /**
+   * Whether the artifact's provenance travels into this check's prompt (E3-4).
+   *
+   * Every canon check says yes, and a craft reviewer says no — it reads the artifact as
+   * craft (D13) and there is no world in front of it. It is **not a flag that waives
+   * validation**, and reading it that way would be the failure this exists to prevent: it
+   * empties the closed sets the parser holds a reply to, and every id is outside an empty
+   * set. So the two nothings stay apart with no exemption anywhere — a craft finding that
+   * cites nothing is legal by kind, and one that cites anything at all is refused by the
+   * same line of code that refuses an invented id from the world-rules check.
+   *
+   * Optional so that a subject which does not mention it argues from canon, which is what
+   * every subject that existed before this field meant.
+   */
+  readsCanon?: boolean
 }
 
 /** A note Ryan has already put down, handed back to a later run (4.4). E3-5 builds the reader. */
@@ -159,7 +183,7 @@ interface Citable {
 }
 
 /** One scene, and the run of the artifact's text that belongs to it. */
-interface SceneSpan {
+export interface SceneSpan {
   scene: Scene
   from: number
   to: number
@@ -287,7 +311,10 @@ export function composeTextCheck(store: Store, request: TextCheckRequest): Compo
   const where = episodeInShow(store, request.artifact.episodeId)
   if (!where) throw new Error(`no such episode: ${request.artifact.episodeId}`)
 
-  const provenance = provenanceOf(store, request.artifact.id)
+  // A craft reviewer reads no canon (D13), so none is loaded, none is recorded on its pass,
+  // and the closed sets below stay empty — which is what refuses a citation from it.
+  const readsCanon = request.subject.readsCanon !== false
+  const provenance = readsCanon ? provenanceOf(store, request.artifact.id) : []
   const subjects = new Set(request.subject.subjectEntityIds)
   const scope: ScopeFactDraft[] = []
   const gaps: CheckGapDraft[] = []
@@ -350,6 +377,16 @@ export function composeTextCheck(store: Store, request: TextCheckRequest): Compo
       ...blocks.rest,
     )
   }
+  if (!readsCanon) {
+    lines.push(
+      '## You have been handed no canon',
+      '',
+      'This is a reading of the craft, so nothing about the world has been loaded for you.',
+      'Cite no fact and name no entity: there is no list here to copy one from, and anything',
+      'you cited would be invented. Argue with the words in front of you.',
+      '',
+    )
+  }
   if (gaps.length > 0) {
     lines.push(
       '## What could not be checked',
@@ -397,7 +434,7 @@ export function composeTextCheck(store: Store, request: TextCheckRequest): Compo
     '',
     '## What to return',
     '',
-    ...SHAPE,
+    ...shapeFor(readsCanon),
   )
 
   return {
@@ -464,8 +501,12 @@ function gapOf(
  * re-delineated since — gets the whole text as its span. That is the honest fallback: it can
  * still refuse a quote nobody wrote, and it stops short of refusing a real one because this
  * function could not find a boundary.
+ *
+ * Exported for `panel.ts`: clustering resolves a stored quote back to the span it came from,
+ * and it must land in exactly the run of text the anchor was verified against. Two answers to
+ * "where is scene 4" would be two answers to "do these two findings overlap".
  */
-function sceneSpans(text: string, scenes: Scene[]): SceneSpan[] {
+export function sceneSpans(text: string, scenes: Scene[]): SceneSpan[] {
   const found = scenes.map((scene) => ({ scene, at: text.indexOf(scene.heading) }))
   return found.map(({ scene, at }, index) => {
     if (at < 0) return { scene, from: 0, to: text.length }
@@ -479,28 +520,39 @@ function sceneSpans(text: string, scenes: Scene[]): SceneSpan[] {
  * prompt, one answer (llm/adapter.ts). Every line here is a rule the parser enforces, which
  * is the point: the prompt asks for exactly what will be accepted, and asking for anything
  * looser would only produce replies that fail the step.
+ *
+ * The last two lines are the only thing a craft reviewer's shape differs by, and they are
+ * dropped rather than reworded: a reviewer that was handed no lists cannot be asked to copy
+ * from them, and leaving the fields in the shape would be inviting exactly the citation the
+ * parser is about to refuse (D13, `readsCanon`). One shape, one branch, one parser.
  */
-const SHAPE = [
-  '```',
-  '{',
-  '  "findings": [{                    // [] when the artifact does not argue with anything',
-  '    "scene": 4,                     // the scene number above. Omit for a whole-artifact finding.',
-  '    "quote": "…",                   // WORD FOR WORD from the text above, inside that scene.',
-  '                                    //   The shortest span that carries the problem. A quote',
-  '                                    //   that is not in the text fails the whole answer.',
-  '    "concern": "…",                 // what is wrong, and which exception you looked for and',
-  '                                    //   did not find. Argue with the text, not with a vibe.',
-  '    "severity": "high",             // "low" | "medium" | "high" — how bad this is IF true',
-  '    "confidence": "high",           // "high" | "medium" | "low" — how sure you are it IS true.',
-  '                                    //   These are two different questions. Never "certain":',
-  '                                    //   that belongs to the checks that read rows.',
-  '    "entity": "Tobin Wick",         // an entity name from the lists above, or omit',
-  '    "facts": ["fact_…"]             // fact ids from the lists above, in the order the card',
-  '                                    //   should quote them. Never an id that is not listed.',
-  '  }]',
-  '}',
-  '```',
-]
+function shapeFor(readsCanon: boolean): string[] {
+  return [
+    '```',
+    '{',
+    '  "findings": [{                    // [] when you have nothing to raise about this artifact',
+    '    "scene": 4,                     // the scene number above. Omit for a whole-artifact finding.',
+    '    "quote": "…",                   // WORD FOR WORD from the text above, inside that scene.',
+    '                                    //   The shortest span that carries the problem. A quote',
+    '                                    //   that is not in the text fails the whole answer.',
+    '    "concern": "…",                 // what is wrong, and which exception you looked for and',
+    '                                    //   did not find. Argue with the text, not with a vibe.',
+    '    "severity": "high",             // "low" | "medium" | "high" — how bad this is IF true',
+    '    "confidence": "high",           // "high" | "medium" | "low" — how sure you are it IS true.',
+    '                                    //   These are two different questions. Never "certain":',
+    '                                    //   that belongs to the checks that read rows.',
+    ...(readsCanon
+      ? [
+          '    "entity": "Tobin Wick",         // an entity name from the lists above, or omit',
+          '    "facts": ["fact_…"]             // fact ids from the lists above, in the order the card',
+          '                                    //   should quote them. Never an id that is not listed.',
+        ]
+      : []),
+    '  }]',
+    '}',
+    '```',
+  ]
+}
 
 // ── Reading the reply ───────────────────────────────────────────────────────────
 
