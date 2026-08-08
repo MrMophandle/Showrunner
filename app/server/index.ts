@@ -34,6 +34,9 @@ serve(
     fetch: createApp(paths, store, events, {
       runner,
       rulings,
+      // The same adapter the runner binds to its steps (D6). E3-5's remediations spend
+      // outside a run and have no step to be bound to; they build their own call site.
+      llm,
       // Re-asked per request rather than captured here: a snapshot taken at boot would go
       // on saying "ready" after the thing it checked went away.
       readiness: () => describeLLMBackend(),

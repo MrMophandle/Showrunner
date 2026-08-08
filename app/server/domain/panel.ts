@@ -67,6 +67,13 @@ import {
  * nobody has re-run. The deterministic rules cost nothing to re-run (`board-rules.ts`), which
  * is the answer, and saying so is this row's job.
  *
+ * `partial` is E3-5's, and it is the same rule said about D14. A scene-scoped re-check reads
+ * one scene of a draft and records a pass at that draft's version (`check_pass.scene_id`), so
+ * without this the row for a reviewer that re-read scene 4 would go green over nine scenes it
+ * never saw — a check that read a paragraph, rendered as a check that read the episode. What
+ * it FOUND still counts as `found`, because a finding is a finding wherever it was read; what
+ * it did not find is reported as what it is, which is not a clean reading of this artifact.
+ *
  * ## Clustering is by OVERLAP, never by an equal quote
  *
  * Two reviewers reading the same moment quote it differently — one takes the sentence, the
@@ -113,7 +120,7 @@ export function panelFor(store: Store, artifact: Artifact): CheckSubject[] {
  * A const array and a union type, never a TS `enum` — the server runs its TypeScript under
  * Node's type stripping, which only erases.
  */
-export const BOARD_VERDICT = ['unread', 'stale', 'clean', 'gapped', 'found'] as const
+export const BOARD_VERDICT = ['unread', 'stale', 'partial', 'clean', 'gapped', 'found'] as const
 export type BoardVerdict = (typeof BOARD_VERDICT)[number]
 
 /** One reviewer's line on the board — the mockup's dot, name, and what-it-found. */
@@ -207,6 +214,13 @@ export function verdictBoard(store: Store, artifact: Artifact): VerdictBoard {
 }
 
 /**
+ * The scene-scoped rows (D14, E3-5). Counted separately from `read` on purpose: they DID read
+ * something, so calling them unread would be a second lie, and folding them into a clean panel
+ * would be the first one.
+ */
+const partialRows = (rows: BoardRow[]): BoardRow[] => rows.filter((row) => row.verdict === 'partial')
+
+/**
  * One row per convened reviewer, paired with the pass it ran.
  *
  * The pairing is positional within a key, and that is not arbitrary: a key can be convened
@@ -214,6 +228,17 @@ export function verdictBoard(store: Store, artifact: Artifact): VerdictBoard {
  * runs them in roster order, so the k-th pass under a key belongs to the k-th subject under
  * it. Taking the LAST n of them is what makes a re-run of the tier at the same version show
  * the latest reading rather than every reading it has ever had.
+ *
+ * **What latest-reading-wins costs, written down (noticed in E3-5).** A row's `standing` counts
+ * only findings raised by the pass it shows, so a finding raised by an EARLIER pass at this
+ * same version is open in the database and absent from this board — and `VerdictBoard.standing`
+ * is the sum of the rows. It is reachable by running the tier twice over one draft and has
+ * been since E3-4; E3-5's scene re-check makes it ordinary rather than rare, because a rewrite
+ * is normally followed by a narrow reading and later by a wide one. It is left as it is on
+ * purpose: the alternative is a board that shows a concern its own reviewer has since read
+ * again and not repeated. The rows the loop and the gate room read (`findingsIn`,
+ * `clusterFindings`) are unaffected — they are about the artifact, not about a reviewer's
+ * latest word — so nothing is lost, only differently framed.
  */
 function textRows(
   store: Store,
@@ -233,12 +258,22 @@ function textRows(
     taken.set(subject.key, passes.filter((pass) => pass.checkKey === subject.key).slice(-expected))
   }
 
+  // Whether ANY pass under this key has read the whole draft at this version. A scene-scoped
+  // pass says `partial` only when the answer is no (D14, E3-5): once a reviewer has read the
+  // draft whole, "the rest of this draft it has not read" is false, and repeating it after a
+  // scene re-check would be a second lie told in the safe direction.
+  const readWhole = new Set(
+    passes.filter((pass) => pass.sceneId === null).map((pass) => pass.checkKey),
+  )
+
   const used = new Map<string, number>()
   return roster.map((subject) => {
     const at = used.get(subject.key) ?? 0
     used.set(subject.key, at + 1)
     const pass = taken.get(subject.key)![at]
-    return rowOf(store, subject.key, subject.label, 'text', pass, standing, scenes)
+    return rowOf(store, subject.key, subject.label, 'text', pass, standing, scenes, {
+      readWhole: readWhole.has(subject.key),
+    })
   })
 }
 
@@ -293,6 +328,8 @@ function rowOf(
   pass: CheckPass | undefined,
   standing: Finding[],
   scenes: Map<string, number>,
+  /** Whether this check has read the whole draft at this version — see `textRows`. */
+  read: { readWhole: boolean } = { readWhole: false },
 ): BoardRow {
   if (!pass) {
     return {
@@ -322,7 +359,18 @@ function rowOf(
     ),
   ]
 
-  const verdict: BoardVerdict = open.length > 0 ? 'found' : pass.gapCount > 0 ? 'gapped' : 'clean'
+  // `partial` before `gapped`, because they answer about different things: a gap is a hole in
+  // the SCOPE this pass was handed, and a scene-scoped pass narrowed the ARTIFACT. A pass that
+  // read one scene and could not reach a species is both, and the narrower reading is the one
+  // that decides whether this row may be read as an answer about the draft (D14, E3-5).
+  const verdict: BoardVerdict =
+    open.length > 0
+      ? 'found'
+      : pass.sceneId !== null && !read.readWhole
+        ? 'partial'
+        : pass.gapCount > 0
+          ? 'gapped'
+          : 'clean'
   return {
     checkKey,
     label,
@@ -336,7 +384,16 @@ function rowOf(
     ...(sure && { confidence: sure }),
     scenes: where,
     passId: pass.id,
-    what: whatItFound({ verdict, raised: raised.length, open: open.length, pass, worst, sure, where }),
+    what: whatItFound({
+      verdict,
+      raised: raised.length,
+      open: open.length,
+      pass,
+      worst,
+      sure,
+      where,
+      read: pass.sceneId === null ? null : (scenes.get(pass.sceneId) ?? null),
+    }),
   }
 }
 
@@ -349,8 +406,16 @@ function whatItFound(row: {
   worst: FindingSeverity | undefined
   sure: FindingConfidence | undefined
   where: number[]
+  /** The one scene this pass was narrowed to, as the episode numbers it (D14). */
+  read: number | null
 }): string {
   const scope = row.pass.scopeCount === 0 ? '' : ` · ${row.pass.scopeCount} facts in scope`
+  if (row.verdict === 'partial') {
+    return (
+      `read scene ${row.read ?? '?'} of this draft and found nothing there${scope} — the rest ` +
+      'of this draft it has not read (D14)'
+    )
+  }
   if (row.verdict === 'gapped') {
     return (
       `clean, and ${row.pass.gapCount} thing(s) it could not check at all — canon has not ` +
@@ -370,13 +435,21 @@ function boardSentence(rows: BoardRow[], read: number, standing: number, gaps: n
   if (rows.length === 0) {
     return 'Nothing convened for this artifact at all — vanilla, legal and tracked (4.1), and not a clean reading either.'
   }
+  const partial = partialRows(rows).length
   if (read < rows.length) {
     const so = standing === 0 ? '' : ` ${standing} finding(s) stand on what they did read.`
-    return `${read} of ${rows.length} reviewers have read this draft.${so}`
+    const narrowed =
+      partial === 0
+        ? ''
+        : ` ${partial} of those read only the scene that was rewritten (D14), not the draft.`
+    return `${read} of ${rows.length} reviewers have read this draft.${narrowed}${so}`
   }
   const said =
     standing === 0
-      ? `${rows.length} reviewers read this draft and nothing stands — recorded, because a clean run is a measurement`
+      ? partial === 0
+        ? `${rows.length} reviewers read this draft and nothing stands — recorded, because a clean run is a measurement`
+        : `Nothing stands, and ${partial} of the ${rows.length} reviewers have read only the ` +
+          'scene that was rewritten (D14) — the rest of this draft they have not read'
       : `${standing} finding(s) standing across ${rows.length} reviewers`
   return gaps === 0
     ? `${said}.`

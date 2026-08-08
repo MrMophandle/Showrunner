@@ -59,6 +59,7 @@ beforeEach(() => {
   app = createApp(paths, store, events, {
     runner,
     rulings: createRulings(store, events, runner),
+    llm,
     readiness: () => readiness,
   })
 

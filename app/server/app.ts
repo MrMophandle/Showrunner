@@ -12,13 +12,23 @@ import {
 import type { Store } from './db/store.ts'
 import { ENTITY_STANDING, findEntityById } from './domain/canon.ts'
 import { findFact } from './domain/fact.ts'
+import { dismissFinding, findFinding } from './domain/finding.ts'
 import { foundCanon } from './domain/founding.ts'
 import { createProposalRulings, findProposal } from './domain/proposal.ts'
 import { findShow } from './domain/spine.ts'
 import { eventsSince, type EventLog, type EventRecord } from './events.ts'
 import type { LibraryPaths } from './library.ts'
+import type { LLMAdapter } from './llm/adapter.ts'
 import type { LLMReadiness } from './llm/choose.ts'
 import { launchBlockedBecause, operatingView, runView } from './operating.ts'
+import {
+  applyRewrite,
+  canonChangePrefill,
+  predraftRewrite,
+  proposeCanonChange,
+  recheckScene,
+  remediationsFor,
+} from './remediation.ts'
 import type { NoteDraft, Rulings } from './runner/gate.ts'
 import type { Runner } from './runner/runner.ts'
 
@@ -47,6 +57,13 @@ const WEB_ROOT = './dist/web'
 export interface Operating {
   runner: Runner
   rulings: Rulings
+  /**
+   * Claude, unbound (D6) — for the two acts in this app that spend money outside a run: the
+   * pre-drafted rewrite and the scene-scoped re-check (E3-5). A step is handed a BOUND adapter
+   * so it cannot bill nowhere; a remediation has no step to bind to, so `remediation.ts` builds
+   * the call site out of the episode and the ledger walks up to the show from there.
+   */
+  llm: LLMAdapter
   /**
    * Whether this process can reach a model right now. A function, not a value: it is
    * re-asked on every health check, so a snapshot taken at boot cannot go on claiming
@@ -177,6 +194,145 @@ export function createApp(
       )
     }
     return rule(c, () => operating.rulings.reject(c.req.param('id'), { notes }))
+  })
+
+  // ── The remediations behind a finding (E3-5) ──────────────────────────────────
+  //
+  // 4.3's three buttons, reachable. **Every one of them raises, revises, or records** — not
+  // one ratifies, and `remediation.ts` is where that is argued. They follow the shape of
+  // `/api/gate/:id/override` above: the act, then what the act left behind, and a refusal
+  // answered in the exact words its disabled button was already showing.
+  //
+  // Two of them spend money and say so before the click (`predraft`, `recheck`); two are free.
+  // Nothing here runs on a GET, so a page load costs nothing (invariant 5).
+  /**
+   * A finding that does not exist is a 404; a finding that exists and cannot be remediated
+   * that way is a 409 carrying the sentence its disabled button was already showing. Two
+   * different answers, because they are two different mistakes.
+   */
+  const finding = (c: Context, id: string, act: () => unknown) => {
+    if (!findFinding(store, id)) return c.json({ error: `No such finding: ${id}` }, 404)
+    try {
+      return c.json(act() as object)
+    } catch (error) {
+      return c.json({ error: messageOf(error) }, 409)
+    }
+  }
+
+  /** What the three buttons say about one finding, and why one of them cannot be pressed. */
+  app.get('/api/finding/:id', (c) =>
+    finding(c, c.req.param('id'), () =>
+      remediationsFor(store, paths, c.req.param('id'), operating.readiness()),
+    ),
+  )
+
+  /**
+   * Pre-draft a replacement for the anchored span. **It spends a call and moves nothing** —
+   * the artifact is untouched when this returns, and applying is a separate click (4.3:
+   * "rewrite the span (pre-drafted, editable)").
+   */
+  app.post('/api/finding/:id/predraft', async (c) => {
+    if (!findFinding(store, c.req.param('id'))) {
+      return c.json({ error: `No such finding: ${c.req.param('id')}` }, 404)
+    }
+    // Refused with the exact sentence the disabled button was already showing, which is what
+    // makes "preconditions before the button" true rather than decorative — one composer
+    // (`remediationsFor`), two readers.
+    const offered = remediationsFor(store, paths, c.req.param('id'), operating.readiness())
+    if (offered.predraft.blockedBecause) {
+      return c.json({ error: offered.predraft.blockedBecause }, 409)
+    }
+    try {
+      return c.json(await predraftRewrite(store, operating.llm, paths, c.req.param('id')))
+    } catch (error) {
+      return c.json({ error: messageOf(error) }, 409)
+    }
+  })
+
+  /**
+   * Apply the rewrite Ryan settled on — **one motion**: revise the artifact, and re-run the
+   * free deterministic tier over the new version before this responds. A `replacement` that
+   * is absent is a request with nothing in it; one that is EMPTY is a deletion he typed, and
+   * the two are different (the `''`-is-a-value rule this schema keeps everywhere).
+   */
+  app.post('/api/finding/:id/rewrite', async (c) => {
+    const body = await json(c.req.raw)
+    if (typeof body['replacement'] !== 'string') {
+      return c.json(
+        {
+          error:
+            'A rewrite needs the replacement text — what should stand where the span stands. ' +
+            'It is applied word for word, so what you send is what lands.',
+        },
+        400,
+      )
+    }
+    const replacement = body['replacement']
+    return finding(c, c.req.param('id'), () =>
+      applyRewrite(store, paths, { findingId: c.req.param('id'), replacement }, operating.readiness()),
+    )
+  })
+
+  /** The five parts, prefilled from the concern — what the propose form opens with. */
+  app.get('/api/finding/:id/canon-change', (c) =>
+    finding(c, c.req.param('id'), () => canonChangePrefill(store, paths, c.req.param('id'))),
+  )
+
+  /**
+   * Raise the canon change the finding implies. It lands on the queue riding the episode and
+   * **stops there**: ruling it is `/api/proposal/:id/ratify` and it is Ryan's (invariant 1).
+   */
+  app.post('/api/finding/:id/canon-change', async (c) => {
+    const body = await json(c.req.raw)
+    const field = text(body['field'])
+    return finding(c, c.req.param('id'), () =>
+      proposeCanonChange(store, paths, c.req.param('id'), {
+        statement: text(body['statement']),
+        ...(field !== '' && { field }),
+      }),
+    )
+  })
+
+  /**
+   * Put it down with a note (4.4). The note is required by `dismissFinding` in the same
+   * sentence the disabled button shows — it rides future runs and it is counted against the
+   * check that raised it (D11), so an empty one teaches nothing and still costs credibility.
+   */
+  app.post('/api/finding/:id/dismiss', async (c) => {
+    const note = text((await json(c.req.raw))['note'])
+    return finding(c, c.req.param('id'), () => {
+      dismissFinding(store, c.req.param('id'), note)
+      return remediationsFor(store, paths, c.req.param('id'), operating.readiness())
+    })
+  })
+
+  /**
+   * D14's scene-scoped re-check: re-read one scene with the reviewers that argued with it.
+   * The paid half of a rewrite, and its own click because it costs a call (invariant 5).
+   */
+  app.post('/api/artifact/:id/recheck', async (c) => {
+    const sceneId = text((await json(c.req.raw))['sceneId'])
+    if (sceneId === '') {
+      return c.json(
+        {
+          error:
+            'A re-check needs the scene to re-read. Narrowing to the scene that changed is ' +
+            'the whole of D14 — reading the whole draft again is the panel, and it has its ' +
+            'own button and its own cost.',
+        },
+        400,
+      )
+    }
+    try {
+      return c.json(
+        await recheckScene(store, operating.llm, paths, {
+          artifactId: c.req.param('id'),
+          sceneId,
+        }),
+      )
+    } catch (error) {
+      return c.json({ error: messageOf(error) }, 409)
+    }
   })
 
   // ── The canon bench (E2-6) ────────────────────────────────────────────────────

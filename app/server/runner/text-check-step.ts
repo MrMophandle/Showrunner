@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import { projectLLMCost, type CostProjection } from '../cost.ts'
 import type { Store } from '../db/store.ts'
 import { artifactsOf, type Artifact, type ArtifactKind } from '../domain/artifact.ts'
-import type { CheckPass } from '../domain/finding.ts'
+import { dismissalNotes, type CheckPass } from '../domain/finding.ts'
 import { panelFor, verdictBoard } from '../domain/panel.ts'
 import { episodeInShow, episodeLabel, type EpisodeInShow } from '../domain/spine.ts'
 import {
@@ -40,6 +40,15 @@ import type { Stage, StageCatalogue, Step, StepContext } from './step.ts'
  * The DETERMINISTIC verdicts are not convened here. They are `continuity-board-checks`, they
  * cost nothing, and they have their own button; the panel's verdict board READS them where
  * they stand (`panel.ts`) rather than re-running a reading this stage was not asked to buy.
+ *
+ * ## What every reviewer is told that Ryan already said (4.4, E3-5)
+ *
+ * Each prompt carries the dismissal notes standing against THAT check, read off
+ * `finding_disposition` by `dismissalNotes` (finding.ts). "Dismissed-finding notes feed future
+ * runs' context" is the rule, and this is the seam it lands on: a reviewer that raised
+ * something Ryan put down last episode argues against his note this time instead of in
+ * ignorance of it. It may still re-raise — checks argue (invariant 3) — and E3-6 counts what
+ * it does either way.
  *
  * ## The retry granularity: TIER ATOMIC, deliberately (E3-4's ruling)
  *
@@ -245,7 +254,20 @@ export function checkTextAgainstCanon(
       // ── Every call first, and nothing recorded until they all parse ──────────
       const answered: { composed: ComposedCheck; findings: ReturnType<typeof readTextCheckReply> }[] = []
       for (const [index, subject] of subjects.entries()) {
-        const composed = composeTextCheck(context.store, { artifact, text, subject, priorNotes })
+        // 4.4's other half, wired: what Ryan has already put down about THIS check rides the
+        // prompt (E3-5). The step fetches them and hands them over rather than the composer
+        // going and finding its own, so "what was this check told" is answerable from here.
+        // The notes handed in at construction ride with them — a caller with context of its
+        // own is not overruled by the ledger's.
+        const composed = composeTextCheck(context.store, {
+          artifact,
+          text,
+          subject,
+          priorNotes: [
+            ...priorNotes,
+            ...dismissalNotes(context.store, { showId: where.show.id, checkKey: subject.key }),
+          ],
+        })
         context.progress(
           `${index + 1} of ${subjects.length} · ${subject.label} — ` +
             // A craft reviewer's zero is not a category check's zero: it was handed no canon
