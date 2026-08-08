@@ -133,6 +133,13 @@ export interface CheckPass {
    * `findingCount` on purpose: zero findings and one gap is not a clean run.
    */
   gapCount: number
+  /**
+   * How many facts it was handed (E3-4) — the mockup's "clean · 4 facts in scope". A silence
+   * is only a measurement if the denominator is on screen beside it, and a craft reviewer's
+   * zero says something different from a category check's zero: it was handed no canon on
+   * purpose (D13), not handed canon and found nothing in it.
+   */
+  scopeCount: number
 }
 
 /**
@@ -523,6 +530,7 @@ interface PassRow {
   ran_at: string
   finding_count: number
   gap_count: number
+  scope_count: number
 }
 
 /**
@@ -533,7 +541,8 @@ interface PassRow {
 const PASS_SELECT = `
   SELECT p.id, p.check_key, p.tier, p.artifact_id, p.artifact_version, p.scene_id, p.ran_at,
          (SELECT COUNT(*) FROM finding f WHERE f.pass_id = p.id) AS finding_count,
-         (SELECT COUNT(*) FROM check_gap g WHERE g.pass_id = p.id) AS gap_count
+         (SELECT COUNT(*) FROM check_gap g WHERE g.pass_id = p.id) AS gap_count,
+         (SELECT COUNT(*) FROM check_pass_fact s WHERE s.pass_id = p.id) AS scope_count
     FROM check_pass p`
 
 const hydratePass = (row: PassRow): CheckPass => ({
@@ -546,6 +555,7 @@ const hydratePass = (row: PassRow): CheckPass => ({
   ranAt: row.ran_at,
   findingCount: row.finding_count,
   gapCount: row.gap_count,
+  scopeCount: row.scope_count,
 })
 
 interface GapRow {

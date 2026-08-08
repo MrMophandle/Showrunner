@@ -111,6 +111,9 @@ describe('a clean check pass leaves a record of having run', () => {
         // And nothing it could not reach either (E3-2, 0012). Zero and zero is the clean
         // run; zero findings beside a gap is a different sentence again.
         gapCount: 0,
+        // What it was handed (E3-4). This pass was composed by hand with no scope, and the
+        // verdict board renders the number beside the silence — "clean · 4 facts in scope".
+        scopeCount: 0,
       },
     ])
   })

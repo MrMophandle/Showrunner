@@ -9,8 +9,10 @@ import {
   reviseArtifact,
   revisionsOf,
   type Artifact,
+  type ArtifactKind,
 } from '../domain/artifact.ts'
 import { checkPassesOf } from '../domain/finding.ts'
+import { verdictBoard } from '../domain/panel.ts'
 import { createProposalRulings, raiseProposal } from '../domain/proposal.ts'
 import { createEventLog } from '../events.ts'
 import { greyHarborFounded, type FoundedFixture } from '../fixture/founded.ts'
@@ -88,13 +90,17 @@ afterEach(() => {
  * notes it is handed. One model call per round, through the same bound adapter a real step
  * gets — which is what lets a test assert on the string that went over the wire.
  *
- * `touches` is what decides how many checks convene (4.1). One character in provenance means
- * exactly one check per round, so the scripted replies stay readable.
+ * `touches` decides how many CATEGORY checks convene (4.1) — one character in provenance
+ * means exactly one. The panel convenes three craft reviewers beside it whatever `touches`
+ * says (D13), which is `PANEL_SIZE` below and why every round scripts four answers.
+ *
+ * `kind` is a parameter for one test only: an artifact nothing reads at all. An outline is
+ * never that any more, because story-craft reads every written kind unbidden.
  */
-function outlineWriter(touches: () => string[]): Producer {
+function outlineWriter(touches: () => string[], kind: ArtifactKind = 'outline'): Producer {
   const find = (context: StepContext): Artifact | undefined =>
     artifactsOf(context.store, context.episodeId).find(
-      (artifact) => artifact.kind === 'outline' && artifact.slot === '',
+      (artifact) => artifact.kind === kind && artifact.slot === '',
     )
 
   return {
@@ -123,7 +129,7 @@ function outlineWriter(touches: () => string[]): Producer {
       if (!standing) {
         recordArtifact(context.store, {
           episodeId: context.episodeId,
-          kind: 'outline',
+          kind,
           filePath,
           touches: touches(),
         })
@@ -137,14 +143,27 @@ function outlineWriter(touches: () => string[]): Producer {
   }
 }
 
-function stages(touches: () => string[] = () => [harbor.entity('Ilse Renn').id]): StageCatalogue {
+function stages(
+  touches: () => string[] = () => [harbor.entity('Ilse Renn').id],
+  kind: ArtifactKind = 'outline',
+): StageCatalogue {
   return {
     [OUTLINE_STAGE]: {
       name: OUTLINE_STAGE,
-      steps: [correctionLoop(outlineWriter(touches), checkTextAgainstCanon(paths, 'outline'))],
+      steps: [correctionLoop(outlineWriter(touches, kind), checkTextAgainstCanon(paths, kind))],
     },
   }
 }
+
+/**
+ * What one round of this loop convenes: the character check, plus story-craft, pacing and
+ * hook — the craft reviewers an outline is read by (D13). Dialogue is not among them, because
+ * an outline has no dialogue in it.
+ *
+ * It is the number every scripted round below is sized to, and it is the number the
+ * granularity decision is paid in: a broken reply re-runs all four.
+ */
+const PANEL_SIZE = 4
 
 // ── What the fake says, round by round ───────────────────────────────────────────
 
@@ -172,10 +191,21 @@ function theFinding(): string {
 
 const NOTHING_FOUND = '{"findings": []}'
 
-/** Round n: the producer's draft, then the tier's answer to it. */
-function queueRound(draft: string, answer: string): void {
+/**
+ * Round n: the producer's draft, then the whole panel's answers to it — the character check
+ * first (that is the one `answer` is for), then the three craft reviewers, silent unless a
+ * test says otherwise.
+ *
+ * A round scripts the WHOLE panel because the step records the whole panel or none of it
+ * (`text-check-step.ts`'s ruling). There is no such thing here as a round that answered
+ * three quarters of the way.
+ */
+function queueRound(draft: string, answer: string, ...craft: string[]): void {
   llm.reply(draft)
   llm.reply(answer)
+  const said = [...craft]
+  while (said.length < PANEL_SIZE - 1) said.push(NOTHING_FOUND)
+  for (const reply of said) llm.reply(reply)
 }
 
 async function write(): Promise<{ runId: string; report: CorrectionOutcome }> {
@@ -210,8 +240,8 @@ describe('a failed check re-runs the producer with the findings as notes', () =>
 
     expect(report.rounds.map((round) => [round.round, round.artifactVersion, round.checks])).toEqual(
       [
-        [1, 1, 1],
-        [2, 2, 1],
+        [1, 1, PANEL_SIZE],
+        [2, 2, PANEL_SIZE],
       ],
     )
     expect(report.rounds[0]!.findings).toHaveLength(1)
@@ -242,6 +272,12 @@ describe('a failed check re-runs the producer with the findings as notes', () =>
       checkPassesOf(store, outline.id).map((pass) => [pass.artifactVersion, pass.findingCount]),
     ).toEqual([
       [1, 1],
+      [1, 0],
+      [1, 0],
+      [1, 0],
+      [2, 0],
+      [2, 0],
+      [2, 0],
       [2, 0],
     ])
 
@@ -268,12 +304,22 @@ describe('a failed check re-runs the producer with the findings as notes', () =>
     expect(payload.rounds[0]!.findings[0]!.concern).toBe(CONCERN)
     expect(payload.sentence).toContain('read clean')
 
+    // And the verdict board rides with it (4.5, E3-4): one row per convened reviewer of the
+    // draft he is looking at, with the craft reviewers beside the category check.
+    expect(payload.board.rows.map((row) => row.checkKey)).toEqual([
+      'character',
+      'story-craft',
+      'pacing',
+      'hook',
+    ])
+    expect(payload.board).toMatchObject({ version: 2, convened: 4, read: 4, standing: 0 })
+
     rulings.approve(open.gate.id, { comment: 'that reads.' })
     const settled = await runner.settled(runId)
 
     expect(settled.status).toBe('done')
-    // Nothing re-run and nothing re-spent on the way back in: four calls, as before.
-    expect(llm.calls).toHaveLength(4)
+    // Nothing re-run and nothing re-spent on the way back in: ten calls, as before.
+    expect(llm.calls).toHaveLength(2 + 2 * PANEL_SIZE)
     const output = findStepByName(store, runId, 'write-the-outline')!.output as CorrectionOutcome
     expect(output).toMatchObject({ verdict: 'approve', gateRound: 1, converged: true })
   })
@@ -296,9 +342,9 @@ describe('non-convergence is not a failure — it is Ryan’s turn', () => {
       'paused',
     )
     expect(attemptsOf(store, stepOf(runId)).map((attempt) => attempt.outcome)).toEqual(['paused'])
-    // Three drafts, three readings, and no fourth of either.
+    // Three drafts, three panels, and no fourth of either.
     expect(producerCalls()).toHaveLength(3)
-    expect(llm.calls).toHaveLength(6)
+    expect(llm.calls).toHaveLength(3 + 3 * PANEL_SIZE)
   })
 
   it('does not render a converged artifact clean when a check could not look (invariant 4)', async () => {
@@ -329,10 +375,17 @@ describe('non-convergence is not a failure — it is Ryan’s turn', () => {
 describe('a transport failure is not a correction', () => {
   it('spends a step attempt, resumes the round it was in, and leaves the count untouched', async () => {
     queueRound(FLAWED, theFinding())
-    // Round 2's draft is written, and then the tier comes back as something nobody can read.
-    // The step fails on its own budget; the correction budget is not the one being spent.
-    queueRound(CLEAN, 'Certainly! Overall the outline reads well.')
+
+    // Round 2's draft is written, two reviewers answer it cleanly, and the third comes back
+    // as something nobody can read. The step fails on its own budget; the correction budget
+    // is not the one being spent.
+    llm.reply(CLEAN)
     llm.reply(NOTHING_FOUND)
+    llm.reply(NOTHING_FOUND)
+    llm.reply('Certainly! Overall the outline reads well.')
+    // The whole panel again on the retry — every reviewer, including the two that had
+    // already answered. That is what tier atomicity costs, inside the loop, per round.
+    for (let again = 0; again < PANEL_SIZE; again += 1) llm.reply(NOTHING_FOUND)
 
     const { runId, report } = await write()
 
@@ -347,12 +400,18 @@ describe('a transport failure is not a correction', () => {
     // And the producer was NOT asked again: the second draft was already on the volume and
     // already recorded, so the resumed loop re-read it rather than rewriting it.
     expect(producerCalls()).toHaveLength(2)
-    expect(llm.calls).toHaveLength(5)
+    expect(llm.calls).toHaveLength(1 + PANEL_SIZE + 1 + 3 + PANEL_SIZE)
 
     const outline = artifactsOf(store, episodeId).find((artifact) => artifact.kind === 'outline')!
-    // The tier that broke recorded nothing at all, so the resumed round starts from a clean
-    // sheet — one pass per version, never one and a half.
-    expect(checkPassesOf(store, outline.id).map((pass) => pass.artifactVersion)).toEqual([1, 2])
+    // **The granularity decision, inside the loop.** The two reviewers that answered before
+    // the broken one recorded NOTHING, so the resumed round found no pass at v2 and re-read
+    // the draft whole. Four passes per version, never two and a broken half — which is also
+    // what keeps the loop's own predicate honest: "a pass exists at this version" would have
+    // been true of a draft two reviewers never saw.
+    expect(checkPassesOf(store, outline.id).map((pass) => pass.artifactVersion)).toEqual([
+      1, 1, 1, 1, 2, 2, 2, 2,
+    ])
+    expect(verdictBoard(store, outline)).toMatchObject({ convened: 4, read: 4 })
   })
 })
 
@@ -398,7 +457,11 @@ describe('Ryan is not bounded by the correction budget', () => {
 
 describe('an artifact nothing checks', () => {
   it('is vanilla, not clean, and never loops forever looking for a check', async () => {
-    runner = createRunner(store, stages(() => []), createEventLog(store), llm)
+    // A shot manifest: no category declares it, no arc position reaches it, and nobody reads
+    // it as craft. An OUTLINE cannot be this any more — story-craft reads every written kind
+    // unbidden (D13), so "vanilla" is a narrower set than it was before E3-4, and this is
+    // what is left of it.
+    runner = createRunner(store, stages(() => [], 'shot-manifest'), createEventLog(store), llm)
     llm.reply(CLEAN)
 
     const { report } = await write()
@@ -406,6 +469,22 @@ describe('an artifact nothing checks', () => {
     expect(report.rounds).toEqual([])
     expect(report).toMatchObject({ converged: true, clean: false })
     expect(report.sentence).toContain('Nothing checks')
+    expect(report.board).toMatchObject({ convened: 0, read: 0 })
     expect(producerCalls()).toHaveLength(1)
+  })
+
+  it('is not what an outline is, however little canon it declares', async () => {
+    runner = createRunner(store, stages(() => []), createEventLog(store), llm)
+    queueRound(CLEAN, NOTHING_FOUND)
+
+    const { report } = await write()
+
+    // No category convenes and no arc is declared, and three reviewers read it anyway.
+    expect(report.board.rows.map((row) => row.checkKey)).toEqual([
+      'story-craft',
+      'pacing',
+      'hook',
+    ])
+    expect(report).toMatchObject({ converged: true, clean: true })
   })
 })

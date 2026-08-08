@@ -101,8 +101,12 @@ export function stageCatalogue(library: LibraryPaths): StageCatalogue {
   // deterministic rules over the rows it wrote for nothing. Both are TypeScript in
   // `board-step.ts` — the catalogue is a lookup, never a place stages are described.
   //
-  // E3-2's `text-checks` is the semantic tier beside them, and it has no free half: a
-  // category check is a reading, and every re-check is a call (`text-check-step.ts`).
+  // `text-checks` is the semantic tier beside them, and it has no free half: a category
+  // check is a reading, and every re-check is a call (`text-check-step.ts`). E3-4 grew it
+  // into a PANEL — the categories, the arc positions and the craft reviewers convened as
+  // one verdict board (4.5) — which changed what one run of the stage convenes and not what
+  // the stage is. The deterministic rules stay on their own free stage above; the board
+  // reads them where they stand rather than paying to re-run them.
   return {
     [DEMO_STAGE]: demoStage(library),
     ...boardStages(library),
