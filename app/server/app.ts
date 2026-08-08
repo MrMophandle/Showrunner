@@ -130,9 +130,9 @@ export function createApp(
   })
 
   /**
-   * The two verdicts this page offers. Neither takes a precondition and neither may be
+   * The three verdicts this page offers. None takes a precondition and none may be
    * refused on the artifact's account — checks argue, they never veto (invariant 3) — so
-   * the only errors either can return are "no such gate" and "that round is already
+   * the only errors any of them can return are "no such gate" and "that round is already
    * ruled", both of which come straight out of `createRulings`.
    */
   app.post('/api/gate/:id/approve', async (c) => {
@@ -140,6 +140,26 @@ export function createApp(
     const comment = typeof body['comment'] === 'string' ? body['comment'].trim() : ''
     return rule(c, () =>
       operating.rulings.approve(c.req.param('id'), comment === '' ? {} : { comment }),
+    )
+  })
+
+  /**
+   * Approve OVER something, recorded as itself forever (invariant 3).
+   *
+   * The same verb as `approve` and a different word in the ledger, which is exactly the
+   * point: a red finding makes an artifact loud, Ryan may carry on anyway, and what he did
+   * has to still be readable a season later. It is also the one thing that takes D12's wall
+   * down (`runner/stage-wall.ts`) — an override that left the next stage refused would be a
+   * verdict with no consequence, which is a check vetoing him by another route.
+   *
+   * E3-7's gate room is where the button appears with the findings it is standing over
+   * named on it. This route is that verb reachable, so the wall has a door.
+   */
+  app.post('/api/gate/:id/override', async (c) => {
+    const body = await json(c.req.raw)
+    const comment = typeof body['comment'] === 'string' ? body['comment'].trim() : ''
+    return rule(c, () =>
+      operating.rulings.override(c.req.param('id'), comment === '' ? {} : { comment }),
     )
   })
 

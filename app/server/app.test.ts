@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { createApp } from './app.ts'
 import type { CanonBenchView } from './canon-bench.ts'
 import type { Store } from './db/store.ts'
+import { findingsIn, recordCheckPass } from './domain/finding.ts'
 import { episodesOf, seasonsOf } from './domain/spine.ts'
 import { createEventLog, type EventLog } from './events.ts'
 import { loadFixture } from './fixture/load.ts'
@@ -197,6 +198,81 @@ describe('the app process — ruling on a gate', () => {
     const refused = await post<{ error: string }>(`/api/gate/${gateId}/reject`, { notes: [] })
     expect(refused.status).toBe(400)
     expect(refused.body.error).toContain('at least one note')
+  })
+
+  /**
+   * D12, both sides of it, over the wire — and the two tests below differ by ONE VERB.
+   *
+   * A deterministic finding is standing against the artifact under review. The gate accepts
+   * every verdict exactly as it did before: nothing here refuses a ruling, and neither
+   * request below is turned away. What the verdict changes is what happens to the NEXT
+   * STAGE — which is the whole of the ruling, and the reason `approve` and `override` are
+   * two words in the ledger rather than one.
+   */
+  async function ruleOverAStandingFinding(verdict: 'approve' | 'override'): Promise<string> {
+    llm.reply('The exchanger fails on a Tuesday.')
+    const started = await post<{ runId: string }>('/api/run', { episodeId: ep02, stage: DEMO_STAGE })
+    await runner.settled(started.body.runId)
+    const open = openGates(store)[0]!
+
+    // As if a canon-graph check had read the draft under review. `recordCheckPass` is the
+    // only path that writes a finding, planted or not.
+    recordCheckPass(store, {
+      checkKey: 'retired-reappearance',
+      tier: 'deterministic',
+      artifactId: open.gate.artifactId,
+      findings: [
+        {
+          concern:
+            'Sefa Doule is declared retired, and this premise-brief is built on them. ' +
+            'Standing is a declaration about the show and provenance is what the episode ' +
+            'actually touches — the two disagree, and one of them is wrong.',
+          severity: 'high',
+          confidence: 'certain',
+        },
+      ],
+    })
+
+    const ruled = await post<RunView>(`/api/gate/${open.gate.id}/${verdict}`, {})
+    expect(ruled.status).toBe(200)
+    expect(ruled.body.gate!.rounds[0]!.ruling).toMatchObject({ verdict })
+    await runner.settled(started.body.runId)
+    return open.gate.artifactId
+  }
+
+  it('takes the approval, and the deterministic finding still walls the next stage', async () => {
+    await ruleOverAStandingFinding('approve')
+
+    const view = await get<{ shows: { episodes: { launch: { blockedBecause: string } }[] }[] }>(
+      '/api/operating',
+    )
+    const onScreen = view.shows[0]!.episodes[1]!.launch.blockedBecause
+    const refused = await post<{ error: string }>('/api/run', { episodeId: ep02, stage: DEMO_STAGE })
+
+    expect(refused.status).toBe(409)
+    expect(refused.body.error).toBe(onScreen)
+    expect(refused.body.error).toContain('retired-reappearance')
+    expect(refused.body.error).toContain('Sefa Doule is declared retired')
+  })
+
+  it('takes the override, and the SAME enqueue goes through — with nothing unblocked', async () => {
+    const artifactId = await ruleOverAStandingFinding('override')
+
+    const started = await post<{ runId: string }>('/api/run', { episodeId: ep02, stage: DEMO_STAGE })
+    expect(started.status).toBe(201)
+
+    // Nothing was written to unblock it. The finding is exactly as the check left it — open,
+    // undismissed, still a record of what it read — and the wall is down because Ryan's
+    // override is a row it computes over, not because anything cleared a flag.
+    const finding = findingsIn(store, artifactId)[0]!
+    expect(finding).toMatchObject({ status: 'open', disposition: null })
+    expect(
+      store.get<{ n: number }>('SELECT COUNT(*) AS n FROM finding_disposition')!.n,
+    ).toBe(0)
+    // And the override is in the log as itself, distinguishable forever (invariant 3).
+    expect(
+      store.get<{ n: number }>("SELECT COUNT(*) AS n FROM event WHERE kind = 'gate-overridden'")!.n,
+    ).toBe(1)
   })
 
   it('says so when the round has already been ruled, rather than ruling it twice', async () => {

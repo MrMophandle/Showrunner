@@ -47,6 +47,7 @@ import {
   type Run,
   type StepStatus,
 } from './runner/run.ts'
+import { stageBlockedBecause } from './runner/stage-wall.ts'
 import { DEMO_CALL, DEMO_STAGE } from './runner/stages.ts'
 
 /**
@@ -253,8 +254,9 @@ export function launchOffer(store: Store, llm: LLMReadiness, episodeId: string):
  * API refuses with. Null when it can.
  *
  * The unfinished run is checked first: it is the more specific state, and it is the one
- * that is true even when the adapter is healthy. The adapter comes second because the
- * page says that once, loudly, at the top, in its own line.
+ * that is true even when the adapter is healthy. The D12 wall comes next, because it is
+ * about this episode's own material. The adapter comes last because the page says that
+ * once, loudly, at the top, in its own line.
  */
 export function launchBlockedBecause(
   store: Store,
@@ -275,6 +277,12 @@ export function launchBlockedBecause(
         : `is ${busy.status}`
     return `${label} already has a ${busy.stage} run, and it ${doing}. One run per episode (D7): rule on it, or let it finish.`
   }
+
+  // D12: a deterministic finding blocks the NEXT STAGE, and never Ryan's gate. Computed
+  // fresh off open findings every time this is asked (`runner/stage-wall.ts`) — the gate
+  // verbs beneath it take no preconditions at all, and that asymmetry is the whole ruling.
+  const wall = stageBlockedBecause(store, episodeId)
+  if (wall) return wall
 
   if (!llm.ready) {
     // The adapter's own sentence is quoted whole, never re-cased: it opens with the name
