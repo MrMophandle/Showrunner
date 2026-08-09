@@ -22,7 +22,7 @@ import { createRulings, presentForRuling } from '../runner/gate.ts'
 import { findStepByName, reconcileSteps, recordRun } from '../runner/run.ts'
 import type { Runner } from '../runner/runner.ts'
 import { scaffoldStage } from '../runner/stage-fixture.ts'
-import { composeWriteContext, type WriteContext } from './write-context.ts'
+import { composeWriteContext, nameAppearingIn, type WriteContext } from './write-context.ts'
 
 /**
  * The writer's desk (E4-0): what a writing step is handed, composed fresh out of records
@@ -448,6 +448,26 @@ describe('the entity slice', () => {
     expect(sefa).toBeDefined()
     expect(sefa!.reasons.map((reason) => reason.reason)).toEqual(['named'])
     expect(sefa!.reasons[0]!.because).toContain('Sefa Doule')
+  })
+
+  /**
+   * The `named` door's own matcher, exported because a WRITING step needs it pointing the
+   * other way: the desk names entities out of what it READS, and a writer has to declare
+   * provenance out of what it WROTE (invariant 2). One matcher, so "named in the upstream"
+   * and "named in the draft" can never mean two different things.
+   */
+  it('lends its matcher out, and answers with the term that matched', () => {
+    const ilse = harbor.entity('Ilse Renn')
+
+    expect(nameAppearingIn('Ilse Renn works the shortage off the roster.', ilse)).toBe('Ilse Renn')
+    // An alias counts, and the term that matched is what comes back — never the name.
+    expect(nameAppearingIn('The harbourmaster works the shortage.', ilse)).toBe('the harbourmaster')
+    expect(nameAppearingIn('The exchanger fails on a Tuesday.', ilse)).toBeUndefined()
+    // Bounded by letters and digits rather than by `\b`, which is what stops the station's
+    // "the harbour" matching inside "the harbourmaster".
+    const station = harbor.entity('Grey Harbor Station')
+    expect(nameAppearingIn('the harbourmaster took the spare', station)).toBeUndefined()
+    expect(nameAppearingIn('nothing moves in the harbour tonight', station)).toBe('the harbour')
   })
 
   it('refuses to add an entity this show does not have', () => {

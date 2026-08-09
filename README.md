@@ -157,9 +157,12 @@ so it says the same thing every time:
    > recorded override, put it down with a note, or fix it and re-run the checks — the
    > deterministic ones cost nothing.
 
-   Scroll **up** to the ep01 card. The demo launch button is disabled with that same sentence
-   under it, word for word. One composer, two readers: a precondition can never become a
-   failure after the click.
+   Scroll **up** to the ep01 card. Its launch button is disabled too — but read what it says:
+   *ep01 already has a premise-brief — rule on it at its gate, or edit it directly.* E4-1
+   retired the `demo` stage and put the **premise stage** behind that button, and a stage with
+   nothing to do says so before the wall is ever consulted. The wall and the refusal still come
+   out of one composer (`launchBlockedBecause`), and you can watch them be the same string on
+   an episode where a producing stage still has work: **ep02**, which has no premise yet.
 4. **The two obeyed rules are on the board, green.** `impossible-adjacency` and
    `duplicate-arrival` each read the grid and found nothing, and each has a row saying so.
    That is a **measurement**, not an absence — and it is the denominator the cried-wolf record

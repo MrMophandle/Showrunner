@@ -28,7 +28,8 @@ import { operatingView, runView } from '../server/operating.ts'
 import { openGates } from '../server/runner/gate.ts'
 import { createRunner, type Runner } from '../server/runner/runner.ts'
 import { SCRIPT_GATE_STAGE } from '../server/runner/script-gate-step.ts'
-import { DEMO_STAGE, stageCatalogue } from '../server/runner/stages.ts'
+import { stageCatalogue } from '../server/runner/stages.ts'
+import { PREMISE_STAGE } from '../server/runner/write-step.ts'
 import { TEXT_CHECK_STAGE } from '../server/runner/text-check-step.ts'
 import { App, Page } from './App.tsx'
 import { EMPTY_BENCH, type BenchDraft } from './CanonBench.tsx'
@@ -80,6 +81,17 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true })
 })
 
+/**
+ * One whole round of the premise stage: the draft, then the panel it convenes. The fixture
+ * is LOADED and not founded here, so nobody has standing yet, the desk hands the writer no
+ * canon, and the panel is the two craft reviewers a premise-brief is read by (D13).
+ */
+function queueThePremise(text: string = WRITTEN): void {
+  llm.reply(text)
+  llm.reply('{"findings": []}')
+  llm.reply('{"findings": []}')
+}
+
 describe('the operating page — before the API answers', () => {
   it('says so, rather than drawing an empty floor', () => {
     const html = renderToString(<App />)
@@ -107,10 +119,12 @@ describe('the operating page — the floor of it', () => {
     expect(html).toContain('<strong>[premise]</strong>')
 
     // Verb + object + scope, and the cost stated before the click.
-    expect(html).toContain('Write the ep01 demo premise and present it for your ruling')
+    expect(html).toContain('Write the ep02 premise-brief from the writer’s desk')
     expect(html).toContain('your money, spent when you click')
-    expect(html).not.toContain('Blocked:')
-    expect(html).not.toContain('disabled=""')
+    // ep01 already has a premise-brief, so its button is disabled with the reason in words —
+    // a blocked action never fails after the click (D15).
+    expect(html).toContain('Blocked:')
+    expect(html).toContain('ep01 already has a premise-brief')
   })
 
   it('disables the button and prints the reason when nothing can reach a model', () => {
@@ -121,14 +135,14 @@ describe('the operating page — the floor of it', () => {
     expect(html).toContain('Blocked:')
     expect(html).toContain('no `claude` executable on PATH')
     // Still a sentence and still a cost — a blocked button says what it would have done.
-    expect(html).toContain('Write the ep01 demo premise')
+    expect(html).toContain('Write the ep02 premise-brief')
   })
 })
 
 describe('the operating page — the gate', () => {
   it('renders the artifact itself, both verdicts, and what the run has spent', async () => {
-    llm.reply(WRITTEN)
-    const run = runner.enqueueRun({ episodeId: ep02, stage: DEMO_STAGE })
+    queueThePremise()
+    const run = runner.enqueueRun({ episodeId: ep02, stage: PREMISE_STAGE })
     await runner.settled(run.id)
 
     const html = render(operatingView(store, paths, READY), {
@@ -139,19 +153,19 @@ describe('the operating page — the gate', () => {
     // D15 / 4.6: the artifact is on the page, readable. Its path is beside it, not
     // instead of it.
     expect(html).toContain(WRITTEN)
-    expect(html).toContain('greyharbor/s01e02/demo/premise-round-1.md')
+    expect(html).toContain('greyharbor/s01e02/premise-brief-round-1.md')
 
     // Both verdicts, each stating its own cost. The rejection is disabled until the note
     // it needs has been written — the same shape as every other blocked button.
-    expect(html).toContain('Approve the ep02 premise-brief demo')
+    expect(html).toContain('Approve the ep02 premise-brief')
     expect(html).toContain('No model call · $0.00')
     expect(html).toContain('reopens as round 2')
     expect(html).toContain('Write the note first')
 
     // Run state is always visible: the steps, and what it cost.
-    expect(html).toContain('write-the-demo-premise')
-    expect(html).toContain('tally-the-demo-spend')
-    expect(html).toMatch(/1 call · \$\d+\.\d\d/)
+    expect(html).toContain('write-the-premise-brief')
+    expect(html).toContain('advance-past-the-premise-gate')
+    expect(html).toMatch(/3 calls · \$\d+\.\d\d/)
 
     // And the stream underneath, prose included — "streams, not spinners".
     expect(html).toContain('step-chunk')
@@ -159,8 +173,8 @@ describe('the operating page — the gate', () => {
   })
 
   it('offers the rejection once the note is written', async () => {
-    llm.reply(WRITTEN)
-    const run = runner.enqueueRun({ episodeId: ep02, stage: DEMO_STAGE })
+    queueThePremise()
+    const run = runner.enqueueRun({ episodeId: ep02, stage: PREMISE_STAGE })
     await runner.settled(run.id)
 
     const html = render(operatingView(store, paths, READY), {

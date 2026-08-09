@@ -138,6 +138,17 @@ const PRODUCES: Record<WriteStep, ArtifactKind> = {
   script: 'script',
 }
 
+/**
+ * The artifact kind a writing step writes.
+ *
+ * Exported because the STEP needs the same answer this file already computes: a producer
+ * has to know which artifact to file, and the composer has to know which one is upstream of
+ * the next. One map, read twice — a second `Record<WriteStep, ArtifactKind>` beside a stage
+ * would be the one that drifts, and it would drift silently into a step writing an artifact
+ * the next step does not read.
+ */
+export const producedBy = (step: WriteStep): ArtifactKind => PRODUCES[step]
+
 export interface WriteContextRequest {
   episodeId: string
   step: WriteStep
@@ -483,7 +494,7 @@ function slice(
   if (what.upstream.text !== null && what.upstream.artifact !== null) {
     const text = what.upstream.text
     for (const entity of what.entities) {
-      const term = [entity.name, ...entity.aliases].find((one) => appearsIn(text, one))
+      const term = nameAppearingIn(text, entity)
       if (term !== undefined) {
         open(
           entity.id,
@@ -544,6 +555,24 @@ function keptOut(entity: CanonEntity, where: EpisodeInShow, upstream: Upstream):
     `standing ${entity.standing ?? 'undeclared'} · status ${entity.status}, so not core`,
   ]
   return clauses.join(', ')
+}
+
+/**
+ * The name or alias of this entity that appears in the text, or undefined — the `named`
+ * door's whole rule, and the one place this app decides what "named in" means.
+ *
+ * **Exported because a writing step needs it pointing the other way.** The desk names
+ * entities out of what it READS; a producer has to declare provenance out of what it WROTE
+ * (invariant 2), and there is no upstream to read for the draft it just made. Two matchers
+ * would make "named in the upstream" and "named in the draft" quietly different questions —
+ * the second-parser failure, at the lexical layer. So the caller is lent this one, and the
+ * term it answers with is what a reason (or a provenance record) quotes.
+ */
+export function nameAppearingIn(
+  text: string,
+  entity: { name: string; aliases: readonly string[] },
+): string | undefined {
+  return [entity.name, ...entity.aliases].find((one) => appearsIn(text, one))
 }
 
 /**

@@ -20,7 +20,8 @@ import { createRulings, openGates, type Rulings } from './gate.ts'
 import { createRunner, type Runner } from './runner.ts'
 import { SCRIPT_GATE_STAGE } from './script-gate-step.ts'
 import { stageBlockedBecause } from './stage-wall.ts'
-import { DEMO_STAGE, stageCatalogue } from './stages.ts'
+import { stageCatalogue } from './stages.ts'
+import { PREMISE_STAGE } from './write-step.ts'
 
 /**
  * The gate over the script (E3-7): **the stage that produces nothing, and the door the wall's
@@ -116,11 +117,20 @@ describe('the script gate — presenting what stands', () => {
   it('is never itself walled — a deterministic finding blocks the next stage, not a ruling', () => {
     theBoard()
 
-    // The wall is up: the producing stage beside it is refused.
+    // The wall is up, and it is what refuses a stage that would PRODUCE from this episode's
+    // material. That refusal is asserted on ep02 in `operating.test.ts`: E4-1 retired `demo`,
+    // and the only producer this build ships is the premise stage, which on ep01 is refused
+    // for having nothing to do — the fixture wrote ep01's premise by hand — before the wall
+    // is ever consulted (`operating.ts`).
     expect(stageBlockedBecause(store, episodeId)).toContain('ep01 is blocked')
-    expect(launchBlockedBecause(store, describeLLMBackend({ ANTHROPIC_API_KEY: 'k' }), episodeId, stageCatalogue(paths)[DEMO_STAGE]!)).toContain(
-      'ep01 is blocked',
-    )
+    expect(
+      launchBlockedBecause(
+        store,
+        describeLLMBackend({ ANTHROPIC_API_KEY: 'k' }),
+        episodeId,
+        stageCatalogue(paths)[PREMISE_STAGE]!,
+      ),
+    ).toContain('already has a premise-brief')
     // And the gate is not. Refusing it would be a check vetoing Ryan by the longest route.
     expect(
       launchBlockedBecause(store, describeLLMBackend({ PATH: '' }), episodeId, stageCatalogue(paths)[SCRIPT_GATE_STAGE]!),

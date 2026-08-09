@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { FREE } from './cost.ts'
 import type { Store } from './db/store.ts'
-import { artifactsOf } from './domain/artifact.ts'
+import { artifactsOf, recordArtifact } from './domain/artifact.ts'
 import { recordCheckPass } from './domain/finding.ts'
 import { episodesOf, findEpisode, scenesOf, seasonsOf } from './domain/spine.ts'
 import { createEventLog, type EventLog } from './events.ts'
@@ -15,8 +15,9 @@ import { createFakeLLM, type FakeLLM } from './llm/fake.ts'
 import { launchBlockedBecause, operatingView, runView } from './operating.ts'
 import { createRulings, openGates, type Rulings } from './runner/gate.ts'
 import { createRunner, type Runner } from './runner/runner.ts'
-import { DEMO_STAGE, stageCatalogue } from './runner/stages.ts'
+import { stageCatalogue } from './runner/stages.ts'
 import { STAGE_WORK, type Stage } from './runner/step.ts'
+import { PREMISE_STAGE } from './runner/write-step.ts'
 
 /**
  * The operating page's read model: the sentences Ryan reads, and the preconditions that
@@ -64,8 +65,49 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true })
 })
 
-/** The one stage E1 ships, out of the catalogue — the refusal takes a stage, not a name. */
-const demoStage = (): Stage => stageCatalogue(paths)[DEMO_STAGE]!
+/** The writing line's first stage, out of the catalogue — the refusal takes a stage, not a name. */
+const premiseStage = (): Stage => stageCatalogue(paths)[PREMISE_STAGE]!
+
+/** What a Dry Stores premise run costs the fake: the draft, then the panel it convenes. */
+const WRITTEN = 'Three weeks after the harbourmaster took the spare, the water plant gives out.'
+
+/**
+ * The whole of one round, scripted. The fixture is LOADED and not founded here, so every
+ * entity is still a candidate with no standing — the desk hands the writer nobody, the brief
+ * declares no provenance, and the panel is the two craft reviewers a premise-brief is read by
+ * (D13). That is a legal empty case and it is what makes this file's runs cheap.
+ */
+function queueThePremise(text: string = WRITTEN): void {
+  llm.reply(text)
+  llm.reply('{"findings": []}')
+  llm.reply('{"findings": []}')
+}
+
+/**
+ * An episode with material standing against it and no premise-brief — the only shape in
+ * which D12's wall can stand in front of the premise stage, and a planted one because the
+ * premise is the FIRST thing an episode has, so a real episode with material already has one.
+ * E4-2's outline stage meets this shape for real.
+ */
+function plantAWalledEpisode(): void {
+  const script = recordArtifact(store, {
+    episodeId: ep02,
+    kind: 'script',
+    filePath: 'greyharbor/s01e02/script.md',
+  })
+  recordCheckPass(store, {
+    checkKey: 'dual-presence',
+    tier: 'deterministic',
+    artifactId: script.id,
+    findings: [
+      {
+        concern: 'Ilse Renn is in two places at one time. Scenes 5 and 6 share one clock.',
+        severity: 'high',
+        confidence: 'certain',
+      },
+    ],
+  })
+}
 
 describe('the operating page — what it lists', () => {
   it('lists the fixture show and both episodes at their own lifecycle positions', () => {
@@ -111,21 +153,38 @@ describe('the operating page — what it lists', () => {
 
 describe('the operating page — the launch button', () => {
   it('states verb, object, scope and cost, before the click', () => {
-    const launch = operatingView(store, paths, READY).shows[0]!.episodes[0]!.launch
+    const launch = operatingView(store, paths, READY).shows[0]!.episodes[1]!.launch
 
     expect(launch.enabled).toBe(true)
     expect(launch.blockedBecause).toBeNull()
     // Verb + object + scope, and never a generic verb.
     expect(launch.sentence).toBe(
-      'Write the ep01 demo premise and present it for your ruling — “The Long Pier”, one call, one gate',
+      'Write the ep02 premise-brief from the writer’s desk and present it for your ruling — ' +
+        '“Dry Stores”, one call, then up to 7 reviewers read it',
     )
     expect(launch.sentence).not.toMatch(/\b(Launch|Run|Go|Do|Start)\b/)
-    // Cost, in the same arithmetic the ledger will use afterwards.
-    expect(launch.cost).toMatch(/^1 Opus call, ~\$\d+\.\d\d · your money, spent when you click$/)
+    // Cost, in the same arithmetic the ledger will use afterwards — the writing call, the
+    // panel it will convene, and the bound on how many drafts it may spend.
+    expect(launch.cost).toMatch(/^1 Opus call, ~\$\d+\.\d\d \+ up to 7 Opus calls, ~\$\d+\.\d\d/)
+    expect(launch.cost).toContain('stops at 3 drafts')
+    expect(launch.cost).toContain('your money, spent when you click')
+  })
+
+  it('says so, in words, when the episode already has the artifact it would write (D20)', () => {
+    // ep01 carries the fixture's own hand-written premise. A hand-made asset always wins,
+    // and a stage with nothing to do says so before the click rather than after it.
+    const launch = operatingView(store, paths, READY).shows[0]!.episodes[0]!.launch
+
+    expect(launch.enabled).toBe(false)
+    expect(launch.blockedBecause).toBe(
+      'ep01 already has a premise-brief — rule on it at its gate, or edit it directly (E4-5).',
+    )
+    // Stated even when it is blocked: what it would have cost is not a secret.
+    expect(launch.cost).toContain('Opus call')
   })
 
   it('is blocked, with the reason in words, when nothing can reach a model', () => {
-    const launch = operatingView(store, paths, NOTHING).shows[0]!.episodes[0]!.launch
+    const launch = operatingView(store, paths, NOTHING).shows[0]!.episodes[1]!.launch
 
     expect(launch.enabled).toBe(false)
     expect(launch.blockedBecause).toContain('Nothing to call')
@@ -135,12 +194,12 @@ describe('the operating page — the launch button', () => {
     expect(launch.blockedBecause).toContain('Export ANTHROPIC_API_KEY')
     expect(launch.blockedBecause).not.toMatch(/aNTHROPIC/)
     // The cost is still stated: what it WOULD cost is not a secret because it is blocked.
-    expect(launch.cost).toContain('1 Opus call')
+    expect(launch.cost).toContain('Opus call')
   })
 
   it('is blocked while the episode already has a run, and says what that run is doing', async () => {
-    llm.reply('The exchanger fails on a Tuesday.')
-    const run = runner.enqueueRun({ episodeId: ep02, stage: DEMO_STAGE })
+    queueThePremise()
+    const run = runner.enqueueRun({ episodeId: ep02, stage: PREMISE_STAGE })
     await runner.settled(run.id)
 
     const view = operatingView(store, paths, READY)
@@ -148,19 +207,20 @@ describe('the operating page — the launch button', () => {
 
     // ep02 is parked on a gate: one run per episode (D7).
     expect(second!.launch.enabled).toBe(false)
-    expect(second!.launch.blockedBecause).toContain('already has a demo run')
+    expect(second!.launch.blockedBecause).toContain('already has a write-the-premise run')
     expect(second!.launch.blockedBecause).toContain('waiting on your ruling')
     expect(second!.launch.blockedBecause).toContain('One run per episode')
-    expect(second!.run).toMatchObject({ stage: DEMO_STAGE, status: 'paused' })
+    expect(second!.run).toMatchObject({ stage: PREMISE_STAGE, status: 'paused' })
     expect(second!.run!.openGateId).toBe(openGates(store)[0]!.gate.id)
 
-    // Cross-episode parallelism is the other half of the same ruling: ep01 is untouched.
-    expect(first!.launch.enabled).toBe(true)
+    // Cross-episode parallelism is the other half of the same ruling: whatever ep01's own
+    // answer is, ep02's run is not part of it.
     expect(first!.run).toBeNull()
+    expect(first!.launch.blockedBecause).not.toContain('One run per episode')
   })
 
   it('refuses an episode that is not in this library', () => {
-    expect(launchBlockedBecause(store, READY, 'ep_nope', demoStage())).toBe(
+    expect(launchBlockedBecause(store, READY, 'ep_nope', premiseStage())).toBe(
       'There is no episode ep_nope in this library.',
     )
   })
@@ -198,6 +258,29 @@ describe('the operating page — the launch button', () => {
   })
 
   it('stands the wall in front of a stage that produces, and never one that reads', () => {
+    plantAWalledEpisode()
+
+    const catalogue = stageCatalogue(paths)
+    // D12 refuses the next stage. The premise stage writes an artifact, so the wall is what
+    // stands in front of it — on an episode where it still has something to write.
+    expect(launchBlockedBecause(store, READY, ep02, catalogue[PREMISE_STAGE]!)).toContain(
+      'ep02 is blocked',
+    )
+    // And it never refuses a reading. The wall's own sentence recommends re-running the free
+    // checks; a wall that refused that button would be a dead end built out of its own advice.
+    for (const stage of Object.values(catalogue).filter((one) => one.work === 'reads')) {
+      expect(launchBlockedBecause(store, READY, ep02, stage) ?? '').not.toContain('is blocked')
+    }
+  })
+
+  /**
+   * The order of the refusals, where it is load-bearing (operating.ts). ep01 has both a
+   * standing deterministic finding and a premise-brief already, and what the button says is
+   * the stage's own precondition: a stage with nothing to do has nothing to be blocked from
+   * doing, and telling Ryan about a wall in front of work that does not exist would send him
+   * to fix something for no reason.
+   */
+  it('says a stage has nothing to do before it says the wall is up', () => {
     const script = artifactsOf(store, ep01).find((artifact) => artifact.kind === 'script')!
     recordCheckPass(store, {
       checkKey: 'dual-presence',
@@ -213,16 +296,9 @@ describe('the operating page — the launch button', () => {
       ],
     })
 
-    const catalogue = stageCatalogue(paths)
-    // D12 refuses the next stage. `demo` writes a premise out of this episode's material.
-    expect(launchBlockedBecause(store, READY, ep01, catalogue[DEMO_STAGE]!)).toContain(
-      'ep01 is blocked',
+    expect(launchBlockedBecause(store, READY, ep01, premiseStage())).toContain(
+      'already has a premise-brief',
     )
-    // And it never refuses a reading. The wall's own sentence recommends re-running the free
-    // checks; a wall that refused that button would be a dead end built out of its own advice.
-    for (const stage of Object.values(catalogue).filter((one) => one.work === 'reads')) {
-      expect(launchBlockedBecause(store, READY, ep01, stage) ?? '').not.toContain('is blocked')
-    }
   })
 })
 
@@ -252,73 +328,63 @@ describe('the stage catalogue — every stage declares itself', () => {
    * and it proves it against the real planted contradiction.
    */
   it('renders the wall a deterministic finding puts up, disabled and in words', () => {
-    const script = artifactsOf(store, ep01).find((artifact) => artifact.kind === 'script')!
-    recordCheckPass(store, {
-      checkKey: 'dual-presence',
-      tier: 'deterministic',
-      artifactId: script.id,
-      findings: [
-        {
-          concern: 'Ilse Renn is in two places at one time. Scenes 5 and 6 share one clock.',
-          severity: 'high',
-          confidence: 'certain',
-          anchor: { sceneId: scenesOf(store, ep01)[5]!.id, quote: '' },
-        },
-      ],
-    })
+    plantAWalledEpisode()
 
-    const episode = operatingView(store, paths, READY).shows[0]!.episodes[0]!
+    const episode = operatingView(store, paths, READY).shows[0]!.episodes[1]!
     expect(episode.launch.enabled).toBe(false)
-    expect(episode.launch.blockedBecause).toContain('ep01 is blocked')
+    expect(episode.launch.blockedBecause).toContain('ep02 is blocked')
     expect(episode.launch.blockedBecause).toContain('dual-presence')
     expect(episode.launch.blockedBecause).toContain('Ilse Renn is in two places at one time.')
     // Stated even when it is blocked: what it would have cost is not a secret.
-    expect(episode.launch.cost).toContain('1 Opus call')
+    expect(episode.launch.cost).toContain('Opus call')
     // The API refuses with the same words. One composer, and they cannot drift.
-    expect(launchBlockedBecause(store, READY, ep01, demoStage())).toBe(episode.launch.blockedBecause)
+    expect(launchBlockedBecause(store, READY, ep02, premiseStage())).toBe(
+      episode.launch.blockedBecause,
+    )
   })
 })
 
 describe('the operating page — one run, and the gate it parks on', () => {
   it('renders the artifact itself, not a filename, with both verdicts and their costs', async () => {
-    const written = 'Three weeks after the harbourmaster took the spare, the water plant gives out.'
-    llm.reply(written)
-    const run = runner.enqueueRun({ episodeId: ep02, stage: DEMO_STAGE })
+    queueThePremise()
+    const run = runner.enqueueRun({ episodeId: ep02, stage: PREMISE_STAGE })
     await runner.settled(run.id)
 
     const view = runView(store, paths, run.id)!
-    expect(view.sentence).toContain('demo on ep02 — waiting on your ruling')
+    expect(view.sentence).toContain('write-the-premise on ep02 — waiting on your ruling')
     expect(view.steps.map((step) => [step.name, step.status])).toEqual([
-      ['write-the-demo-premise', 'paused'],
-      ['tally-the-demo-spend', 'pending'],
+      ['write-the-premise-brief', 'paused'],
+      ['advance-past-the-premise-gate', 'pending'],
     ])
 
     // D15 / 4.6: the gate renders its artifact. The text is here, off the volume.
     const gate = view.gate!
-    expect(gate).toMatchObject({ subject: 'the ep02 premise-brief demo', round: 1, isOpen: true })
-    expect(gate.artifact).toMatchObject({ kind: 'premise-brief', slot: 'demo', version: 1 })
-    expect(gate.artifact.text).toBe(`${written}\n`)
+    expect(gate).toMatchObject({ subject: 'the ep02 premise-brief', round: 1, isOpen: true })
+    expect(gate.artifact).toMatchObject({ kind: 'premise-brief', slot: '', version: 1 })
+    expect(gate.artifact.text).toBe(`${WRITTEN}\n`)
     expect(gate.artifact.note).toBeNull()
 
-    // Both verdicts, both stating their own cost. A rejection buys another call and the
-    // button that asks for it says so before it is pressed.
+    // Both verdicts, both stating their own cost. A rejection buys another draft and another
+    // reading, and the button that asks for it says so before it is pressed.
     expect(gate.approve.sentence).toBe(
-      'Approve the ep02 premise-brief demo — round 1, and write-the-demo-premise carries the run on',
+      'Approve the ep02 premise-brief — round 1, and write-the-premise-brief carries the run on',
     )
     expect(gate.approve.cost).toBe('No model call · $0.00')
     expect(gate.reject.sentence).toContain('reopens as round 2')
-    expect(gate.reject.cost).toContain('1 Opus call')
+    expect(gate.reject.sentence).toContain('writes it again against them')
+    expect(gate.reject.cost).toContain('Opus call')
     expect([gate.approve.enabled, gate.reject.enabled]).toEqual([true, true])
 
-    // And what it has cost so far, off the ledger rather than off a counter.
-    expect(view.spend.sentence).toMatch(/^1 call · \$\d+\.\d\d$/)
-    expect(view.spend.entries).toHaveLength(1)
+    // And what it has cost so far, off the ledger rather than off a counter: the draft, and
+    // the two craft reviewers that read it.
+    expect(view.spend.sentence).toMatch(/^3 calls · \$\d+\.\d\d$/)
+    expect(view.spend.entries).toHaveLength(3)
     expect(view.spend.entries[0]).toMatchObject({ kind: 'llm', priced: 'rate-card' })
   })
 
   it('closes both verdicts once the round is ruled, and says why', async () => {
-    llm.reply('The exchanger fails on a Tuesday.')
-    const run = runner.enqueueRun({ episodeId: ep02, stage: DEMO_STAGE })
+    queueThePremise()
+    const run = runner.enqueueRun({ episodeId: ep02, stage: PREMISE_STAGE })
     await runner.settled(run.id)
 
     rulings.approve(openGates(store)[0]!.gate.id, { comment: 'that reads.' })
@@ -326,14 +392,14 @@ describe('the operating page — one run, and the gate it parks on', () => {
 
     const view = runView(store, paths, run.id)!
     expect(view.run.status).toBe('done')
-    expect(view.sentence).toBe('demo on ep02 — finished')
+    expect(view.sentence).toBe('write-the-premise on ep02 — finished')
     expect(view.gate!.isOpen).toBe(false)
     expect(view.gate!.approve.enabled).toBe(false)
     expect(view.gate!.approve.blockedBecause).toContain('already ruled "approve"')
     expect(view.gate!.reject.blockedBecause).toContain('A later opinion is a later round.')
 
     // The artifact is still rendered after the ruling — the round history is readable.
-    expect(view.gate!.artifact.text).toContain('The exchanger fails')
+    expect(view.gate!.artifact.text).toContain('the water plant gives out')
     expect(view.gate!.rounds[0]!.ruling).toMatchObject({ verdict: 'approve', comment: 'that reads.' })
   })
 
