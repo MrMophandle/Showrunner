@@ -154,7 +154,12 @@ describe('the gate — surviving a restart', () => {
         'write-script resumed on approve',
         'publish-the-cut ran',
       ])
-  })
+    // The same ceiling `crash.test.ts` gives its own kill-and-restart, and for the same
+    // reason: this spawns two processes and waits for each to boot, which on a loaded
+    // machine is seconds. Nothing here waits on a clock, so the ceiling only ever catches
+    // a real hang — and a durability test that goes red on a busy laptop teaches the
+    // suite to be re-run until it is green.
+  }, 60_000)
 })
 
 // ── Test kit ────────────────────────────────────────────────────────────────────

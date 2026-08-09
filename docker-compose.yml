@@ -24,6 +24,12 @@ services:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       SHOWRUNNER_LLM_BACKEND: ${SHOWRUNNER_LLM_BACKEND:-}
     restart: unless-stopped
+    # `r.ok` is the whole test, and it goes on meaning exactly "serving" now that the port
+    # is bound before the library is opened (#49, `app/server/boot.ts`): during the window
+    # between the two, `/api/health` answers 503 with `starting — migrating N → M` rather
+    # than a 200 it would have to take back. Docker's own word for a container inside its
+    # start period is "starting", which is the state it is genuinely in — and a migration
+    # of this schema is milliseconds, so `start_period` covers it without being widened.
     healthcheck:
       test:
         - CMD
