@@ -3,8 +3,14 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { renderToString } from 'react-dom/server'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { canonBenchView, type CanonBenchView } from '../server/canon-bench.ts'
+import {
+  canonBenchView,
+  registerAndPropose,
+  type CanonBenchView,
+} from '../server/canon-bench.ts'
 import type { Store } from '../server/db/store.ts'
+import { findEntity } from '../server/domain/canon.ts'
+import { createProposalRulings } from '../server/domain/proposal.ts'
 import { episodesOf, seasonsOf } from '../server/domain/spine.ts'
 import { createEventLog, eventsOfRun, type EventLog } from '../server/events.ts'
 import { greyHarborFounded } from '../server/fixture/founded.ts'
@@ -212,6 +218,34 @@ describe('the operating page — the canon bench, founded', () => {
     expect(html).toContain('founded Grey Harbor from the sheets in')
   })
 
+  it('offers the addition form on a factless entity, where no change form can reach', () => {
+    const harbor = greyHarborFounded(store, paths)
+    // Ottilie Bray as the drill left her: created with the facts box empty, promotion ruled.
+    const promotion = registerAndPropose(
+      store,
+      harbor.show.id,
+      { categoryKey: 'character', name: 'Ottilie Bray' },
+      { standing: 'recurring', relations: [{ type: 'species', to: 'unknown' }] },
+    )
+    createProposalRulings(store, createEventLog(store)).ratify(promotion.id, {
+      note: 'she has been in the background for six episodes.',
+    })
+    const ottilie = findEntity(store, {
+      showId: harbor.show.id,
+      categoryKey: 'character',
+      name: 'Ottilie Bray',
+    })!
+
+    const html = renderBench(canonBenchView(store, harbor.show.id, { entityId: ottilie.id })!)
+
+    // Nothing to anchor a change to — and the addition is offered anyway (#39).
+    expect(html).toContain('Nothing ratified stands here at this setting')
+    expect(html).toContain('Propose a new fact for Ottilie Bray')
+    expect(html).toContain('No model call · $0.00')
+    // Blocked until the statement is typed, in the sentence the API refuses with.
+    expect(html).toContain('Write the statement first')
+  })
+
   it('offers the candidate its promotion, and the create form its category', () => {
     const harbor = greyHarborFounded(store, paths)
     const html = renderBench(
@@ -280,6 +314,7 @@ function renderBench(canon: CanonBenchView, draft: BenchDraft = EMPTY_BENCH): st
       onCreate: () => undefined,
       onPromote: () => undefined,
       onPropose: () => undefined,
+      onAddFact: () => undefined,
       onRuleProposal: () => undefined,
     },
   })

@@ -401,6 +401,66 @@ describe('the app process — the canon bench', () => {
     expect(blank.body.error).toBe(created.body.refusals.entityNeedsName)
   })
 
+  it('adds a fact to an entity created without one, which is the gap #39 names', async () => {
+    await post(`/api/canon/${showId}/found`, {})
+    const created = await post<CanonBenchView>(`/api/canon/${showId}/entity`, {
+      categoryKey: 'character',
+      name: 'Ottilie Bray',
+      standing: 'recurring',
+      facts: '',
+      relations: [{ type: 'species', to: 'unknown' }],
+    })
+    const ottilie = created.body.entities.find((entity) => entity.name === 'Ottilie Bray')!
+    const promoted = await post<CanonBenchView>(
+      `/api/proposal/${created.body.queue[0]!.id}/ratify?entity=${ottilie.id}`,
+      { note: 'she has been in the background for six episodes.' },
+    )
+    // Canon, and carrying nothing — there is no fact here to hang a change form on.
+    expect(promoted.body.entity!.status).toBe('active')
+    expect(promoted.body.entity!.facts).toEqual([])
+
+    const raised = await post<CanonBenchView>(
+      `/api/canon/entity/${ottilie.id}/fact?entity=${ottilie.id}`,
+      { field: 'trade', statement: 'Ottilie Bray keeps the harbour’s only working lathe.' },
+    )
+    expect(raised.status).toBe(200)
+    // Raised is not ruled: her sheet is still empty, and the proposal is on the queue.
+    expect(raised.body.entity!.facts).toEqual([])
+    expect(raised.body.queue).toHaveLength(1)
+
+    const ruled = await post<CanonBenchView>(
+      `/api/proposal/${raised.body.queue[0]!.id}/ratify?entity=${ottilie.id}`,
+      { note: 'yes — she turns the part in ep05.' },
+    )
+    expect(ruled.body.entity!.facts.map((fact) => fact.statement)).toEqual([
+      'Ottilie Bray keeps the harbour’s only working lathe.',
+    ])
+
+    // The 400-and-the-button house rule: one string, refused and rendered.
+    const blank = await post<{ error: string }>(`/api/canon/entity/${ottilie.id}/fact`, {
+      statement: ' ',
+    })
+    expect(blank.status).toBe(409)
+    expect(blank.body.error).toBe(ruled.body.refusals.additionNeedsStatement)
+
+    const missing = await app.request('/api/canon/entity/entity_nope/fact', { method: 'POST' })
+    expect(missing.status).toBe(404)
+  })
+
+  it('refuses a fact on a candidate in the sentence its disabled button showed', async () => {
+    const founded = await post<CanonBenchView>(`/api/canon/${showId}/found`, {})
+    const sefa = founded.body.entities.find((entity) => entity.name === 'Sefa Doule')!
+
+    const sheet = await get<CanonBenchView>(`/api/canon/${showId}?entity=${sefa.id}`)
+    expect(sheet.entity!.addFact.enabled).toBe(false)
+
+    const refused = await post<{ error: string }>(`/api/canon/entity/${sefa.id}/fact`, {
+      statement: 'Sefa Doule files against the line office’s ledger.',
+    })
+    expect(refused.status).toBe(409)
+    expect(refused.body.error).toBe(sheet.entity!.addFact.blockedBecause)
+  })
+
   it('promotes the candidate the loader left, with the sheet typed for it', async () => {
     const founded = await post<CanonBenchView>(`/api/canon/${showId}/found`, {})
     const sefa = founded.body.entities.find((entity) => entity.name === 'Sefa Doule')!

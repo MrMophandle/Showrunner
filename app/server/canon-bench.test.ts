@@ -8,10 +8,12 @@ import {
   FREE,
   promoteCandidate,
   proposeFactChange,
+  proposeNewFact,
   registerAndPropose,
 } from './canon-bench.ts'
 import type { Store } from './db/store.ts'
 import { findEntity } from './domain/canon.ts'
+import { canonAsOf, factsOfEntity } from './domain/fact.ts'
 import { foundCanon } from './domain/founding.ts'
 import { createProposalRulings, type ProposalRulings } from './domain/proposal.ts'
 import { findShowByKey } from './domain/spine.ts'
@@ -390,6 +392,141 @@ describe('the canon bench — changing a ratified fact, and reading canon on eit
         statement: '   ',
       }),
     ).toThrowError(BENCH_REFUSALS.changeNeedsStatement)
+  })
+})
+
+describe('the canon bench — adding a fact the entity does not have (#39)', () => {
+  const LATHE = 'Ottilie Bray keeps the harbour’s only working lathe.'
+
+  /**
+   * Ottilie Bray as the drill left her: created with the facts box empty, her promotion
+   * ruled, and canon with nothing on it. A change form anchors to a fact that exists, so
+   * before #39 she was unreachable by every affordance this bench had.
+   */
+  const ottilie = () => {
+    const promotion = registerAndPropose(
+      store,
+      showId(),
+      { categoryKey: 'character', name: 'Ottilie Bray' },
+      { standing: 'recurring', relations: [{ type: 'species', to: 'unknown' }] },
+    )
+    rulings.ratify(promotion.id, { note: 'she has been in the background for six episodes.' })
+    return findEntity(store, { showId: showId(), categoryKey: 'character', name: 'Ottilie Bray' })!
+  }
+
+  beforeEach(() => {
+    greyHarborFounded(store, paths)
+  })
+
+  it('offers the form on an entity carrying no facts at all', () => {
+    const entity = ottilie()
+    const view = bench({ entityId: entity.id }).entity!
+
+    expect(view.facts).toEqual([])
+    expect(view.addFact.enabled).toBe(true)
+    expect(view.addFact.blockedBecause).toBeNull()
+    expect(view.addFact.sentence).toBe(
+      'Propose a new fact for Ottilie Bray — a fact delta with no before, for your ruling in ' +
+        'the queue',
+    )
+    expect(view.addFact.sentence).not.toMatch(/\b(Launch|Run|Go|Do|Start)\b/)
+    expect(view.addFact.cost).toBe(FREE)
+  })
+
+  it('writes no fact anywhere while the proposal is standing on the queue', () => {
+    const entity = ottilie()
+    const proposal = proposeNewFact(store, entity.id, {
+      field: 'trade',
+      statement: LATHE,
+      usageContext: 'ep05 has her turning a part, and canon has never said she could.',
+    })
+
+    // An addition comes off the canon surface, not out of an episode's production, so it
+    // rides nothing — and a proposal riding nothing writes no provisional claim either.
+    // Nothing exists until the ruling (invariant 1).
+    expect(proposal.episodeId).toBeNull()
+    expect(factsOfEntity(store, entity.id)).toEqual([])
+    expect(canonAsOf(store, { entityId: entity.id }, 'now')).toEqual([])
+
+    const view = bench({ entityId: entity.id })
+    expect(view.entity!.facts).toEqual([])
+    expect(view.entity!.history).toEqual([])
+
+    // And it rides the queue like every other proposal, with the same three verbs on it.
+    const queued = view.queue.find((each) => each.id === proposal.id)!
+    expect(queued.kind).toBe('fact-delta')
+    expect(queued.status).toBe('raised')
+    expect(queued.sentence).toBe(
+      'fact delta · “Ottilie Bray” — raised by you, at the bench, riding nothing',
+    )
+    expect(queued.change).toEqual([`fact · trade: “${LATHE}”`])
+    expect(queued.implications).toBe('touches nothing ratified yet')
+    expect([queued.ratify.enabled, queued.reject.enabled, queued.defer.enabled]).toEqual([
+      true,
+      true,
+      true,
+    ])
+  })
+
+  it('writes the fact with lineage, and with no establishing episode, when it is ratified', () => {
+    const entity = ottilie()
+    const proposal = proposeNewFact(store, entity.id, { statement: LATHE })
+    rulings.ratify(proposal.id, { note: 'yes — she turns the part in ep05.' })
+
+    const view = bench({ entityId: entity.id }).entity!
+    expect(view.facts.map((fact) => fact.statement)).toEqual([LATHE])
+    expect(view.facts[0]!.status).toBe('ratified')
+    expect(view.facts[0]!.lineage).toMatch(
+      /^established with no episode — a founding sheet, or a change ruled at the bench · ratified at ruling \d+ · \d{4}-\d{2}-\d{2}T/,
+    )
+    // No before, so nothing was closed: the sheet gained a row rather than replacing one.
+    expect(view.history).toEqual([])
+
+    const written = factsOfEntity(store, entity.id)[0]!
+    expect(written.establishedIn).toBeNull()
+    expect(written.ratifiedBy).toBe(bench().ledger[0]!.seq)
+  })
+
+  it('shows the fact absent before that ruling and present as of it (D9)', () => {
+    const entity = ottilie()
+    const proposal = proposeNewFact(store, entity.id, { statement: LATHE })
+    rulings.ratify(proposal.id, { note: 'yes.' })
+    const at = bench().ledger[0]!.seq
+
+    expect(canonAsOf(store, { entityId: entity.id }, { ruling: at - 1 })).toEqual([])
+    expect(
+      canonAsOf(store, { entityId: entity.id }, { ruling: at }).map((fact) => fact.statement),
+    ).toEqual([LATHE])
+
+    // And through the bench's own point-in-time control, which is what Ryan reads it by.
+    expect(bench({ entityId: entity.id, ruling: at - 1 }).entity!.facts).toEqual([])
+    expect(
+      bench({ entityId: entity.id, ruling: at }).entity!.facts.map((fact) => fact.statement),
+    ).toEqual([LATHE])
+  })
+
+  it('refuses an addition to a candidate, in the words the disabled button shows', () => {
+    const sefa = findEntity(store, {
+      showId: showId(),
+      categoryKey: 'character',
+      name: 'Sefa Doule',
+    })!
+    const onScreen = bench({ entityId: sefa.id }).entity!.addFact
+
+    expect(onScreen.enabled).toBe(false)
+    expect(onScreen.blockedBecause).toContain('is a candidate')
+    expect(() =>
+      proposeNewFact(store, sefa.id, { statement: 'Sefa Doule files against the line office.' }),
+    ).toThrowError(onScreen.blockedBecause!)
+  })
+
+  it('refuses an addition with nothing typed in it', () => {
+    const entity = ottilie()
+
+    expect(() => proposeNewFact(store, entity.id, { statement: '   ' })).toThrowError(
+      BENCH_REFUSALS.additionNeedsStatement,
+    )
+    expect(factsOfEntity(store, entity.id)).toEqual([])
   })
 })
 

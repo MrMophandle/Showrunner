@@ -99,6 +99,9 @@ export const BENCH_REFUSALS = {
   changeNeedsStatement:
     'Write the new statement first — a fact delta is a before AND an after, and the after ' +
     'is what canon would say once you ruled it.',
+  additionNeedsStatement:
+    'Write the statement first — an addition has no before, so the statement is the whole of ' +
+    'it: the one atomic, checkable thing canon would say.',
 } as const
 
 export type BenchRefusals = typeof BENCH_REFUSALS
@@ -162,6 +165,8 @@ export interface EntityInFull extends EntityOnTheBench {
   relations: RelationOnTheBench[]
   /** The edges a sheet of this category must answer before it can become canon (D22). */
   required: RequiredRelation[]
+  /** Raise a fact this entity does not have yet — the same delta, with no before (#39). */
+  addFact: Offer
 }
 
 export interface FactOnTheBench {
@@ -434,7 +439,37 @@ function inFull(
         `${relation.type.inheritsFacts ? ' · facts travel it (D22)' : ''}`,
     })),
     required: category ? requiredOf(store, category, entity.showId) : [],
+    addFact: addFactOffer(entity),
   }
+}
+
+/**
+ * The affordance #39 found missing, mid-drill: Ottilie Bray was created with the facts box
+ * empty, her promotion was ruled, and nothing on this bench could then give her a fact. Every
+ * form here anchored to something that already existed — a change carries a before, and an
+ * entity with no facts has none.
+ *
+ * It is `proposeOffer`'s twin, minus the anchor, and the one precondition it gains is the
+ * subject's own standing: a candidate has no sheet in canon to add a fact to, and its facts
+ * belong on the promotion, where they are ruled with the rest of the sheet.
+ */
+function addFactOffer(entity: CanonEntity): Offer {
+  const sentence =
+    `Propose a new fact for ${entity.name} — a fact delta with no before, for your ruling in ` +
+    'the queue'
+
+  if (entity.status === 'candidate') {
+    return {
+      sentence,
+      cost: FREE,
+      enabled: false,
+      blockedBecause:
+        `“${entity.name}” is a candidate — an identity nobody has ruled on, so there is no ` +
+        'sheet in canon to add a fact to. A candidate’s facts belong on its promotion, ruled ' +
+        'with the rest of the sheet; promote it, and this opens.',
+    }
+  }
+  return { sentence, cost: FREE, enabled: true, blockedBecause: null }
 }
 
 function onTheSheet(store: Store, fact: Fact): FactOnTheBench {
@@ -877,6 +912,51 @@ export function proposeFactChange(
     alternatives: change.alternatives ?? [
       'reject it — the fact as it stands is what canon keeps, and the note says why',
       'defer it — park the change until an episode forces the question',
+    ],
+  })
+}
+
+/**
+ * The same delta with nothing on the other side of it — an ADDITION (#39). A fact-delta part
+ * whose `supersedes` is NULL adds rather than replaces, which `proposal.ts` has expressed
+ * since E2-2; the gap was never the machinery, it was that this bench had no way to raise one.
+ * In production E4's writers raise most additions mid-script, riding the episode that needed
+ * them; this is the canon surface for everything outside the writing line — an import, a
+ * correction, a showrunner filling a gap he left at creation.
+ *
+ * **It rides nothing, and that is the whole of its behaviour before the ruling.** The change
+ * comes off the canon surface, not out of an episode's production, so there is no episode to
+ * ride and therefore no provisional claim — `episode_id` is null for exactly the reason
+ * founding's is (proposal.ts). Which means this writes NOTHING: no fact row, nothing visible
+ * to a check, nothing on `canonAsOf`. The entity's sheet is unchanged until Ryan ratifies it,
+ * and then the fact has lineage pointing at that ruling and no establishing episode.
+ */
+export function proposeNewFact(
+  store: Store,
+  entityId: string,
+  addition: { statement: string; field?: string; usageContext?: string },
+): Proposal {
+  const entity = findEntityById(store, entityId)
+  if (!entity) throw new Error(`No such canon entity: ${entityId}`)
+
+  const blocked = addFactOffer(entity).blockedBecause
+  if (blocked) throw new Error(blocked)
+
+  const statement = addition.statement.trim()
+  if (statement === '') throw new Error(BENCH_REFUSALS.additionNeedsStatement)
+
+  return raiseProposal(store, {
+    entityId: entity.id,
+    kind: 'fact-delta',
+    raisedBy: 'ryan',
+    facts: [{ statement, ...(addition.field !== undefined && { field: addition.field }) }],
+    usageContext:
+      addition.usageContext ??
+      `Typed at the canon bench. Canon has said nothing about this so far — the sheet is ` +
+        'silent on it, and every artifact written until now was checked against that silence.',
+    alternatives: [
+      'reject it — canon saying nothing is an answer, and the note says why it stays silent',
+      'defer it — park the claim until an episode actually needs canon to have an answer',
     ],
   })
 }
