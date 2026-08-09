@@ -5,7 +5,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { Store } from '../db/store.ts'
 import { artifactsOf, reviseArtifact, type Artifact } from '../domain/artifact.ts'
 import { runBoardRules } from '../domain/board-rules.ts'
-import { recordExtractedBoard } from '../domain/board.ts'
+import { boardOf, recordExtractedBoard } from '../domain/board.ts'
+import { inheritedDismissal } from '../domain/concern.ts'
 import { factsOfEntity } from '../domain/fact.ts'
 import { dismissFinding, findingsIn, recordCheckPass } from '../domain/finding.ts'
 import { scenesOf } from '../domain/spine.ts'
@@ -45,15 +46,31 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true })
 })
 
-/** The board as the fixture extracted it by hand, and the four rules over it. Free, both. */
-function checkTheBoard(): void {
+/**
+ * The board as the fixture extracted it by hand, and the four rules over it. Free, both.
+ *
+ * `ilseUnprotected` strips scene 6's hardsuit, which is a change to the SCRIPT as extraction
+ * read it — the vacuum rule then finds a second body on the pier, with words no ruling has
+ * ever been put on. Nothing else in the grid moves, so every other finding is word-for-word
+ * the one it was.
+ */
+function checkTheBoard(change: { ilseUnprotected?: boolean } = {}): void {
+  const extraction = theLongPierExtraction({
+    lockCycle: factOf('Grey Harbor Station', 'Cycling the No. 4 lock'),
+    halvaniVacuum: factOf('Halvani', 'loses consciousness'),
+  })
+  if (change.ilseUnprotected) {
+    for (const scene of extraction.scenes) {
+      for (const who of scene.present) {
+        if (who.character === 'Ilse Renn' && scene.environment === 'exposed') who.protection = 'none'
+      }
+    }
+  }
+
   const board = recordExtractedBoard(store, {
     episodeId,
     scriptId: script.id,
-    extraction: theLongPierExtraction({
-      lockCycle: factOf('Grey Harbor Station', 'Cycling the No. 4 lock'),
-      halvaniVacuum: factOf('Halvani', 'loses consciousness'),
-    }),
+    extraction,
     filePath: 'greyharbor/s01e01/continuity-board-v1.md',
   })
   runBoardRules(store, board.artifact.id)
@@ -151,5 +168,78 @@ describe('the wall falls without an unblocking write', () => {
     // The finding rows are still there, still open, still a record of what was true at v1.
     expect(stageBlockingFindings(store, episodeId)).toEqual([])
     expect(findingsIn(store, script.id).map((finding) => finding.status)).toEqual(['open', 'open'])
+  })
+})
+
+/**
+ * **E3-6's twin-dismissal ruling, at the one place it changes behaviour** (`domain/concern.ts`).
+ *
+ * E3-5's one-motion apply re-runs the free tier on every rewrite, so the rule re-reads rows
+ * nothing touched and raises a fresh open twin of the finding Ryan put down last week. The
+ * wall consults finding identity, and it does it by READING — no disposition is copied onto
+ * the twin, the twin stays open, and its firing is still counted in D11's denominator.
+ */
+describe('a twin of a dismissed concern does not put the wall back up', () => {
+  it('stays down when the free tier re-raises the same words at the same span', () => {
+    checkTheBoard()
+    dismissFinding(store, findingOf('vacuum-without-protection'), 'Coveralls are sealed in ep01.')
+    dismissFinding(store, findingOf('dual-presence'), 'Scene 6 is a flash-forward and reads as one.')
+    expect(stageBlockedBecause(store, episodeId)).toBeNull()
+
+    // A rewrite lands somewhere else in the episode and the free tier reads the board again,
+    // off rows nobody changed. Both rules fire again, at the new version.
+    reviseArtifact(store, script.id, { summary: 'scene 2 rewritten' })
+    runBoardRules(store, boardOf(store, episodeId)!.artifact.id)
+
+    const twins = findingsIn(store, script.id).filter((finding) => finding.anchor.version === 2)
+    expect(twins.map((finding) => finding.checkKey).sort()).toEqual([
+      'dual-presence',
+      'vacuum-without-protection',
+    ])
+    // Recorded, open, and counted — and not one of them holds the wall.
+    expect(twins.every((finding) => finding.status === 'open')).toBe(true)
+    expect(stageBlockingFindings(store, episodeId)).toEqual([])
+    expect(stageBlockedBecause(store, episodeId)).toBeNull()
+  })
+
+  it('goes back up for a genuinely new contradiction the same rule finds', () => {
+    checkTheBoard()
+    dismissFinding(store, findingOf('vacuum-without-protection'), 'Coveralls are sealed in ep01.')
+    dismissFinding(store, findingOf('dual-presence'), 'Scene 6 is a flash-forward and reads as one.')
+    expect(stageBlockedBecause(store, episodeId)).toBeNull()
+
+    // The script is rewritten and re-extracted, and this time Ilse is on the pier in scene 6
+    // with nothing on. Tobin's scene 4 concern is word-for-word the one Ryan put down; hers
+    // has never been ruled on by anybody, and the same rule raised both.
+    reviseArtifact(store, script.id, { summary: 'scene 6 rewritten' })
+    checkTheBoard({ ilseUnprotected: true })
+
+    const blocked = stageBlockedBecause(store, episodeId)
+    expect(blocked).not.toBeNull()
+    expect(blocked).toContain('vacuum-without-protection')
+    expect(blocked).toContain('Ilse Renn is outside the pressure hull in scene 6')
+    // Only hers. Tobin's twin and the dual-presence twin both read his standing notes.
+    expect(stageBlockingFindings(store, episodeId)).toHaveLength(1)
+  })
+
+  it('is his note, attributed to the finding he actually ruled on', () => {
+    checkTheBoard()
+    const original = findingOf('vacuum-without-protection')
+    dismissFinding(store, original, 'Coveralls are sealed in ep01.')
+
+    reviseArtifact(store, script.id, { summary: 'scene 2 rewritten' })
+    runBoardRules(store, boardOf(store, episodeId)!.artifact.id)
+
+    const findings = findingsIn(store, script.id)
+    const twin = findings.find(
+      (finding) => finding.checkKey === 'vacuum-without-protection' && finding.anchor.version === 2,
+    )!
+
+    expect(inheritedDismissal(findings, twin)).toEqual({
+      findingId: original,
+      version: 1,
+      note: 'Coveralls are sealed in ep01.',
+      at: expect.any(String),
+    })
   })
 })
