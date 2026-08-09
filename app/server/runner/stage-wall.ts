@@ -43,12 +43,17 @@ import { overriddenThrough } from './gate.ts'
  * particular stage rather than every stage — including the free re-check, which should never
  * be walled by the finding it exists to clear.
  *
- * **Until E3-5 there is one way out of it and Ryan has to be at a gate for it.** Dismiss-with-
- * note and the pre-drafted rewrite are E3-5's buttons; the override below is the only escape
- * this build renders, and it needs an open gate on the artifact the finding is anchored in.
- * So an episode whose script carries a standing deterministic finding, with no gate open on
- * that script, is refused every run until one of those lands. That is deliberate — a wall
- * with a hole in it is not a wall — and it is why E3-5 and E3-7 are the next two issues.
+ * **E3-5 landed the other two ways out, and neither is a hole.** Dismiss-with-note closes the
+ * finding, which is condition 2 and is Ryan's answer either way. The pre-drafted rewrite moves
+ * the artifact past the draft the finding argued with, which is condition 3 — and it is why
+ * `applyRewrite` (`remediation.ts`) is ONE motion: it revises the artifact and re-runs this
+ * free tier over the new version in the same transaction, so a `check_pass` at the current
+ * version exists before anything can ask this question again. A rewrite that landed a version
+ * and stopped would drop the wall over a draft nobody had read, which is never-checked
+ * rendering as checked-clean; that is the collapse the motion exists to prevent, and it is
+ * asserted directly in `remediation.test.ts` against a revise-and-stop control.
+ *
+ * The override below is still the third way, and still the only one that takes a gate.
  */
 
 /** One finding standing in the way, with what a sentence needs to name it. */

@@ -66,6 +66,16 @@ import { episodeInShow, scenesOf, type Scene } from './spine.ts'
  * what the tier MEANS" (finding.ts) — and a model's confidence in its own reading is never
  * that, however sure it says it is.
  *
+ * ## One scene, when one scene is what changed (D14, E3-5)
+ *
+ * `TextCheckRequest.scene` narrows a pass to a single scene, which is the difference between
+ * one call and re-convening the whole panel after a rewrite lands in scene 4. It is the same
+ * composer and the same parser: what narrows is the TEXT, and everything the parser holds a
+ * reply to is recomputed against it — the scene list, the spans, the closed sets. A narrowed
+ * pass therefore cannot accept a finding about a scene it was not given, and the pass records
+ * which scene it read (`check_pass.scene_id`, built for this in 0010) so that nothing
+ * downstream can mistake it for a reading of the whole draft.
+ *
  * ## Three kinds of nothing, and this tier owns the third
  *
  * `factsInScope` reports each fact-carrying edge's case separately rather than collapsing an
@@ -144,15 +154,29 @@ export interface PriorNote {
 
 export interface TextCheckRequest {
   artifact: Artifact
-  /** The artifact's text, read off the volume by the step. */
+  /** The artifact's text, read off the volume by the step. Whole, even when narrowed below. */
   text: string
   subject: CheckSubject
   /**
    * Dismissal notes from earlier runs, as optional context. **This module accepts them and
-   * does not go and find them** — E3-5 owns the reader, and a checker that queried for its
-   * own context would make "what was this check told" unanswerable from the call site.
+   * does not go and find them** — `dismissalNotes` (finding.ts) is the reader and the STEP
+   * calls it, because a checker that queried for its own context would make "what was this
+   * check told" unanswerable from the call site.
    */
   priorNotes?: PriorNote[]
+  /**
+   * D14's scene-scoped re-check (E3-5): read one scene of the artifact rather than all of it.
+   *
+   * **The narrowing is done HERE, from the whole text**, rather than by handing this function
+   * a slice. A slice and a scene id are two statements that can disagree, and the one that
+   * decides where a finding may anchor is the span — so `text` stays the whole artifact and
+   * this field is the only thing that narrows it. What the model is sent, what a quote is
+   * searched in, and what the pass records as its scene all come out of the same slice.
+   *
+   * It is a `Scene` and not an id so that a caller cannot narrow to a scene of another
+   * episode: the scene it names has to be one it already holds.
+   */
+  scene?: Scene
 }
 
 /** One check, composed: what it will send, and what it will accept back. */
@@ -169,6 +193,12 @@ export interface ComposedCheck {
   scope: ScopeFactDraft[]
   /** What the scope could not reach. */
   gaps: CheckGapDraft[]
+  /**
+   * The one scene this pass read, or null for the whole artifact (D14, E3-5). It lands on
+   * `check_pass.scene_id`, which 0010 built for exactly this — so "what did this check
+   * actually read" is a column afterwards rather than an inference from the prompt.
+   */
+  sceneId: string | null
   /** What a citation is checked against. Not sent; used to refuse a reply that invents one. */
   citable: Citable
 }
@@ -315,6 +345,10 @@ export function composeTextCheck(store: Store, request: TextCheckRequest): Compo
   // and the closed sets below stay empty — which is what refuses a citation from it.
   const readsCanon = request.subject.readsCanon !== false
   const provenance = readsCanon ? provenanceOf(store, request.artifact.id) : []
+  // D14's narrowing, resolved once, before anything is composed. Everything downstream —
+  // the text sent, the scenes listed, the spans a quote is searched in — comes off `read`,
+  // so there is exactly one answer to "what did this pass have in front of it".
+  const read = narrow(store, request)
   const subjects = new Set(request.subject.subjectEntityIds)
   const scope: ScopeFactDraft[] = []
   const gaps: CheckGapDraft[] = []
@@ -349,7 +383,9 @@ export function composeTextCheck(store: Store, request: TextCheckRequest): Compo
   const lines: string[] = [
     `Show: “${where.show.title}” · season ${where.season.number}, episode ` +
       `${where.episode.number}, “${where.episode.title}”.`,
-    `Artifact: ${request.artifact.kind} v${request.artifact.version}.`,
+    `Artifact: ${request.artifact.kind} v${request.artifact.version}${
+      read.scene ? `, scene ${read.scene.ordinal} only` : ''
+    }.`,
     '',
     `## What you are checking: ${request.subject.label}`,
     '',
@@ -400,12 +436,22 @@ export function composeTextCheck(store: Store, request: TextCheckRequest): Compo
     )
   }
 
-  const scenes = sceneSpans(request.text, scenesOf(store, request.artifact.episodeId))
-  if (scenes.length > 0) {
+  if (read.scene) {
+    lines.push(
+      `## You are re-reading scene ${read.scene.ordinal}, and only scene ${read.scene.ordinal}`,
+      '',
+      'This scene has been rewritten since it was last read, and the rest of the artifact has',
+      'not changed. So this is a re-reading of the scene rather than of the episode: raise what',
+      'is wrong with the words below, and raise nothing about anything that is not below them.',
+      'A concern about the shape of the whole episode needs a pass that read the whole episode.',
+      '',
+    )
+  }
+  if (read.scenes.length > 0) {
     lines.push(
       '## The scenes, numbered',
       '',
-      ...scenes.map((span) => `${span.scene.ordinal} · ${span.scene.heading}`),
+      ...read.scenes.map((span) => `${span.scene.ordinal} · ${span.scene.heading}`),
       '',
     )
   }
@@ -428,13 +474,15 @@ export function composeTextCheck(store: Store, request: TextCheckRequest): Compo
   }
 
   lines.push(
-    `## The ${request.artifact.kind}`,
+    read.scene
+      ? `## Scene ${read.scene.ordinal} of the ${request.artifact.kind}`
+      : `## The ${request.artifact.kind}`,
     '',
-    request.text.trim(),
+    read.text.trim(),
     '',
     '## What to return',
     '',
-    ...shapeFor(readsCanon),
+    ...shapeFor(readsCanon, read.scene),
   )
 
   return {
@@ -446,8 +494,64 @@ export function composeTextCheck(store: Store, request: TextCheckRequest): Compo
     prompt: lines.join('\n'),
     scope,
     gaps,
-    citable: { text: request.text, factIds, entityIds, scenes },
+    sceneId: read.scene?.id ?? null,
+    citable: { text: read.text, factIds, entityIds, scenes: read.scenes },
   }
+}
+
+/** What one pass actually reads: the whole artifact, or one scene of it (D14). */
+interface Narrowed {
+  /** The scene it was narrowed to, or undefined for the whole artifact. */
+  scene?: Scene
+  /** The text the model is sent, and the only text a quote is searched in. */
+  text: string
+  /** The scenes a finding may anchor in, with their spans INSIDE `text`. */
+  scenes: SceneSpan[]
+}
+
+/**
+ * D14's narrowing, done once (E3-5).
+ *
+ * The spans are recomputed against the narrowed text rather than carried over from the whole
+ * artifact's, and that is the load-bearing line: `anchorOf` slices `citable.text` by them to
+ * decide whether a quote is really inside the scene it claims, so an offset measured against
+ * the wrong string would accept a quote from anywhere.
+ *
+ * The scene list shrinks to one for the same reason. Left whole, every other scene's heading
+ * would be missing from the narrowed text, `sceneSpans` would fall back to giving each of them
+ * the WHOLE slice, and a finding anchored at "scene 1" would be accepted with a quote out of
+ * scene 4 — the honest fallback for a re-delineated artifact, turned into a hole here.
+ */
+function narrow(store: Store, request: TextCheckRequest): Narrowed {
+  const scenes = scenesOf(store, request.artifact.episodeId)
+  const spans = sceneSpans(request.text, scenes)
+  if (!request.scene) return { text: request.text, scenes: spans }
+
+  const asked = request.scene
+  const span = spans.find((one) => one.scene.id === asked.id)
+  if (!span) {
+    throw new Error(
+      `Scene ${asked.ordinal} (“${asked.heading}”) does not belong to this episode, so there ` +
+        'is nothing of it to re-read. A scene-scoped re-check narrows an artifact to one of ' +
+        'its own scenes (D14).',
+    )
+  }
+  // `sceneSpans` gives a heading it cannot find the WHOLE text — the honest fallback for a
+  // check that must still be able to refuse an invented quote. Here it would be a hole with a
+  // green light on it: the narrowed pass would silently be handed the entire artifact, would
+  // accept a quote out of any scene as belonging to this one, and would cost what the panel
+  // costs while claiming D14's saving. So it is refused, loudly, in words.
+  if (!request.text.includes(asked.heading)) {
+    throw new Error(
+      `Scene ${asked.ordinal} is “${asked.heading}”, and the ${request.artifact.kind} on the ` +
+        'volume does not carry that heading any more — so where the scene begins and ends is ' +
+        'not knowable, and there is nothing to narrow to. Scenes are DERIVED from the written ' +
+        'episode (D3): re-derive them, or read the whole draft with the panel.',
+    )
+  }
+
+  const text = request.text.slice(span.from, span.to)
+  return { scene: span.scene, text, scenes: sceneSpans(text, [span.scene]) }
 }
 
 /** One entity's block: what it is, and every fact loaded with it, inherited ones marked. */
@@ -526,12 +630,17 @@ export function sceneSpans(text: string, scenes: Scene[]): SceneSpan[] {
  * from them, and leaving the fields in the shape would be inviting exactly the citation the
  * parser is about to refuse (D13, `readsCanon`). One shape, one branch, one parser.
  */
-function shapeFor(readsCanon: boolean): string[] {
+function shapeFor(readsCanon: boolean, scene: Scene | undefined): string[] {
   return [
     '```',
     '{',
     '  "findings": [{                    // [] when you have nothing to raise about this artifact',
-    '    "scene": 4,                     // the scene number above. Omit for a whole-artifact finding.',
+    scene
+      ? // A narrowed pass has one legal answer and the shape says so. Omitting it is not the
+        // whole-artifact case here — this pass did not read the whole artifact — and the
+        // parser lands it in this scene either way (`anchorOf`).
+        `    "scene": ${scene.ordinal},                     // this pass read scene ${scene.ordinal}. That is the only scene it may name.`
+      : '    "scene": 4,                     // the scene number above. Omit for a whole-artifact finding.',
     '    "quote": "…",                   // WORD FOR WORD from the text above, inside that scene.',
     '                                    //   The shortest span that carries the problem. A quote',
     '                                    //   that is not in the text fails the whole answer.',
@@ -651,12 +760,25 @@ function anchorOf(
     span = scenes.find((one) => one.scene.ordinal === Number(raw.scene))
     if (!span) {
       throw new Error(
-        `${at} anchors at scene ${String(raw.scene)}, and this episode has no scene ` +
-          `${String(raw.scene)} — it has ${scenes.length}. Scenes are derived from the ` +
-          'written episode (D3), so there is no such place to point at.',
+        // Two different refusals, because they are two different mistakes. A whole-artifact
+        // pass is told the episode has no such scene; a scene-scoped one (D14) is told it was
+        // not given that scene to read, which is true even though the scene exists.
+        composed.sceneId === null
+          ? `${at} anchors at scene ${String(raw.scene)}, and this episode has no scene ` +
+            `${String(raw.scene)} — it has ${scenes.length}. Scenes are derived from the ` +
+            'written episode (D3), so there is no such place to point at.'
+          : `${at} anchors at scene ${String(raw.scene)}, and this pass was given scene ` +
+            `${scenes[0]?.scene.ordinal ?? '?'} and nothing else to read (D14). A finding ` +
+            'about another scene needs a pass that read it — this one never saw it.',
       )
     }
   }
+
+  // A narrowed pass that names no scene still lands in the one it read (D14, E3-5). Its
+  // finding cannot be about the whole artifact — the pass never saw the whole artifact — and a
+  // NULL scene is exactly that claim: it renders above the anchored ones on the verdict board
+  // and it is what a whole-artifact finding means everywhere else in this app.
+  span ??= composed.sceneId === null ? undefined : scenes[0]
 
   const claimed = typeof raw.quote === 'string' ? raw.quote.trim() : ''
   if (claimed === '') return { sceneId: span?.scene.id ?? null, quote: '' }
@@ -745,6 +867,11 @@ export function recordTextCheck(
     tier: 'text',
     artifactId: composed.artifactId,
     version: composed.version,
+    // What it read, recorded beside what it said (D14). A pass that read one scene and a pass
+    // that read the episode are both "a pass at v2", and only this column tells them apart —
+    // which is what stops a scene re-check rendering as a clean reading of the whole draft
+    // (`panel.ts`, the `partial` verdict).
+    sceneId: composed.sceneId,
     findings,
     scope: composed.scope,
     gaps: composed.gaps,

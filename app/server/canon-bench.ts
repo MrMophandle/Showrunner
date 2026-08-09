@@ -29,6 +29,7 @@ import {
   REJECTION_NEEDS_A_NOTE,
   type Proposal,
   type ProposalDraft,
+  type ProposalOrigin,
 } from './domain/proposal.ts'
 import { relationsFrom, UNKNOWN_TARGET } from './domain/relation.ts'
 import { episodeLabel, findEpisode, findShow, type Show } from './domain/spine.ts'
@@ -831,11 +832,27 @@ export function promoteCandidate(store: Store, entityId: string, sheet: SheetDra
  * The second proposal, over a fact that is already canon (3.3) — the step the epic exit
  * turns on. The before is the fact itself, so the delta is a delta; the after is what Ryan
  * typed; and until he ratifies it, `canonAsOf` still answers with the before.
+ *
+ * **The one fact-delta builder, and E3-5's remediation raises through it** (`remediation.ts`).
+ * The bench's own defaults are the ones written below — typed by Ryan, riding nothing — and a
+ * caller with a different story about where the change came from says so in the three optional
+ * fields rather than assembling a second draft. That is the same argument the header makes
+ * about `promotionFromSheet`: two builders for one payload eventually build two payloads, and
+ * the refusals a closed or provisional fact earns must be the same wherever the button is.
  */
 export function proposeFactChange(
   store: Store,
   factId: string,
-  change: { statement: string; field?: string; usageContext?: string },
+  change: {
+    statement: string
+    field?: string
+    usageContext?: string
+    /** Who raised it (1.2's fifth part). The bench is `ryan`; a check remediation is `check`. */
+    raisedBy?: ProposalOrigin
+    /** Left out, it rides nothing. A remediation rides the episode it was raised over (3.3). */
+    episodeId?: string
+    alternatives?: string[]
+  },
 ): Proposal {
   const before = findFact(store, factId)
   if (!before) throw new Error(`No such fact: ${factId}`)
@@ -850,13 +867,14 @@ export function proposeFactChange(
   return raiseProposal(store, {
     entityId: before.entityId,
     kind: 'fact-delta',
-    raisedBy: 'ryan',
+    raisedBy: change.raisedBy ?? 'ryan',
+    ...(change.episodeId !== undefined && { episodeId: change.episodeId }),
     facts: [{ statement, supersedes: before.id, ...(field !== null && { field }) }],
     usageContext:
       change.usageContext ??
       `Typed at the canon bench, over “${before.statement}”. Nothing has been written against ` +
         'the change yet — the before is what every artifact so far was checked against.',
-    alternatives: [
+    alternatives: change.alternatives ?? [
       'reject it — the fact as it stands is what canon keeps, and the note says why',
       'defer it — park the change until an episode forces the question',
     ],

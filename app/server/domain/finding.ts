@@ -47,6 +47,18 @@ import { newId } from './id.ts'
  * `status` follows the same rule and is derived, never stored: a finding is `open` until a
  * disposition row closes it. That is `fact.status` over `fact_closure` exactly (0007).
  *
+ * A REWRITE closes nothing, and E3-5's ruling on that is on `FINDING_DISPOSITION` below: a
+ * finding stops standing because the draft it was anchored in is gone, which every reader
+ * already computes, and a `cleared` row would be both remembered state and a mark against a
+ * check that was right.
+ *
+ * ## One record, many readers (4.4)
+ *
+ * `dismissalNotes` at the foot of this file is the only reader of a dismissal's note, and it
+ * is a READ — no second table, no cache, no "context note" anywhere. The panel hands them to
+ * a later run (E3-5), cried-wolf counts the same rows (E3-6), and E4's writer context calls
+ * the same function. A note Ryan wrote once is read back by all three or by none.
+ *
  * ## The anchor lands on the material, and it lands by quote
  *
  * "Clicking lands on the material, highlighted" (4.3). An anchor is artifact + version +
@@ -104,9 +116,22 @@ export const FINDING_CONFIDENCE = ['certain', 'high', 'medium', 'low'] as const
 export type FindingConfidence = (typeof FINDING_CONFIDENCE)[number]
 
 /**
- * What closes a finding. One member today: E3-0 builds the dismissal, whose note 4.4 says
- * rides future runs. **E3-5 adds `cleared`** — a rewrite landed and the scene-scoped
- * re-check no longer fires it — as a widened union with a test, never a CHECK to rebuild.
+ * What closes a finding. One member, and E3-5 kept it at one.
+ *
+ * 0010 and this comment both expected a second — `cleared`, for a finding a rewrite had
+ * answered — and **E3-5 ruled against writing one**, for two reasons that point the same way.
+ *
+ * There is nothing for it to do. A finding is anchored at a VERSION, and a rewrite lands a new
+ * one; every reader that asks what stands already filters on `anchor.version === current`
+ * (D12's wall, the verdict board, the correction loop's rounds). The finding stops standing
+ * the moment the draft it argued with is gone, with no write anywhere — the freshness pattern
+ * (1.3), which is how status is derived here in the first place. Clearing IS the passing of
+ * the re-check, and a row saying so would be remembered state beside a computed answer.
+ *
+ * And it would be counted. E3-6 computes D11's cried-wolf ratio out of these rows — findings
+ * put down, against times fired — so a `cleared` row would spend a check's credibility for
+ * being RIGHT: it found a real problem, Ryan fixed it, and the check would be marked down for
+ * it. A disposition is Ryan's answer to a finding; a rewrite is his answer to the artifact.
  */
 export const FINDING_DISPOSITION = ['dismissed'] as const
 export type FindingDispositionKind = (typeof FINDING_DISPOSITION)[number]
@@ -518,7 +543,104 @@ export function findingsIn(
   return rows.map((row) => hydrate(store, row))
 }
 
+// ── The context reader: one record, many readers (4.4) ──────────────────────────
+
+/**
+ * One note Ryan put down, as a later run reads it back.
+ *
+ * It satisfies `PriorNote` (text-check.ts) structurally rather than by importing it: the
+ * checker owns what a note looks like in a PROMPT, this module owns what one looks like as a
+ * ROW, and an import either way round would be a cycle between two modules that each already
+ * know enough.
+ */
+export interface DismissalNote {
+  findingId: string
+  /** The check that raised what he put down — which is the category, and the scope below. */
+  checkKey: string
+  /** The span it was anchored at. '' when there was none to highlight. */
+  quote: string
+  note: string
+  at: string
+  /** The episode whose artifact it was raised against. */
+  episodeId: string
+  entityId: string | null
+}
+
+/**
+ * How many notes ride one prompt. Newest first, and the ones past this are dropped rather
+ * than summarised — a show three seasons in has more dismissals than a prompt has room for,
+ * and the alternative to a stated bound is a prompt that silently doubles in size.
+ */
+export const PRIOR_NOTE_LIMIT = 20
+
+/**
+ * **Every dismissal note this check has collected, newest first — 4.4's "dismissed-finding
+ * notes feed future runs' context", as a READ.**
+ *
+ * There is no second table for context notes and there is no notes cache. A dismissal is a
+ * `finding_disposition` row (0010); this is that row, joined back to the check that raised it
+ * and the span it was anchored at, and nothing here writes anything. Three readers share it
+ * and that is the point: E3-5 hands them to the panel so a re-run argues against Ryan's note
+ * instead of in ignorance of it, E3-6 counts the same rows for D11's cried-wolf ratio, and
+ * E4's writer context will call this function rather than growing its own.
+ *
+ * **Scoped by SHOW and by CHECK.** By show because a note about Grey Harbor's vacuum is not
+ * about another show's; by check because a check IS a category (3.2, `text-check.ts`), so "the
+ * notes this reviewer has been put down over" and "the notes about this category" are the same
+ * question. Left without a `checkKey` it answers for the whole show, which is what a writer
+ * run wants — it is not one reviewer.
+ *
+ * **Newest first, tie-broken on the DISPOSITION's own order.** `at` is milliseconds, and three
+ * findings put down in one sitting land in the same millisecond most of the time — so the
+ * tie-break decides the order in practice rather than in some edge case, and it decides which
+ * notes survive `PRIOR_NOTE_LIMIT`. `d.rowid` is the order Ryan ruled in; `f.rowid` would be
+ * the order the CHECK raised them in, which is a different event and often a different order.
+ */
+export function dismissalNotes(
+  store: Store,
+  scope: { showId: string; checkKey?: string; limit?: number },
+): DismissalNote[] {
+  return store
+    .all<DismissalRow>(
+      `SELECT f.id, p.check_key, f.quote, f.entity_id, d.note, d.at, a.episode_id
+         FROM finding_disposition d
+         JOIN finding f ON f.id = d.finding_id
+         JOIN check_pass p ON p.id = f.pass_id
+         JOIN artifact a ON a.id = f.artifact_id
+         JOIN episode e ON e.id = a.episode_id
+         JOIN season s ON s.id = e.season_id
+        WHERE s.show_id = ?
+          AND d.disposition = 'dismissed'
+          AND (? IS NULL OR p.check_key = ?)
+        ORDER BY d.at DESC, d.rowid DESC
+        LIMIT ?`,
+      scope.showId,
+      scope.checkKey ?? null,
+      scope.checkKey ?? null,
+      scope.limit ?? PRIOR_NOTE_LIMIT,
+    )
+    .map((row) => ({
+      findingId: row.id,
+      checkKey: row.check_key,
+      quote: row.quote,
+      note: row.note,
+      at: row.at,
+      episodeId: row.episode_id,
+      entityId: row.entity_id,
+    }))
+}
+
 // ── Rows ────────────────────────────────────────────────────────────────────────
+
+interface DismissalRow {
+  id: string
+  check_key: string
+  quote: string
+  entity_id: string | null
+  note: string
+  at: string
+  episode_id: string
+}
 
 interface PassRow {
   id: string

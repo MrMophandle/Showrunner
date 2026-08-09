@@ -7,6 +7,7 @@ import { createEpisode, createSeason, createShow } from './domain/spine.ts'
 import { createEventLog, eventsOfRun, transitionsOfRun, type EventLog } from './events.ts'
 import { libraryPaths } from './library.ts'
 import { describeLLMBackend } from './llm/choose.ts'
+import { createFakeLLM } from './llm/fake.ts'
 import { createRulings } from './runner/gate.ts'
 import { createRunner, type Runner } from './runner/runner.ts'
 import { pauseRun, type StageCatalogue, type Step } from './runner/step.ts'
@@ -59,6 +60,9 @@ beforeEach(() => {
     get rulings() {
       return createRulings(store, events, runner)
     },
+    // Nothing below spends a cent; the adapter is here because `Operating` needs one, and a
+    // fake with nothing scripted throws rather than reaching the network if anything did.
+    llm: createFakeLLM(),
     readiness: () => describeLLMBackend({ PATH: '' }),
   })
   const show = createShow(store, { key: 'greyharbor', title: 'Grey Harbor' })
