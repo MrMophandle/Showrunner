@@ -187,8 +187,12 @@ export function operatingView(
           // once ep02 had a brief would be a screen with a hole in it.
           //
           // It is still ONE stage for every episode, which is E5's to fix rather than this
-          // module's: the offer an episode's card should carry is the stage its lifecycle
-          // is at, and there is no outline or script stage to point at until E4-2/E4-3.
+          // module's: the offer an episode's card should carry is the stage its lifecycle is
+          // at. **E4-2 landed `write-the-outline` and deliberately did not point this at it.**
+          // A lifecycle→stage map would have a hole in it while E4-3's script stage is
+          // missing (ep01 sits at `script`), and inventing a fallback for that hole here is
+          // the screen decision E5 owns. The stage is reachable by name through `POST
+          // /api/run` in the meantime, which is how E4-2's own boot proof exercised it.
           launch: stageOffer(store, llm, episode.id, catalogue[PREMISE_STAGE]!),
           launchStage: PREMISE_STAGE,
         }

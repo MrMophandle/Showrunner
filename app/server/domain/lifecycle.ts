@@ -54,6 +54,20 @@ import {
  * touches no ledger. The completion sweep at approval (1.2, `sweepEpisode`) is the other
  * half of an approval and is deliberately not called from here: collecting the proposals
  * riding an episode is a ruling pass Ryan sits in, not a side effect of a column move.
+ *
+ * ## The reading half, and why it lives here too (E4-2)
+ *
+ * If an approval is the only thing that moves the column, then the column is the honest
+ * answer to "has the work above this been ruled on" — and a stage that needs a ruled upstream
+ * asks it here rather than going and finding a gate of its own. `notYetReachedBecause` is
+ * that read, and it is the same `EPISODE_LIFECYCLE` order pointed backwards: an episode still
+ * at `premise` has not had its premise-brief approved, so the outline has nothing ruled to be
+ * written from and the offer says so before the click.
+ *
+ * A gate-shaped answer was the alternative and it is worse in the way that matters: a stage
+ * would then be asking about a gate that may have been rejected, deferred, re-opened or never
+ * built, and two stages asking it two ways is how the writing line ends up with two opinions
+ * of "approved". One column, one order, one reading.
  */
 
 /** What the seam did, and the words the run's closing step says about it. */
@@ -120,4 +134,43 @@ export function advanceOnApproval(
     moved: true,
     sentence: `${label} moves from ${from} to ${next} — you approved its ${completed} gate.`,
   }
+}
+
+/**
+ * Why work at this stage cannot start on this episode yet, in words — or null when it can.
+ *
+ * The mirror of `advanceOnApproval`: that one says an approval moved the episode here, this
+ * one says nothing has. It answers about the STAGE, not about an artifact, so a stage with a
+ * ruled upstream and no draft of its own is offerable and one with neither is refused with a
+ * sentence naming what to rule on first.
+ *
+ * **It can only ever refuse a stage that has something before it**, which is not a special
+ * case but the same fact E4-1 recorded from the other side: the premise is the first stop, so
+ * an episode can never be short of it, and the premise stage therefore cannot be refused by
+ * this any more than it can be walled by D12. The rule is one rule; `premise` is where it is
+ * vacuous.
+ *
+ * Being PAST the stage is deliberately not refused here. An episode that ran ahead and left a
+ * gap is a gap worth filling, and "there is already one of those" is a different question with
+ * a different sentence (`runner/write-step.ts`), asked of the artifact rather than the column.
+ */
+export function notYetReachedBecause(
+  store: Store,
+  episodeId: string,
+  stage: EpisodeLifecycle,
+): string | null {
+  const episode = findEpisode(store, episodeId)
+  if (!episode) throw new Error(`No such episode: ${episodeId}`)
+
+  const previous = EPISODE_LIFECYCLE[EPISODE_LIFECYCLE.indexOf(stage) - 1]
+  if (previous === undefined) return null
+  if (EPISODE_LIFECYCLE.indexOf(episode.lifecycle) >= EPISODE_LIFECYCLE.indexOf(stage)) return null
+
+  const label = episodeLabel(episode.number)
+  return (
+    `${label} is at ${episode.lifecycle} and has not reached ${stage} yet — you have not ` +
+    `approved its ${previous}. Lifecycle names the stage an episode is AT rather than one it ` +
+    `has finished (1.1), and an approval at the ${previous} gate is the only thing that moves ` +
+    `it on. Rule on the ${label} ${previous} first, and this becomes offerable.`
+  )
 }

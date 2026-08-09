@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { Store } from '../db/store.ts'
 import { initLibrary, openLibraryStore, type LibraryPaths } from '../library.ts'
 import { abandonEpisode } from './episode-canon.ts'
-import { advanceOnApproval } from './lifecycle.ts'
+import { advanceOnApproval, notYetReachedBecause } from './lifecycle.ts'
 import {
   createEpisode,
   createSeason,
@@ -19,10 +19,12 @@ import {
  * The lifecycle seam (1.1): **an episode's lifecycle names the stage it is AT, and a
  * stage's gate approving is what moves it on.**
  *
- * Everything below is one ruling read four ways, and every one of them was a way to get
+ * Everything below is one ruling read five ways, and every one of them was a way to get
  * it wrong: "at premise" is premise work not yet done; the approval and not the artifact
- * is what moves it; an abandoned episode keeps the stage it reached; and it never walks
- * backwards, however late a ruling on an early gate arrives.
+ * is what moves it; an abandoned episode keeps the stage it reached; it never walks
+ * backwards, however late a ruling on an early gate arrives; and — the fifth, E4-2's — the
+ * column read BACKWARDS is the honest answer to "has the work above this been ruled on",
+ * which is what lets a writing stage refuse before the click instead of after it.
  */
 
 let root: string
@@ -103,8 +105,45 @@ describe('an abandoned episode keeps the stage it reached', () => {
   })
 })
 
+/**
+ * The reading half (E4-2): the same order asked backwards, so a stage that writes from a
+ * ruled upstream can refuse in words before the click instead of discovering it in a run.
+ */
+describe('a stage the episode has not reached yet', () => {
+  it('is refused with what to rule on first, in words', () => {
+    const because = notYetReachedBecause(store, episode.id, 'outline')!
+
+    expect(because).toContain('ep02 is at premise and has not reached outline yet')
+    expect(because).toContain('you have not approved its premise')
+    expect(because).toContain('Rule on the ep02 premise first')
+  })
+
+  it('names the stage before it, whichever stage is asked about', () => {
+    expect(notYetReachedBecause(store, episode.id, 'script')).toContain('approved its outline')
+    expect(notYetReachedBecause(store, episode.id, 'assets')).toContain('approved its script')
+  })
+
+  it('has nothing to say about premise, because premise is the first stop', () => {
+    // Not an exemption — the rule is one rule and this is where it is vacuous. It is also
+    // why the premise stage cannot be refused by it any more than it can be walled by D12.
+    expect(notYetReachedBecause(store, episode.id, 'premise')).toBeNull()
+  })
+
+  it('stands aside once the episode is there, and once it is past', () => {
+    moveLifecycleTo(store, episode.id, 'outline')
+    expect(notYetReachedBecause(store, episode.id, 'outline')).toBeNull()
+
+    // Past it, deliberately: an episode that ran ahead and left a gap is a gap worth
+    // filling, and "there is already one of those" is a different question asked of the
+    // artifact rather than of the column (runner/write-step.ts).
+    moveLifecycleTo(store, episode.id, 'assembled')
+    expect(notYetReachedBecause(store, episode.id, 'outline')).toBeNull()
+  })
+})
+
 describe('it refuses what it cannot answer about', () => {
   it('says so for an episode that is not in this library', () => {
     expect(() => advanceOnApproval(store, 'ep_nope', 'premise')).toThrow(/ep_nope/)
+    expect(() => notYetReachedBecause(store, 'ep_nope', 'outline')).toThrow(/ep_nope/)
   })
 })

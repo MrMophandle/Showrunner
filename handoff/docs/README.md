@@ -485,8 +485,9 @@ cannot repeat it.
 
 ## Constraints E4 leaves behind
 
-Written as E4's issues land, for the same reason as every list above. These four are E4-1's
-(#61), and the first three bind E4-2 and E4-3 directly.
+Written as E4's issues land, for the same reason as every list above. The first four are
+E4-1's (#61) and the first three bound E4-2 directly; the three after them are E4-2's (#62)
+and they bind E4-3.
 
 ### One seam moves an episode's lifecycle, and the builder is what makes it a seam (E4-1, #61)
 
@@ -530,6 +531,11 @@ ep02 with material and no brief), and the drill reads the wall off the check ben
 **E4-2's outline stage is the first real one the wall can stand in front of** — give it the
 demonstration back there, on ep01, where the fixture's planted contradictions already live.
 
+*Done by E4-2 (#62), on **ep02** rather than ep01: ep01 already has an outline, so "there is
+already one of those" answers ahead of the wall there, exactly as "nothing to do" did for the
+premise. `outline-stage.test.ts` stands the wall up with a real `retired-reappearance` finding
+on ep02's ruled brief and brings it down again with a dismissal.*
+
 ### A run of a retired stage holds its episode forever (E4-1, #61)
 
 `advance` (runner.ts) skips a run whose stage this build has no code for — "a click Ryan
@@ -542,6 +548,43 @@ first time a stage was retired. Not fixed here either, because the fix is an **a
 putting a run down** — a verb, a row, and a sentence — and that is a decision about what Ryan
 may do to a run, not a change to a refusal. `runner/stages.test.ts` pins the behaviour so the
 day it bites, the test says what is happening.
+
+### The lifecycle column is how a writing stage asks "was the upstream ruled" (E4-2, #62)
+
+`notYetReachedBecause` (domain/lifecycle.ts) is `advanceOnApproval` read backwards, and
+`writingStage` puts it on every writing stage the way it already puts the advance on every
+one. So E4-3's script stage inherits "ep02 is at outline and has not reached script yet"
+without writing a line, and **must not grow a second opinion of "approved"** — not a gate
+query, not a `ruled_at` column, not a check of its own. A stage asking about a gate would be
+asking about one that may have been rejected, deferred, re-opened or never built; the column
+is the one place an approval is recorded as having happened.
+
+It refuses only NOT-YET-REACHED, never past. An episode that ran ahead and left a gap is a gap
+worth filling, and "there is already one of those" is the artifact's question with the
+artifact's sentence. The two are asked in that order, and `outline-stage.test.ts` pins which.
+
+### An outline is intent, and E4-3 is where that gets spent or wasted (E4-2, #62)
+
+Nothing E4-2 writes prescribes a scene: no `scenes` field, no scene row, no count, and — the
+part that is easy to lose — **nothing parses the draft at all**, so no grid can arrive
+inferred either. The ask itself carries the prohibition WITH ITS REASON, because a model told
+only "no numbers" writes the same grid with dashes.
+
+The whole point of that restraint is E4-3's to collect: **the script writer reads the outline
+as intent and the scenes fall where the story breaks** (1.1, D3). A script step that read the
+outline's movements as a scene list would have spent this issue's discipline on nothing, and
+it would do it silently — `num_scenes` would simply come out equal to the number of headings
+and look like a coincidence. `outline-stage.test.ts`'s zero-scene-rows test is the assertion
+that fails on the outline side; E4-3 owes the one that fails on the script side.
+
+### E4-2 shipped a stage the floor cannot click, on purpose (E4-2, #62)
+
+`operatingView` still offers ONE stage per episode and it is still the premise (operating.ts).
+Pointing it at "the stage this episode's lifecycle is at" needs a map with no hole in it, and
+there is a hole until E4-3's script stage exists — ep01 sits at `script`. So `write-the-outline`
+is reachable by name through `POST /api/run` (which is how E4-2's boot proof exercised it) and
+by nothing on a screen. **E4-3 completes the map and E5 owns the card**; whoever closes it
+should do it once, for all three stages, rather than special-casing two.
 
 ## Working agreements that bind every session
 
