@@ -7,6 +7,7 @@ import { createEpisode, createSeason, createShow } from '../domain/spine.ts'
 import { findStepByName, recordRun } from '../runner/run.ts'
 import type { CallSite } from './adapter.ts'
 import { createAnthropicAdapter } from './anthropic.ts'
+import { scaffoldStage } from '../runner/stage-fixture.ts'
 
 /**
  * The API backend's reading of `usage`, proved against objects typed as the SDK's own
@@ -33,7 +34,7 @@ beforeEach(() => {
   const episodeId = createEpisode(store, { seasonId: season.id, number: 7, title: 'Salt' }).id
   const runId = recordRun(
     store,
-    { name: 'write', steps: [{ name: 'outline', execute: async () => undefined }] },
+    scaffoldStage('write', [{ name: 'outline', execute: async () => undefined }]),
     episodeId,
   ).id
   stepId = findStepByName(store, runId, 'outline')!.id

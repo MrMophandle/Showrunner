@@ -1,6 +1,6 @@
 import { mkdirSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { projectLLMCost, type CostProjection } from '../cost.ts'
+import { FREE, projectLLMCost, type CostProjection } from '../cost.ts'
 import type { Store } from '../db/store.ts'
 import { artifactsOf, provenanceOf, staleArtifacts, type Artifact } from '../domain/artifact.ts'
 import {
@@ -21,7 +21,7 @@ import {
 } from '../domain/spine.ts'
 import { writeIfAbsent, type LibraryPaths } from '../library.ts'
 import type { LLMEffort } from '../llm/adapter.ts'
-import type { Stage, StageCatalogue, Step, StepContext } from './step.ts'
+import type { StageCatalogue, StageOffer, Step, StepContext } from './step.ts'
 
 /**
  * Building the continuity board, as steps (3.2b, 2.2).
@@ -45,14 +45,19 @@ import type { Stage, StageCatalogue, Step, StepContext } from './step.ts'
  * **No lock.** It is a cloud model call — it holds no GPU, and `image-api` is for cloud
  * IMAGE steps (D20).
  *
- * ── One thing this leaves for whoever builds the buttons ────────────────────────
- * `continuity-board-checks` is the FIRST stage in this app that calls no model, and
- * `launchBlockedBecause` (operating.ts) does not know that: it refuses every run when the
- * adapter is unready, because until now every stage needed one. So on a process with no
- * backend configured at all, the free stage is refused with "Nothing to call" — a
- * precondition that is true of the paid stage beside it and false of this one. The fix is
- * for the stage to say what it spends (which is what "verb + object + scope + cost" needs
- * anyway), and it belongs with E3-7's buttons rather than here.
+ * ── The refusal this stage broke, and how E3-7 mended it ────────────────────────
+ * `continuity-board-checks` was the FIRST stage in this app to call no model, and
+ * `launchBlockedBecause` (operating.ts) did not know it: it refused every run when the
+ * adapter was unready, because until then every stage needed one. So on a process with no
+ * backend configured at all, the free stage was refused with "Nothing to call" — a
+ * precondition true of the paid stage beside it and false of this one.
+ *
+ * The fix is **a declaration, never an exemption**. Each stage says what it spends
+ * (`StageOffer`, step.ts), which is exactly the data "verb + object + scope + cost" needs
+ * anyway, and the refusal consults the declaration: a stage that declares `callsModel: false`
+ * runs on a process with nothing behind the adapter. A list of stage names in the refusal
+ * would have been the same bug with a longer fuse — right until the next free stage, and
+ * wrong from then on with nobody looking.
  */
 
 /** The stage names, as they are persisted on `run.stage` and as the API takes them. */
@@ -105,9 +110,55 @@ export function boardStages(library: LibraryPaths): StageCatalogue {
   return {
     [BOARD_STAGE]: {
       name: BOARD_STAGE,
+      // Both of these READ the script and record what they found (step.ts, `STAGE_WORK`).
+      // Neither is walled, and the free one especially must not be: the wall's own sentence
+      // sends Ryan here — "fix it and re-run the checks, the deterministic ones cost nothing".
+      work: 'reads',
       steps: [extractTheContinuityBoard(library), runTheBoardRules()],
+      offerOn: (store, episode): StageOffer => {
+        const label = episodeLabel(episode.number)
+        const script = scriptOf(store, episode.id)
+        const standing = boardOf(store, episode.id)
+        const again =
+          standing && isStale(store, episode.id, standing)
+            ? ', which the script has moved past'
+            : ''
+        return {
+          sentence:
+            `Read the ${label} script into a continuity board and run the rules over it — ` +
+            `one reading of the whole script${
+              standing ? `, replacing the board built from v${standing.source?.version ?? '?'}${again}` : ''
+            }`,
+          cost: BOARD_EXTRACTION.sentence,
+          callsModel: true,
+          nothingToDoBecause: script ? null : noScriptBecause(label),
+        }
+      },
     },
-    [BOARD_CHECK_STAGE]: { name: BOARD_CHECK_STAGE, steps: [runTheBoardRules()] },
+    [BOARD_CHECK_STAGE]: {
+      name: BOARD_CHECK_STAGE,
+      work: 'reads',
+      steps: [runTheBoardRules()],
+      offerOn: (store, episode): StageOffer => {
+        const label = episodeLabel(episode.number)
+        const standing = boardOf(store, episode.id)
+        return {
+          sentence:
+            `Re-run the ${BOARD_RULE.length} deterministic rules over the ${label} continuity ` +
+            'board — they read the rows an extraction already wrote, and read no script',
+          // The whole reason this stage exists, said on its own button: a correction loop that
+          // billed Ryan for re-reading a script he had already paid to have read would make
+          // every rewrite cost an extraction.
+          cost: FREE,
+          callsModel: false,
+          nothingToDoBecause: standing
+            ? null
+            : `${label} has no continuity board yet, and these rules read the rows an ` +
+              'extraction wrote. Build the board first — that is the reading that costs money, ' +
+              'and this is the one that never does.',
+        }
+      },
+    },
   }
 }
 
@@ -418,16 +469,27 @@ function requireEpisode(store: Store, episodeId: string): EpisodeInShow {
   return where
 }
 
-function requireScript(store: Store, episodeId: string, label: string): Artifact {
+/** The episode's script, or undefined when there is none on the volume to read. */
+function scriptOf(store: Store, episodeId: string): Artifact | undefined {
   const script = artifactsOf(store, episodeId).find(
     (artifact) => artifact.kind === 'script' && artifact.slot === '',
   )
-  if (!script?.filePath) {
-    throw new Error(
-      `${label} has no script to read. A continuity board is DERIVED from the written ` +
-        'episode and never prescribed to it (D3) — there is nothing here to extract.',
-    )
-  }
+  return script?.filePath ? script : undefined
+}
+
+/**
+ * One sentence, two readers — the disabled button states it before the click and the step
+ * throws it when something calls the API directly. `launchBlockedBecause`'s rule (operating.ts):
+ * a precondition worded one way in front of a button and another way behind it is a failure
+ * after the click wearing a different coat.
+ */
+const noScriptBecause = (label: string): string =>
+  `${label} has no script to read. A continuity board is DERIVED from the written episode ` +
+  'and never prescribed to it (D3) — there is nothing here to extract.'
+
+function requireScript(store: Store, episodeId: string, label: string): Artifact {
+  const script = scriptOf(store, episodeId)
+  if (!script) throw new Error(noScriptBecause(label))
   return script
 }
 

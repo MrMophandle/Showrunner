@@ -1,4 +1,5 @@
 import type { Store } from '../db/store.ts'
+import type { Episode } from '../domain/spine.ts'
 import type { BoundLLM } from '../llm/adapter.ts'
 import type { GateDraft, GateStanding } from './gate.ts'
 
@@ -117,13 +118,98 @@ export interface Step<Out = unknown> {
 }
 
 /**
+ * **What a stage does with an episode's material** — and therefore whether D12's wall stands
+ * in front of it.
+ *
+ * `produces` — it writes the next artifact FROM the material. A deterministic contradiction
+ *   standing against that material is exactly the thing the next stage must not be built on,
+ *   which is the whole of D12, and `launchBlockedBecause` refuses one while the wall is up.
+ *
+ * `reads` — it reads the material and records what it found: the check stages, and the gate
+ *   stage that presents an artifact for Ryan's ruling. The wall never stands in front of one,
+ *   and that is not an exemption — it is the wall's own sentence kept honest. It ends "fix it
+ *   and re-run the checks — the deterministic ones cost nothing", and a wall that refused the
+ *   button it just recommended would be a dead end built out of its own advice. The gate half
+ *   is D12 read literally: deterministic findings block the next stage and **never Ryan's
+ *   gate** (invariant 3), so a stage whose work is to present something for a ruling can no
+ *   more be walled than the ruling can.
+ *
+ * A const array and a union type, never a TS `enum` — the server runs its TypeScript under
+ * Node's type stripping, which only erases.
+ */
+export const STAGE_WORK = ['reads', 'produces'] as const
+export type StageWork = (typeof STAGE_WORK)[number]
+
+/**
+ * **What a stage says about itself before it is run on one episode** (E3-7): the whole of the
+ * button, declared where the stage is written.
+ *
+ * ## Why the stage declares this rather than the page composing it
+ *
+ * Until E3-1 every stage called a model, so `launchBlockedBecause` (operating.ts) refused
+ * EVERY run when the adapter was unready — and the day a free stage arrived, that refusal
+ * started lying: `continuity-board-checks` re-runs deterministic rules over rows and reaches
+ * for nothing, and a process with no backend at all was told "Nothing to call" about a stage
+ * that calls nothing. The fix could not be a list of exempt stage names, because such a list
+ * is wrong the day a stage is added and nobody remembers it exists. So the stage says what it
+ * spends, and the refusal consults the declaration.
+ *
+ * It carries the sentence and the cost as well as `callsModel`, because those are the same
+ * fact asked three ways: "verb + object + scope + cost" is one declaration, and a stage that
+ * declared its spend to the refusal while the page composed its cost line separately would be
+ * two answers that can disagree. The page adds only what it owns — whether the button is
+ * pressable, and why not (`operating.ts`'s `Offer`).
+ *
+ * **The Archon rule holds.** This is a TypeScript method on a TypeScript object; adding a
+ * stage is still a code change with a test. It is not a description of a stage in data, and
+ * nothing reads it to decide what to run.
+ */
+export interface StageOffer {
+  /** Verb + object + scope, in one sentence. Never "Run", never "Go". */
+  readonly sentence: string
+  /**
+   * What one run of it costs, in the same arithmetic the ledger will use afterwards — or
+   * `FREE` (cost.ts) when it costs nothing. The page appends whose money it is and when.
+   */
+  readonly cost: string
+  /**
+   * Whether one run of it calls a model at all.
+   *
+   * False is a claim with teeth rather than a hint: a stage that declares zero spend runs, and
+   * is drillable, on a process with no usable backend configured.
+   */
+  readonly callsModel: boolean
+  /**
+   * Why this stage has nothing to do on this episode, in words — an episode with no script to
+   * check, a board that has never been built. Null when there is something to do.
+   *
+   * Stated here so it reaches the button before the click. Every step below still checks its
+   * own preconditions and throws: "preconditions before the button" is a promise about
+   * screens, and a step that trusted a screen to have kept it would be a step that fails
+   * differently when the API is called directly.
+   */
+  readonly nothingToDoBecause: string | null
+}
+
+/**
  * A stage (write, produce, canon, assemble, season review) is an ordered list of steps.
  * Ordered, not a graph — the next step runs when the previous one is done, and that is
  * the only control flow there is.
  */
 export interface Stage {
   readonly name: string
+  /** What it does with the material, which is what decides whether the wall refuses it. */
+  readonly work: StageWork
   readonly steps: readonly Step[]
+  /**
+   * What running it on this episode would say, cost, and need — read by the button and by the
+   * refusal behind it, so the two cannot tell Ryan different stories.
+   *
+   * It takes the resolved episode rather than an id because every implementation needs the
+   * label and the title, and resolving it once at the call site is what keeps "there is no
+   * such episode" a question the page answers rather than one four stages each answer badly.
+   */
+  offerOn(store: Store, episode: Episode): StageOffer
 }
 
 /**

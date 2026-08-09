@@ -2,10 +2,11 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { FREE } from './cost.ts'
 import type { Store } from './db/store.ts'
 import { artifactsOf } from './domain/artifact.ts'
 import { recordCheckPass } from './domain/finding.ts'
-import { episodesOf, scenesOf, seasonsOf } from './domain/spine.ts'
+import { episodesOf, findEpisode, scenesOf, seasonsOf } from './domain/spine.ts'
 import { createEventLog, type EventLog } from './events.ts'
 import { loadFixture } from './fixture/load.ts'
 import { initLibrary, openLibraryStore, type LibraryPaths } from './library.ts'
@@ -15,6 +16,7 @@ import { launchBlockedBecause, operatingView, runView } from './operating.ts'
 import { createRulings, openGates, type Rulings } from './runner/gate.ts'
 import { createRunner, type Runner } from './runner/runner.ts'
 import { DEMO_STAGE, stageCatalogue } from './runner/stages.ts'
+import { STAGE_WORK, type Stage } from './runner/step.ts'
 
 /**
  * The operating page's read model: the sentences Ryan reads, and the preconditions that
@@ -61,6 +63,9 @@ afterEach(() => {
   store.close()
   rmSync(root, { recursive: true, force: true })
 })
+
+/** The one stage E1 ships, out of the catalogue — the refusal takes a stage, not a name. */
+const demoStage = (): Stage => stageCatalogue(paths)[DEMO_STAGE]!
 
 describe('the operating page — what it lists', () => {
   it('lists the fixture show and both episodes at their own lifecycle positions', () => {
@@ -155,9 +160,89 @@ describe('the operating page — the launch button', () => {
   })
 
   it('refuses an episode that is not in this library', () => {
-    expect(launchBlockedBecause(store, READY, 'ep_nope')).toBe(
+    expect(launchBlockedBecause(store, READY, 'ep_nope', demoStage())).toBe(
       'There is no episode ep_nope in this library.',
     )
+  })
+
+  /**
+   * E3-1's deferred defect, at the seam it was deferred to. The refusal used to be true of
+   * every stage because every stage called a model; now each one says what it spends and the
+   * refusal reads the declaration. **No stage name appears in `launchBlockedBecause`** — an
+   * exemption list would be right today and wrong the day somebody adds a stage.
+   */
+  it('consults what the stage declared rather than assuming every stage spends', () => {
+    const catalogue = stageCatalogue(paths)
+    const spending = Object.values(catalogue).filter((stage) => {
+      const episode = findEpisode(store, ep02)!
+      return stage.offerOn(store, episode).callsModel
+    })
+    const free = Object.values(catalogue).filter(
+      (stage) => !stage.offerOn(store, findEpisode(store, ep02)!).callsModel,
+    )
+
+    // Both kinds exist in this build, which is what makes the distinction testable at all.
+    expect(spending.length).toBeGreaterThan(0)
+    expect(free.length).toBeGreaterThan(0)
+
+    for (const stage of spending) {
+      const because = launchBlockedBecause(store, NOTHING, ep02, stage)
+      // Either the adapter refuses it, or the stage had nothing to do on this episode in the
+      // first place — never a silent pass on a stage that would have called a dead backend.
+      expect(because).not.toBeNull()
+    }
+    for (const stage of free) {
+      const because = launchBlockedBecause(store, NOTHING, ep02, stage)
+      expect(because ?? '').not.toContain('Nothing to call')
+    }
+  })
+
+  it('stands the wall in front of a stage that produces, and never one that reads', () => {
+    const script = artifactsOf(store, ep01).find((artifact) => artifact.kind === 'script')!
+    recordCheckPass(store, {
+      checkKey: 'dual-presence',
+      tier: 'deterministic',
+      artifactId: script.id,
+      findings: [
+        {
+          concern: 'Ilse Renn is in two places at one time.',
+          severity: 'high',
+          confidence: 'certain',
+          anchor: { sceneId: scenesOf(store, ep01)[5]!.id, quote: '' },
+        },
+      ],
+    })
+
+    const catalogue = stageCatalogue(paths)
+    // D12 refuses the next stage. `demo` writes a premise out of this episode's material.
+    expect(launchBlockedBecause(store, READY, ep01, catalogue[DEMO_STAGE]!)).toContain(
+      'ep01 is blocked',
+    )
+    // And it never refuses a reading. The wall's own sentence recommends re-running the free
+    // checks; a wall that refused that button would be a dead end built out of its own advice.
+    for (const stage of Object.values(catalogue).filter((one) => one.work === 'reads')) {
+      expect(launchBlockedBecause(store, READY, ep01, stage) ?? '').not.toContain('is blocked')
+    }
+  })
+})
+
+describe('the stage catalogue — every stage declares itself', () => {
+  it('gives each stage a work, a sentence, a cost and a precondition', () => {
+    const episode = findEpisode(store, ep01)!
+
+    for (const stage of Object.values(stageCatalogue(paths))) {
+      const declared = stage.offerOn(store, episode)
+      expect(STAGE_WORK).toContain(stage.work)
+      // Verb + object + scope, and never a generic verb — the rule, held to per stage rather
+      // than per screen, because this is where the sentence is written.
+      expect(declared.sentence).not.toMatch(/^(Launch|Run|Go|Do|Start)\b/)
+      expect(declared.sentence).toContain('ep01')
+      expect(declared.cost).not.toBe('')
+      // A stage that spends nothing says the free sentence, and one that spends says a
+      // projection. Neither is left to be inferred from silence.
+      if (!declared.callsModel) expect(declared.cost).toBe(FREE)
+      else expect(declared.cost).toMatch(/~\$|cost unknown/)
+    }
   })
 
   /**
@@ -190,7 +275,7 @@ describe('the operating page — the launch button', () => {
     // Stated even when it is blocked: what it would have cost is not a secret.
     expect(episode.launch.cost).toContain('1 Opus call')
     // The API refuses with the same words. One composer, and they cannot drift.
-    expect(launchBlockedBecause(store, READY, ep01)).toBe(episode.launch.blockedBecause)
+    expect(launchBlockedBecause(store, READY, ep01, demoStage())).toBe(episode.launch.blockedBecause)
   })
 })
 

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { CanonBenchView } from '../server/canon-bench.ts'
+import type { CheckBenchView } from '../server/check-bench.ts'
 import type { EventRecord } from '../server/events.ts'
 import type { EpisodeOnThePage, OperatingView, RunView } from '../server/operating.ts'
 import type { NoteDepth } from '../server/runner/gate.ts'
@@ -11,6 +12,12 @@ import {
   type Edge,
   type SheetForm,
 } from './CanonBench.tsx'
+import {
+  CheckBench,
+  EMPTY_CHECK_DRAFT,
+  type CheckBenchProps,
+  type CheckDraft,
+} from './CheckBench.tsx'
 import { ARTIFACT, Button, CARD, FAINT, needing, PAGE, STREAM } from './kit.tsx'
 
 /**
@@ -78,6 +85,15 @@ export function App() {
   const [asOf, setAsOf] = useState({ ruling: '', date: '' })
   const [bench, setBench] = useState<BenchDraft>(EMPTY_BENCH)
 
+  // The check bench (E3-7). Scoped to an EPISODE rather than a show, because a check reads
+  // one artifact, and opened by hand — a page that picked an episode silently would be
+  // reading a bench Ryan did not ask for.
+  const [checkEpisode, setCheckEpisode] = useState<string | null>(null)
+  const [checks, setChecks] = useState<CheckBenchView | null>(null)
+  const [checkDraft, setCheckDraft] = useState<CheckDraft>(EMPTY_CHECK_DRAFT)
+  /** Which bench is on screen, readable inside the stream's listener without re-subscribing. */
+  const benched = useRef<string | null>(null)
+
   /** Where the bench's controls stand, as the API reads them — a string, so an effect can watch it. */
   const controls = new URLSearchParams({
     ...(entityId !== null && { entity: entityId }),
@@ -107,6 +123,11 @@ export function App() {
     setCanon(res.ok ? ((await res.json()) as CanonBenchView) : null)
   }, [])
 
+  const loadChecks = useCallback(async (episodeId: string): Promise<void> => {
+    const res = await fetch(`/api/checks/${episodeId}`)
+    setChecks(res.ok ? ((await res.json()) as CheckBenchView) : null)
+  }, [])
+
   // First load. It also picks up whatever this process came back to: a run left parked on
   // a gate by a killed process is still parked, and this is what puts it back on screen.
   useEffect(() => {
@@ -132,6 +153,13 @@ export function App() {
     if (runId) void loadRun(runId)
   }, [runId, loadRun])
 
+  // The check bench re-reads when Ryan opens a different episode, and on nothing else. A GET,
+  // so opening it starts nothing and costs nothing (invariant 5).
+  useEffect(() => {
+    benched.current = checkEpisode
+    if (checkEpisode) void loadChecks(checkEpisode)
+  }, [checkEpisode, loadChecks])
+
   /**
    * The stream. It opens at sequence 0, so this panel is also the log — after a restart it
    * replays everything the killed process wrote before it died, which is how "it resumed"
@@ -151,37 +179,101 @@ export function App() {
         void loadView()
         if (showing.current === null) setRunId(record.runId)
         else if (showing.current === record.runId) void loadRun(record.runId)
+        // A check run finishing changes every number on the bench — the board, the wall, the
+        // cards. It is re-read rather than patched: the whole thing is computed off rows, so
+        // there is nothing here that could be kept up to date by hand (1.3).
+        if (benched.current !== null) void loadChecks(benched.current)
       })
     }
     return () => source.close()
-  }, [stream, loadView, loadRun])
+  }, [stream, loadView, loadRun, loadChecks])
 
-  async function launch(episode: EpisodeOnThePage): Promise<void> {
+  /**
+   * Ryan's click on one stage's button — the demo's, or one of the check bench's.
+   *
+   * The stage is a string that came down the wire on the offer it belongs to. The browser
+   * never holds its own copy of a stage name: a page that did could ask for a stage this
+   * build does not have, and the catalogue is the one place they are written down.
+   */
+  async function launch(episodeId: string, stage: string): Promise<void> {
     setBusy(true)
     setProblem(null)
     try {
       const res = await fetch('/api/run', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ episodeId: episode.id, stage: episode.launchStage }),
+        body: JSON.stringify({ episodeId, stage }),
       })
       const body = (await res.json()) as { runId?: string; error?: string }
       if (!res.ok) setProblem(body.error ?? 'The run was refused, and said nothing about why.')
       else if (body.runId) setRunId(body.runId)
       await loadView()
+      if (checkEpisode) await loadChecks(checkEpisode)
     } finally {
       setBusy(false)
     }
   }
 
-  async function rule(gateId: string, verdict: 'approve' | 'reject'): Promise<void> {
+  /**
+   * One remediation, and the bench as the act left it.
+   *
+   * Every one of these raises, revises or records — not one ratifies (`remediation.ts`). The
+   * bench is re-read afterwards rather than patched, for the same reason the canon section is:
+   * the board, the wall and the cards are all computed off rows, and a screen that tried to
+   * keep them in step by hand would be the remembered state this design refuses.
+   */
+  async function remediate(path: string, body: unknown): Promise<unknown> {
     setBusy(true)
     setProblem(null)
     try {
+      const res = await fetch(path, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      const payload: unknown = await res.json()
+      if (!res.ok) {
+        setProblem(
+          (payload as { error?: string }).error ??
+            'The remediation was refused, and said nothing about why.',
+        )
+        return null
+      }
+      if (checkEpisode) await loadChecks(checkEpisode)
+      await loadView()
+      return payload
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  /**
+   * The pre-draft, which spends a call and **moves nothing**: what comes back lands in the
+   * box for Ryan to edit, and applying is a separate click (4.3). His edit wins over the
+   * model's words the same way a hand-made still does (D20).
+   */
+  async function predraft(findingId: string): Promise<void> {
+    const drafted = (await remediate(`/api/finding/${findingId}/predraft`, {})) as {
+      replacement?: string
+      sentence?: string
+    } | null
+    if (!drafted?.replacement) return
+    setCheckDraft((held) => ({
+      ...held,
+      replacements: { ...held.replacements, [findingId]: drafted.replacement! },
+      drafted: { ...held.drafted, [findingId]: drafted.sentence ?? '' },
+    }))
+  }
+
+  async function rule(gateId: string, verdict: 'approve' | 'reject' | 'override'): Promise<void> {
+    setBusy(true)
+    setProblem(null)
+    try {
+      // An override carries the same optional words an approval does. They are two verbs and
+      // two rows in the ledger, forever (invariant 3) — never one verb with a flag on it.
       const body =
-        verdict === 'approve'
-          ? { comment: draft.comment }
-          : {
+        verdict === 'reject'
+          ? {
               notes: [
                 {
                   note: draft.note,
@@ -190,6 +282,7 @@ export function App() {
                 },
               ],
             }
+          : { comment: draft.comment }
       const res = await fetch(`/api/gate/${gateId}/${verdict}`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -203,6 +296,9 @@ export function App() {
         setRun((await res.json()) as RunView)
       }
       await loadView()
+      // An override takes D12's wall down (`stage-wall.ts`), and the bench is where Ryan
+      // watches it fall. Nothing wrote an unblock — this is a re-read of the same question.
+      if (checkEpisode) await loadChecks(checkEpisode)
     } finally {
       setBusy(false)
     }
@@ -269,13 +365,47 @@ export function App() {
       busy={busy}
       draft={draft}
       onDraft={(next) => setDraft({ ...draft, ...next })}
-      onLaunch={(episode) => void launch(episode)}
+      onLaunch={(episode) => void launch(episode.id, episode.launchStage)}
       onShowRun={setRunId}
       onRule={(gateId, verdict) => void rule(gateId, verdict)}
       onShowBench={(id) => {
         setBenchShow(id)
         setEntityId(null)
       }}
+      onShowChecks={(episodeId) => {
+        setCheckEpisode(episodeId)
+        setCheckDraft(EMPTY_CHECK_DRAFT)
+      }}
+      checkEpisode={checkEpisode}
+      checks={
+        checks === null || checkEpisode === null
+          ? null
+          : {
+              checks,
+              draft: checkDraft,
+              busy,
+              onDraft: (next) => setCheckDraft({ ...checkDraft, ...next }),
+              onRun: (stage) => void launch(checkEpisode, stage),
+              onPredraft: (findingId) => void predraft(findingId),
+              onApply: (findingId) =>
+                void remediate(`/api/finding/${findingId}/rewrite`, {
+                  // Verbatim, character for character: whatever he settled on is what lands
+                  // (D20). Nothing here trims, tidies or re-wraps it on the way past.
+                  replacement: checkDraft.replacements[findingId] ?? '',
+                }),
+              onPropose: (findingId) =>
+                void remediate(`/api/finding/${findingId}/canon-change`, {
+                  statement: checkDraft.statements[findingId] ?? '',
+                }),
+              onDismiss: (findingId) =>
+                void remediate(`/api/finding/${findingId}/dismiss`, {
+                  note: checkDraft.notes[findingId] ?? '',
+                }),
+              onRecheck: (artifactId, sceneId) =>
+                void remediate(`/api/artifact/${artifactId}/recheck`, { sceneId }),
+              onShowRun: setRunId,
+            }
+      }
       bench={
         canon === null || benchShow === null
           ? null
@@ -327,13 +457,19 @@ export interface PageProps {
   onDraft(next: Partial<Draft>): void
   onLaunch(episode: EpisodeOnThePage): void
   onShowRun(runId: string): void
-  onRule(gateId: string, verdict: 'approve' | 'reject'): void
+  onRule(gateId: string, verdict: 'approve' | 'reject' | 'override'): void
   /**
    * The canon section, whole — its view, its draft and its handlers in one object rather
    * than ten props threaded through a page that does nothing with any of them. Null until
    * the bench has answered, and on a library with no show in it at all.
    */
   bench: CanonBenchProps | null
+  /** The checks section, whole (E3-7), on the same terms. Null until an episode is opened. */
+  checks: CheckBenchProps | null
+  /** Which episode's checks are on the bench, so the button for it can say it is already open. */
+  checkEpisode: string | null
+  /** Checks are scoped to an artifact, so an episode has to be chosen — never picked silently. */
+  onShowChecks(episodeId: string): void
   /**
    * Which show the bench is standing at. Canon is scoped to a show and this page renders
    * one bench, so a library with two shows needs a way to say which — never a first one
@@ -416,6 +552,18 @@ export function Page(props: PageProps) {
                   )}
                 </p>
               )}
+
+              {/* Not an action and so not a costed sentence: it opens a read. The check
+                  bench's own buttons are where anything is run or spent (E3-7). */}
+              <p>
+                {props.checkEpisode === episode.id ? (
+                  <em>The check bench below is standing at {episode.label}.</em>
+                ) : (
+                  <button type="button" onClick={() => props.onShowChecks(episode.id)}>
+                    Open the {episode.label} check bench below
+                  </button>
+                )}
+              </p>
             </article>
           ))}
         </section>
@@ -478,6 +626,15 @@ export function Page(props: PageProps) {
                 offer={run.gate.approve}
                 busy={busy}
                 onClick={() => props.onRule(run.gate!.id, 'approve')}
+              />
+
+              {/* The wall's third door (D12, E3-3): a red finding makes an artifact loud, Ryan
+                  may carry on anyway, and what he did stays readable a season later. It is a
+                  separate verb from approve and a separate row in the ledger (invariant 3). */}
+              <Button
+                offer={run.gate.override}
+                busy={busy}
+                onClick={() => props.onRule(run.gate!.id, 'override')}
               />
 
               <p>
@@ -575,6 +732,10 @@ export function Page(props: PageProps) {
         </p>
       )}
       {props.bench && <CanonBench {...props.bench} />}
+
+      {/* Checks (E3-7). It renders what six issues recorded and records nothing of its own;
+          the acts on it raise, revise or record, and not one of them ratifies. */}
+      {props.checks && <CheckBench {...props.checks} />}
 
       <h2>Live</h2>
       <p>

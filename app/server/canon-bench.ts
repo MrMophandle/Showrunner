@@ -1,3 +1,4 @@
+import { FREE } from './cost.ts'
 import type { Store } from './db/store.ts'
 import {
   ENTITY_STANDING,
@@ -82,9 +83,6 @@ import type { Offer } from './operating.ts'
  * works for Grey Harbor and no other show. So there is one builder, `promotionDraft`, and
  * two entrances to it — a new identity, and a candidate that already has one.
  */
-
-/** Nothing on this bench calls a model. Said on every button rather than left to inference. */
-export const FREE = 'No model call · $0.00'
 
 /**
  * The preconditions the PAGE owns, because each lives in a field the server has never seen

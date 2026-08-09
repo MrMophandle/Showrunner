@@ -14,6 +14,7 @@ import {
   type CallSite,
   type LLMAdapter,
 } from './adapter.ts'
+import { scaffoldStage } from '../runner/stage-fixture.ts'
 
 /**
  * The machinery every backend shares: the sentence coalescer that feeds `chunk`, the
@@ -36,7 +37,7 @@ beforeEach(() => {
   const episodeId = createEpisode(store, { seasonId: season.id, number: 7, title: 'Salt' }).id
   const runId = recordRun(
     store,
-    { name: 'write', steps: [{ name: 'outline', execute: async () => undefined }] },
+    scaffoldStage('write', [{ name: 'outline', execute: async () => undefined }]),
     episodeId,
   ).id
   stepId = findStepByName(store, runId, 'outline')!.id

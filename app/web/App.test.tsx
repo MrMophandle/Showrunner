@@ -8,12 +8,18 @@ import {
   registerAndPropose,
   type CanonBenchView,
 } from '../server/canon-bench.ts'
+import { checkBenchView, type CheckBenchView } from '../server/check-bench.ts'
 import type { Store } from '../server/db/store.ts'
+import { artifactsOf } from '../server/domain/artifact.ts'
+import { runBoardRules } from '../server/domain/board-rules.ts'
+import { recordExtractedBoard } from '../server/domain/board.ts'
 import { findEntity } from '../server/domain/canon.ts'
+import { factsOfEntity } from '../server/domain/fact.ts'
 import { createProposalRulings } from '../server/domain/proposal.ts'
 import { episodesOf, seasonsOf } from '../server/domain/spine.ts'
 import { createEventLog, eventsOfRun, type EventLog } from '../server/events.ts'
 import { greyHarborFounded } from '../server/fixture/founded.ts'
+import { theLongPierExtraction } from '../server/fixture/long-pier-board.ts'
 import { loadFixture } from '../server/fixture/load.ts'
 import { initLibrary, openLibraryStore, type LibraryPaths } from '../server/library.ts'
 import { describeLLMBackend, type LLMReadiness } from '../server/llm/choose.ts'
@@ -21,9 +27,12 @@ import { createFakeLLM, type FakeLLM } from '../server/llm/fake.ts'
 import { operatingView, runView } from '../server/operating.ts'
 import { openGates } from '../server/runner/gate.ts'
 import { createRunner, type Runner } from '../server/runner/runner.ts'
+import { SCRIPT_GATE_STAGE } from '../server/runner/script-gate-step.ts'
 import { DEMO_STAGE, stageCatalogue } from '../server/runner/stages.ts'
+import { TEXT_CHECK_STAGE } from '../server/runner/text-check-step.ts'
 import { App, Page } from './App.tsx'
 import { EMPTY_BENCH, type BenchDraft } from './CanonBench.tsx'
+import { EMPTY_CHECK_DRAFT, type CheckDraft } from './CheckBench.tsx'
 
 /**
  * The page, rendered — with the real view objects the server composes, off a real library
@@ -164,6 +173,137 @@ describe('the operating page — the gate', () => {
   })
 })
 
+describe('the operating page — the check bench', () => {
+  /**
+   * The fixture's own planted material, checked by the real machinery and rendered by the
+   * real page: the board rules over the hand-written extraction (free), and the panel through
+   * the fake backend. What is asserted is that every kind of record E3 writes actually reaches
+   * the screen — the HIL contract, held to as a string search.
+   */
+  async function checked(): Promise<CheckBenchView> {
+    const harbor = greyHarborFounded(store, paths)
+    const ep01 = episodesOf(store, seasonsOf(store, harbor.show.id)[0]!.id).find(
+      (episode) => episode.number === 1,
+    )!.id
+    const script = artifactsOf(store, ep01).find((artifact) => artifact.kind === 'script')!
+    const factOf = (entity: string, needle: string): string => {
+      const row = store.get<{ id: string }>('SELECT id FROM canon_entity WHERE name = ?', entity)!
+      return factsOfEntity(store, row.id).find((fact) => fact.statement.includes(needle))!.id
+    }
+
+    const board = recordExtractedBoard(store, {
+      episodeId: ep01,
+      scriptId: script.id,
+      extraction: theLongPierExtraction({
+        lockCycle: factOf('Grey Harbor Station', 'Cycling the No. 4 lock'),
+        halvaniVacuum: factOf('Halvani', 'loses consciousness'),
+      }),
+      filePath: 'greyharbor/s01e01/continuity-board-v1.md',
+    })
+    runBoardRules(store, board.artifact.id)
+
+    for (let before = 0; before < 4; before += 1) llm.reply('{"findings": []}')
+    llm.reply(
+      JSON.stringify({
+        findings: [
+          {
+            scene: 4,
+            quote: 'Tobin comes out onto the pier in his coveralls',
+            concern:
+              'Three minutes outside the pressure hull in coveralls. The rule names a sealed ' +
+              'hardsuit or an active containment field and the scene shows neither.',
+            severity: 'high',
+            confidence: 'high',
+            entity: 'Tobin Wick',
+            facts: [factOf('Halvani', 'loses consciousness')],
+          },
+        ],
+      }),
+    )
+    for (let after = 0; after < 5; after += 1) llm.reply('{"findings": []}')
+
+    const panel = runner.enqueueRun({ episodeId: ep01, stage: TEXT_CHECK_STAGE })
+    await runner.settled(panel.id)
+    return checkBenchView(store, paths, ep01, READY)!
+  }
+
+  it('renders the script with every finding at its own span, and the buttons that read it', async () => {
+    const html = renderChecks(await checked())
+
+    // The artifact itself, readable, with the argued line marked where it stands (D15, 4.6).
+    expect(html).toContain('The mess deck is warm')
+    expect(html).toContain('<mark>Tobin comes out onto the pier in his coveralls</mark>')
+
+    // Verb + object + scope + cost on every button that reads, and the free tier says free.
+    expect(html).toContain('Check the ep01 script v1')
+    expect(html).toContain('5 category checks, 1 arc position and 4 craft reviewers')
+    expect(html).toContain('your money, spent when you click')
+    expect(html).toContain('Re-run the 4 deterministic rules over the ep01 continuity board')
+    expect(html).toContain('No model call · $0.00')
+  })
+
+  it('renders every kind of record E3 writes — the HIL contract, as a string search', async () => {
+    const html = renderChecks(await checked())
+
+    // Severity and confidence as two values, never one (invariant 4).
+    expect(html).toContain('world-rules · severity high · confidence high · text, a reading')
+    expect(html).toContain('dual-presence · severity high · confidence certain · deterministic')
+
+    // The canon it argues with, quoted on the card.
+    expect(html).toContain('loses consciousness in about nine seconds')
+
+    // Deterministic findings marked stage-blocking, and said not to reach the gate.
+    expect(html).toContain('STAGE-BLOCKING')
+    expect(html).toContain('Blocks the next stage until it is resolved, and never this gate (D12)')
+
+    // The wall's own sentence, where a disabled next-stage button renders it.
+    expect(html).toContain('ep01 is blocked')
+    expect(html).toContain('Deterministic findings block the next stage and never your gate')
+
+    // ONE verdict board (4.5), not two half-boards Ryan has to read together: ten text
+    // reviewers and the four deterministic rules, with the three findings standing on it.
+    expect(html).toContain('Verdict board')
+    expect(html).toContain('3 finding(s) standing across 14 reviewers')
+
+    // The measured silence, by name: rules 2 and 3 were loaded and left alone.
+    expect(html).toContain('loaded, and not cited')
+    expect(html).toContain('Sound does not carry outside the hull')
+
+    // 4.3's three buttons, priced, and the two refusals the page owns.
+    expect(html).toContain('Pre-draft a rewrite of the world-rules span in scene 4')
+    expect(html).toContain('Put the world-rules finding down with your note')
+    expect(html).toContain('Dismissing a finding takes a note')
+    expect(html).toContain('Pre-draft a replacement, or write one yourself')
+
+    // D11's record, with its silences on it — and no maintenance prompt, because nothing here
+    // has earned one. It is a question, and nothing acts on it.
+    expect(html).toContain('Cried-wolf record')
+    expect(html).toContain('No check is crying wolf')
+    expect(html).toContain('impossible-adjacency')
+  })
+
+  it('renders the override verb at the gate, naming what it would stand over', async () => {
+    const harbor = greyHarborFounded(store, paths)
+    const ep01 = episodesOf(store, seasonsOf(store, harbor.show.id)[0]!.id).find(
+      (episode) => episode.number === 1,
+    )!.id
+    const gate = runner.enqueueRun({ episodeId: ep01, stage: SCRIPT_GATE_STAGE })
+    await runner.settled(gate.id)
+
+    const html = render(operatingView(store, paths, READY), {
+      run: runView(store, paths, gate.id)!,
+    })
+
+    // Three verbs, and the third one is its own button because it is its own row in the
+    // ledger, forever (invariant 3).
+    expect(html).toContain('Approve the ep01 script — round 1')
+    expect(html).toContain('Approve the ep01 script OVER')
+    expect(html).toContain('recorded as your override forever')
+    // Rejecting this gate re-presents; there is no producer behind it to re-run, so it is free.
+    expect(html).toContain('Reject the ep01 script with notes')
+  })
+})
+
 describe('the operating page — the canon bench, unfounded', () => {
   it('renders every sheet as a candidate, the queue, and the button that founds the show', () => {
     const html = renderBench(canonBenchView(store, showId)!)
@@ -290,9 +430,31 @@ function render(
       onRule={() => undefined}
       bench={null}
       onShowBench={() => undefined}
+      checks={null}
+      checkEpisode={null}
+      onShowChecks={() => undefined}
       {...over}
     />,
   ).replaceAll('<!-- -->', '')
+}
+
+/** The checks section, with the real bench the server composed. Handlers are no-ops. */
+function renderChecks(checks: CheckBenchView, draft: CheckDraft = EMPTY_CHECK_DRAFT): string {
+  return render(operatingView(store, paths, READY), {
+    checks: {
+      checks,
+      draft,
+      busy: false,
+      onDraft: () => undefined,
+      onRun: () => undefined,
+      onPredraft: () => undefined,
+      onApply: () => undefined,
+      onPropose: () => undefined,
+      onDismiss: () => undefined,
+      onRecheck: () => undefined,
+      onShowRun: () => undefined,
+    },
+  })
 }
 
 /**

@@ -19,6 +19,7 @@ import { LLM_BACKEND, type CallSite, type LLMBackend, type LLMEffort } from '../
 import { createAnthropicAdapter } from '../app/server/llm/anthropic.ts'
 import { createClaudeCliAdapter } from '../app/server/llm/cli.ts'
 import { findStepByName, recordRun } from '../app/server/runner/run.ts'
+import { scaffoldStage } from '../app/server/runner/stage-fixture.ts'
 
 /**
  * The smoke test for E1-6 — **one real call, on real credentials, for real money.**
@@ -73,7 +74,7 @@ const season = createSeason(store, { showId: show.id, number: 1 })
 const episode = createEpisode(store, { seasonId: season.id, number: 7, title: 'Salt' })
 const run = recordRun(
   store,
-  { name: 'write', steps: [{ name: 'outline', execute: async () => undefined }] },
+  scaffoldStage('write', [{ name: 'outline', execute: async () => undefined }]),
   episode.id,
 )
 const step = findStepByName(store, run.id, 'outline')!

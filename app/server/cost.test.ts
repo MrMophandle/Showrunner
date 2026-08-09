@@ -21,6 +21,7 @@ import { migrate } from './db/migrate.ts'
 import { openStore, type Store } from './db/store.ts'
 import { createEpisode, createSeason, createShow } from './domain/spine.ts'
 import { findStepByName, recordRun } from './runner/run.ts'
+import { scaffoldStage } from './runner/stage-fixture.ts'
 
 /**
  * The cost ledger: the arithmetic, the four rollups, the budget, and the projection.
@@ -49,7 +50,7 @@ beforeEach(() => {
   episodeId = createEpisode(store, { seasonId: season.id, number: 7, title: 'Salt' }).id
   otherEpisodeId = createEpisode(store, { seasonId: season.id, number: 8, title: 'Slack Water' }).id
 
-  const stage = { name: 'write', steps: [{ name: 'outline', execute: async () => undefined }] }
+  const stage = scaffoldStage('write', [{ name: 'outline', execute: async () => undefined }])
   runId = recordRun(store, stage, episodeId).id
   stepId = findStepByName(store, runId, 'outline')!.id
 })

@@ -16,6 +16,7 @@ import { findStepByName } from '../runner/run.ts'
 import { createRunner } from '../runner/runner.ts'
 import type { StageCatalogue } from '../runner/step.ts'
 import { createFakeLLM, type FakeLLM } from './fake.ts'
+import { scaffoldStage } from '../runner/stage-fixture.ts'
 
 /**
  * A step calling Claude, all the way through the runner — the shape E3 writes against.
@@ -49,22 +50,19 @@ beforeEach(() => {
 
 /** A one-step stage that writes an outline. The narrowest thing E3 will do. */
 const writeStage: StageCatalogue = {
-  write: {
-    name: 'write',
-    steps: [
-      {
-        name: 'outline',
-        async execute(context) {
-          context.progress('Writing the ep07 outline')
-          const completion = await context.llm.complete({
-            system: 'You write Grey Harbor.',
-            prompt: 'Write the ep07 outline.',
-          })
-          return { text: completion.text, dollars: completion.dollars }
-        },
+  write: scaffoldStage('write', [
+    {
+      name: 'outline',
+      async execute(context) {
+        context.progress('Writing the ep07 outline')
+        const completion = await context.llm.complete({
+          system: 'You write Grey Harbor.',
+          prompt: 'Write the ep07 outline.',
+        })
+        return { text: completion.text, dollars: completion.dollars }
       },
-    ],
-  },
+    },
+  ]),
 }
 
 describe('a step calling Claude', () => {
@@ -121,29 +119,26 @@ describe('a step calling Claude', () => {
     // E6's `ImageAdapter` is not this issue's to build; the row it will write is. This
     // step stands in for it — dollars, no tokens, same ledger, same rollups, no migration.
     const stages: StageCatalogue = {
-      produce: {
-        name: 'produce',
-        steps: [
-          writeStage['write']!.steps[0]!,
-          {
-            name: 'shot-images',
-            lock: 'image-api',
-            async execute(context) {
-              context.progress('Shot 1 of 1 — scene 2, the corridor')
-              recordCost(context.store, {
-                kind: 'image',
-                backend: 'nano-banana-pro',
-                model: 'gemini-3-pro-image',
-                microDollars: 134_000, // $0.134 a frame, reported by the API
-                priced: 'reported',
-                stepId: context.stepId,
-                attempt: context.attempt,
-              })
-              return { shots: 1 }
-            },
+      produce: scaffoldStage('produce', [
+        writeStage['write']!.steps[0]!,
+        {
+          name: 'shot-images',
+          lock: 'image-api',
+          async execute(context) {
+            context.progress('Shot 1 of 1 — scene 2, the corridor')
+            recordCost(context.store, {
+              kind: 'image',
+              backend: 'nano-banana-pro',
+              model: 'gemini-3-pro-image',
+              microDollars: 134_000, // $0.134 a frame, reported by the API
+              priced: 'reported',
+              stepId: context.stepId,
+              attempt: context.attempt,
+            })
+            return { shots: 1 }
           },
-        ],
-      },
+        },
+      ]),
     }
     llm.reply({ text: OUTLINE, usage: { uncachedInput: 12_000, cacheRead: 40_000, output: 900 } })
     const runner = createRunner(store, stages, events, llm)

@@ -32,6 +32,7 @@ import { attemptsOf, findStepByName } from './run.ts'
 import { createRunner, type Runner } from './runner.ts'
 import type { StageCatalogue, StepContext } from './step.ts'
 import { checkTextAgainstCanon } from './text-check-step.ts'
+import { scaffoldStage } from './stage-fixture.ts'
 
 /**
  * The correction loop (4.4): **a stage composes produce → check, and a failed check re-runs
@@ -148,10 +149,9 @@ function stages(
   kind: ArtifactKind = 'outline',
 ): StageCatalogue {
   return {
-    [OUTLINE_STAGE]: {
-      name: OUTLINE_STAGE,
-      steps: [correctionLoop(outlineWriter(touches, kind), checkTextAgainstCanon(paths, kind))],
-    },
+    [OUTLINE_STAGE]: scaffoldStage(OUTLINE_STAGE, [
+      correctionLoop(outlineWriter(touches, kind), checkTextAgainstCanon(paths, kind)),
+    ]),
   }
 }
 

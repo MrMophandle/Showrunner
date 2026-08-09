@@ -417,6 +417,20 @@ function versionOf(store: Store, artifactId: string, checked: { id: string; vers
  * or does not matter here; if the WORLD was wrong, the remediation is a proposal (E3-5), and
  * only Ryan ratifying that proposal moves canon (invariant 1).
  */
+/**
+ * The one refusal a dismissal has, as a string rather than as a throw site.
+ *
+ * The note lives in a textarea the server has never seen, so the check bench cannot enforce
+ * it — it renders this, disabled, before the click, and the API refuses with the same string
+ * when something posts anyway. One constant, two readers, exactly as `REJECTION_NEEDS_A_NOTE`
+ * is for the ruling API (proposal.ts): a precondition worded twice is a precondition that
+ * eventually says two things.
+ */
+export const DISMISSAL_NEEDS_A_NOTE =
+  'Dismissing a finding takes a note. It is read back by later runs (4.4) and counted ' +
+  'against the check that raised it (D11) — an empty one teaches nothing and still ' +
+  'spends the check’s credibility.'
+
 export function dismissFinding(store: Store, findingId: string, note: string): Finding {
   return store.transaction(() => {
     const finding = findFinding(store, findingId)
@@ -427,13 +441,7 @@ export function dismissFinding(store: Store, findingId: string, note: string): F
           'A disposition is kept forever (4.4); a later opinion is a later check pass.',
       )
     }
-    if (note.trim() === '') {
-      throw new Error(
-        'Dismissing a finding takes a note. It is read back by later runs (4.4) and counted ' +
-          'against the check that raised it (D11) — an empty one teaches nothing and still ' +
-          'spends the check’s credibility.',
-      )
-    }
+    if (note.trim() === '') throw new Error(DISMISSAL_NEEDS_A_NOTE)
 
     store.run(
       'INSERT INTO finding_disposition (finding_id, disposition, note) VALUES (?, ?, ?)',

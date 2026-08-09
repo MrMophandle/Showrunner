@@ -5,6 +5,7 @@ import {
   costOfRun,
   costOfShow,
   costsOfRun,
+  FREE,
   remainingThisWeek,
   spentSentence,
   type CostEntry,
@@ -47,8 +48,9 @@ import {
   type Run,
   type StepStatus,
 } from './runner/run.ts'
-import { stageBlockedBecause } from './runner/stage-wall.ts'
-import { DEMO_CALL, DEMO_STAGE } from './runner/stages.ts'
+import { stageBlockedBecause, stageBlockingFindings, type StageBlock } from './runner/stage-wall.ts'
+import { DEMO_STAGE, stageCatalogue } from './runner/stages.ts'
+import type { Stage, StageCatalogue } from './runner/step.ts'
 
 /**
  * The operating page's read model — everything the bare-bones page renders, composed
@@ -158,6 +160,9 @@ export function operatingView(
   llm: LLMReadiness,
 ): OperatingView {
   const waiting = new Map(openGates(store).map((open) => [open.gate.runId, open.gate.id]))
+  // Built once for the page rather than per episode: it is a plain object of TypeScript
+  // functions, and the sentences on every button below come out of the stages themselves.
+  const catalogue = stageCatalogue(library)
 
   const onThePage = shows(store).map((show): ShowOnThePage => {
     const episodes = seasonsOf(store, show.id).flatMap((season) =>
@@ -174,7 +179,7 @@ export function operatingView(
           spend,
           spendSentence: spentSentence(spend),
           run: run ? runOnThePage(run, waiting.get(run.id) ?? null) : null,
-          launch: launchOffer(store, llm, episode.id),
+          launch: stageOffer(store, llm, episode.id, catalogue[DEMO_STAGE]!),
           launchStage: DEMO_STAGE,
         }
       }),
@@ -217,51 +222,76 @@ export function lifecycleTrack(lifecycle: EpisodeLifecycle): LifecycleStop[] {
 // ── The launch button, and the preconditions in front of it ─────────────────────
 
 /**
- * The demo run's button for one episode: the sentence, the cost, and — when it cannot be
+ * One stage's button for one episode: the sentence, the cost, and — when it cannot be
  * pressed — the reason, in words, before the click rather than as a failure after it.
  *
- * The API calls this too. One composer, so the disabled button and the refusal can never
- * be telling Ryan two different stories.
+ * **The stage composes the first two and this composes the third.** Verb, object, scope and
+ * cost come off `stage.offerOn` (step.ts), written where the stage is; what this adds is
+ * whether Ryan may press it, which is about the episode's state and the process's rather than
+ * about the stage. The API calls the same refusal, so the disabled button and the 409 can
+ * never be telling him two different stories.
  */
-export function launchOffer(store: Store, llm: LLMReadiness, episodeId: string): Offer {
+export function stageOffer(
+  store: Store,
+  llm: LLMReadiness,
+  episodeId: string,
+  stage: Stage,
+): Offer {
   const episode = findEpisode(store, episodeId)
   if (!episode) {
     return {
-      sentence: 'Write a demo premise — no such episode',
-      cost: DEMO_CALL.sentence,
+      sentence: `The ${stage.name} stage — there is nothing here to run it on`,
+      cost: 'Nothing to cost: this episode is not in the library.',
       enabled: false,
       blockedBecause: `There is no episode ${episodeId} in this library.`,
     }
   }
-  const label = episodeLabel(episode.number)
-  const blocked = launchBlockedBecause(store, llm, episodeId)
 
+  const declared = stage.offerOn(store, episode)
+  const blocked = launchBlockedBecause(store, llm, episodeId, stage)
   return {
-    sentence:
-      `Write the ${label} demo premise and present it for your ruling — ` +
-      `“${episode.title}”, one call, one gate`,
-    // Stated even when it is blocked: what it would have cost is not a secret, and a
-    // button whose cost appears only once it is pressable teaches nothing about the one
-    // that is greyed out beside it.
-    cost: `${DEMO_CALL.sentence} · your money, spent when you click`,
+    sentence: declared.sentence,
+    // Stated even when it is blocked: what it would have cost is not a secret, and a button
+    // whose cost appears only once it is pressable teaches nothing about the one greyed out
+    // beside it. Whose money and when is appended exactly where a call will be made — a free
+    // stage that said "spent when you click" would be charging for a reading of rows.
+    cost: declared.callsModel
+      ? `${declared.cost} · your money, spent when you click`
+      : declared.cost,
     enabled: blocked === null,
     blockedBecause: blocked,
   }
 }
 
 /**
- * Why the demo cannot be launched on this episode, in the words the button shows and the
+ * Why this stage cannot be started on this episode, in the words the button shows and the
  * API refuses with. Null when it can.
  *
- * The unfinished run is checked first: it is the more specific state, and it is the one
- * that is true even when the adapter is healthy. The D12 wall comes next, because it is
- * about this episode's own material. The adapter comes last because the page says that
- * once, loudly, at the top, in its own line.
+ * The order is from the most specific to the least, and every step of it is a different
+ * question:
+ *
+ *   1. **An unfinished run** — the one state that is true whatever the stage and whatever the
+ *      adapter is doing. One run per episode (D7).
+ *   2. **The stage's own precondition**, off its declaration: an episode with no script to
+ *      check, a board that has never been built. It comes before the wall because a stage with
+ *      nothing to do has nothing to be blocked from doing.
+ *   3. **D12's wall**, and only in front of a stage that PRODUCES (step.ts, `STAGE_WORK`).
+ *      Computed fresh off open findings every time this is asked (`stage-wall.ts`). Refusing a
+ *      stage that only reads would refuse the way out of the wall — the wall's own sentence
+ *      recommends re-running the checks — and refusing the gate stage would be a deterministic
+ *      finding blocking Ryan's gate, which is precisely what D12 forbids.
+ *   4. **The adapter**, and only for a stage that DECLARED IT SPENDS. This is E3-1's deferred
+ *      defect, mended: until a stage could say what it costs, this refusal was true of every
+ *      stage because every stage called a model, and the first free one was told "Nothing to
+ *      call" about a call it never makes. The fix consults the declaration and enumerates no
+ *      stage names — a list of exemptions here would be right today and wrong the day after
+ *      somebody adds a stage without reading this paragraph.
  */
 export function launchBlockedBecause(
   store: Store,
   llm: LLMReadiness,
   episodeId: string,
+  stage: Stage,
 ): string | null {
   const episode = findEpisode(store, episodeId)
   if (!episode) return `There is no episode ${episodeId} in this library.`
@@ -278,19 +308,38 @@ export function launchBlockedBecause(
     return `${label} already has a ${busy.stage} run, and it ${doing}. One run per episode (D7): rule on it, or let it finish.`
   }
 
-  // D12: a deterministic finding blocks the NEXT STAGE, and never Ryan's gate. Computed
-  // fresh off open findings every time this is asked (`runner/stage-wall.ts`) — the gate
-  // verbs beneath it take no preconditions at all, and that asymmetry is the whole ruling.
-  const wall = stageBlockedBecause(store, episodeId)
-  if (wall) return wall
+  const declared = stage.offerOn(store, episode)
+  if (declared.nothingToDoBecause !== null) return declared.nothingToDoBecause
 
-  if (!llm.ready) {
+  if (stage.work === 'produces') {
+    const wall = stageBlockedBecause(store, episodeId)
+    if (wall) return wall
+  }
+
+  if (declared.callsModel && !llm.ready) {
     // The adapter's own sentence is quoted whole, never re-cased: it opens with the name
     // of an environment variable often enough that lowering its first letter would print
     // `aNTHROPIC_API_KEY` at Ryan and send him looking for a variable that does not exist.
     return `Nothing to call. ${llm.label} was chosen (${llm.chosenBy}) — ${llm.sentence}`
   }
   return null
+}
+
+/**
+ * The stage by that name, or undefined — the one lookup between a string off the wire and the
+ * TypeScript that is the stage.
+ *
+ * It is here rather than in the API because the refusal above takes a `Stage`, and a caller
+ * holding a name needs somewhere honest to turn it into one. `stageCatalogue` is the map
+ * (stages.ts); this is a reader of it that says nothing about what a stage is.
+ */
+export function findStage(library: LibraryPaths, name: string): Stage | undefined {
+  return stageCatalogue(library)[name]
+}
+
+/** Every stage whose work is READING the episode's material — the check bench's buttons. */
+export function readingStages(catalogue: StageCatalogue): Stage[] {
+  return Object.values(catalogue).filter((stage) => stage.work === 'reads')
 }
 
 // ── One run, in full ────────────────────────────────────────────────────────────
@@ -328,6 +377,16 @@ export interface GateOnThePage {
   rounds: GateRound[]
   artifact: ArtifactUnderReview
   approve: Offer
+  /**
+   * Approve OVER what is standing on it, recorded as itself forever (invariant 3) — and the
+   * one verdict that takes D12's wall down (`stage-wall.ts`).
+   *
+   * A third button rather than a checkbox on the first, because they are two different
+   * sentences in the ledger and must stay two on the screen: "he approved" and "he approved
+   * over a contradiction the board is certain about" are not the same ruling, and a season
+   * later the difference is the whole record.
+   */
+  override: Offer
   reject: Offer
   /** How deep a rejection note may route the work back (D21). Empty is the legal default. */
   noteDepths: readonly NoteDepth[]
@@ -367,14 +426,30 @@ export function runView(store: Store, library: LibraryPaths, runId: string): Run
     })),
     events: eventsOfRun(store, runId),
     spend: { totals, sentence: spentSentence(totals), entries: costsOfRun(store, runId) },
-    gate: gate ? gateOnThePage(store, library, gate.id) : null,
+    gate: gate ? gateOnThePage(store, library, gate.id, stageCatalogue(library)) : null,
   }
 }
 
+/**
+ * The gate, whole: what is under review, the three verdicts, and their costs.
+ *
+ * **None of the three takes a precondition on the artifact's account.** The only thing that
+ * closes them is a round already ruled — checks argue and never veto (invariant 3), and D12
+ * lets a deterministic finding block the next stage and never this. What the standing findings
+ * DO reach is the override's sentence, which names what he would be ruling over: a verb that
+ * records something forever should say what it is recording.
+ *
+ * The rejection's cost comes off the STAGE's declaration (step.ts) rather than off a constant,
+ * because a rejection buys another run of the step that opened this gate — one Opus call for
+ * the demo's writer, nothing at all for the stage that only presents what stands. A single
+ * hardcoded number here was right while `demo` was the only stage with a gate and would have
+ * quietly charged Ryan for a re-presentation the day a second one arrived.
+ */
 function gateOnThePage(
   store: Store,
   library: LibraryPaths,
   gateId: string,
+  catalogue: StageCatalogue,
 ): GateOnThePage | null {
   const standing = gateStanding(store, gateId)
   if (!standing) return null
@@ -385,6 +460,16 @@ function gateOnThePage(
     standing.gate.stepId,
   )!.name
 
+  const ruled = standing.isOpen
+    ? null
+    : `Round ${standing.round} was already ruled "${standing.ruling!.verdict}". A later opinion is a later round.`
+  const blocking = stageBlockingFindings(store, standing.gate.episodeId).filter(
+    (block) => block.artifact.id === standing.gate.artifactId,
+  )
+  const stage = catalogue[findRun(store, standing.gate.runId)?.stage ?? '']
+  const episode = findEpisode(store, standing.gate.episodeId)
+  const again = stage && episode ? stage.offerOn(store, episode) : null
+
   return {
     id: standing.gate.id,
     subject: standing.subject,
@@ -394,24 +479,47 @@ function gateOnThePage(
     artifact: read(library, artifact),
     approve: {
       sentence: `Approve ${standing.subject} — round ${standing.round}, and ${stepName} carries the run on`,
-      cost: 'No model call · $0.00',
+      cost: FREE,
       enabled: standing.isOpen,
-      blockedBecause: standing.isOpen
-        ? null
-        : `Round ${standing.round} was already ruled "${standing.ruling!.verdict}". A later opinion is a later round.`,
+      blockedBecause: ruled,
+    },
+    override: {
+      sentence:
+        `Approve ${standing.subject} OVER ${overSentence(blocking)} — round ${standing.round}, ` +
+        'recorded as your override forever, and the next stage stops being refused on it',
+      cost: FREE,
+      enabled: standing.isOpen,
+      blockedBecause: ruled,
     },
     reject: {
+      // What the step will actually DO comes off the stage's declared work, never off a
+      // guess: a stage that produces writes it again against the notes, and a stage that only
+      // presents re-presents it with them recorded. Saying "writes it again" over a gate with
+      // no writer behind it would be the button promising work nothing is going to do.
       sentence:
         `Reject ${standing.subject} with notes — ${stepName} reopens as round ${standing.round + 1} ` +
-        'and writes it again against them',
-      cost: `${DEMO_CALL.sentence} · your money, spent when you click`,
+        (stage?.work === 'reads'
+          ? 'and presents it again with them recorded against it; there is no writer behind ' +
+            'this gate to route them to yet, so the notes land and ride (D21)'
+          : 'and writes it again against them'),
+      cost: again === null || !again.callsModel ? FREE : `${again.cost} · your money, spent when you click`,
       enabled: standing.isOpen,
-      blockedBecause: standing.isOpen
-        ? null
-        : `Round ${standing.round} was already ruled "${standing.ruling!.verdict}". A later opinion is a later round.`,
+      blockedBecause: ruled,
     },
     noteDepths: NOTE_DEPTH,
   }
+}
+
+/** What an override would be standing over, named out of the rows rather than counted. */
+function overSentence(blocking: StageBlock[]): string {
+  if (blocking.length === 0) {
+    return 'whatever stands on it — nothing deterministic does right now, so this records the same decision as approving, in the louder word'
+  }
+  const [first, ...rest] = blocking
+  const where = first!.scene === null ? '' : ` at scene ${first!.scene}`
+  const others =
+    rest.length === 0 ? '' : ` and ${rest.length} more deterministic finding${rest.length === 1 ? '' : 's'}`
+  return `the ${first!.finding.checkKey} finding${where}${others}`
 }
 
 /**

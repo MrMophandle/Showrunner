@@ -10,6 +10,7 @@ import { describeLLMBackend } from './llm/choose.ts'
 import { createFakeLLM } from './llm/fake.ts'
 import { createRulings } from './runner/gate.ts'
 import { createRunner, type Runner } from './runner/runner.ts'
+import { scaffoldStage } from './runner/stage-fixture.ts'
 import { pauseRun, type StageCatalogue, type Step } from './runner/step.ts'
 
 /**
@@ -159,14 +160,12 @@ describe('the event stream — lock contention', () => {
     runner = createRunner(
       store,
       {
-        'produce-local-images': {
-          name: 'produce-local-images',
-          steps: [{ name: 'local-shots', lock: 'gpu', execute: () => onEp05.promise }],
-        },
-        'produce-audio': {
-          name: 'produce-audio',
-          steps: [{ name: 'tts-takes', lock: 'gpu', execute: () => onEp06.promise }],
-        },
+        'produce-local-images': scaffoldStage('produce-local-images', [
+          { name: 'local-shots', lock: 'gpu', execute: () => onEp05.promise },
+        ]),
+        'produce-audio': scaffoldStage('produce-audio', [
+          { name: 'tts-takes', lock: 'gpu', execute: () => onEp06.promise },
+        ]),
       },
       events,
     )
@@ -337,7 +336,7 @@ function parseFrame(frame: string): Frame {
 }
 
 function catalogue(stageName: string, ...steps: Step[]): StageCatalogue {
-  return { [stageName]: { name: stageName, steps } }
+  return { [stageName]: scaffoldStage(stageName, steps) }
 }
 
 function deferred() {

@@ -21,7 +21,8 @@ import { eventsSince, type EventLog, type EventRecord } from './events.ts'
 import type { LibraryPaths } from './library.ts'
 import type { LLMAdapter } from './llm/adapter.ts'
 import type { LLMReadiness } from './llm/choose.ts'
-import { launchBlockedBecause, operatingView, runView } from './operating.ts'
+import { checkBenchView } from './check-bench.ts'
+import { findStage, launchBlockedBecause, operatingView, runView } from './operating.ts'
 import {
   applyRewrite,
   canonChangePrefill,
@@ -32,6 +33,7 @@ import {
 } from './remediation.ts'
 import type { NoteDraft, Rulings } from './runner/gate.ts'
 import type { Runner } from './runner/runner.ts'
+import { stageCatalogue } from './runner/stages.ts'
 
 const WEB_ROOT = './dist/web'
 
@@ -136,7 +138,24 @@ export function createApp(
       return c.json({ error: 'A run needs an episodeId and a stage.' }, 400)
     }
 
-    const blocked = launchBlockedBecause(store, operating.readiness(), episodeId)
+    // The stage first, because the refusal is now the STAGE's: what it spends decides
+    // whether a dead adapter stands in its way, and what it does with the material decides
+    // whether D12's wall does (`operating.ts`, `runner/step.ts`). A name this build does not
+    // have is a different mistake from a run it will not start, and says so.
+    const declared = findStage(paths, stage)
+    if (!declared) {
+      return c.json(
+        {
+          error:
+            `This build has no stage called “${stage}”. A stage is TypeScript in the ` +
+            'catalogue, never a row (the Archon rule) — the ones it has are: ' +
+            `${stageNames(paths).join(', ')}.`,
+        },
+        404,
+      )
+    }
+
+    const blocked = launchBlockedBecause(store, operating.readiness(), episodeId, declared)
     if (blocked) return c.json({ error: blocked }, 409)
 
     try {
@@ -195,6 +214,19 @@ export function createApp(
       )
     }
     return rule(c, () => operating.rulings.reject(c.req.param('id'), { notes }))
+  })
+
+  /**
+   * The check bench for one episode (E3-7): what the checks said, at the spans they said it
+   * about, with the three remediation buttons behind each finding and D12's wall in words.
+   *
+   * A GET, and it runs nothing — the whole bench is a read over rows six issues already wrote
+   * (`check-bench.ts`). Opening it costs nothing, which is invariant 5 at page-load scale.
+   */
+  app.get('/api/checks/:episodeId', (c) => {
+    const view = checkBenchView(store, paths, c.req.param('episodeId'), operating.readiness())
+    if (!view) return c.json({ error: `No such episode: ${c.req.param('episodeId')}` }, 404)
+    return c.json(view)
   })
 
   // ── The remediations behind a finding (E3-5) ──────────────────────────────────
@@ -563,6 +595,9 @@ export function createApp(
 
   return app
 }
+
+/** The stages this build has, for the refusal that names them when a request asks for one it does not. */
+const stageNames = (paths: LibraryPaths): string[] => Object.keys(stageCatalogue(paths))
 
 /** A body that is absent, empty, or not JSON is an empty body, not a crash. */
 async function json(request: Request): Promise<Record<string, unknown>> {

@@ -12,7 +12,8 @@ import {
   waitingOn,
 } from './run.ts'
 import { createRunner } from './runner.ts'
-import { pauseRun, type LockName, type Step, type StageCatalogue } from './step.ts'
+import { pauseRun, type LockName, type Stage, type Step, type StageCatalogue } from './step.ts'
+import { scaffoldStage } from './stage-fixture.ts'
 
 /**
  * The runner, proven against the sentences the floor and the episode room have to say
@@ -362,11 +363,11 @@ function held(name: string, log: string[], lock?: LockName) {
   return { step, release: () => finish.resolve() }
 }
 
-function stage(name: string, ...steps: Step[]) {
-  return { name, steps }
+function stage(name: string, ...steps: Step[]): Stage {
+  return scaffoldStage(name, steps)
 }
 
-function catalogue(...stages: { name: string; steps: Step[] }[]): StageCatalogue {
+function catalogue(...stages: Stage[]): StageCatalogue {
   return Object.fromEntries(stages.map((s) => [s.name, s]))
 }
 
