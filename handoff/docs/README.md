@@ -166,6 +166,70 @@ The bench renders rulings from the ledger, not events (ruled). The schema doc's 
 are drift-proofed by tests — its example pack parses, founds, and pins the vocabularies
 the app enforces.
 
+## What E3 built, and where
+
+Same purpose again: which module an E4+ issue extends rather than rebuilds. Everything
+below is tested, and the exit was operated on real money (Aug 9: $1.32 against ~$1.60
+projected, failed calls priced honestly).
+
+**Findings, passes, and the third thing** (`0010`, `0012`; `domain/finding.ts`). A
+finding is a record, never state — status derives from its disposition, and
+`recordCheckPass` is the only write path, so a zero-findings reading leaves its row
+(D11's denominator). `check_pass_fact` records what a pass was handed — "loaded and not
+cited" is how a silence becomes a measurement. `check_gap` is the third thing a check
+can say: could-not-look, neither silence nor finding, kept out of both. `cleared` was
+ruled OUT as a disposition and the header says why; `FINDING_DISPOSITION` is
+`['dismissed']`.
+
+**The deterministic tier** (`0011`; `domain/board.ts`, `board-rules.ts`,
+`runner/board-step.ts`). Extraction is one paid reading of the whole script; the rules
+then read rows for free, answer `certain`, and are the only findings allowed to block
+anything (D12).
+
+**The generic checker** (`domain/text-check.ts`, `runner/text-check-step.ts`).
+Parameterized by `canon_category.check_instructions` — category checks, waypoint-drift
+checks (D8), and craft reviewers all flow through one `CheckSubject` composer and one
+parser. Nothing trusts the model: quotes must resolve to real spans, cited facts must be
+in scope, and a reply nobody can parse **fails the step** — it is never a clean pass.
+The tier is retry-atomic, deliberately: there is no half a verdict board
+(`text-check-step.ts`'s header carries the argument and its price).
+
+**Panels** (`domain/panel.ts`). The roster is decided by declarations (3.2) plus
+story-craft as mandatory equipment nobody can configure away (D13). Findings cluster by
+span *overlap* within a scene, never by exact quote match. The verdict board is a READ —
+`partial`, `stale`, and `unread` are verdicts precisely so a narrow or outdated reading
+never renders as a clean one.
+
+**The correction loop** (`runner/correction-loop.ts`). Produce → check, three drafts,
+every attempt kept, then Ryan — non-convergence is his turn, not a failure. Transport
+retry and correction retry are different counters, never merged. The gate payload
+carries the loop history and the gaps.
+
+**The wall** (`runner/stage-wall.ts`; `runner/gate.ts` → `overriddenVersions`).
+Computed, never stored: open deterministic findings at the artifact's current version,
+minus what Ryan's rulings reach. An override is version-scoped (it does not survive a
+rewrite); a standing dismissal is concern-scoped and reaches byte-identical twins
+(`domain/concern.ts`). Stages declare their spend and their work
+(`Stage.offerOn` → sentence, cost, `callsModel`, `reads`/`produces`) — the adapter
+refuses only spenders, the wall stands only before producers, and no stage name appears
+in any refusal.
+
+**Remediations** (`remediation.ts`). The three buttons behind a finding: pre-draft +
+apply (the apply is ONE motion — revise, then the free tier re-reads before it
+returns), propose-the-canon-change (raises, never rules), dismiss-with-note. The
+scene-scoped re-check narrows to the touched scene (D14) against spans resolved over
+every scene. The context reader feeds dismissal notes into later runs' prompts (4.4) —
+one record, many readers; E4's writer calls the same reader.
+
+**Cried-wolf** (`domain/concern.ts` + the record on the bench). Identity is byte-exact
+(check + artifact + scene + span + entity + cited facts + words). The ratio counts ruled
+concerns over readings; abstentions sit in neither side; the tune sentence asks and
+nothing ever acts on it.
+
+**Surfaces** (`check-bench.ts` behind `/api/checks/:episodeId`; `script-gate`;
+`POST /api/gate/:id/override`; the bench's add-a-fact route from #39). The bench renders
+every record kind above, unstyled — E5 restyles, it does not re-derive.
+
 ## Constraints E1 leaves behind
 
 Decisions one epic made that bind a later one. Each was correct where it was made and
@@ -349,6 +413,59 @@ arc sheet carries no subject (the E2-3 constraint above). Supplying one from a l
 put a claim in the fixture nobody decided. **E4's writer step answers it**; if the fixture
 should carry a landing before then, the honest change is a `subject` field on the arc sheet
 and a `read.ts` that requires it.
+
+## Constraints E3 leaves behind
+
+Decisions E3 made that are correct where they were made and a trap somewhere else —
+the same list one epic further on.
+
+### Every new artifact version must be read before the wall can trust it (E3-5, #45)
+
+The D12 wall counts deterministic findings at the artifact's **current** version, and
+the reason a rewrite can't clear it by merely landing is that `remediation.ts`'s apply
+is one motion: revise, then the free tier re-reads, *then* return — `check_pass` at the
+new version is the receipt. **E4 builds direct editing and a writer that produces
+scripts**; any new path that writes an artifact version must go through that same
+motion (or its equivalent), because a version nobody has read looks identical to a
+version read clean, and the wall cannot tell the difference from findings alone. The
+three-kinds-of-nothing rule, at the artifact layer.
+
+### The check tier is retry-atomic, and the loop's resume depends on it (E3-2/E3-4, #44)
+
+The correction loop decides "has this draft been read" by "a pass exists at this
+version" (`correction-loop.ts`). That predicate is honest ONLY because the tier records
+all-or-nothing — `text-check-step.ts`'s header carries the full argument and the price
+(ten reviewers, one garbage reply, three attempts = thirty calls, per round). An E4
+stage that composes produce → check inherits both: do not split the panel into steps,
+and do not make the loop smarter about partial passes — either move re-opens a resumed
+loop skipping a panel three reviewers never finished.
+
+### An override and a dismissal are different verbs at every layer (E3-3/E3-6)
+
+An override is Ryan's opinion of **one draft** (version-scoped; the wall comes back at
+v+1). A dismissal is his opinion of **one concern** (identity-scoped; it reaches
+byte-identical twins forever). The E3 drill operated both on the same findings. Any E4+
+surface that renders them as one "approve anyway" button, or any query that counts them
+interchangeably outside cried-wolf's explicit both-count rule, breaks a distinction two
+separate rulings created on purpose.
+
+### `script-gate` exists for the override door, and E4 decides its fate (E3-7, #47)
+
+The override verb needs an open gate on the artifact the finding stands in, and until
+E3-7 nothing ever opened a gate over a script — so `script-gate` is a zero-spend,
+never-walled stage whose whole job is convening Ryan. **E4's real writing gates
+supersede the need.** When outline/script gates exist, decide deliberately: retire
+`script-gate`, or keep it as the re-present-for-ruling affordance. Leaving it
+unexamined means two gates over one artifact with different payloads.
+
+### New stages declare, refusals consult (E3-7, #47)
+
+`Stage.offerOn` is the single source of the button sentence, the cost, `callsModel`,
+and `reads`/`produces`. Every stage E4 adds must declare all four; nothing may
+special-case a stage name in `launchBlockedBecause` or anywhere else. The board-step
+header's "Nothing to call" defect was exactly the cost of one stage that broke the
+assumption behind a global refusal — the declaration exists so the next new stage
+cannot repeat it.
 
 ## Working agreements that bind every session
 

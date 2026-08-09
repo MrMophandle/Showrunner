@@ -290,7 +290,8 @@ done-condition. Repo CLAUDE.md carries the invariants. Fixtures before features
   operated end-to-end incl. kill-and-resume.
   → **DONE, Aug 5 2026.** Issues #1–#9 merged, and the exit was operated rather than
   simulated: a run survived `SIGKILL` with its gate open and finished on one model call.
-  The drill is in the root `README.md`; what it built is mapped in `docs/README.md`.
+  The drill is retired to git history (the root `README.md` carries only the current
+  epic's); what it built is mapped in `docs/README.md`.
 - **E2 · Canon** — entities, categories, proposals, ratification, point-in-time,
   arcs/waypoints, schema doc. Ends: create entity, rule a proposal, query "canon as of."
   → **DONE, Aug 7 2026.** Issues #23–#29 merged, D25 ruled (canon founded by proposals,
@@ -305,6 +306,22 @@ done-condition. Repo CLAUDE.md carries the invariants. Fixtures before features
 - **E3 · Checks** — generic checker, findings, continuity board + deterministic
   checks, correction loop, panels + story-craft, cried-wolf tracking. Ends: planted
   contradiction produces an anchored finding whose rewrite remediation fixes it.
+  → **DONE, Aug 9 2026.** Issues #40–#47 and #39 merged, and the exit operated: Ryan
+  ran the ep01 checks from the bench ($1.32 real against ~$1.60 projected, failed
+  calls priced honestly), watched both planted contradictions surface — the board's
+  dual presence and the vacuum violation, semantically twinned by world-rules quoting
+  the Halvani fact through its species edge (D22 working end to end) — then took the
+  D12 wall down through both doors: an override recorded at the gate, and dismissals
+  whose standing rulings visibly reached the identical twins a later free re-run
+  raised (the E3-6 identity ruling, operated).
+  → **Scope grew (rulings made in-epic, recorded in the code they govern):** stages
+  declare their spend and their work (`reads`/`produces`) — the wall stands only
+  before producers, the adapter refuses only spenders; finding identity is byte-exact
+  and a standing dismissal reaches an identical twin (wall stays down) while an
+  override is version-scoped and does not survive a rewrite; `cleared` was ruled OUT
+  as a disposition — clearing is computed; the check tier is retry-atomic (there is
+  no half a verdict board); a pass records what it was handed (`check_pass_fact`),
+  and "could not check" is a third record (`check_gap`), neither silence nor finding.
 - **E4 · The writing line** — premise → outline → script with scene delineation,
   writer context assembly, outline/script gates, direct editing + staleness. Ends:
   full fixture episode written incl. a rejection round-trip.
