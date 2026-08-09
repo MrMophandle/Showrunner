@@ -12,7 +12,8 @@ import { episodeInShow, episodeLabel, type EpisodeInShow } from '../domain/spine
 import { writeIfAbsent, type LibraryPaths } from '../library.ts'
 import type { LLMEffort } from '../llm/adapter.ts'
 import { boardStages } from './board-step.ts'
-import type { Stage, StageCatalogue, Step, StepContext } from './step.ts'
+import { scriptGateStages } from './script-gate-step.ts'
+import type { Stage, StageCatalogue, StageOffer, Step, StepContext } from './step.ts'
 import { textCheckStages } from './text-check-step.ts'
 
 /**
@@ -107,17 +108,36 @@ export function stageCatalogue(library: LibraryPaths): StageCatalogue {
   // one verdict board (4.5) — which changed what one run of the stage convenes and not what
   // the stage is. The deterministic rules stay on their own free stage above; the board
   // reads them where they stand rather than paying to re-run them.
+  //
+  // `script-gate` is E3-7's, and it is the only stage here that produces nothing at all: it
+  // presents what stands for Ryan's ruling. It exists because the wall has three doors and
+  // one of them is a gate (D12) — without a gate over the script there is no override to take
+  // and the door is a route only a test can walk.
   return {
     [DEMO_STAGE]: demoStage(library),
     ...boardStages(library),
     ...textCheckStages(library),
+    ...scriptGateStages(),
   }
 }
 
 function demoStage(library: LibraryPaths): Stage {
   return {
     name: DEMO_STAGE,
+    // It writes a premise-brief out of the episode's own identity, which is what makes it the
+    // one stage in this build that D12's wall stands in front of (step.ts, `STAGE_WORK`).
+    work: 'produces',
     steps: [writeTheDemoPremise(library), tallyTheDemoSpend()],
+    offerOn: (_store, episode): StageOffer => ({
+      sentence:
+        `Write the ${episodeLabel(episode.number)} demo premise and present it for your ` +
+        `ruling — “${episode.title}”, one call, one gate`,
+      cost: DEMO_CALL.sentence,
+      callsModel: true,
+      // An episode is all it needs — there is no artifact to be missing and no board to be
+      // unbuilt. The demo is the one stage that can always be run on anything.
+      nothingToDoBecause: null,
+    }),
   }
 }
 

@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { FREE, proposeFactChange } from './canon-bench.ts'
-import { projectLLMCost, type CostProjection } from './cost.ts'
+import { proposeFactChange } from './canon-bench.ts'
+import { FREE, projectLLMCost, type CostProjection } from './cost.ts'
 import type { Store } from './db/store.ts'
 import {
   findArtifact,
@@ -845,6 +845,42 @@ export function recheckProjection(
 function nothingToCall(llm: LLMReadiness | undefined): string | null {
   if (!llm || llm.ready) return null
   return `Nothing to call. ${llm.label} was chosen (${llm.chosenBy}) — ${llm.sentence}`
+}
+
+/** One scene with a question outstanding, and the button that would answer it. */
+export interface RecheckOnTheBench {
+  sceneId: string
+  /** As the episode numbers it. */
+  scene: number
+  offer: Offer
+}
+
+/**
+ * **Every scene of this artifact a re-check is owed on** — the ones carrying still-open text
+ * findings raised against a draft this artifact has moved past.
+ *
+ * It is a list per SCENE and not per finding, and that is D14 rather than a convenience: what
+ * narrows is the text, so one call answers every finding anchored in that scene at once, and a
+ * button behind each finding would offer to buy the same reading three times.
+ *
+ * The check bench (E3-7) renders these. It cannot get them off the finding cards, because
+ * those are the findings standing against the CURRENT draft — a finding awaiting a re-check is
+ * by definition one the current draft has moved past, so it has already left the cards. That
+ * is the correct behaviour and the reason this reader exists: without it, a rewrite would make
+ * the finding it answered disappear along with the button that proves it was answered.
+ */
+export function recheckOffers(
+  store: Store,
+  artifact: Artifact,
+  llm?: LLMReadiness,
+): RecheckOnTheBench[] {
+  return scenesOf(store, artifact.episodeId)
+    .filter((scene) => outstandingIn(store, artifact, scene).findings.length > 0)
+    .map((scene) => ({
+      sceneId: scene.id,
+      scene: scene.ordinal,
+      offer: recheckOffer(store, artifact, scene, llm),
+    }))
 }
 
 function recheckOffer(

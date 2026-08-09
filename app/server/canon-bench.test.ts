@@ -5,12 +5,12 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   BENCH_REFUSALS,
   canonBenchView,
-  FREE,
   promoteCandidate,
   proposeFactChange,
   proposeNewFact,
   registerAndPropose,
 } from './canon-bench.ts'
+import { FREE } from './cost.ts'
 import type { Store } from './db/store.ts'
 import { findEntity } from './domain/canon.ts'
 import { canonAsOf, factsOfEntity } from './domain/fact.ts'

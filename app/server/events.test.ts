@@ -12,6 +12,7 @@ import {
   type EventLog,
 } from './events.ts'
 import { recordRun } from './runner/run.ts'
+import { scaffoldStage } from './runner/stage-fixture.ts'
 
 /**
  * The event log itself: ordering, append-only, and replay.
@@ -32,7 +33,7 @@ beforeEach(() => {
   const show = createShow(store, { key: 'greyharbor', title: 'Grey Harbor' })
   const season = createSeason(store, { showId: show.id, number: 1 })
   episodeId = createEpisode(store, { seasonId: season.id, number: 5, title: 'The Quiet Deck' }).id
-  runId = recordRun(store, { name: 'produce', steps: [] }, episodeId).id
+  runId = recordRun(store, scaffoldStage('produce', []), episodeId).id
 })
 
 /** A `NewEvent` with the boilerplate filled in — every test here is about the rest. */
@@ -169,7 +170,7 @@ describe('the event log — subscribers', () => {
 
 describe('the event log — replay', () => {
   it('answers "everything about run X, in order", and its transitions alone', () => {
-    const other = recordRun(store, { name: 'write', steps: [] }, episodeId).id
+    const other = recordRun(store, scaffoldStage('write', []), episodeId).id
 
     log.append(about('run-queued'))
     log.append(about('run-started'))

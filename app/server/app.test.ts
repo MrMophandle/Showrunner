@@ -4,15 +4,19 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { createApp } from './app.ts'
 import type { CanonBenchView } from './canon-bench.ts'
+import type { CheckBenchView } from './check-bench.ts'
 import type { Store } from './db/store.ts'
+import { artifactsOf } from './domain/artifact.ts'
+import { recordExtractedBoard } from './domain/board.ts'
 import { findingsIn, recordCheckPass } from './domain/finding.ts'
-import { episodesOf, seasonsOf } from './domain/spine.ts'
+import { episodesOf, scenesOf, seasonsOf } from './domain/spine.ts'
 import { createEventLog, type EventLog } from './events.ts'
 import { loadFixture } from './fixture/load.ts'
 import { initLibrary, openLibraryStore, type LibraryPaths } from './library.ts'
 import { describeLLMBackend, type LLMReadiness } from './llm/choose.ts'
 import { createFakeLLM, type FakeLLM } from './llm/fake.ts'
 import type { RunView } from './operating.ts'
+import { BOARD_CHECK_STAGE, BOARD_STAGE } from './runner/board-step.ts'
 import { createRulings, openGates } from './runner/gate.ts'
 import { createRunner, type Runner } from './runner/runner.ts'
 import { DEMO_STAGE, stageCatalogue } from './runner/stages.ts'
@@ -140,6 +144,93 @@ describe('the app process — launching a run', () => {
     const nothing = await post<{ error: string }>('/api/run', {})
     expect(nothing.status).toBe(400)
     expect(nothing.body.error).toContain('episodeId and a stage')
+  })
+
+  it('says which stages it has when asked for one it does not', async () => {
+    const missing = await post<{ error: string }>('/api/run', {
+      episodeId: ep02,
+      stage: 'produce-shot-images',
+    })
+
+    // A stage this build does not have is a different mistake from a run it will not start,
+    // and it answers as one. The catalogue is TypeScript, so the list is the truth.
+    expect(missing.status).toBe(404)
+    expect(missing.body.error).toContain('no stage called “produce-shot-images”')
+    expect(missing.body.error).toContain('continuity-board-checks')
+    expect(missing.body.error).toContain('the Archon rule')
+  })
+
+  /**
+   * The defect E3-1 found and deferred to E3-7, through the wire it actually matters on: a
+   * stage that declares zero spend runs on a process with nothing behind the adapter.
+   */
+  it('starts a stage that declares no model call with no backend configured at all', async () => {
+    readiness = NOTHING
+    // ep01 has the fixture script and a board is what the free tier reads; build one the way
+    // the rules will find it, without a model.
+    const ep01 = episodesOf(store, seasonsOf(store, showId)[0]!.id).find((e) => e.number === 1)!.id
+    const script = artifactsOf(store, ep01).find((artifact) => artifact.kind === 'script')!
+    recordExtractedBoard(store, {
+      episodeId: ep01,
+      scriptId: script.id,
+      // Every scene the script has, because a grid with a hole in it is refused (`board.ts`).
+      // Flat and inside: what is under test here is the refusal in front of the button, not
+      // what the rules make of the rows.
+      extraction: {
+        scenes: scenesOf(store, ep01).map((scene) => ({
+          scene: scene.ordinal,
+          location: scene.heading,
+          environment: 'inside' as const,
+          elapsed: '',
+          elapsedSeconds: null,
+          present: [],
+        })),
+        transits: [],
+        hazards: [],
+      },
+      filePath: 'greyharbor/s01e01/continuity-board-v1.md',
+    })
+
+    const started = await post<{ runId: string }>('/api/run', {
+      episodeId: ep01,
+      stage: BOARD_CHECK_STAGE,
+    })
+
+    expect(started.status).toBe(201)
+    const settled = await runner.settled(started.body.runId)
+    expect(settled.status).toBe('done')
+    expect(llm.calls).toHaveLength(0)
+
+    // Its paid sibling on the same episode is refused, with the adapter's own sentence. That
+    // asymmetry is the whole fix: a declaration, not an exemption list.
+    const paid = await post<{ error: string }>('/api/run', { episodeId: ep01, stage: BOARD_STAGE })
+    expect(paid.status).toBe(409)
+    expect(paid.body.error).toContain('Nothing to call')
+  })
+})
+
+describe('the app process — the check bench', () => {
+  it('answers with the bench for one episode, and runs nothing doing it', async () => {
+    const ep01 = episodesOf(store, seasonsOf(store, showId)[0]!.id).find((e) => e.number === 1)!.id
+
+    const bench = await get<CheckBenchView>(`/api/checks/${ep01}`)
+
+    expect(bench.label).toBe('ep01')
+    expect(bench.artifact.kind).toBe('script')
+    // The script itself, off the volume — the bench renders the artifact, never a filename.
+    expect(bench.artifact.text).toContain('The mess deck is warm')
+    // A GET starts nothing (invariant 5), and reading this page costs nothing.
+    expect(store.get<{ n: number }>('SELECT COUNT(*) AS n FROM run')!.n).toBe(0)
+    expect(llm.calls).toHaveLength(0)
+    // One button per stage that reads, each with the stage it starts on it, so the browser
+    // never holds its own copy of a stage name.
+    expect(bench.runs.map((one) => one.stage)).toContain(BOARD_CHECK_STAGE)
+  })
+
+  it('404s for an episode that is not in this library', async () => {
+    const missing = await app.request('/api/checks/ep_nope')
+    expect(missing.status).toBe(404)
+    expect(await missing.json()).toMatchObject({ error: 'No such episode: ep_nope' })
   })
 })
 

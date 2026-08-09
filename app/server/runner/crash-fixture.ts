@@ -5,6 +5,7 @@ import { openStore } from '../db/store.ts'
 import { createEpisode, createSeason, createShow } from '../domain/spine.ts'
 import { createRunner } from './runner.ts'
 import type { Step, StageCatalogue } from './step.ts'
+import { scaffoldStage } from './stage-fixture.ts'
 
 /**
  * The other half of `crash.test.ts`: a real Showrunner process, run twice against one
@@ -69,10 +70,11 @@ const assemble: Step = {
 }
 
 const STAGES: StageCatalogue = {
-  'produce-shot-images': {
-    name: 'produce-shot-images',
-    steps: [buildShotManifest, generateShots, assemble],
-  },
+  'produce-shot-images': scaffoldStage('produce-shot-images', [
+    buildShotManifest,
+    generateShots,
+    assemble,
+  ]),
 }
 
 const store = openStore(databaseFile)

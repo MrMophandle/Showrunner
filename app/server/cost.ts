@@ -473,6 +473,17 @@ export function money(microDollars: number): string {
 }
 
 /**
+ * The cost sentence for an act that cannot spend a cent, said rather than left to inference.
+ *
+ * It lives here, beside the projections, because it is the same field on the same button: a
+ * screen that printed a projection for the paid acts and nothing for the free ones would make
+ * "$0.00" a thing Ryan infers from silence, which is the one reading a cost line may never
+ * ask for. Its readers are the canon bench (E2-6), the remediations (E3-5) and the stages
+ * that declare zero spend (E3-7), and one string is what keeps them from drifting into three.
+ */
+export const FREE = 'No model call · $0.00'
+
+/**
  * What was actually spent, in one sentence — "2 Opus calls, $0.02" is the projection's
  * job; this is the ledger's, after the fact.
  *

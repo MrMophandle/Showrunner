@@ -8,6 +8,7 @@ import { createRulings, gateOfStep, gateStanding, openGates, type GateNote } fro
 import { findRun } from './run.ts'
 import { createRunner, type Runner } from './runner.ts'
 import type { StageCatalogue, Step, StepContext } from './step.ts'
+import { scaffoldStage } from './stage-fixture.ts'
 
 /**
  * The gate primitive, proved against the sentences the gate room has to say
@@ -356,7 +357,7 @@ describe('the gate — misuse the runner has to catch', () => {
         return { script: 'v1' }
       },
     }
-    const { runner } = wire({ write: { name: 'write', steps: [swallowing] } })
+    const { runner } = wire({ write: scaffoldStage('write', [swallowing]) })
 
     const run = runner.enqueueRun({ episodeId: ep06, stage: 'write' })
     await runner.settled(run.id)
@@ -442,7 +443,7 @@ function writerStage(episodeId: string, stageName = 'write', lock?: 'gpu' | 'ima
   }
 
   return {
-    stages: { [stageName]: { name: stageName, steps: [step] } } as StageCatalogue,
+    stages: { [stageName]: scaffoldStage(stageName, [step]) } as StageCatalogue,
     log,
     notesSeen,
     routingSeen,

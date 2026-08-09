@@ -17,6 +17,7 @@ import { createRulings, presentForRuling } from './runner/gate.ts'
 import { findStepByName, reconcileSteps, recordRun } from './runner/run.ts'
 import type { Runner } from './runner/runner.ts'
 import type { Stage } from './runner/step.ts'
+import { scaffoldStage } from './runner/stage-fixture.ts'
 
 /**
  * **D11's cried-wolf tracking: a query and a sentence, over rows that already exist.**
@@ -83,7 +84,9 @@ function read(checkKey: string, draft: Partial<CheckPassDraft> = {}): string[] {
 
 /** A gate on one artifact, ruled as an explicit override of the draft under review. */
 function overrideAt(artifact: Artifact): void {
-  const stage: Stage = { name: 'write', steps: [{ name: `write-${artifact.kind}`, execute: async () => ({}) }] }
+  const stage: Stage = scaffoldStage('write', [
+    { name: `write-${artifact.kind}`, execute: async () => ({}) },
+  ])
   const run = recordRun(store, stage, episodeId)
   reconcileSteps(store, run.id, stage)
   const step = findStepByName(store, run.id, `write-${artifact.kind}`)!

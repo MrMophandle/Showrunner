@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { projectLLMCost, type CostProjection } from '../cost.ts'
+import { FREE, projectLLMCost, type CostProjection } from '../cost.ts'
 import type { Store } from '../db/store.ts'
 import { artifactsOf, type Artifact, type ArtifactKind } from '../domain/artifact.ts'
 import { dismissalNotes, type CheckPass } from '../domain/finding.ts'
@@ -10,12 +10,14 @@ import {
   composeTextCheck,
   readTextCheckReply,
   recordTextCheck,
+  WAYPOINT_CHECK_KEY,
+  type CheckSubject,
   type ComposedCheck,
   type PriorNote,
 } from '../domain/text-check.ts'
 import type { LibraryPaths } from '../library.ts'
 import type { LLMEffort } from '../llm/adapter.ts'
-import type { Stage, StageCatalogue, Step, StepContext } from './step.ts'
+import type { Stage, StageCatalogue, StageOffer, Step, StepContext } from './step.ts'
 
 /**
  * Convening a panel over one artifact, as a step (2.2, 4.1, 4.5) — **the semantic tier's paid
@@ -200,8 +202,78 @@ export function textCheckStages(library: LibraryPaths): StageCatalogue {
 }
 
 function textCheckStage(library: LibraryPaths): Stage {
-  return { name: TEXT_CHECK_STAGE, steps: [checkTextAgainstCanon(library, TEXT_CHECK_KIND)] }
+  return {
+    name: TEXT_CHECK_STAGE,
+    // It reads the script and records what the panel said (step.ts, `STAGE_WORK`). D12's wall
+    // does not stand in front of it: a reading is how a contradiction gets answered, not
+    // something built on top of one.
+    work: 'reads',
+    steps: [checkTextAgainstCanon(library, TEXT_CHECK_KIND)],
+    offerOn: (store, episode): StageOffer => {
+      const label = episodeLabel(episode.number)
+      const artifact = artifactOf(store, episode.id, TEXT_CHECK_KIND)
+      if (!artifact) {
+        return {
+          sentence: `Convene the panel over the ${label} ${TEXT_CHECK_KIND}`,
+          cost: FREE,
+          callsModel: false,
+          nothingToDoBecause: noArtifactBecause(label, TEXT_CHECK_KIND),
+        }
+      }
+
+      // The roster, counted as Ryan reads it: the categories that argue with canon, the arc
+      // positions the episode declared, and the reviewers that read it as craft (D13). Three
+      // different kinds of reading, and a button that said "10 reviewers" would hide which.
+      const roster = panelFor(store, artifact)
+      const projection = panelProjection(store, artifact)
+      return {
+        sentence:
+          `Check the ${label} ${TEXT_CHECK_KIND} v${artifact.version} — ` +
+          `${rosterSentence(roster)} read it, ${projection.sentence}`,
+        cost: projection.cost.sentence,
+        // Every convened reviewer is a call. There is no free half of this tier and there is
+        // deliberately no free sibling stage: a board rule re-reads rows, a category check
+        // re-reads a script.
+        callsModel: roster.length > 0,
+        nothingToDoBecause:
+          roster.length === 0
+            ? `Nothing convenes over the ${label} ${TEXT_CHECK_KIND}: it declares no canon in ` +
+              'scope, its episode declares no arc position, and nothing reads this kind as ' +
+              'craft. That is a vanilla artifact, not a failure (4.1) — and not a clean ' +
+              'reading either.'
+            : null,
+      }
+    },
+  }
 }
+
+/**
+ * "6 category checks, 1 arc position and 3 craft reviewers" — the roster in the words 4.5
+ * convenes it with.
+ *
+ * Told apart by what each one is handed rather than by a kind column: a craft reviewer is the
+ * one given no canon at all (`readsCanon: false`, D13), and an arc position is the one whose
+ * key is the waypoint check's. That is the same three-way composition `panelFor` makes, read
+ * back out of it — a fourth field naming the kind would be a second place for it to be wrong.
+ */
+function rosterSentence(roster: readonly CheckSubject[]): string {
+  const craft = roster.filter((subject) => subject.readsCanon === false).length
+  const arcs = roster.filter(
+    (subject) => subject.readsCanon !== false && subject.key === WAYPOINT_CHECK_KEY,
+  ).length
+  const categories = roster.length - craft - arcs
+  const parts = [
+    categories > 0 ? `${categories} category check${plural(categories)}` : '',
+    arcs > 0 ? `${arcs} arc position${plural(arcs)}` : '',
+    craft > 0 ? `${craft} craft reviewer${plural(craft)}` : '',
+  ].filter((part) => part !== '')
+
+  if (parts.length === 0) return 'nobody'
+  if (parts.length === 1) return parts[0]!
+  return `${parts.slice(0, -1).join(', ')} and ${parts.at(-1)}`
+}
+
+const plural = (count: number): string => (count === 1 ? '' : 's')
 
 /**
  * Convenes the panel over one artifact: every reviewer, one call each, one transaction.
@@ -351,20 +423,30 @@ function requireEpisode(store: Store, episodeId: string): EpisodeInShow {
   return where
 }
 
+/** The episode's artifact of this kind, or undefined when there is none on the volume. */
+export function artifactOf(
+  store: Store,
+  episodeId: string,
+  kind: ArtifactKind,
+): Artifact | undefined {
+  const artifact = artifactsOf(store, episodeId).find(
+    (candidate) => candidate.kind === kind && candidate.slot === '',
+  )
+  return artifact?.filePath ? artifact : undefined
+}
+
+/** One sentence, two readers — the disabled button states it, the step throws it. */
+export const noArtifactBecause = (label: string, kind: ArtifactKind): string =>
+  `${label} has no ${kind} to check. Checks fire at artifact boundaries and never ` +
+  'continuously (4.1) — there is no boundary here yet.'
+
 function requireArtifact(
   store: Store,
   episodeId: string,
   kind: ArtifactKind,
   label: string,
 ): Artifact {
-  const artifact = artifactsOf(store, episodeId).find(
-    (candidate) => candidate.kind === kind && candidate.slot === '',
-  )
-  if (!artifact?.filePath) {
-    throw new Error(
-      `${label} has no ${kind} to check. Checks fire at artifact boundaries and never ` +
-        'continuously (4.1) — there is no boundary here yet.',
-    )
-  }
+  const artifact = artifactOf(store, episodeId, kind)
+  if (!artifact) throw new Error(noArtifactBecause(label, kind))
   return artifact
 }

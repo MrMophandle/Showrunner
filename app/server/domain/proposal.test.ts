@@ -29,6 +29,7 @@ import {
 } from './proposal.ts'
 import { relate, relationsFrom, UNKNOWN_TARGET } from './relation.ts'
 import { createEpisode, createSeason, createShow, type Episode } from './spine.ts'
+import { scaffoldStage } from '../runner/stage-fixture.ts'
 
 let store: Store
 let events: EventLog
@@ -476,7 +477,9 @@ describe('a ruling convened at a gate (E1-5)', () => {
   /** A run parked on the ep06 script gate, which is where the writer raised the proposal. */
   function gateOnEp06(harbor: Harbor): { gateId: string; runId: string } {
     const episodeId = harbor.episodes[5]!.id
-    const stage: Stage = { name: 'write', steps: [{ name: 'write-script', execute: async () => ({}) }] }
+    const stage: Stage = scaffoldStage('write', [
+      { name: 'write-script', execute: async () => ({}) },
+    ])
     const run = recordRun(store, stage, episodeId)
     reconcileSteps(store, run.id, stage)
     const step = findStepByName(store, run.id, 'write-script')!

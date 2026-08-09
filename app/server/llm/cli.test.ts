@@ -6,6 +6,7 @@ import { createEpisode, createSeason, createShow } from '../domain/spine.ts'
 import { findStepByName, recordRun } from '../runner/run.ts'
 import { sentenceChunker, type CallSite } from './adapter.ts'
 import { claudeArgv, createClaudeCliAdapter, newTranscript, readCliLine } from './cli.ts'
+import { scaffoldStage } from '../runner/stage-fixture.ts'
 
 /**
  * The `claude` CLI backend: the argv it builds, the JSONL it reads, and the whole
@@ -28,7 +29,7 @@ beforeEach(() => {
   const episodeId = createEpisode(store, { seasonId: season.id, number: 7, title: 'Salt' }).id
   runId = recordRun(
     store,
-    { name: 'write', steps: [{ name: 'outline', execute: async () => undefined }] },
+    scaffoldStage('write', [{ name: 'outline', execute: async () => undefined }]),
     episodeId,
   ).id
   stepId = findStepByName(store, runId, 'outline')!.id

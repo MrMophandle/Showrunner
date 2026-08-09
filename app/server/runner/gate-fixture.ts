@@ -8,6 +8,7 @@ import { createEventLog } from '../events.ts'
 import { createRulings, gateOfStep, gateStanding, openGates } from './gate.ts'
 import { reclaimAfterCrash } from './run.ts'
 import { createRunner } from './runner.ts'
+import { scaffoldStage } from './stage-fixture.ts'
 import type { Step, StageCatalogue } from './step.ts'
 
 /**
@@ -83,7 +84,7 @@ const publish: Step = {
 }
 
 const STAGES: StageCatalogue = {
-  write: { name: 'write', steps: [writeScript, publish] },
+  write: scaffoldStage('write', [writeScript, publish]),
 }
 
 if (phase === 'start') {
