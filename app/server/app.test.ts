@@ -19,7 +19,8 @@ import type { RunView } from './operating.ts'
 import { BOARD_CHECK_STAGE, BOARD_STAGE } from './runner/board-step.ts'
 import { createRulings, openGates } from './runner/gate.ts'
 import { createRunner, type Runner } from './runner/runner.ts'
-import { DEMO_STAGE, stageCatalogue } from './runner/stages.ts'
+import { stageCatalogue } from './runner/stages.ts'
+import { PREMISE_STAGE } from './runner/write-step.ts'
 
 /**
  * The API the operating page talks to, end to end: Ryan clicks, a run starts, a gate
@@ -77,6 +78,21 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true })
 })
 
+const WRITTEN = 'The exchanger fails on a Tuesday.'
+
+/**
+ * One whole round of the premise stage, scripted: the draft, then the panel it convenes.
+ *
+ * The fixture is LOADED and not founded here, so every entity is still a candidate with no
+ * standing — the desk hands the writer nobody, the brief declares no provenance, and the
+ * panel is the two craft reviewers a premise-brief is read by whatever else is true (D13).
+ */
+function queueThePremise(text: string = WRITTEN): void {
+  llm.reply(text)
+  llm.reply('{"findings": []}')
+  llm.reply('{"findings": []}')
+}
+
 describe('the app process — health', () => {
   it('reports the library paths it will use', async () => {
     const body = await get<{ status: string; library: { databaseFile: string } }>('/api/health')
@@ -102,10 +118,10 @@ describe('the app process — health', () => {
 })
 
 describe('the app process — launching a run', () => {
-  it('starts the demo run Ryan clicked, and nothing else', async () => {
-    llm.reply('The exchanger fails on a Tuesday.')
+  it('starts the premise run Ryan clicked, and nothing else', async () => {
+    queueThePremise()
 
-    const started = await post<{ runId: string }>('/api/run', { episodeId: ep02, stage: DEMO_STAGE })
+    const started = await post<{ runId: string }>('/api/run', { episodeId: ep02, stage: PREMISE_STAGE })
     expect(started.status).toBe(201)
     await runner.settled(started.body.runId)
 
@@ -122,7 +138,7 @@ describe('the app process — launching a run', () => {
     )
     const onScreen = view.shows[0]!.episodes[1]!.launch.blockedBecause
 
-    const refused = await post<{ error: string }>('/api/run', { episodeId: ep02, stage: DEMO_STAGE })
+    const refused = await post<{ error: string }>('/api/run', { episodeId: ep02, stage: PREMISE_STAGE })
     expect(refused.status).toBe(409)
     // Not "similar" — the same sentence, out of the same composer. That is what stops a
     // precondition becoming a failure after the click.
@@ -131,11 +147,11 @@ describe('the app process — launching a run', () => {
   })
 
   it('refuses a second run on an episode that already has one', async () => {
-    llm.reply('The exchanger fails on a Tuesday.')
-    const first = await post<{ runId: string }>('/api/run', { episodeId: ep02, stage: DEMO_STAGE })
+    queueThePremise()
+    const first = await post<{ runId: string }>('/api/run', { episodeId: ep02, stage: PREMISE_STAGE })
     await runner.settled(first.body.runId)
 
-    const second = await post<{ error: string }>('/api/run', { episodeId: ep02, stage: DEMO_STAGE })
+    const second = await post<{ error: string }>('/api/run', { episodeId: ep02, stage: PREMISE_STAGE })
     expect(second.status).toBe(409)
     expect(second.body.error).toContain('One run per episode')
   })
@@ -236,8 +252,8 @@ describe('the app process — the check bench', () => {
 
 describe('the app process — ruling on a gate', () => {
   it('carries the run on and hands back the run as it now stands', async () => {
-    llm.reply('The exchanger fails on a Tuesday.')
-    const started = await post<{ runId: string }>('/api/run', { episodeId: ep02, stage: DEMO_STAGE })
+    queueThePremise()
+    const started = await post<{ runId: string }>('/api/run', { episodeId: ep02, stage: PREMISE_STAGE })
     await runner.settled(started.body.runId)
     const gateId = openGates(store)[0]!.gate.id
 
@@ -251,15 +267,16 @@ describe('the app process — ruling on a gate', () => {
     await runner.settled(started.body.runId)
     const after = await get<RunView>(`/api/run/${started.body.runId}`)
     expect(after.run.status).toBe('done')
-    expect(after.spend.sentence).toMatch(/^1 call · \$\d+\.\d\d$/)
-    // Nothing was re-run on the way back in: one call, one row, one draft on the volume.
-    expect(llm.calls).toHaveLength(1)
+    // The draft and the two reviewers that read it. Nothing was re-run on the way back in:
+    // no second draft, no second reading, no second row.
+    expect(after.spend.sentence).toMatch(/^3 calls · \$\d+\.\d\d$/)
+    expect(llm.calls).toHaveLength(3)
   })
 
   it('reopens the producing step on a rejection, with the notes', async () => {
-    llm.reply('The exchanger fails on a Tuesday.')
-    llm.reply('Nobody will say whose fault the exchanger is.')
-    const started = await post<{ runId: string }>('/api/run', { episodeId: ep02, stage: DEMO_STAGE })
+    queueThePremise()
+    queueThePremise('Nobody will say whose fault the exchanger is.')
+    const started = await post<{ runId: string }>('/api/run', { episodeId: ep02, stage: PREMISE_STAGE })
     await runner.settled(started.body.runId)
     const gateId = openGates(store)[0]!.gate.id
 
@@ -278,12 +295,16 @@ describe('the app process — ruling on a gate', () => {
     const after = await get<RunView>(`/api/run/${started.body.runId}`)
     expect(after.gate!.round).toBe(2)
     expect(after.gate!.artifact.text).toContain('whose fault')
-    expect(llm.calls[1]!.prompt).toContain('Too tidy.')
+    // The note reached the writer — the second draft's call, on the far side of round 1's
+    // panel — and it arrived through the desk, with the round it was given at on it.
+    const rewrite = llm.calls.filter((call) => call.prompt.includes('WRITE THE ep02'))[1]!
+    expect(rewrite.prompt).toContain('Too tidy.')
+    expect(rewrite.prompt).toContain('your round 1 rejection of the ep02 premise-brief')
   })
 
   it('will not take a rejection with no notes', async () => {
-    llm.reply('The exchanger fails on a Tuesday.')
-    const started = await post<{ runId: string }>('/api/run', { episodeId: ep02, stage: DEMO_STAGE })
+    queueThePremise()
+    const started = await post<{ runId: string }>('/api/run', { episodeId: ep02, stage: PREMISE_STAGE })
     await runner.settled(started.body.runId)
     const gateId = openGates(store)[0]!.gate.id
 
@@ -300,10 +321,16 @@ describe('the app process — ruling on a gate', () => {
    * request below is turned away. What the verdict changes is what happens to the NEXT
    * STAGE — which is the whole of the ruling, and the reason `approve` and `override` are
    * two words in the ledger rather than one.
+   *
+   * **What it is read through changed in E4-1.** It used to be the episode card's launch
+   * button, back when `demo` could be run on anything forever. The premise stage cannot: once
+   * ep02 has a brief the button says so, ahead of the wall and rightly (`operating.ts`). So
+   * the wall is read where it is also rendered — the check bench's `wall`, which is the same
+   * `stageBlockedBecause` string the refusal uses, over the same wire.
    */
   async function ruleOverAStandingFinding(verdict: 'approve' | 'override'): Promise<string> {
-    llm.reply('The exchanger fails on a Tuesday.')
-    const started = await post<{ runId: string }>('/api/run', { episodeId: ep02, stage: DEMO_STAGE })
+    queueThePremise()
+    const started = await post<{ runId: string }>('/api/run', { episodeId: ep02, stage: PREMISE_STAGE })
     await runner.settled(started.body.runId)
     const open = openGates(store)[0]!
 
@@ -335,23 +362,23 @@ describe('the app process — ruling on a gate', () => {
   it('takes the approval, and the deterministic finding still walls the next stage', async () => {
     await ruleOverAStandingFinding('approve')
 
-    const view = await get<{ shows: { episodes: { launch: { blockedBecause: string } }[] }[] }>(
-      '/api/operating',
-    )
-    const onScreen = view.shows[0]!.episodes[1]!.launch.blockedBecause
-    const refused = await post<{ error: string }>('/api/run', { episodeId: ep02, stage: DEMO_STAGE })
+    const bench = await get<CheckBenchView>(`/api/checks/${ep02}`)
+    expect(bench.wall).toContain('ep02 is blocked')
+    expect(bench.wall).toContain('retired-reappearance')
+    expect(bench.wall).toContain('Sefa Doule is declared retired')
 
+    // The premise stage has its own, truer answer for ep02 now — it wrote the brief that is
+    // sitting there — and that is what the button says. The wall is still up behind it.
+    const refused = await post<{ error: string }>('/api/run', { episodeId: ep02, stage: PREMISE_STAGE })
     expect(refused.status).toBe(409)
-    expect(refused.body.error).toBe(onScreen)
-    expect(refused.body.error).toContain('retired-reappearance')
-    expect(refused.body.error).toContain('Sefa Doule is declared retired')
+    expect(refused.body.error).toContain('already has a premise-brief')
   })
 
-  it('takes the override, and the SAME enqueue goes through — with nothing unblocked', async () => {
+  it('takes the override, and the wall comes down — with nothing unblocked', async () => {
     const artifactId = await ruleOverAStandingFinding('override')
 
-    const started = await post<{ runId: string }>('/api/run', { episodeId: ep02, stage: DEMO_STAGE })
-    expect(started.status).toBe(201)
+    const bench = await get<CheckBenchView>(`/api/checks/${ep02}`)
+    expect(bench.wall).toBeNull()
 
     // Nothing was written to unblock it. The finding is exactly as the check left it — open,
     // undismissed, still a record of what it read — and the wall is down because Ryan's
@@ -368,8 +395,8 @@ describe('the app process — ruling on a gate', () => {
   })
 
   it('says so when the round has already been ruled, rather than ruling it twice', async () => {
-    llm.reply('The exchanger fails on a Tuesday.')
-    const started = await post<{ runId: string }>('/api/run', { episodeId: ep02, stage: DEMO_STAGE })
+    queueThePremise()
+    const started = await post<{ runId: string }>('/api/run', { episodeId: ep02, stage: PREMISE_STAGE })
     await runner.settled(started.body.runId)
     const gateId = openGates(store)[0]!.gate.id
 

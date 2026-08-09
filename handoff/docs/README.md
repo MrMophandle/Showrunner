@@ -106,7 +106,8 @@ deliberately thin: `registerEntity`, `findEntity`, `entitiesOfShow`, and nothing
 `pauseRun`, which throws `RunPaused` to park a run on a decision. `runner.ts` — scheduling,
 per-episode serialization, named locks, bounded retry, crash reclaim. `run.ts` — the run
 ledger. `gate.ts` — gates, rounds, rulings, routed reject notes. `stages.ts` — the
-name→code catalogue; one stage in it (`demo`), and adding one is a code change with a test.
+name→code catalogue, and adding one is a code change with a test. *(E1's one stage, `demo`,
+was retired by E4-1; the catalogue and everything around it is unchanged.)*
 
 **The record** (`events.ts`). Append-only, enforced by triggers, ordered by a monotonic
 `seq` rather than a clock. `EventLog.append` + `subscribe`; `eventsOfRun`,
@@ -326,14 +327,25 @@ the API refuses a launch with the *same string* the disabled button was showing.
 those two coming out of one composer. The moment they are written twice, a precondition
 becomes a failure after the click, which is exactly what D15 forbids.
 
-### The `demo` stage is a drill, and it spends real money (E1-8, issue #9)
+### The `demo` stage is a drill, and it spends real money (E1-8, issue #9) — **retired in E4-1**
 
-`runner/stages.ts` holds one stage, `demo`, which E1 needs so Ryan has something to
-operate: one small Opus call, one artifact on the volume, one gate, one ledger row. It is
-not a mock and not a test — `npm test` drives it through the fake backend, and the button
-on the page drives it through the real one. It stays until E3's real stages give the drill
-something better to run on, and whoever removes it should move the kill-and-resume drill in
-`README.md` onto whatever replaces it rather than deleting both.
+`runner/stages.ts` held one stage, `demo`, which E1 needed so Ryan had something to
+operate: one small Opus call, one artifact on the volume, one gate, one ledger row. It was
+not a mock and not a test — `npm test` drove it through the fake backend, and the button on
+the page drove it through the real one.
+
+**E4-1 (#61) retired it**, because a real premise writer beside a placeholder one makes every
+"which button?" question ambiguous. What that means, and what it does not:
+
+- It is out of the catalogue and out of every offer. Nothing anywhere may bring it back for
+  a test's convenience — a stage that exists only so tests have something cheap to run is a
+  lie in the catalogue, and the E1-era tests that leaned on it now run the premise stage
+  through the fake adapter (`runner/write-step.test.ts`, `runner/stages.test.ts`).
+- **Its rows are records and they stay.** Demo runs, steps, gates, rulings, cost entries and
+  the premise-brief it wrote into slot `demo` all still render; `runner/stages.test.ts` holds
+  that, gate buttons included.
+- The drill moved with it: the E3 drill in the root `README.md` now reads the ep01 card's
+  refusal as the premise stage's own sentence.
 
 ## Constraints E2 leaves behind
 
@@ -458,6 +470,10 @@ supersede the need.** When outline/script gates exist, decide deliberately: reti
 `script-gate`, or keep it as the re-present-for-ruling affordance. Leaving it
 unexamined means two gates over one artifact with different payloads.
 
+*E4-1 looked and left it standing, deliberately: the gate it convenes is over the SCRIPT, and
+the only writing gate this build has is over the premise-brief — so there are not yet two
+gates over one artifact. **E4-3 is where the call gets made.***
+
 ### New stages declare, refusals consult (E3-7, #47)
 
 `Stage.offerOn` is the single source of the button sentence, the cost, `callsModel`,
@@ -466,6 +482,66 @@ special-case a stage name in `launchBlockedBecause` or anywhere else. The board-
 header's "Nothing to call" defect was exactly the cost of one stage that broke the
 assumption behind a global refusal — the declaration exists so the next new stage
 cannot repeat it.
+
+## Constraints E4 leaves behind
+
+Written as E4's issues land, for the same reason as every list above. These four are E4-1's
+(#61), and the first three bind E4-2 and E4-3 directly.
+
+### One seam moves an episode's lifecycle, and the builder is what makes it a seam (E4-1, #61)
+
+`domain/lifecycle.ts` owns the ruling: **lifecycle names the stage the episode is AT**, so
+ep02 at `premise` is premise work *not yet done*, and it is a stage's **gate approving** that
+moves it on — never a producer writing, never a check reading. Four rules fall out and are
+tested one apiece: forward only, idempotent, the last stop stays put, and **an abandoned
+episode keeps the stage it reached** (`abandoned_at` is a column beside the enum, never a
+member of it).
+
+The part that is easy to lose: it is not a function later stages must *remember* to call.
+`runner/write-step.ts`'s `writingStage` builds every writing stage with the closing step
+already on it, so E4-2's outline and E4-3's script get it by construction. If a stage is ever
+assembled by hand instead, that property is gone the same day.
+
+### A writer declares provenance out of what it WROTE (E4-1, #61)
+
+Invariant 2 runs backwards for a producer: there is no upstream declaration to read, because
+this is the step that writes one. The premise stage matches its own draft against the entities
+the desk handed it, through the desk's own matcher (`nameAppearingIn`, exported from
+`write-context.ts` for exactly this), and declares what it names.
+
+Two consequences E4-2/E4-3 inherit rather than re-decide. **The convened panel is a
+consequence of the draft**, not a constant: a brief about Ilse convenes the `character` check
+and nothing else, even though five of the fixture's categories declare `premise-brief` in
+their `applies to` — a category with no entity in provenance correctly stays home (4.1). And
+**an entity the writer was never handed can never enter provenance**, because a check would
+then be reading canon the writer never saw.
+
+### The premise stage cannot be walled, and D12's button lost its demonstration (E4-1, #61)
+
+`demo` was the only stage declaring `work: 'produces'`, and it could be run on any episode
+forever, so the D12 wall's "a producing stage is refused with this exact sentence" was
+demonstrable on ep01 in the drill. The premise stage cannot be: it is the FIRST artifact an
+episode has, so an episode with material standing against it always has a premise-brief
+already — and `launchBlockedBecause` answers "nothing to do" ahead of the wall, correctly (a
+stage with nothing to do has nothing to be blocked from doing).
+
+So the wall's button-side proof is now on a **planted** episode (`operating.test.ts`:
+ep02 with material and no brief), and the drill reads the wall off the check bench instead.
+**E4-2's outline stage is the first real one the wall can stand in front of** — give it the
+demonstration back there, on ep01, where the fixture's planted contradictions already live.
+
+### A run of a retired stage holds its episode forever (E4-1, #61)
+
+`advance` (runner.ts) skips a run whose stage this build has no code for — "a click Ryan
+already made is not something a deploy gets to throw away" — and that run then stays `queued`
+forever. D7's one-run-per-episode refuses every other stage on that episode with "rule on it,
+or let it finish", and neither is possible once the code is gone.
+
+Not new to E4-1: it has been true of any retired stage since E1-3, and E4-1 is simply the
+first time a stage was retired. Not fixed here either, because the fix is an **affordance for
+putting a run down** — a verb, a row, and a sentence — and that is a decision about what Ryan
+may do to a run, not a change to a refusal. `runner/stages.test.ts` pins the behaviour so the
+day it bites, the test says what is happening.
 
 ## Working agreements that bind every session
 

@@ -26,6 +26,7 @@ import { createRulings, openGates, type Rulings } from './runner/gate.ts'
 import { createRunner, type Runner } from './runner/runner.ts'
 import { SCRIPT_GATE_STAGE } from './runner/script-gate-step.ts'
 import { stageCatalogue } from './runner/stages.ts'
+import { PREMISE_STAGE } from './runner/write-step.ts'
 import { TEXT_CHECK_STAGE } from './runner/text-check-step.ts'
 
 /**
@@ -197,8 +198,8 @@ describe('the check bench — the buttons that read', () => {
   it('offers one per stage whose work is reading, each stating verb, object, scope and cost', () => {
     const runs = bench().runs
 
-    // The catalogue filtered by DECLARATION, never by a list of names here — the demo stage
-    // produces, so it is not on this bench at all.
+    // The catalogue filtered by DECLARATION, never by a list of names here — the premise
+    // stage produces, so it is not on this bench at all.
     expect(runs.map((one) => one.stage)).toEqual([
       BOARD_STAGE,
       BOARD_CHECK_STAGE,
@@ -403,9 +404,13 @@ describe('the check bench — the wall, and what it marks', () => {
     expect(view.wall).toContain('ep01 is blocked')
     expect(view.wall).toContain('vacuum-without-protection')
     expect(view.wall).toContain('scene 4 of the ep01 script')
-    // One composer, two readers: the bench's line and the demo button's refusal are one string.
-    expect(launchBlockedBecause(store, READY, episodeId, stageCatalogue(paths)['demo']!)).toBe(
-      view.wall,
+    // One composer, two readers — and on ep01 the producing stage does not reach the wall at
+    // all: the premise stage is refused for having nothing to do (the fixture wrote ep01's
+    // premise by hand) before the wall is consulted, which is the order `operating.ts` argues
+    // for. The wall refusing a producer with this exact string is asserted on ep02, where the
+    // premise stage still has something to write (`operating.test.ts`).
+    expect(launchBlockedBecause(store, READY, episodeId, stageCatalogue(paths)[PREMISE_STAGE]!)).toContain(
+      'already has a premise-brief',
     )
   })
 

@@ -49,8 +49,9 @@ import {
   type StepStatus,
 } from './runner/run.ts'
 import { stageBlockedBecause, stageBlockingFindings, type StageBlock } from './runner/stage-wall.ts'
-import { DEMO_STAGE, stageCatalogue } from './runner/stages.ts'
+import { stageCatalogue } from './runner/stages.ts'
 import type { Stage, StageCatalogue } from './runner/step.ts'
+import { PREMISE_STAGE } from './runner/write-step.ts'
 
 /**
  * The operating page's read model — everything the bare-bones page renders, composed
@@ -119,7 +120,7 @@ export interface RunOnThePage {
   id: string
   stage: string
   status: Run['status']
-  /** "demo — waiting on your ruling", "demo — finished". The run in one line. */
+  /** "write-the-premise — waiting on your ruling", "… — finished". The run in one line. */
   sentence: string
   /** Set while a gate on this run is open, so the page can go straight to the ruling. */
   openGateId: string | null
@@ -179,8 +180,17 @@ export function operatingView(
           spend,
           spendSentence: spentSentence(spend),
           run: run ? runOnThePage(run, waiting.get(run.id) ?? null) : null,
-          launch: stageOffer(store, llm, episode.id, catalogue[DEMO_STAGE]!),
-          launchStage: DEMO_STAGE,
+          // **One button, and E4-1 moved which stage is behind it.** E1's `demo` was
+          // retired (`runner/stages.ts`), and the writing line's first real stage took its
+          // place: the premise. It is the honest offer for an episode that has not started
+          // and it says so in words for one that has — a card that offered nothing at all
+          // once ep02 had a brief would be a screen with a hole in it.
+          //
+          // It is still ONE stage for every episode, which is E5's to fix rather than this
+          // module's: the offer an episode's card should carry is the stage its lifecycle
+          // is at, and there is no outline or script stage to point at until E4-2/E4-3.
+          launch: stageOffer(store, llm, episode.id, catalogue[PREMISE_STAGE]!),
+          launchStage: PREMISE_STAGE,
         }
       }),
     )
@@ -440,10 +450,15 @@ export function runView(store: Store, library: LibraryPaths, runId: string): Run
  * records something forever should say what it is recording.
  *
  * The rejection's cost comes off the STAGE's declaration (step.ts) rather than off a constant,
- * because a rejection buys another run of the step that opened this gate — one Opus call for
- * the demo's writer, nothing at all for the stage that only presents what stands. A single
+ * because a rejection buys another run of the step that opened this gate — a call and a panel
+ * for the premise writer, nothing at all for the stage that only presents what stands. A single
  * hardcoded number here was right while `demo` was the only stage with a gate and would have
  * quietly charged Ryan for a re-presentation the day a second one arrived.
+ *
+ * **A gate whose stage this build no longer has still renders.** `demo` was retired in E4-1 and
+ * its gates are still in Ryan's library; the catalogue lookup misses, `again` is null, and the
+ * three verdicts come back with the free cost rather than a guess. Rows are records — a stage
+ * leaving the catalogue may not take its history off the screen.
  */
 function gateOnThePage(
   store: Store,
@@ -495,13 +510,19 @@ function gateOnThePage(
       // What the step will actually DO comes off the stage's declared work, never off a
       // guess: a stage that produces writes it again against the notes, and a stage that only
       // presents re-presents it with them recorded. Saying "writes it again" over a gate with
-      // no writer behind it would be the button promising work nothing is going to do.
+      // no writer behind it would be the button promising work nothing is going to do — which
+      // is also why a RETIRED stage gets its own clause rather than the producer's. E4-1 took
+      // `demo` out of the catalogue and left its gates in the library, and a rejection there
+      // is a note on the record with nothing left to route it to.
       sentence:
         `Reject ${standing.subject} with notes — ${stepName} reopens as round ${standing.round + 1} ` +
-        (stage?.work === 'reads'
-          ? 'and presents it again with them recorded against it; there is no writer behind ' +
-            'this gate to route them to yet, so the notes land and ride (D21)'
-          : 'and writes it again against them'),
+        (stage === undefined
+          ? 'if it can: this build has no code for the stage that opened this gate, so the ' +
+            'notes are recorded against the round and nothing is rewritten'
+          : stage.work === 'reads'
+            ? 'and presents it again with them recorded against it; there is no writer behind ' +
+              'this gate to route them to yet, so the notes land and ride (D21)'
+            : 'and writes it again against them'),
       cost: again === null || !again.callsModel ? FREE : `${again.cost} · your money, spent when you click`,
       enabled: standing.isOpen,
       blockedBecause: ruled,

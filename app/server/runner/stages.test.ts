@@ -1,31 +1,40 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { costOfRun } from '../cost.ts'
+import { FREE } from '../cost.ts'
 import type { Store } from '../db/store.ts'
-import { artifactsOf } from '../domain/artifact.ts'
-import { episodesOf, seasonsOf } from '../domain/spine.ts'
-import { createEventLog, eventsOfRun, type EventLog } from '../events.ts'
+import { recordArtifact, type Artifact } from '../domain/artifact.ts'
+import { episodesOf, findEpisode, seasonsOf } from '../domain/spine.ts'
+import { createEventLog, type EventLog } from '../events.ts'
 import { loadFixture } from '../fixture/load.ts'
 import { initLibrary, openLibraryStore, type LibraryPaths } from '../library.ts'
+import { describeLLMBackend, type LLMReadiness } from '../llm/choose.ts'
 import { createFakeLLM, type FakeLLM } from '../llm/fake.ts'
-import { createRulings, gateStanding, openGates, type Rulings } from './gate.ts'
-import { findStepByName, stepsOf } from './run.ts'
+import { findStage, operatingView, runView } from '../operating.ts'
+import { BOARD_CHECK_STAGE, BOARD_STAGE } from './board-step.ts'
+import { createRulings, presentForRuling } from './gate.ts'
+import { findStepByName, markRunDone, reconcileSteps, recordRun, stepsOf } from './run.ts'
 import { createRunner, type Runner } from './runner.ts'
-import { DEMO_STAGE, stageCatalogue, type DemoClose } from './stages.ts'
+import { SCRIPT_GATE_STAGE } from './script-gate-step.ts'
+import { scaffoldStage } from './stage-fixture.ts'
+import { stageCatalogue } from './stages.ts'
+import { STAGE_WORK } from './step.ts'
+import { TEXT_CHECK_STAGE } from './text-check-step.ts'
+import { PREMISE_STAGE } from './write-step.ts'
 
 /**
- * The demo stage — E1's one stage, and the thing Ryan operates for the epic exit: one
- * model call, one artifact on the volume, one gate, one ruling, and a run that carries on
- * past it.
+ * The stage catalogue: what this build ships, and what it no longer offers.
  *
- * Every test here runs the REAL stage through the REAL runner against a REAL library
- * volume in a temp directory, with the Grey Harbor fixture in it and the fake backend in
- * front of the model. Nothing in `npm test` may spend a cent (fixtures before features) —
- * the two real backends are Ryan's to exercise, by hand, through the page and through
- * `scripts/smoke-llm.ts`.
+ * It used to be the demo stage's test file — `demo` was E1's placeholder writer and the
+ * cheap thing every other test reached for. E4-1 retired it and gave the premise stage its
+ * behaviours (`write-step.test.ts`); what is left here is the catalogue itself, and the
+ * half of the retirement that is easy to get wrong: **unoffered is not erased.** A demo run
+ * in Ryan's library still renders, still carries its gate and its ruling, and is still left
+ * alone by a runner that has no code for it.
  */
+
+const READY: LLMReadiness = describeLLMBackend({ ANTHROPIC_API_KEY: 'sk-ant-x' })
 
 let root: string
 let paths: LibraryPaths
@@ -33,26 +42,19 @@ let store: Store
 let events: EventLog
 let llm: FakeLLM
 let runner: Runner
-let rulings: Rulings
-/** ep02 "Dry Stores" — the un-started episode, so nothing here disturbs ep01's script. */
 let ep02: string
 
-const FIRST = 'Three weeks after the harbourmaster took the spare, the water plant gives out.'
-const SECOND = 'The exchanger fails on a Tuesday, and nobody is willing to say whose fault it is.'
-
 beforeEach(() => {
-  root = mkdtempSync(join(tmpdir(), 'showrunner-demo-'))
+  root = mkdtempSync(join(tmpdir(), 'showrunner-catalogue-'))
   paths = initLibrary(root)
   store = openLibraryStore(paths)
   loadFixture(store, paths)
   events = createEventLog(store)
   llm = createFakeLLM()
   runner = createRunner(store, stageCatalogue(paths), events, llm)
-  rulings = createRulings(store, events, runner)
 
   const show = store.get<{ id: string }>("SELECT id FROM show WHERE key = 'greyharbor'")!
-  const season = seasonsOf(store, show.id)[0]!
-  ep02 = episodesOf(store, season.id).find((episode) => episode.number === 2)!.id
+  ep02 = episodesOf(store, seasonsOf(store, show.id)[0]!.id).find((one) => one.number === 2)!.id
 })
 
 afterEach(() => {
@@ -60,142 +62,128 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true })
 })
 
-describe('the demo stage — one call, one artifact, one gate', () => {
-  it('writes a premise, files it on the volume, and parks on Ryan', async () => {
-    llm.reply(FIRST)
-
-    const run = runner.enqueueRun({ episodeId: ep02, stage: DEMO_STAGE })
-    await runner.settled(run.id)
-
-    // One call, small and bounded — this is Ryan's money on a real backend.
-    expect(llm.calls).toHaveLength(1)
-    expect(llm.calls[0]).toMatchObject({ maxTokens: 700, effort: 'low' })
-    expect(llm.calls[0]!.prompt).toContain('"Dry Stores"')
-    // No canon in the prompt: that is what makes the artifact's empty provenance honest.
-    expect(llm.calls[0]!.prompt).not.toContain('Ilse Renn')
-
-    // The artifact is a real row with a real file, in its own slot — the fixture's own
-    // premise-brief for other episodes is untouched (D20, and UNIQUE (episode, kind, slot)).
-    const artifact = demoArtifact()
-    expect(artifact).toMatchObject({ kind: 'premise-brief', slot: 'demo', version: 1 })
-    expect(artifact.filePath).toBe('greyharbor/s01e02/demo/premise-round-1.md')
-    expect(readFileSync(join(paths.artifactDir, artifact.filePath!), 'utf8')).toBe(`${FIRST}\n`)
-
-    // Parked on a decision, with the gate open on that artifact at round 1.
-    const standing = gateStanding(store, openGates(store)[0]!.gate.id)!
-    expect(standing).toMatchObject({ round: 1, isOpen: true, subject: 'the ep02 premise-brief demo' })
-    expect(standing.rounds[0]).toMatchObject({
-      artifactVersion: 1,
-      payload: { round: 1, calledTheModel: true, truncated: false },
-    })
-    expect(stepsOf(store, run.id).map((step) => [step.name, step.status])).toEqual([
-      ['write-the-demo-premise', 'paused'],
-      ['tally-the-demo-spend', 'pending'],
-    ])
-
-    // And it cost something, on the run, before anything was rendered.
-    expect(costOfRun(store, run.id).calls).toBe(1)
+/**
+ * A demo-era run, as Ryan's own library holds one: the retired stage's name on the row, its
+ * artifact in its own slot, its gate, and his ruling on it. Planted through the real ledger
+ * functions, because what is under test is whether the RECORD still reads once the code is
+ * gone — and a hand-INSERTed row would prove nothing about that.
+ */
+function aDemoEraRun(): { runId: string; artifact: Artifact } {
+  const filePath = join('greyharbor', 's01e02', 'demo', 'premise-round-1.md')
+  const onDisk = join(paths.artifactDir, filePath)
+  mkdirSync(dirname(onDisk), { recursive: true })
+  writeFileSync(onDisk, 'The exchanger fails on a Tuesday.\n', 'utf8')
+  const artifact = recordArtifact(store, {
+    episodeId: ep02,
+    kind: 'premise-brief',
+    slot: 'demo',
+    filePath,
   })
 
-  it('streams what the model wrote while it is writing it', async () => {
-    llm.reply(FIRST)
-    const run = runner.enqueueRun({ episodeId: ep02, stage: DEMO_STAGE })
-    await runner.settled(run.id)
+  const stage = scaffoldStage('demo', [
+    { name: 'write-the-demo-premise', execute: async () => ({}) },
+  ])
+  const run = recordRun(store, stage, ep02)
+  reconcileSteps(store, run.id, stage)
+  const step = findStepByName(store, run.id, 'write-the-demo-premise')!
+  const standing = presentForRuling(
+    store,
+    { runId: run.id, stepId: step.id, episodeId: ep02 },
+    { artifactId: artifact.id, payload: { round: 1, calledTheModel: true } },
+  )
+  createRulings(store, events, runner).approve(standing.gate.id, { comment: 'that reads.' })
+  markRunDone(store, run.id)
+  return { runId: run.id, artifact }
+}
 
-    const prose = eventsOfRun(store, run.id).filter((event) => event.kind === 'step-chunk')
-    expect(prose.map((event) => event.summary).join(' ')).toBe(FIRST)
-  })
-})
-
-describe('the demo stage — the ruling', () => {
-  it('a rejection reopens the same step, writes again against the notes, and presents round 2', async () => {
-    llm.reply(FIRST)
-    llm.reply(SECOND)
-
-    const run = runner.enqueueRun({ episodeId: ep02, stage: DEMO_STAGE })
-    await runner.settled(run.id)
-    const gateId = openGates(store)[0]!.gate.id
-
-    rulings.reject(gateId, {
-      notes: [{ note: 'Too tidy. Nobody in Grey Harbor says whose fault it is.' }],
-    })
-    await runner.settled(run.id)
-
-    // The notes reached the model verbatim — that is what "reject with notes" buys.
-    expect(llm.calls).toHaveLength(2)
-    expect(llm.calls[1]!.prompt).toContain('Nobody in Grey Harbor says whose fault it is.')
-
-    // Round 2 of the SAME gate, on version 2 of the SAME artifact. Round 1 is kept and
-    // marked stale, never overwritten.
-    const standing = gateStanding(store, gateId)!
-    expect(standing.round).toBe(2)
-    expect(standing.rounds.map((round) => [round.round, round.artifactVersion, round.stale])).toEqual([
-      [1, 1, true],
-      [2, 2, false],
-    ])
-    expect(standing.rounds[0]!.ruling).toMatchObject({ verdict: 'reject' })
-
-    // Each round has its own file. Round 1's draft is still there, exactly as ruled on.
-    expect(readFileSync(join(paths.artifactDir, 'greyharbor/s01e02/demo/premise-round-1.md'), 'utf8'))
-      .toBe(`${FIRST}\n`)
-    expect(demoArtifact().filePath).toBe('greyharbor/s01e02/demo/premise-round-2.md')
-    expect(readFileSync(join(paths.artifactDir, demoArtifact().filePath!), 'utf8')).toBe(`${SECOND}\n`)
-
-    // Both attempts are on the ledger. A rejection is not a failure — it is a second call
-    // Ryan asked for, and the button that asked for it said so.
-    expect(costOfRun(store, run.id).calls).toBe(2)
-  })
-
-  it('an approval carries the run past the gate and closes it with what it spent', async () => {
-    llm.reply(FIRST)
-
-    const run = runner.enqueueRun({ episodeId: ep02, stage: DEMO_STAGE })
-    await runner.settled(run.id)
-
-    rulings.approve(openGates(store)[0]!.gate.id, { comment: 'that reads.' })
-    const settled = await runner.settled(run.id)
-
-    expect(settled.status).toBe('done')
-    expect(stepsOf(store, run.id).map((step) => step.status)).toEqual(['done', 'done'])
-
-    // Coming back in on an approval re-runs nothing and re-spends nothing — which is
-    // exactly what the kill-and-resume drill watches for.
-    expect(llm.calls).toHaveLength(1)
-    expect(costOfRun(store, run.id).calls).toBe(1)
-
-    const close = findStepByName(store, run.id, 'tally-the-demo-spend')!.output as DemoClose
-    expect(close.verdict).toBe('approve')
-    expect(close.round).toBe(1)
-    expect(close.sentence).toMatch(/^Approved at round 1 · 1 call · \$\d+\.\d\d$/)
-  })
-})
-
-describe('the demo stage — a draft already on the volume', () => {
-  it('keeps it, presents it, and makes no second call for it (D20)', async () => {
-    // What a crash between writing the draft and recording the gate leaves behind — and
-    // what a hand-made asset looks like. Either way it wins, and it is not paid for twice.
-    const at = join(paths.artifactDir, 'greyharbor/s01e02/demo/premise-round-1.md')
-    mkdirSync(dirname(at), { recursive: true })
-    writeFileSync(at, 'The one Ryan wrote himself.\n', 'utf8')
-
-    const run = runner.enqueueRun({ episodeId: ep02, stage: DEMO_STAGE })
-    await runner.settled(run.id)
-
-    expect(llm.calls).toHaveLength(0)
-    expect(costOfRun(store, run.id).calls).toBe(0)
-    expect(readFileSync(at, 'utf8')).toBe('The one Ryan wrote himself.\n')
-
-    const standing = gateStanding(store, openGates(store)[0]!.gate.id)!
-    expect(standing.isOpen).toBe(true)
-    expect(standing.rounds[0]!.payload).toMatchObject({ calledTheModel: false })
-    expect(eventsOfRun(store, run.id).map((event) => event.summary)).toContain(
-      "Round 1's draft was already in the library — kept as it stands, and no second call made for it",
+describe('what this build ships', () => {
+  it('is these five stages, and adding one is a code change with a test', () => {
+    expect(Object.keys(stageCatalogue(paths)).sort()).toEqual(
+      [PREMISE_STAGE, BOARD_STAGE, BOARD_CHECK_STAGE, TEXT_CHECK_STAGE, SCRIPT_GATE_STAGE].sort(),
     )
   })
+
+  it('has every one of them declaring its work, its sentence, its cost and its precondition', () => {
+    const episode = findEpisode(store, ep02)!
+
+    for (const stage of Object.values(stageCatalogue(paths))) {
+      const declared = stage.offerOn(store, episode)
+      expect(STAGE_WORK).toContain(stage.work)
+      expect(declared.sentence).not.toMatch(/^(Launch|Run|Go|Do|Start)\b/)
+      expect(declared.sentence).toContain('ep02')
+      if (!declared.callsModel) expect(declared.cost).toBe(FREE)
+      else expect(declared.cost).toMatch(/~\$|cost unknown/)
+    }
+  })
 })
 
-function demoArtifact() {
-  return artifactsOf(store, ep02).find(
-    (artifact) => artifact.kind === 'premise-brief' && artifact.slot === 'demo',
-  )!
-}
+describe('the retired demo stage', () => {
+  it('is offered nowhere, by name or by lookup', () => {
+    expect(stageCatalogue(paths)['demo']).toBeUndefined()
+    expect(findStage(paths, 'demo')).toBeUndefined()
+    // And nothing kept it alive for tests. A stage that exists only so tests have something
+    // cheap to run is a lie in the catalogue: the premise stage, on the fake adapter, is
+    // what the E1-era tests run on now.
+    expect(Object.keys(stageCatalogue(paths))).not.toContain('demo')
+  })
+
+  it('keeps its run, its steps, its gate, its ruling and its artifact readable', () => {
+    const { runId, artifact } = aDemoEraRun()
+
+    const view = runView(store, paths, runId)!
+    expect(view.run.stage).toBe('demo')
+    expect(view.steps.map((step) => step.name)).toEqual(['write-the-demo-premise'])
+    // The gate renders its artifact off the volume, exactly as it did when the stage existed.
+    expect(view.gate!.subject).toBe('the ep02 premise-brief demo')
+    expect(view.gate!.artifact.text).toBe('The exchanger fails on a Tuesday.\n')
+    expect(view.gate!.rounds[0]!.ruling).toMatchObject({ verdict: 'approve' })
+    // Both verdicts are closed, because the round was ruled — not because the stage is gone.
+    expect(view.gate!.approve.blockedBecause).toContain('already ruled')
+    // And the reject button says the truth about a gate with no code behind it any more.
+    expect(view.gate!.reject.sentence).toContain('this build has no code for the stage')
+    expect(view.gate!.reject.cost).toBe(FREE)
+
+    expect(store.get<{ n: number }>('SELECT COUNT(*) AS n FROM artifact WHERE id = ?', artifact.id)!.n)
+      .toBe(1)
+  })
+
+  it('still shows on the episode it ran on, and the card offers the premise stage now', () => {
+    const { runId } = aDemoEraRun()
+
+    const episode = operatingView(store, paths, READY).shows[0]!.episodes[1]!
+    expect(episode.run).toMatchObject({ id: runId, stage: 'demo' })
+    expect(episode.launchStage).toBe(PREMISE_STAGE)
+    // ep02's demo-era brief is a premise-brief, so the premise stage says so rather than
+    // writing a second one over the top of it (D20).
+    expect(episode.launch.blockedBecause).toContain('already has a premise-brief')
+  })
+
+  /**
+   * `advance` (runner.ts) skips a run whose stage this build has no code for, deliberately:
+   * "a click Ryan already made is not something a deploy gets to throw away."
+   *
+   * The other half of that is written down here rather than discovered: such a run stays
+   * queued forever, and D7's one-run-per-episode then refuses every stage on that episode
+   * with a sentence that says "rule on it, or let it finish" — neither of which is possible
+   * once the code is gone. It is not new to E4-1 (it has been true of any retired stage
+   * since E1-3) and it is not fixed here; `handoff/docs/README.md` carries it as an E4
+   * constraint, because the fix is an affordance for putting a run down, not a change to
+   * this refusal.
+   */
+  it('leaves a run of it queued rather than failing it, and that run holds its episode', () => {
+    const stage = scaffoldStage('demo', [{ name: 'write-the-demo-premise', execute: async () => ({}) }])
+    const run = recordRun(store, stage, ep02)
+
+    expect(runner.resumeInterrupted().map((one) => one.id)).not.toContain(run.id)
+    expect(store.get<{ status: string }>('SELECT status FROM run WHERE id = ?', run.id)!.status).toBe(
+      'queued',
+    )
+    // Nothing ran: the steps are reconciled rows and every one of them is still pending.
+    expect(stepsOf(store, run.id).map((step) => step.status)).toEqual(['pending'])
+    expect(llm.calls).toHaveLength(0)
+
+    const episode = operatingView(store, paths, READY).shows[0]!.episodes[1]!
+    expect(episode.launch.blockedBecause).toContain('already has a demo run')
+    expect(episode.launch.blockedBecause).toContain('One run per episode')
+  })
+})
