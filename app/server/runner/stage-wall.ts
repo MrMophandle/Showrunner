@@ -1,5 +1,6 @@
 import type { Store } from '../db/store.ts'
 import { artifactsOf, type Artifact } from '../domain/artifact.ts'
+import { inheritedDismissal } from '../domain/concern.ts'
 import { findingsIn, type Finding } from '../domain/finding.ts'
 import { episodeLabel, findEpisode, scenesOf } from '../domain/spine.ts'
 import { overriddenThrough } from './gate.ts'
@@ -12,7 +13,7 @@ import { overriddenThrough } from './gate.ts'
  * "Blocked" is not a column, not a flag, and not an event anyone has to remember to write.
  * It is this read, over live rows, asked again every time somebody wants to start work —
  * exactly as artifact staleness is (1.3) and finding status is (0010). The wall goes UP
- * because four things are true at once, and it comes DOWN because one of them stopped being
+ * because five things are true at once, and it comes DOWN because one of them stopped being
  * true, with no unblocking write anywhere in the app:
  *
  *   1. the finding is `deterministic` — the tier that reads rows and answers `certain` (4.2).
@@ -27,6 +28,19 @@ import { overriddenThrough } from './gate.ts'
  *   4. Ryan has not overridden it. Approving over a red finding is recorded as an explicit
  *      override (invariant 3), and an override that did not move the wall would be a verdict
  *      with no consequence — which is the same as a check vetoing him.
+ *   5. **He has not already put this exact concern down** (E3-6, `domain/concern.ts`). E3-5's
+ *      one-motion apply re-runs the free tier on every rewrite, so a rule reading rows nobody
+ *      touched raises a fresh open TWIN of a finding he ruled on last week — and without this
+ *      the wall he brought down goes back up, for free, every time he fixes something else.
+ *      That is a veto on a slow clock, which is invariant 3 in the one direction it can be
+ *      violated without anybody writing "blocked" anywhere.
+ *
+ *      It is READ, never copied: `inheritedDismissal` compares identity across live rows, the
+ *      twin stays `open`, and its firing still counts in D11's denominator. The identity is
+ *      exact — same check, same span, same scene, same entity, same canon, same words — so a
+ *      genuinely new contradiction the same rule finds raises the wall as it always did. That
+ *      strictness is the load-bearing part; the failure it prevents is a wall that stays down
+ *      over something nobody has ruled on.
  *
  * ## What it refuses, and what it must never touch
  *
@@ -82,12 +96,16 @@ export function stageBlockingFindings(store: Store, episodeId: string): StageBlo
     // Asked once per artifact rather than once per finding: it is one row either way, and
     // the version it answers with is what decides every finding anchored in it.
     const overridden = overriddenThrough(store, artifact.id)
+    // And read once for the same reason. Every firing of one concern is anchored in the same
+    // artifact by construction (`concern.ts`), so this list holds every twin there is.
+    const anchored = findingsIn(store, artifact.id)
 
-    for (const finding of findingsIn(store, artifact.id)) {
+    for (const finding of anchored) {
       if (finding.tier !== 'deterministic') continue
       if (finding.status !== 'open') continue
       if (finding.anchor.version !== artifact.version) continue
       if (overridden !== null && overridden >= finding.anchor.version) continue
+      if (inheritedDismissal(anchored, finding) !== null) continue
 
       blocks.push({
         finding,

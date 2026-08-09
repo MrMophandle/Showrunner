@@ -476,27 +476,46 @@ export function roundsOf(store: Store, gateId: string): GateRound[] {
 }
 
 /**
- * The newest version of this artifact Ryan approved as an explicit override, or null if he
- * never has — what D12's wall reads to know whether he has already ruled over the red
- * (`stage-wall.ts`).
+ * **Every version of this artifact Ryan approved as an explicit override**, ascending.
  *
- * A version, not a boolean: an override is his opinion of the draft that was in front of him,
- * and it must not license the next one. `approve` deliberately does not count. The two verbs
- * are kept apart in the ledger precisely so that "he approved" and "he approved over
+ * A version and not a boolean: an override is his opinion of the draft that was in front of
+ * him, and it must not license the next one. `approve` deliberately does not count. The two
+ * verbs are kept apart in the ledger precisely so that "he approved" and "he approved over
  * something" stay different sentences forever (invariant 3), and folding them here would undo
- * that at the one place it is load-bearing.
+ * that at the two places it is load-bearing.
+ *
+ * The two readers ask different questions of this one list, and the difference matters:
+ *
+ *   * D12's wall (`stage-wall.ts`) asks about the draft that is on the volume NOW, and takes
+ *     the newest — `overriddenThrough` below.
+ *   * D11's cried-wolf ratio (`cried-wolf.ts`) asks whether a finding raised against some
+ *     PAST draft was standing when he ruled, which is an exact match on that draft's version.
+ *     A max would credit an override at v3 against a finding from v1 he never saw at that
+ *     gate, and a number Ryan cannot reconstruct from the record is the one thing D11's
+ *     sentence may not contain.
  */
-export function overriddenThrough(store: Store, artifactId: string): number | null {
-  return (
-    store.get<{ version: number | null }>(
-      `SELECT MAX(r.artifact_version) AS version
+export function overriddenVersions(store: Store, artifactId: string): number[] {
+  return store
+    .all<{ version: number }>(
+      `SELECT DISTINCT r.artifact_version AS version
          FROM gate g
          JOIN gate_round r ON r.gate_id = g.id
          JOIN gate_ruling ru ON ru.gate_id = g.id AND ru.round = r.round
-        WHERE g.artifact_id = ? AND ru.verdict = 'override'`,
+        WHERE g.artifact_id = ? AND ru.verdict = 'override'
+        ORDER BY r.artifact_version`,
       artifactId,
-    )?.version ?? null
-  )
+    )
+    .map((row) => row.version)
+}
+
+/**
+ * The newest version of this artifact Ryan approved as an explicit override, or null if he
+ * never has — what D12's wall reads to know whether he has already ruled over the red
+ * (`stage-wall.ts`).
+ */
+export function overriddenThrough(store: Store, artifactId: string): number | null {
+  const versions = overriddenVersions(store, artifactId)
+  return versions.length === 0 ? null : versions[versions.length - 1]!
 }
 
 // ── Rows ────────────────────────────────────────────────────────────────────────
