@@ -5,6 +5,7 @@ import {
   canonBenchView,
   promoteCandidate,
   proposeFactChange,
+  proposeNewFact,
   registerAndPropose,
   type BenchStanding,
   type SheetDraft,
@@ -337,8 +338,8 @@ export function createApp(
 
   // ── The canon bench (E2-6) ────────────────────────────────────────────────────
   //
-  // Six routes, and every one of them is Ryan's click. Five RAISE — founding aside, nothing
-  // here writes canon — and the sixth is the ruling API, convened from the queue exactly as
+  // Seven routes, and every one of them is Ryan's click. Six RAISE — founding aside, nothing
+  // here writes canon — and the seventh is the ruling API, convened from the queue exactly as
   // the gate room convenes it over a script (proposal.ts: a gate says where he was standing,
   // never whether he may rule).
   //
@@ -415,6 +416,26 @@ export function createApp(
 
     const body = await json(c.req.raw)
     return bench(c, entity.showId, () => promoteCandidate(store, entity.id, sheetFrom(body)))
+  })
+
+  /**
+   * A fact the entity does not have yet (#39) — the same delta with no before, and the twin
+   * of the route below. A change form anchors to a fact that exists, so an entity created
+   * with its facts box empty was unreachable by every other act on this bench.
+   */
+  app.post('/api/canon/entity/:entityId/fact', async (c) => {
+    const entity = findEntityById(store, c.req.param('entityId'))
+    if (!entity) return c.json({ error: `No such canon entity: ${c.req.param('entityId')}` }, 404)
+
+    const body = await json(c.req.raw)
+    const field = text(body['field'])
+    return bench(c, entity.showId, () =>
+      proposeNewFact(store, entity.id, {
+        statement: text(body['statement']),
+        ...(field !== '' && { field }),
+        ...(text(body['usageContext']) !== '' && { usageContext: text(body['usageContext']) }),
+      }),
+    )
   })
 
   /** A change to a ratified fact, which is a SECOND proposal carrying the first as its before. */

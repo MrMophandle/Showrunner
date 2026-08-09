@@ -19,13 +19,13 @@ import { ARTIFACT, Button, CARD, FAINT, needing } from './kit.tsx'
  * Same contract as `App.tsx`: the server composes, this renders. Nothing here imports a
  * VALUE from `app/server` — not a standing, not the word `unknown`, not the sentence a
  * missing note is refused with — so the browser bundle stays a browser bundle and there is
- * one copy of every list. The three preconditions this file DOES own are the ones living in
- * a field the server has never seen (a name, a note, a new statement), and each of them
- * renders the server's own `refusals` string, which is the string the API refuses with.
+ * one copy of every list. The four preconditions this file DOES own are the ones living in
+ * a field the server has never seen (a name, a note, a new statement, an added one), and
+ * each renders the server's own `refusals` string, which is the string the API refuses with.
  *
  * ── Nothing here writes canon ───────────────────────────────────────────────────
- * Five of the six buttons RAISE — a promotion, a change, a ruling's note — and only
- * ratification writes (invariant 1). Loading this section reads. Every cost on it is
+ * Six of the seven buttons RAISE — a promotion, a change, an addition, a ruling's note — and
+ * only ratification writes (invariant 1). Loading this section reads. Every cost on it is
  * `No model call · $0.00`, stated on the button rather than left to be inferred.
  */
 
@@ -48,6 +48,8 @@ export interface BenchDraft {
   notes: Record<string, string>
   /** The "after" per fact, so a change is raised from beside the fact it replaces. */
   statements: Record<string, string>
+  /** A fact the entity does not have yet: the same delta, with no before (#39). */
+  addition: { field: string; statement: string }
   /** Why now — the usage context on whichever change is raised (1.2's second part). */
   changeContext: string
   create: SheetForm
@@ -68,6 +70,7 @@ export const EMPTY_SHEET: SheetForm = {
 export const EMPTY_BENCH: BenchDraft = {
   notes: {},
   statements: {},
+  addition: { field: '', statement: '' },
   changeContext: '',
   create: EMPTY_SHEET,
   promote: EMPTY_SHEET,
@@ -87,6 +90,8 @@ export interface CanonBenchProps {
   onCreate(categoryKey: string, relations: Edge[]): void
   onPromote(entityId: string, relations: Edge[]): void
   onPropose(factId: string): void
+  /** The addition — no fact to raise it beside, so it takes the entity (#39). */
+  onAddFact(entityId: string): void
   onRuleProposal(proposalId: string, verdict: 'ratify' | 'reject' | 'defer'): void
 }
 
@@ -215,8 +220,9 @@ export function CanonBench(props: CanonBenchProps) {
           </p>
           {canon.entity.facts.length === 0 ? (
             <p>
-              Nothing ratified stands here at this setting. A candidate carries no canon until
-              its promotion is ruled.
+              Nothing ratified stands here at this setting — a candidate carries no canon until
+              its promotion is ruled, and an entity promoted with its facts box empty carries
+              none until you add one below.
             </p>
           ) : (
             <ol>
@@ -251,6 +257,45 @@ export function CanonBench(props: CanonBenchProps) {
               ))}
             </ol>
           )}
+
+          {/*
+            The addition (#39): the same delta with nothing on the other side of it, and the
+            only path to a fact on an entity that carries none — a change form is anchored to
+            a fact that exists, so it cannot reach one. It takes the usage context above,
+            which says "whichever change you raise below" and means this one too.
+          */}
+          <h4>Add a fact this entity does not have</h4>
+          <p>
+            <label>
+              Field (optional):{' '}
+              <input
+                value={draft.addition.field}
+                onChange={(event) =>
+                  props.onDraft({ addition: { ...draft.addition, field: event.target.value } })
+                }
+                size={16}
+              />
+            </label>{' '}
+            <label>
+              What canon would say — one atomic, checkable statement:{' '}
+              <input
+                value={draft.addition.statement}
+                onChange={(event) =>
+                  props.onDraft({ addition: { ...draft.addition, statement: event.target.value } })
+                }
+                size={64}
+              />
+            </label>
+          </p>
+          <Button
+            offer={needing(
+              canon.entity.addFact,
+              draft.addition.statement,
+              canon.refusals.additionNeedsStatement,
+            )}
+            busy={busy}
+            onClick={() => props.onAddFact(canon.entity!.id)}
+          />
 
           {canon.entity.history.length > 0 && (
             <>

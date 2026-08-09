@@ -300,6 +300,12 @@ export function App() {
                   statement: bench.statements[factId] ?? '',
                   usageContext: bench.changeContext,
                 }),
+              onAddFact: (id) =>
+                void act(`/api/canon/entity/${id}/fact`, {
+                  field: bench.addition.field,
+                  statement: bench.addition.statement,
+                  usageContext: bench.changeContext,
+                }),
               onRuleProposal: (proposalId, verdict) =>
                 void act(`/api/proposal/${proposalId}/${verdict}`, {
                   note: bench.notes[proposalId] ?? '',
