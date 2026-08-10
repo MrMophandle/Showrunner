@@ -18,7 +18,7 @@ import type { LibraryPaths } from '../library.ts'
  * that reached for `process.env` instead could not be run against a temp volume in a test.
  *
  * The stages still to arrive, with the work they do:
- *   E4 · write   — the outline and script steps beside the premise, scene delineation
+ *   E4 · write   — the script step beside the premise and the outline, scene delineation
  *   E6 · produce — shot manifest, image generation, TTS takes, mix
  *   E7 · assemble — timeline, render, publish kit
  *
@@ -53,12 +53,17 @@ export function stageCatalogue(library: LibraryPaths): StageCatalogue {
   // presents what stands for Ryan's ruling. It exists because the wall has three doors and
   // one of them is a gate (D12) — without a gate over the script there is no override to take
   // and the door is a route only a test can walk. E3-7's own note says E4 decides its fate;
-  // E4-1 leaves it standing, because the gate it convenes is over the SCRIPT and the only
-  // writing gate this build has is over the premise-brief. E4-3 is where that call is made.
+  // E4-1 and E4-2 both leave it standing, because the gate it convenes is over the SCRIPT and
+  // the writing gates this build has are over the premise-brief and the outline. E4-3 is where
+  // that call is made, and it is the issue that finally puts a second gate over one artifact.
   //
-  // `write-the-premise` is E4-1's, and the first stage in this app that writes from canon:
-  // the writer's desk (E4-0), one call, the panel over what came back, and Ryan's ruling —
-  // which is also the only thing that moves an episode's lifecycle (`domain/lifecycle.ts`).
+  // `write-the-premise` and `write-the-outline` are E4-1's and E4-2's, and they are the same
+  // TypeScript twice (`write-step.ts`): the writer's desk (E4-0), one call, the panel over what
+  // came back, and Ryan's ruling — which is also the only thing that moves an episode's
+  // lifecycle (`domain/lifecycle.ts`). They differ in what the model is asked for and in
+  // nothing else, which is what "one composer, one loop, one gate" was for. The outline is
+  // also the first stage here that D12's wall can really refuse: it produces from material an
+  // episode has (the ruled brief), which the premise, being first, never does.
   return {
     ...writeStages(library),
     ...boardStages(library),

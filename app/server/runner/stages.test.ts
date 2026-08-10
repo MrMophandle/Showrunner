@@ -21,7 +21,7 @@ import { scaffoldStage } from './stage-fixture.ts'
 import { stageCatalogue } from './stages.ts'
 import { STAGE_WORK } from './step.ts'
 import { TEXT_CHECK_STAGE } from './text-check-step.ts'
-import { PREMISE_STAGE } from './write-step.ts'
+import { OUTLINE_STAGE, PREMISE_STAGE } from './write-step.ts'
 
 /**
  * The stage catalogue: what this build ships, and what it no longer offers.
@@ -97,9 +97,16 @@ function aDemoEraRun(): { runId: string; artifact: Artifact } {
 }
 
 describe('what this build ships', () => {
-  it('is these five stages, and adding one is a code change with a test', () => {
+  it('is these six stages, and adding one is a code change with a test', () => {
     expect(Object.keys(stageCatalogue(paths)).sort()).toEqual(
-      [PREMISE_STAGE, BOARD_STAGE, BOARD_CHECK_STAGE, TEXT_CHECK_STAGE, SCRIPT_GATE_STAGE].sort(),
+      [
+        PREMISE_STAGE,
+        OUTLINE_STAGE,
+        BOARD_STAGE,
+        BOARD_CHECK_STAGE,
+        TEXT_CHECK_STAGE,
+        SCRIPT_GATE_STAGE,
+      ].sort(),
     )
   })
 
