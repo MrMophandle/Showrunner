@@ -487,6 +487,21 @@ export interface ClusterSay {
   entityId: string | null
   /** The facts it argues with, as the card quotes them. */
   facts: string[]
+  /**
+   * **"world-rules · severity high · confidence high · text, a reading"** — the card's own
+   * line, composed here because a cluster has more than one reader now (E4-7).
+   *
+   * E3-7 composed it in `check-bench.ts`, which was right while the check bench was the only
+   * surface that rendered a cluster. The writing room's gates render the premise-brief's and
+   * the outline's findings, which that bench never sees (it is script-only), so the string
+   * moved down to the module that owns what a say IS — one composer, two readers, which is the
+   * same move `proposalOnTheBench` made for the sweep.
+   *
+   * Severity and confidence stay side by side and are never folded into one word (invariant
+   * 4): "how bad if true" and "how sure it is true" are two questions. The tier rides with
+   * them because `certain` off a row means something different from a model's certainty (4.2).
+   */
+  sentence: string
 }
 
 /** One card in the gate room: a span of the artifact, and everything said about it. */
@@ -597,6 +612,9 @@ const sayOf = (finding: Finding): ClusterSay => ({
   status: finding.status,
   entityId: finding.entityId,
   facts: finding.facts.map((fact) => fact.statement),
+  sentence:
+    `${finding.checkKey} · severity ${finding.severity} · confidence ${finding.confidence} · ` +
+    `${finding.tier === 'deterministic' ? 'deterministic, from the rows' : 'text, a reading'}`,
 })
 
 const worstOf = (says: ClusterSay[]): FindingSeverity | undefined =>

@@ -245,6 +245,25 @@ export interface Rulings {
   override(gateId: string, ruling?: { comment?: string }): GateStanding
 }
 
+/**
+ * **Why a rejection with no note is refused** — one string, three readers (E4-7).
+ *
+ * The verb is "reject WITH NOTES", so a rejection carrying none is the verb without its
+ * object: nothing would be recorded against the round, the step would reopen with nothing to
+ * write against, and a later writer run would read the desk back and find Ryan had said
+ * nothing at all (`write-context.ts` is the reader that makes this load-bearing).
+ *
+ * It is composed rather than constant because it names what is being rejected, and it is
+ * exported because three places have to say it identically: `rule` below throws it, the API
+ * refuses with it, and the disabled button on every gate surface shows it BEFORE the click.
+ * Until E4-7 those were three different sentences — the button's, the route's and the
+ * ruling's — which is "preconditions before the button" decorated rather than kept (D15).
+ */
+export const rejectionNeedsANote = (subject: string): string =>
+  `Rejecting ${subject} needs at least one note — “reject with notes” is the verb, and the ` +
+  'notes are what the step reopens with. A rejection that said nothing would reopen the ' +
+  'round with nothing to write against, and later runs read your notes back off the desk (4.4).'
+
 export function createRulings(store: Store, events: EventLog, runner: Runner): Rulings {
   function rule(
     gateId: string,
@@ -263,10 +282,7 @@ export function createRulings(store: Store, events: EventLog, runner: Runner): R
     const round = before.round
     const notes = given.notes ?? []
     if (verdict === 'reject' && notes.length === 0) {
-      throw new Error(
-        `rejecting ${before.subject} needs at least one note — "reject with notes" is the ` +
-          'verb, and the notes are what the step reopens with',
-      )
+      throw new Error(rejectionNeedsANote(before.subject))
     }
 
     store.transaction(() => {
@@ -388,6 +404,26 @@ export function gateOfRun(store: Store, runId: string): Gate | undefined {
     runId,
   )
   return row && hydrateGate(row)
+}
+
+/**
+ * **Every gate ever opened on this episode, newest first** — its whole ruling history, across
+ * runs and across stages.
+ *
+ * Scoped to the EPISODE rather than to a run because that is the question E4-7's writing room
+ * asks: an episode's premise was ruled by one run, its outline by another, and its script by a
+ * third, and a room that could only reach the newest run's gate would hide two of Ryan's own
+ * rulings behind archaeology. It is deliberately not filtered to open ones — a ruled gate is
+ * the record of a decision, and reading back what he said at the premise while looking at the
+ * script is most of what the room is for.
+ *
+ * Ordered by `seq` descending, never by a timestamp: `at` is for humans (events.ts's rule,
+ * which every ordered read in this app keeps).
+ */
+export function gatesOfEpisode(store: Store, episodeId: string): Gate[] {
+  return store
+    .all<GateRow>('SELECT * FROM gate WHERE episode_id = ? ORDER BY seq DESC', episodeId)
+    .map(hydrateGate)
 }
 
 /**

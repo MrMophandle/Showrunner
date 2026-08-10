@@ -352,7 +352,7 @@ export function canonBenchView(
     positions:
       standing.episodeId === undefined
         ? null
-        : (positionSection(store, show.id, standing.episodeId) ?? null),
+        : (declarePositionSection(store, show.id, standing.episodeId) ?? null),
     refusals: BENCH_REFUSALS,
     emptyBecause:
       entities.length === 0
@@ -860,8 +860,14 @@ function requiredOf(
  * of its own season — which is `write-context.ts`'s rule, read here rather than re-decided,
  * because the desk and this door disagreeing about which arcs an episode is on would be two
  * answers to one question.
+ *
+ * **Exported for the writing room** (E4-7). E4-4 built the door and left it reachable only
+ * through the bench's `?episode=` control, which no screen ever set — so the pin could be moved
+ * by an API call and by nothing a hand could press. The room is where declaring belongs, since
+ * it is a production decision about the episode being written; the section is composed here,
+ * once, because the arc page (D24) is E5's third reader of it.
  */
-function positionSection(
+export function declarePositionSection(
   store: Store,
   showId: string,
   episodeId: string,

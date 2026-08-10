@@ -40,6 +40,7 @@ import {
   gateStanding,
   NOTE_DEPTH,
   openGates,
+  rejectionNeedsANote,
   type GateRound,
   type NoteDepth,
 } from './runner/gate.ts'
@@ -295,8 +296,12 @@ export function stageForEpisode(episode: Episode): string {
  * is a STAGE, so its offer comes off `stage.offerOn` like every other button in this app and
  * `stageOffer` adds the same preconditions it adds to a launch — a run already holding the
  * episode refuses both doors with one sentence, which is D7 said once (`launchBlockedBecause`).
+ *
+ * **Exported for the writing room** (E4-7), which renders the same three artifacts beside the
+ * stage that writes each one. One composer, two readers: a second list of doors would be the
+ * one that quietly dropped the freshness sentence beside them.
  */
-function writtenOnThePage(
+export function writtenOnThePage(
   store: Store,
   library: LibraryPaths,
   llm: LLMReadiness,
@@ -510,6 +515,16 @@ export interface GateOnThePage {
   reject: Offer
   /** How deep a rejection note may route the work back (D21). Empty is the legal default. */
   noteDepths: readonly NoteDepth[]
+  /**
+   * **Why the rejection is disabled while the note box is empty**, in the words the API
+   * refuses with (E4-7, `runner/gate.ts`).
+   *
+   * The note lives in a textarea this process has never seen, so the precondition is the
+   * page's to apply — but never the page's to WORD. It came down the wire until E4-7 in three
+   * different wordings, one per surface, which is the drift `refusals` exists on every other
+   * bench to prevent (`CHECK_REFUSALS`, `BENCH_REFUSALS`).
+   */
+  rejectNeedsNote: string
 }
 
 export interface RunView {
@@ -569,8 +584,14 @@ export function runView(store: Store, library: LibraryPaths, runId: string): Run
  * its gates are still in Ryan's library; the catalogue lookup misses, `again` is null, and the
  * three verdicts come back with the free cost rather than a guess. Rows are records — a stage
  * leaving the catalogue may not take its history off the screen.
+ *
+ * **Exported for the writing room** (E4-7), which is its second reader. What a gate IS, what
+ * the three verbs would do and why one is refused are one answer wherever Ryan is standing —
+ * the same rule `proposalOnTheBench` keeps for the sweep and `draftsUnderReview` for a gate's
+ * payload. The room adds the findings clustered at their spans and renders the same three
+ * offers; it composes none of them.
  */
-function gateOnThePage(
+export function gateOnThePage(
   store: Store,
   library: LibraryPaths,
   gateId: string,
@@ -643,6 +664,7 @@ function gateOnThePage(
       blockedBecause: ruled,
     },
     noteDepths: NOTE_DEPTH,
+    rejectNeedsNote: rejectionNeedsANote(standing.subject),
   }
 }
 
