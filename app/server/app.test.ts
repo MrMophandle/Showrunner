@@ -442,7 +442,7 @@ describe('the app process — the canon bench', () => {
     // a second round trip, which is where a bench ruling is read back from (#29).
     expect(founded.body.ledger).toHaveLength(6)
     expect(founded.body.ledger.every((ruling) => ruling.kind === 'ratification')).toBe(true)
-    expect(founded.body.ledger[0]!.sentence).toContain('convened at the bench, no gate')
+    expect(founded.body.ledger[0]!.sentence).toContain('convened away from a gate')
     expect(founded.body.queue).toEqual([])
     expect(founded.body.found.enabled).toBe(false)
     expect(founded.body.entities.find((entity) => entity.name === 'Ilse Renn')!.status).toBe(

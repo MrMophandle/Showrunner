@@ -57,6 +57,7 @@ import { stageCatalogue } from './runner/stages.ts'
 import type { Stage, StageCatalogue } from './runner/step.ts'
 import { PRESENTING_STAGE, SCRIPT_GATE_STAGE } from './runner/present-step.ts'
 import { WRITING_STAGE } from './runner/write-step.ts'
+import { sweepOnThePage, type SweepOnThePage } from './sweep.ts'
 
 /**
  * The operating page's read model — everything the bare-bones page renders, composed
@@ -114,6 +115,15 @@ export interface EpisodeOnThePage {
   launchStage: string
   /** Every written artifact this episode has, with its freshness and both of Ryan's doors. */
   artifacts: WrittenOnThePage[]
+  /**
+   * **The completion sweep this episode still owes, or null when it owes none** (E4-6, 1.2).
+   *
+   * Derived from the proposals riding it, both ways: the sentence appears when something rides
+   * and disappears when nothing does. There is no `swept_at` column and no sweep table — the
+   * pass is a standing obligation computed from the queue, and `sweep.ts` argues why it stands
+   * OWED after the approval rather than inside the gate that gave it.
+   */
+  sweep: SweepOnThePage | null
 }
 
 /**
@@ -224,6 +234,7 @@ export function operatingView(
           launch: stageOffer(store, llm, episode.id, catalogue[stage]!),
           launchStage: stage,
           artifacts: writtenOnThePage(store, library, llm, catalogue, episode.id),
+          sweep: sweepOnThePage(store, episode.id),
         }
       }),
     )

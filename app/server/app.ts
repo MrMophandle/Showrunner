@@ -40,6 +40,7 @@ import {
 import type { NoteDraft, Rulings } from './runner/gate.ts'
 import type { Runner } from './runner/runner.ts'
 import { stageCatalogue } from './runner/stages.ts'
+import { notOnAnEpisodeSweepBecause, sweepView } from './sweep.ts'
 
 const WEB_ROOT = './dist/web'
 
@@ -600,6 +601,49 @@ export function createApp(
         else if (verdict === 'defer') rulings.defer(proposal.id, { note })
         else rulings.reject(proposal.id, { note })
       })
+    })
+  }
+
+  // ── The completion sweep (E4-6) ───────────────────────────────────────────────
+  //
+  // Two routes, and they convene **the same three verbs the queue above convenes** — the
+  // `rulings` object is literally the one built for the bench, because there is one ruling API
+  // and a surface is where Ryan was standing, never what a ruling is (proposal.ts). What is
+  // different is the scope and the answer: this presents the proposals riding ONE episode, and
+  // hands back that episode's pass as the ruling left it.
+  //
+  // **There is no bulk verb here and there is no route for one.** Each rider is ruled by its
+  // own POST, writes its own row on `canon_ruling`, and the pass re-reads afterwards — which is
+  // what "ruled one at a time, no bulk approve" means at the wire (1.2, and `sweep.ts`'s header
+  // argues why the pass stands owed after the approval rather than inside the gate).
+
+  /** What the episode still owes canon: its riders, its rulings, and the sentence for both. */
+  app.get('/api/sweep/:episodeId', (c) => {
+    const view = sweepView(store, c.req.param('episodeId'))
+    if (!view) return c.json({ error: `No such episode: ${c.req.param('episodeId')}` }, 404)
+    return c.json(view)
+  })
+
+  for (const verdict of ['ratify', 'reject', 'defer'] as const) {
+    app.post(`/api/sweep/proposal/:proposalId/${verdict}`, async (c) => {
+      const proposal = findProposal(store, c.req.param('proposalId'))
+      if (!proposal) {
+        return c.json({ error: `No such proposal: ${c.req.param('proposalId')}` }, 404)
+      }
+      // A proposal riding nothing is not on any episode's pass, and the refusal says where it
+      // IS rulable rather than leaving him to find out (`sweep.ts`).
+      const elsewhere = notOnAnEpisodeSweepBecause(proposal)
+      if (elsewhere) return c.json({ error: elsewhere }, 409)
+
+      const note = text((await json(c.req.raw))['note'])
+      try {
+        if (verdict === 'ratify') rulings.ratify(proposal.id, { note })
+        else if (verdict === 'defer') rulings.defer(proposal.id, { note })
+        else rulings.reject(proposal.id, { note })
+      } catch (error) {
+        return c.json({ error: messageOf(error) }, 409)
+      }
+      return c.json(sweepView(store, proposal.episodeId!)!)
     })
   }
 

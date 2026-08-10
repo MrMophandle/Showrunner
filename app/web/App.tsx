@@ -4,6 +4,7 @@ import type { CheckBenchView } from '../server/check-bench.ts'
 import type { EventRecord } from '../server/events.ts'
 import type { EpisodeOnThePage, OperatingView, RunView } from '../server/operating.ts'
 import type { NoteDepth } from '../server/runner/gate.ts'
+import type { SweepView } from '../server/sweep.ts'
 import {
   CanonBench,
   EMPTY_BENCH,
@@ -18,6 +19,7 @@ import {
   type CheckBenchProps,
   type CheckDraft,
 } from './CheckBench.tsx'
+import { EMPTY_SWEEP, Sweep, type SweepDraft, type SweepProps } from './Sweep.tsx'
 import { ARTIFACT, Button, CARD, FAINT, needing, PAGE, STREAM } from './kit.tsx'
 
 /**
@@ -100,6 +102,14 @@ export function App() {
   /** Which bench is on screen, readable inside the stream's listener without re-subscribing. */
   const benched = useRef<string | null>(null)
 
+  // The completion sweep (E4-6). Episode-scoped like the checks, opened by hand, and NOT on
+  // the event stream for the same reason the canon section is not: a ruling made here convenes
+  // no gate, so it lands on `canon_ruling` and nowhere else, and the pass re-reads from there
+  // after every act.
+  const [sweepEpisode, setSweepEpisode] = useState<string | null>(null)
+  const [sweep, setSweep] = useState<SweepView | null>(null)
+  const [sweepDraft, setSweepDraft] = useState<SweepDraft>(EMPTY_SWEEP)
+
   /** Where the bench's controls stand, as the API reads them — a string, so an effect can watch it. */
   const controls = new URLSearchParams({
     ...(entityId !== null && { entity: entityId }),
@@ -134,6 +144,11 @@ export function App() {
     setChecks(res.ok ? ((await res.json()) as CheckBenchView) : null)
   }, [])
 
+  const loadSweep = useCallback(async (episodeId: string): Promise<void> => {
+    const res = await fetch(`/api/sweep/${episodeId}`)
+    setSweep(res.ok ? ((await res.json()) as SweepView) : null)
+  }, [])
+
   // First load. It also picks up whatever this process came back to: a run left parked on
   // a gate by a killed process is still parked, and this is what puts it back on screen.
   useEffect(() => {
@@ -165,6 +180,12 @@ export function App() {
     benched.current = checkEpisode
     if (checkEpisode) void loadChecks(checkEpisode)
   }, [checkEpisode, loadChecks])
+
+  // The sweep re-reads when Ryan opens a different episode's pass, and on nothing else. A GET,
+  // so opening it rules nothing and spends nothing (invariant 5).
+  useEffect(() => {
+    if (sweepEpisode) void loadSweep(sweepEpisode)
+  }, [sweepEpisode, loadSweep])
 
   /**
    * The stream. It opens at sequence 0, so this panel is also the log — after a restart it
@@ -385,6 +406,44 @@ export function App() {
     }
   }
 
+  /**
+   * **One rider, one ruling** (E4-6). The sweep answers with the pass as the ruling left it,
+   * so the rider that was just disposed of moves out of the list and onto the record without a
+   * second round trip — and the episode card's own sentence is re-read beside it, because "N
+   * proposals still ride ep02" is computed from the same queue this just changed.
+   *
+   * There is deliberately no sibling of this that takes a list.
+   */
+  async function ruleRider(
+    proposalId: string,
+    verdict: 'ratify' | 'reject' | 'defer',
+  ): Promise<void> {
+    setBusy(true)
+    setProblem(null)
+    try {
+      const res = await fetch(`/api/sweep/proposal/${proposalId}/${verdict}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ note: sweepDraft.notes[proposalId] ?? '' }),
+      })
+      const payload: unknown = await res.json()
+      if (!res.ok) {
+        setProblem(
+          (payload as { error?: string }).error ?? 'The ruling was refused, and said nothing why.',
+        )
+      } else {
+        setSweep(payload as SweepView)
+        setSweepDraft(EMPTY_SWEEP)
+      }
+      await loadView()
+      // A ratified rider is canon now, so the bench's own facts, ledger and queue have all
+      // moved. Re-read rather than patched: every number on it is computed off rows.
+      if (benchShow) await loadCanon(benchShow, controls)
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const sheetBody = (form: SheetForm, relations: Edge[]): Record<string, unknown> => ({
     categoryKey: form.categoryKey,
     name: form.name,
@@ -432,6 +491,23 @@ export function App() {
         setCheckDraft(EMPTY_CHECK_DRAFT)
       }}
       checkEpisode={checkEpisode}
+      sweepEpisode={sweepEpisode}
+      onShowSweep={(episodeId) => {
+        setSweepEpisode(episodeId)
+        setSweepDraft(EMPTY_SWEEP)
+      }}
+      sweep={
+        sweep === null || sweepEpisode === null
+          ? null
+          : {
+              sweep,
+              draft: sweepDraft,
+              busy,
+              onDraft: (next) => setSweepDraft({ ...sweepDraft, ...next }),
+              onRule: (proposalId, verdict) => void ruleRider(proposalId, verdict),
+              onClose: () => setSweepEpisode(null),
+            }
+      }
       checks={
         checks === null || checkEpisode === null
           ? null
@@ -535,6 +611,15 @@ export interface PageProps {
   checkEpisode: string | null
   /** Checks are scoped to an artifact, so an episode has to be chosen — never picked silently. */
   onShowChecks(episodeId: string): void
+  /**
+   * The completion sweep, whole (E4-6): the ruling pass an approved episode still owes canon,
+   * one rider at a time. Null until one is opened — a pass that convened itself would be a
+   * screen ruling on Ryan's behalf about when he sits down to it.
+   */
+  sweep: SweepProps | null
+  /** Which episode's pass is open, so the button for it can say it already is. */
+  sweepEpisode: string | null
+  onShowSweep(episodeId: string): void
   /**
    * Which show the bench is standing at. Canon is scoped to a show and this page renders
    * one bench, so a library with two shows needs a way to say which — never a first one
@@ -671,6 +756,25 @@ export function Page(props: PageProps) {
                     </button>
                   )}
                 </p>
+              )}
+
+              {/* **What approving the script left owed** (E4-6, 1.2). It is here and only
+                  here while something rides — the sentence is computed off the queue, so it
+                  appears with the riders and goes when the last one is ruled. Nothing about
+                  it blocks the launch button above: it is Ryan's owed pass, never a wall. */}
+              {episode.sweep && (
+                <div style={ARTIFACT}>
+                  <p>{episode.sweep.sentence}</p>
+                  {props.sweepEpisode === episode.id ? (
+                    <em>The completion sweep below is standing at {episode.label}.</em>
+                  ) : (
+                    <Button
+                      offer={episode.sweep.open}
+                      busy={busy}
+                      onClick={() => props.onShowSweep(episode.id)}
+                    />
+                  )}
+                </div>
               )}
 
               {/* Not an action and so not a costed sentence: it opens a read. The check
@@ -856,6 +960,10 @@ export function Page(props: PageProps) {
       {/* Checks (E3-7). It renders what six issues recorded and records nothing of its own;
           the acts on it raise, revise or record, and not one of them ratifies. */}
       {props.checks && <CheckBench {...props.checks} />}
+
+      {/* The completion sweep (E4-6). The one section on this page where ratifying happens
+          over an episode's own claims — one rider at a time, each on its own row. */}
+      {props.sweep && <Sweep {...props.sweep} />}
 
       <h2>Live</h2>
       <p>

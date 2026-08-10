@@ -228,7 +228,15 @@ export interface RulingOnTheBench {
   kind: CanonRuling['kind']
   at: string
   note: string
-  /** "ruling 7 · ratification — the “Sefa Doule” promotion · “…” · convened at the bench" */
+  /**
+   * "ruling 7 · ratification — the “Sefa Doule” promotion · “…” · convened away from a gate"
+   *
+   * **Away from a gate, rather than "at the bench"** (E4-6). `canon_ruling` records the gate a
+   * ruling was convened at and nothing else — there is no column for the surface — so naming
+   * one was an inference the row does not support. It was true while the bench was the only
+   * gateless surface; the completion sweep is the second (`sweep.ts`), and E6 will bring more.
+   * What the row genuinely knows is that no gate was open, and that is what this says.
+   */
   sentence: string
   /** The same ruling short enough to be an option in the point-in-time control. */
   label: string
@@ -337,7 +345,7 @@ export function canonBenchView(
     asOf: asOfControl(store, standing, at, ledger),
     entities: entities.map((entity) => onTheBench(store, entity, at, queue)),
     entity: open && open.showId === show.id ? inFull(store, open, at, queue, categories) : null,
-    queue: queue.map((proposal) => inTheQueue(store, proposal)),
+    queue: queue.map((proposal) => proposalOnTheBench(store, proposal)),
     ledger,
     found: foundingOffer(store, show, entities),
     create: createForm(store, show, categories, entities),
@@ -610,7 +618,19 @@ function proposeOffer(fact: Fact): Offer {
 
 // ── The queue: one proposal, and the three verbs that dispose of it ─────────────
 
-function inTheQueue(store: Store, proposal: Proposal): ProposalOnTheBench {
+/**
+ * One proposal, rendered whole: its five parts, its blast radius computed at read, and the
+ * three verbs that dispose of it — **one at a time, and there is no fourth verb here.**
+ *
+ * **Exported because E4-6's completion sweep is its second reader** (`sweep.ts`). The sweep
+ * presents the proposals riding one episode rather than the whole show's queue, and that is
+ * the only difference between the two surfaces: what a proposal IS, what ratifying it would
+ * write, what it would disturb and why a verb is refused are one answer wherever Ryan is
+ * standing. A second renderer would be the second payload builder this module's header
+ * refuses on every other shape it owns — and it would drift the day one of them learned
+ * something the other did not.
+ */
+export function proposalOnTheBench(store: Store, proposal: Proposal): ProposalOnTheBench {
   const name = findEntityById(store, proposal.entityId)?.name ?? proposal.entityId
   const subject = `the “${name}” ${KIND_NOUN[proposal.kind]}`
   const ruled = proposal.disposition !== null
@@ -740,7 +760,7 @@ function onTheLedger(store: Store, ruling: CanonRuling): RulingOnTheBench {
     sentence:
       `ruling ${ruling.seq} · ${ruling.kind} — ${subject}${
         ruling.note === '' ? '' : ` · “${ruling.note}”`
-      } · ${ruling.gateId === null ? 'convened at the bench, no gate' : 'convened at a gate'}`,
+      } · ${ruling.gateId === null ? 'convened away from a gate' : 'convened at a gate'}`,
     // The note is left off this one on purpose: it is a founding note repeated on six
     // rulings, and a point-in-time control is a list to pick a moment from, not to read.
     label: `ruling ${ruling.seq} · ${ruling.kind} · ${ruling.at.slice(0, 10)} — ${subject}`,

@@ -543,7 +543,7 @@ describe('the canon bench — where a ruling is read back from', () => {
     const ledger = bench().ledger
     expect(ledger.map((ruling) => ruling.kind)).toEqual(['deferral', 'rejection', 'ratification'])
     expect(ledger[2]!.sentence).toMatch(/^ruling \d+ · ratification — the “.+” promotion · “yes\.”/)
-    expect(ledger.every((ruling) => ruling.sentence.endsWith('convened at the bench, no gate'))).toBe(
+    expect(ledger.every((ruling) => ruling.sentence.endsWith('convened away from a gate'))).toBe(
       true,
     )
 
