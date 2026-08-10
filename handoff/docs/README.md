@@ -374,6 +374,12 @@ query — every proposal has a subject. Putting a subject entity on `arc` would 
 one answer per arc at creation time, before anybody knows which of a story arc's several
 subjects an individual episode's landing reads on.
 
+*Wired by E4-4 (#64).* `landPosition`'s first caller outside a test is the script's fact
+extraction: the same paid call that reads the draft's claims answers, per declared position,
+which entity the landing reads on — and the answer is refused unless it is in the script's
+provenance, exactly like a claim's subject. The subject was never a lookup and it is not one
+now; it is a sentence in a prompt that says so.
+
 ### `sweepEpisode` is a read, and E4's approval gate is what calls it (E2-3, issue #26)
 
 The completion sweep collects every proposal still riding an episode into one final ruling
@@ -391,6 +397,11 @@ The sweep collects **existing** proposals only. Extracting the implicit facts ou
 prose is LLM work and is E3/E4's: those extractors raise proposals riding the episode, and
 this sweep collects them without a line changing here. That is the whole reason it was built
 as a collector rather than as something that also generates.
+
+*Half paid by E4-4 (#64): the extractor exists (`claim.ts`, `runner/claim-step.ts`) and the
+sweep collects what it raises with not a line changed, exactly as predicted. What still has no
+caller is the sweep itself — **E4-6's episode-approval gate is what convenes it**, and this
+paragraph's other half stays open until then.*
 
 ### A `candidate` sheet raises nothing, and re-loading is not a sync (E2-4, issue #27)
 
@@ -425,6 +436,10 @@ arc sheet carries no subject (the E2-3 constraint above). Supplying one from a l
 put a claim in the fixture nobody decided. **E4's writer step answers it**; if the fixture
 should carry a landing before then, the honest change is a `subject` field on the arc sheet
 and a `read.ts` that requires it.
+
+*Answered by E4-4 (#64), and ep01's pin is still a pin: the extraction step answers the subject
+per declared position, out of the written script, and the loader was not touched. Nothing
+materialises a landing for ep01 retroactively — this ruling stands.*
 
 ## Constraints E3 leaves behind
 
@@ -505,8 +520,9 @@ cannot repeat it.
 
 Written as E4's issues land, for the same reason as every list above. The first four are
 E4-1's (#61) and the first three bound E4-2 directly; the three after them are E4-2's (#62)
-and bound E4-3; the last three are E4-3's (#63), and the scene rules among them bind E4-5's
-direct editor and E6's shot manifest before anything else touches a scene.
+and bound E4-3; then three of E4-3's (#63), and the scene rules among them bind E4-5's
+direct editor and E6's shot manifest before anything else touches a scene. The last three are
+E4-4's (#64), and the first of them binds E4-6's sweep gate directly.
 
 ### One seam moves an episode's lifecycle, and the builder is what makes it a seam (E4-1, #61)
 
@@ -673,6 +689,75 @@ a NEW draft rather than re-reading the broken one three times.
 and E7's import both. It is the artifact-layer sibling of E3-5's rule that every new version
 must be read before the wall can trust it: a version delineated against the previous draft's
 headings is a grid nobody derived, and nothing downstream can tell it from one that was.
+
+### A paid step past the gate is money the launch button already promised (E4-4, #64)
+
+The script stage has three steps since E4-4, and the third runs on the far side of Ryan's
+ruling: `extract-the-canon-claims` reads the draft he APPROVED and raises what it claimed.
+Three placements, each a decision, and `runner/claim-step.ts` carries the argument —
+**after the gate** so it reads the draft that was kept rather than a round the loop replaced;
+**inside the run** so the launch click already made is the click that pays for it (E1's
+pattern: the gate parks the run and the approval carries it on); **before the close** so the
+closing step's `costOfRun` covers what it spent.
+
+Two things fall out that a later stage inherits rather than re-decides.
+
+**The offer's `cost` must cover the whole run, not the part before the gate.** One click buys
+every step, so a spend that lands after a ruling is still one Ryan agreed to, and a cost line
+that stopped at the gate would be a button that lies cheaply. `offerFor` states it as its own
+clause. **Any stage that grows a step past its gate owes the same clause.**
+
+**A failed extraction leaves the episode where it stood, with the gate approved.** The run
+fails after three attempts and `advance-past-the-script-gate` never runs, so ep02 stays at
+`script` and Ryan has the attempt history (invariant 5). That is the honest state — he ruled,
+and the stage did not finish — but there is no affordance for re-running just the tail, which
+is the same gap as "a run of a retired stage holds its episode forever" above and wants the
+same fix: **a verb for putting a run down, or picking one up again.** Not invented here,
+because it is a decision about what Ryan may do to a run.
+
+### A pin is not a landing, and the door only moves the pin (E4-4, #64)
+
+Before E4-4 nothing in this app called `declarePosition` except the fixture loader, so an
+episode's position on an arc could be read everywhere and moved nowhere. The door is
+`declareEpisodePosition` (canon-bench.ts) behind `POST /api/canon/episode/:id/position`, and
+it is deliberately the LOWER of the two calls: it moves the pin, raises nothing, and costs
+nothing.
+
+**The split is D8 read literally, and it is why there are two calls at all.** Declaring is a
+production decision — Ryan saying which waypoint this episode is written to land. The LANDING
+is a claim about the world, so it is a fact, so it needs a subject entity, and the subject is a
+writing judgement out of the written episode (the E2-3 constraint). A bench that raised the
+landing would have to invent that subject with no text to read it from — the same thing E2-4
+refused to do from a loader. So: pin at the bench, free, whenever; landing from the script,
+paid, with the subject the writer answered.
+
+**E5's arc page (D24) is what renders this properly.** What is built is what that page needs
+already queryable — the sentence, the `$0.00`, and the reason a button is disabled — reached
+through the bench view's `?episode=` control, the same shape `?entity=` already had.
+
+### The extractor's four laws, and the one scope they are read against (E4-4, #64)
+
+`claim.ts` inherits `domain/board.ts`'s pattern whole — nothing trusts the model — and adds the
+thing that makes it enforceable: **`claimScope` is composed once and read by both the prompt
+and the parser.** So "that entity is not in provenance" and "that fact was not on your list"
+are refusals against the exact list the model was handed, rather than against a second query
+that happens to agree today. A prompt built from one read and a parser built from another is
+`write-context.ts`'s failure mode one layer down.
+
+The four: a claim's span must resolve in the draft; a claim's subject must be in the draft's
+provenance (E4-1's rule, read backwards — an entity the writer was never handed is canon
+nobody read); a claim already standing verbatim raises nothing; a claim that contradicts a
+standing fact is raised as a delta **with its before**. A malformed answer fails the step, and
+that is not fussiness: **a zero-claims pass is a real and legal answer**, so a broken reply
+rendering as one would tell Ryan this episode touched no canon.
+
+Two implementation rules a later extractor should copy rather than rediscover. The proposals go
+through `canon-bench.ts`'s two builders — `proposeFactChange` for a delta with a before and
+`proposeNewFact` for one without, the latter widened here with the same three optional fields
+the former already had — so the refusal a closed or provisional fact earns is one string
+wherever the claim came from. And the usage context is quoted by `quotedLines` (remediation.ts,
+exported for this), because a proposal's second part is "the passage that made it necessary"
+and two composers would put two shapes of one argument on one queue.
 
 ## Working agreements that bind every session
 

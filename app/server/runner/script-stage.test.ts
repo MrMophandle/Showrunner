@@ -533,6 +533,10 @@ describe('the script is offered only once the outline has been ruled', () => {
     expect(offer.sentence).not.toMatch(/^(Launch|Run|Go|Do|Start)\b/)
     expect(offer.cost).toMatch(/^1 Opus call, ~\$\d+\.\d\d \+ up to 9 Opus calls, ~\$\d+\.\d\d/)
     expect(offer.cost).toContain('stops at 3 drafts')
+    // The spend that lands on the far side of the gate, on the button that buys it (E4-4).
+    // One click covers the whole run, so the sentence covers the whole run.
+    expect(offer.cost).toMatch(/then 1 Opus call, ~\$\d+\.\d\d after you approve it/)
+    expect(offer.cost).toContain('read what the script claims of canon into proposals')
     expect(offer.cost).toContain('your money, spent when you click')
 
     // And the upper bound is really an upper bound: nine is every category that DECLARES the
@@ -617,8 +621,12 @@ describe('the desk is what reaches the model, on the third lap too', () => {
     expect(payload.rounds.map((round) => [round.artifactVersion, round.checks])).toEqual([[1, 6]])
     expect(payload).toMatchObject({ converged: true, clean: true, blocking: [] })
 
+    // Three steps since E4-4, and the third has not run: extraction reads the draft Ryan
+    // APPROVED, so while the gate is open it is `pending` like the close behind it. What the
+    // call count above proves is the other half — nothing has been spent on it yet.
     expect(stepsOf(store, runId).map((step) => [step.name, step.status])).toEqual([
       ['write-the-script', 'paused'],
+      ['extract-the-canon-claims', 'pending'],
       ['advance-past-the-script-gate', 'pending'],
     ])
     // And the gate renders its artifact rather than a filename (1.3).
@@ -646,14 +654,18 @@ describe('the script gate moves ep02 on, and nothing else does', () => {
     const runId = await writeTheScript()
     const spent = llm.calls.length
 
+    // The one call the approval buys: E4-4's extraction, which reads the draft he just ruled
+    // on. ep02 is vanilla, so it lands nothing and claims nothing here — `claim-step.test.ts`
+    // is where it claims something.
+    llm.reply('{"claims": [], "landings": []}')
     rulings.approve(openGates(store)[0]!.gate.id, { comment: 'shoot it.' })
     const settled = await runner.settled(runId)
 
     expect(settled.status).toBe('done')
     expect(lifecycleOf()).toBe('assets')
-    // Nothing re-written, nothing re-checked, nothing re-spent on the way back in — and
-    // nothing re-delineated either.
-    expect(llm.calls).toHaveLength(spent)
+    // Nothing re-written, nothing re-checked, nothing re-delineated on the way back in — and
+    // exactly one thing re-spent, which is the one the button's cost sentence promised.
+    expect(llm.calls).toHaveLength(spent + 1)
     expect(scenesOf(store, ep02)).toHaveLength(3)
 
     const close = findStepByName(store, runId, 'advance-past-the-script-gate')!.output as WriteClose

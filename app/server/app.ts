@@ -3,6 +3,7 @@ import { Hono, type Context } from 'hono'
 import { streamSSE } from 'hono/streaming'
 import {
   canonBenchView,
+  declareEpisodePosition,
   promoteCandidate,
   proposeFactChange,
   proposeNewFact,
@@ -16,7 +17,7 @@ import { findFact } from './domain/fact.ts'
 import { dismissFinding, findFinding } from './domain/finding.ts'
 import { foundCanon } from './domain/founding.ts'
 import { createProposalRulings, findProposal } from './domain/proposal.ts'
-import { findShow } from './domain/spine.ts'
+import { episodeInShow, findShow } from './domain/spine.ts'
 import { eventsSince, type EventLog, type EventRecord } from './events.ts'
 import type { LibraryPaths } from './library.ts'
 import type { LLMAdapter } from './llm/adapter.ts'
@@ -385,13 +386,15 @@ export function createApp(
   // "entity". Nothing here spends a cent, which is why no route consults the LLM readiness.
   const rulings = createProposalRulings(store, events)
 
-  /** Where the bench's two controls stand, off the query string the page sent with its act. */
+  /** Where the bench's controls stand, off the query string the page sent with its act. */
   const standingOf = (c: Context): BenchStanding => {
     const entity = c.req.query('entity')
+    const episode = c.req.query('episode')
     const ruling = Number(c.req.query('ruling'))
     const date = c.req.query('date')
     return {
       ...(entity !== undefined && entity !== '' && { entityId: entity }),
+      ...(episode !== undefined && episode !== '' && { episodeId: episode }),
       ...(Number.isInteger(ruling) && ruling > 0 && { ruling }),
       ...(date !== undefined && date !== '' && { date }),
     }
@@ -483,6 +486,29 @@ export function createApp(
         statement: text(body['statement']),
         ...(field !== '' && { field }),
         ...(text(body['usageContext']) !== '' && { usageContext: text(body['usageContext']) }),
+      }),
+    )
+  })
+
+  /**
+   * **The door E4-4 built** (D8): moving an episode's pin on an arc. Until this route,
+   * `declarePosition` had exactly one caller in the whole app — the fixture loader — so a pin
+   * could be read everywhere and moved nowhere.
+   *
+   * It raises nothing and costs nothing. The LANDING proposal that turns a pin into a fact is
+   * raised by the script's extraction, because a landing needs the subject entity only the
+   * writer can answer for (`canon-bench.ts` states the split, `claim.ts` answers it).
+   */
+  app.post('/api/canon/episode/:episodeId/position', async (c) => {
+    const where = episodeInShow(store, c.req.param('episodeId'))
+    if (!where) return c.json({ error: `no such episode: ${c.req.param('episodeId')}` }, 404)
+
+    const body = await json(c.req.raw)
+    return bench(c, where.show.id, () =>
+      declareEpisodePosition(store, {
+        episodeId: where.episode.id,
+        arcId: text(body['arcId']),
+        waypointId: text(body['waypointId']),
       }),
     )
   })

@@ -34,6 +34,7 @@ import {
 } from '../domain/write-context.ts'
 import { writeIfAbsent, type LibraryPaths } from '../library.ts'
 import type { LLMEffort } from '../llm/adapter.ts'
+import { CLAIM_EXTRACTION, extractTheCanonClaims } from './claim-step.ts'
 import {
   correctionLoop,
   correctionNoteLines,
@@ -51,7 +52,9 @@ import { checkTextAgainstCanon, TEXT_CHECK_CALL } from './text-check-step.ts'
  *
  * One stage is one writing step: compose the desk, make one call, file what came back, run
  * the panel over it, correct it while the panel has something to say, and present whatever
- * it ends on for Ryan's ruling. Then, and only then, the episode moves on.
+ * it ends on for Ryan's ruling. The script stage does one more thing on the far side of that
+ * ruling — it reads the approved draft for what it claims of canon (E4-4). Then, and only
+ * then, the episode moves on.
  *
  * ## The desk is the only door onto canon, and that is the whole point
  *
@@ -136,6 +139,19 @@ import { checkTextAgainstCanon, TEXT_CHECK_CALL } from './text-check-step.ts'
  *     there are — the ask says the count is the writer's, and says not to match the outline's
  *     movements one for one. What the ask DOES name is the heading convention, because a scene
  *     is its heading and two the same cannot be told apart afterwards.
+ *
+ * ## And then what the script did to canon (E4-4, 1.2, D8)
+ *
+ * The script stage carries a third step the other two do not, and it runs on the far side of
+ * the gate: `extractTheCanonClaims` reads the draft Ryan approved and raises what it claimed —
+ * fact deltas riding the episode, and one landing per arc position it declares, each with the
+ * subject the writer answered. **It raises and stops.** Nothing about it writes canon; the
+ * proposals wait for him at the completion sweep (`domain/episode-canon.ts`).
+ *
+ * The whole argument for where it sits — after the gate, inside this run, before the close —
+ * is in `claim-step.ts`. What belongs here is the consequence for this file: the button's cost
+ * sentence grows a clause for the spend that lands after the approval, because one click buys
+ * the whole run and the sentence has to cover the whole run.
  *
  * ## Where "it already has one" is enforced, and where it deliberately is not
  *
@@ -459,6 +475,17 @@ function writingStage(library: LibraryPaths, step: WriteStep, name: string): Sta
     work: 'produces',
     steps: [
       correctionLoop(producer, checkTextAgainstCanon(library, producedBy(step))),
+      // The extraction, on the script alone (E4-4). It reads the draft Ryan has just APPROVED,
+      // which is why it is here rather than inside the loop, and it is inside this run so that
+      // the launch click he already made is the one that pays for it (`claim-step.ts` argues
+      // both). It sits BEFORE the close so the closing step's `costOfRun` covers what it spent
+      // and so the episode still moves on last, when the stage's work is really finished.
+      //
+      // The premise and the outline are deliberately not extracted. A premise-brief's claims
+      // are the script's claims three drafts earlier — the same facts, raised twice, ruled
+      // twice, and the second ruling arguing with prose the first one has already replaced.
+      // The script is the artifact the episode ships, and its claims are the episode's.
+      ...(step === 'script' ? [extractTheCanonClaims(library, producer.name)] : []),
       advancePastTheGate(step, producer.name),
     ],
     offerOn: (store, episode): StageOffer => offerFor(store, episode, step),
@@ -505,7 +532,15 @@ function offerFor(store: Store, episode: Episode, step: WriteStep): StageOffer {
       } read it`,
     cost:
       `${write.sentence} + up to ${panel.sentence} to check it, per draft — and the loop ` +
-      `stops at ${MAX_CORRECTION_ROUNDS} drafts (invariant 5)`,
+      `stops at ${MAX_CORRECTION_ROUNDS} drafts (invariant 5)` +
+      // The spend that lands on the far side of the gate, said before the click that buys it
+      // (E4-4). One click covers the whole run, so the sentence has to cover the whole run:
+      // a cost that arrives after a ruling is still a cost Ryan agreed to, and a button that
+      // left it out would be a button that lies cheaply.
+      (step === 'script'
+        ? `, then ${CLAIM_EXTRACTION.sentence} after you approve it, to read what the script ` +
+          'claims of canon into proposals for your ruling'
+        : ''),
     callsModel: true,
     nothingToDoBecause:
       standing !== undefined

@@ -642,6 +642,48 @@ describe('the app process — the canon bench', () => {
     const missing = await app.request('/api/canon/fact/fact_nope/propose', { method: 'POST' })
     expect(missing.status).toBe(404)
   })
+
+  /**
+   * **The door E4-4 built** (#64): until this route, `declarePosition` had one caller in the
+   * whole app and it was the fixture loader. Declaring is free and raises nothing — the
+   * LANDING that turns a pin into a claim is raised by the script's extraction, with the
+   * subject only a writer can answer for (`claim.ts`).
+   */
+  it('declares an episode’s arc position, raising nothing and writing no canon', async () => {
+    const before = await get<CanonBenchView>(`/api/canon/${showId}?episode=${ep02}`)
+    expect(before.positions!.standing).toContain('ep02 declares no position on any arc')
+
+    const second = before.positions!.waypoints.find((one) => one.ordinal === 2)!
+    expect(second.declare.enabled).toBe(true)
+    expect(second.declare.cost).toBe('No model call · $0.00')
+    expect(second.declare.sentence).toContain('Declare ep02 at waypoint 2')
+    expect(second.declare.sentence).toContain('the landing proposal is raised when the script is read')
+
+    const declared = await post<CanonBenchView>(
+      `/api/canon/episode/${ep02}/position?episode=${ep02}`,
+      { arcId: second.arcId, waypointId: second.waypointId },
+    )
+    expect(declared.status).toBe(200)
+    expect(declared.body.positions!.waypoints.find((one) => one.ordinal === 2)!.declared).toBe(true)
+    // The pin moved and nothing else did: no proposal on the queue, no row on the ledger.
+    expect(declared.body.queue).toEqual(before.queue)
+    expect(declared.body.ledger).toEqual(before.ledger)
+
+    const missing = await app.request('/api/canon/episode/ep_nope/position', { method: 'POST' })
+    expect(missing.status).toBe(404)
+  })
+
+  it('refuses an arc the episode is not written under, in the words the bench would use', async () => {
+    const view = await get<CanonBenchView>(`/api/canon/${showId}?episode=${ep02}`)
+    const waypoint = view.positions!.waypoints[0]!
+
+    const refused = await post<{ error: string }>(
+      `/api/canon/episode/${ep02}/position?episode=${ep02}`,
+      { arcId: waypoint.arcId, waypointId: 'wp_nope' },
+    )
+    expect(refused.status).toBe(409)
+    expect(refused.body.error).toContain('does not belong to arc')
+  })
 })
 
 describe('the app process — the wire itself', () => {
