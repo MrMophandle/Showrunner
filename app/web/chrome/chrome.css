@@ -1,0 +1,857 @@
+/**
+ * The cockpit's one stylesheet — EXTRACTED from `mockups/`, never invented (E5-0, #80).
+ *
+ * ── Where every value in this file came from ────────────────────────────────────
+ * The eight mockups are approved design (`mockups/README.md`). They were drawn
+ * independently over two days and they already agree on almost everything: the whole
+ * `:root` palette below is byte-identical in all eight files, the reset is identical in
+ * all eight, and the button, panel and section-heading shapes differ only in density.
+ *
+ * So this file is a *lift*, and the proof is mechanical rather than a promise:
+ * `drift.test.ts` parses this file AND all eight mockups and fails when a value here
+ * stops matching the value there. Change a token and the test names the mockup you
+ * drifted from. A value that appears in no mockup at all is an invention, and the same
+ * test refuses it.
+ *
+ * Where the mockups disagree, the choice is recorded in `drift.test.ts` beside the
+ * dissenters, so the disagreement survives in code instead of being quietly averaged
+ * away. Every one of them is listed in #80's summary for Ryan's eye.
+ *
+ * ── What this file is NOT ───────────────────────────────────────────────────────
+ * It is not a screen. E5-1..5 build those, composing the components in this directory;
+ * nothing here knows what a floor, a gate or an arc is. It holds no copy either — every
+ * sentence on screen comes down the wire (E4-7's rule, extended to the whole chrome).
+ *
+ * ── Two things the mockups leave to E5, by their own README ─────────────────────
+ * Responsive below ~800px and the accessibility pass. Both have a BASELINE here — focus
+ * that is visible, motion that can be turned off, layouts that collapse rather than
+ * scroll sideways — and a per-screen audit rides each screen's own issue.
+ */
+
+:root {
+  /*
+   * The palette, verbatim. This block is byte-identical in all eight mockups; nothing in
+   * it was chosen here. `drift.test.ts` asserts that, property by property.
+   */
+  --page: #0d0d0d;
+  --card: #1a1a19;
+  --card-raised: #222220;
+  --line: #2c2c2a;
+  --ink: #ffffff;
+  --ink-2: #c3c2b7;
+  --muted: #898781;
+  --good: #0ca30c;
+  --warn: #fab219;
+  --serious: #ec835a;
+  --critical: #d03b3b;
+  --live: #6db3f2;
+
+  /*
+   * Six shades the mockups use over and over WITHOUT naming — they sit as literal hexes
+   * in the rules that need them. The values are lifted verbatim; only the names are new,
+   * and `drift.test.ts` checks each value still occurs in the mockups.
+   */
+  --line-strong: #4e4e49; /* the border on a standalone tag or control (30 uses) */
+  --rule: #232321; /* the hairline between rows inside a panel (15 uses) */
+  --on-warn: #1a1400; /* text on an amber fill — the count badge, a landed waypoint */
+  --faint: #5c5b55; /* the dimmest ink there is; the footer, and only the footer */
+  --track: #2e2e2c; /* an unfilled meter or scrub track */
+  --track-pip: #33332f; /* the lifecycle track's line and its unreached stops */
+
+  /* The live box. Its own two shades, identical in the floor and the episode room. */
+  --live-fill: #14202b;
+  --live-edge: #23405a;
+
+  /*
+   * Type. Every size below is one the mockups actually use; the comment says how often,
+   * counted across all eight files, so a later session can tell a scale step from a
+   * one-off. There is no 4px-grid here because the mockups do not have one — inventing a
+   * ladder they never used would be exactly the drift this file exists to prevent.
+   */
+  --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: ui-monospace, Menlo, monospace; /* timecodes, prompts, ids */
+  --font-script: 'Courier New', Courier, monospace; /* a script, as a script looks */
+
+  --type-label: 11px; /* the uppercase micro-label above a value (22 uses) */
+  --type-small: 12px; /* section headings, footer, the smallest running text (53) */
+  --type-meta: 12.5px; /* the breadcrumb, a cost line, muted meta (45) */
+  --type-read: 13px; /* running prose in a dense panel (25) */
+  --type-body: 13.5px; /* the live region's "what" line, key–value rows (26) */
+  --type-action: 14px; /* a button's sentence, roomy density (10) */
+  --type-page: 15px; /* the body, in all eight */
+  --type-title: 22px; /* h1, in four of the seven screens that have one */
+
+  --track-label: 0.16em; /* a section heading's letter-spacing, in all seven */
+  --track-live: 0.13em; /* the live region's heading, in both screens that have one */
+  --track-tag: 0.08em; /* an uppercase standing tag — `.sev`, unanimous in three files */
+
+  /*
+   * Space. The page frame the mockups agree on, with the two parts that genuinely differ
+   * per screen left as knobs: the foot (a screen with a fixed ruling bar reserves room
+   * for it) and the wrap (the season map is wider, the floor narrower, on purpose).
+   */
+  --page-pad-y: 28px;
+  --page-pad-x: 40px;
+  --page-foot: 70px;
+  --wrap: 1280px;
+  /* The right-hand rail. Four screens draw one, at 360/360/370/380 — 360 is the mode. */
+  --rail: 360px;
+
+  --panel-pad-y: 18px;
+  --panel-pad-x: 20px;
+  --panel-gap: 18px;
+  --heading-gap: 12px;
+  --row-pad: 10px;
+
+  --radius-panel: 12px;
+  --radius-control: 9px;
+  --radius-chip: 6px;
+  --radius-tag: 5px;
+  --radius-pill: 99px;
+}
+
+/* Verbatim, and identical in all eight mockups. */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  background: var(--page);
+  color: var(--ink-2);
+  font: var(--type-page) / 1.5 var(--font);
+  -webkit-font-smoothing: antialiased;
+  padding: var(--page-pad-y) var(--page-pad-x) var(--page-foot);
+}
+
+.wrap {
+  max-width: var(--wrap);
+  margin: 0 auto;
+}
+
+/*
+ * The screen's own title. 22px/650 is what four of the seven mockups with an h1 use; the
+ * floor's 28px and the arc page's 26px are those screens' own weight and they override
+ * `--type-title` rather than re-declaring the rule.
+ */
+h1 {
+  font-size: var(--type-title);
+  font-weight: 650;
+  color: var(--ink);
+  letter-spacing: -0.01em;
+}
+
+/*
+ * The breadcrumb — "← the floor · Dead Light S1 · the canon library". Identical in all
+ * seven mockups that carry one, and it is the ONLY navigation the mockups draw: every
+ * screen but the floor says where it is and how to get back, and nothing draws a nav bar.
+ * `Shell.tsx` explains what E5-0 had to add beside it and why.
+ */
+.crumb {
+  font-size: var(--type-meta);
+  color: var(--muted);
+  margin-bottom: var(--row-pad);
+}
+
+.crumb a {
+  color: var(--muted);
+  text-decoration: none;
+  border-bottom: 1px solid var(--line);
+}
+
+.crumb a:hover {
+  color: var(--ink-2);
+}
+
+footer {
+  margin-top: 26px;
+  font-size: var(--type-small);
+  color: var(--faint);
+  text-align: center;
+}
+
+/* ── The shell's own chrome ──────────────────────────────────────────────────────
+ * Assembled from the vocabulary above rather than drawn from a mockup, because no
+ * mockup draws one: the eight screens navigate by breadcrumb back to the floor, and the
+ * floor links to nothing at all. Ryan's third criterion — no flow needs find-in-page —
+ * cannot be met by a link graph with holes in it, so the shell adds the doors and takes
+ * every value from what the mockups already say. Nothing visual is invented here.
+ */
+.shell-bar {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 20px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+/* The wordmark, lifted from the floor's `.app`. */
+.shell-mark {
+  font-size: 13px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.shell-doors {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  flex-wrap: wrap;
+  list-style: none;
+}
+
+.shell-door {
+  font-size: var(--type-meta);
+  color: var(--muted);
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+}
+
+.shell-door:hover {
+  color: var(--ink-2);
+  border-bottom-color: var(--line);
+}
+
+/*
+ * A room that is not built yet, and the old page. Dashed, because dashed is the mockups'
+ * one mark for a thing that is not real yet — and `--muted` rather than `--faint`, which
+ * is 2.85:1 on this page and belongs to the footer alone. Navigation a reader has to lean
+ * into is navigation that fails the third criterion before it has been used once.
+ */
+.shell-door[data-standing] {
+  color: var(--muted);
+  border-bottom: 1px dashed var(--line);
+}
+
+/* The old operating page is a door, not a shortcut: last in the row, and named. */
+.shell-door[data-standing='scaffolding'] {
+  margin-left: auto;
+}
+
+/*
+ * Where you are. Said in two ways, because colour alone is not a statement — and LAST,
+ * because the room you are standing in is usually also a room that is not built yet, and
+ * the marker has to win over the standing rather than the other way round.
+ */
+.shell-door[aria-current='page'],
+.shell-door[data-standing][aria-current='page'] {
+  color: var(--ink);
+  border-bottom: 1px solid var(--warn);
+}
+
+.shell-switcher-label {
+  display: inline-flex;
+  align-items: baseline;
+}
+
+.shell-switcher {
+  font: inherit;
+  font-size: var(--type-meta);
+  color: var(--ink);
+  background: var(--card-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-chip);
+  padding: 3px 9px;
+}
+
+/* One show is not a choice. It says which show it is and stops pretending. */
+.shell-switcher:disabled {
+  color: var(--ink-2);
+  border-style: dashed;
+  opacity: 1;
+}
+
+/*
+ * The old operating page, left alone.
+ *
+ * `chrome.css` styles the document, and the scaffolding is not part of the design system
+ * it describes — "unstyled HTML is the point" is that page's own header, and it is still
+ * the page Ryan operates on until #86. So it is handed back the browser's own surface
+ * and its own controls: the shell adds a bar above it and changes nothing below.
+ *
+ * `Canvas` and `CanvasText` are the system's default page colours, so this restores
+ * exactly what the page had before the cockpit existed rather than guessing at white.
+ */
+.scaffolding {
+  color-scheme: light;
+  background: Canvas;
+  color: CanvasText;
+  border-radius: var(--radius-panel);
+  margin-bottom: var(--panel-gap);
+}
+
+/*
+ * And the elements inside it get the browser back too. Without this, the reset above
+ * flattens its margins and the cockpit's `h1` paints its title `--ink` — white on the
+ * white surface it was just handed, which is a page that has lost its heading rather than
+ * a page that has been left alone.
+ */
+.scaffolding :where(h1, h2, h3, h4, p, ul, ol, li, pre, small) {
+  margin: revert;
+  padding: revert;
+  font-size: revert;
+  font-weight: revert;
+  letter-spacing: revert;
+  color: revert;
+}
+
+/* ── The card, and the section that has to explain itself ────────────────────────
+ * `.panel` is the mockups' one surface: background `--card`, a 1px `--line` border and a
+ * 12px radius, in all seven files that have one. Only its padding wobbles (16–20px),
+ * and 18×20 is the median.
+ */
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+  padding: var(--panel-pad-y) var(--panel-pad-x);
+  margin-bottom: var(--panel-gap);
+}
+
+.card--raised {
+  background: var(--card-raised);
+}
+
+/*
+ * A row inside a card. Eleven class names across the eight mockups draw this — `.rel`,
+ * `.kv`, `.verdict`, `.hist`, `.refrow`, `.art`, `.arc`, `.round`, `.note-row`, `.item`,
+ * `.thread` — and all eleven agree exactly on the hairline and on the last row dropping
+ * it. Only the vertical padding wobbles, 6px to 12px; 10px is the plurality, and the two
+ * ends of the spread are real enough to keep as variants: a key–value line wants less
+ * air, a row carrying a paragraph wants more.
+ */
+.card-row {
+  padding: var(--row-pad) 0;
+  border-bottom: 1px solid var(--rule);
+}
+
+.card-row--tight {
+  padding: 7px 0;
+}
+
+.card-row--loose {
+  padding: 12px 0;
+}
+
+.card-row:last-child {
+  border-bottom: none;
+  padding-bottom: 2px;
+}
+
+/*
+ * The section heading. The mockups render it as an uppercase tracked micro-label with
+ * the plain-words explanation sitting immediately beside it, in the muted ink, at the
+ * same baseline — "ARTIFACTS  freshness is computed, never remembered". That is Ryan's
+ * second criterion already drawn, and `SectionHeader.tsx` is what makes it a rule.
+ */
+.section-h {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: var(--heading-gap);
+}
+
+.section-h__name {
+  font-size: var(--type-small);
+  font-weight: 400;
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.section-h__explains {
+  font-size: var(--type-meta);
+  color: var(--muted);
+}
+
+/*
+ * The count badge beside a heading — "NEEDS YOU ③". The only one in the system, and the
+ * only place letter-spacing is explicitly reset to 0 against a heading's tracking.
+ */
+.section-h__count {
+  background: var(--warn);
+  color: var(--on-warn);
+  font-weight: 700;
+  font-size: var(--type-small);
+  border-radius: var(--radius-pill);
+  padding: 1px 9px;
+  letter-spacing: 0;
+}
+
+/* ── The full-sentence button ────────────────────────────────────────────────────
+ * Verb + object + scope on the first line, cost on the second — and when it cannot be
+ * pressed, the reason takes the cost line's place and the border goes dashed. That is
+ * the mockups' own pattern ("Write the ep08 outline / blocked — the premise isn't
+ * greenlit yet"), and it is why `SentenceButton` renders one string or the other rather
+ * than both.
+ */
+.btn {
+  display: inline-block;
+  border-radius: var(--radius-control);
+  padding: 9px 16px;
+  font-family: inherit;
+  font-size: var(--type-action);
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid var(--line);
+  background: var(--card-raised);
+  color: var(--ink);
+  text-align: left;
+  line-height: 1.35;
+  transition:
+    border-color 0.15s,
+    background 0.15s;
+}
+
+.btn:hover:not(:disabled) {
+  border-color: var(--muted);
+}
+
+.btn .cost {
+  display: block;
+  font-weight: 400;
+  font-size: var(--type-meta);
+  color: var(--muted);
+}
+
+/*
+ * The dense density. Two of the eight mockups (the gate room and the arc page) run their
+ * buttons a step smaller, because those screens stack many of them in a rail. It is a
+ * real design difference rather than a wobble, so it is a variant rather than an average.
+ */
+.btn--dense {
+  border-radius: 8px;
+  padding: 6px 12px;
+  font-size: var(--type-meta);
+  line-height: 1.3;
+}
+
+.btn--dense .cost {
+  font-size: 11.5px;
+}
+
+/* A button that fills its rail. The episode room's stage rail is all of these. */
+.btn--wide {
+  display: block;
+  width: 100%;
+  margin-bottom: 8px;
+}
+
+/* The ruling button — the amber one, for the act that ends with Ryan's word on it. */
+.btn--rule {
+  background: #2c250e;
+  border-color: #5c4c16;
+}
+
+.btn--rule:hover:not(:disabled) {
+  border-color: var(--warn);
+}
+
+.btn--rule .cost {
+  color: #b1a06a;
+}
+
+/* The second verb on a card — present, never loud. */
+.btn--quiet {
+  background: none;
+  font-weight: 500;
+}
+
+.btn:disabled {
+  background: none;
+  border-style: dashed;
+  border-color: var(--line);
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
+.btn:disabled .cost {
+  color: #6b695f;
+}
+
+/* ── Standing tags ───────────────────────────────────────────────────────────────
+ * The uppercase label that says where something stands: ACTIVE, STANDING · RECURRING,
+ * PROVISIONAL · RIDES EP05, FLAGGED FOR YOUR EYE, DISMISSED WITH NOTE.
+ *
+ * The geometry below is unanimous in the three mockups that draw a `.sev` — 11px, 700,
+ * .08em, radius 5px, padding 1px 7px — and the mockups' `.chip` in the canon library and
+ * the arc page is the same thing 0.01em and 1px apart. What is NOT unanimous is what the
+ * class means: the gate room colours it by SEVERITY, the episode room by DISPOSITION, and
+ * merged into one stylesheet those would be one namespace holding two vocabularies. So
+ * the colour variants below are named for what they say, not for the colour they are.
+ *
+ * Outline only, never a fill. Every tag in every mockup is a border and a coloured word —
+ * the one exception is a landed waypoint, which is amber-filled because it is a position
+ * rather than a standing.
+ */
+.tag {
+  display: inline-block;
+  font-size: var(--type-label);
+  font-weight: 700;
+  letter-spacing: var(--track-tag);
+  text-transform: uppercase;
+  border-radius: var(--radius-tag);
+  padding: 1px 7px;
+  border: 1px solid var(--line-strong);
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+
+/* Settled, ratified, clean. */
+.tag--good {
+  color: var(--good);
+  border-color: #1d4d1d;
+}
+
+/* Waiting on Ryan. Amber means his hand everywhere in this cockpit, and only that. */
+.tag--warn {
+  color: var(--warn);
+  border-color: #5c4c16;
+}
+
+/* In flight, right now. */
+.tag--live {
+  color: var(--live);
+  border-color: var(--live-edge);
+}
+
+/*
+ * Blocking. The only red in the system, and it is deliberately rare: the gate room is the
+ * only screen that earns it, because a deterministic finding blocking the next stage is
+ * the only thing in this app that is not an argument (D12). The review desk never goes
+ * red on purpose — an image check flags and never rules (invariant 4).
+ *
+ * Its values are the gate room's `.sev.red`, not the floor's hand-mixed chip: the floor
+ * renders the SAME finding in a different red, which is one finding described two ways.
+ */
+.tag--critical {
+  color: #f2a0a0;
+  border-color: #5c2020;
+}
+
+/* Ruled on and kept as a record — dismissed, closed, past. */
+.tag--past {
+  color: var(--muted);
+  border-color: var(--line);
+}
+
+/* Not real yet. Dashed is the mockups' one mark for a thing that is planned, not standing. */
+.tag--planned {
+  border-style: dashed;
+  color: var(--muted);
+}
+
+/*
+ * The low-weight action tier: a real button with a two-word lowercase label and NO cost
+ * line — "edit scene", "edit waypoint", "unfold". It appears ten times across the
+ * mockups and it is a sanctioned exception to verb + object + scope + cost, because it
+ * opens something rather than spending anything. Anything that costs money is a `.btn`.
+ */
+.editlink {
+  font: inherit;
+  font-size: var(--type-meta);
+  color: var(--muted);
+  background: none;
+  border: none;
+  border-bottom: 1px dashed var(--line);
+  cursor: pointer;
+  padding: 0;
+}
+
+.editlink:hover {
+  color: var(--ink-2);
+}
+
+/* ── Severity and confidence: two values, never one (invariant 4) ────────────────
+ * The mockups never collapse them into a checkmark and never draw a score. They print
+ * two named readings side by side in the muted ink — "severity low · confidence high".
+ * `TwoValues.tsx` takes a two-tuple so that collapsing them will not compile.
+ */
+.readings {
+  font-size: var(--type-meta);
+  color: var(--muted);
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.readings__sep {
+  color: var(--line-strong);
+}
+
+/* ── Freshness, computed and said in words ───────────────────────────────────────── */
+.freshness {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: var(--type-meta);
+  color: var(--muted);
+}
+
+.freshness__standing {
+  display: inline-block;
+  font-size: var(--type-small);
+  border-radius: var(--radius-chip);
+  padding: 1px 8px;
+  border: 1px solid #1d4d1d;
+  color: var(--good);
+}
+
+.freshness--stale .freshness__standing {
+  border-color: #5c4c16;
+  color: var(--warn);
+}
+
+/* ── The honest empty state ──────────────────────────────────────────────────────
+ * The floor's idea-pool footer, generalised: a dashed box that says what is not there
+ * and what is, in a sentence the server wrote. Never a blank region, never a spinner
+ * standing in for nothing.
+ */
+.empty {
+  border: 1px dashed var(--line);
+  border-radius: var(--radius-panel);
+  padding: 20px 24px;
+  font-size: var(--type-action);
+  color: var(--muted);
+}
+
+.empty__lead {
+  color: var(--ink-2);
+  font-weight: 600;
+}
+
+/* ── The live region ─────────────────────────────────────────────────────────────
+ * The mockups' `.running` box, verbatim in its colours and its type — and given the one
+ * thing a mockup cannot have, which is a guarantee about what happens when the content
+ * changes.
+ *
+ * **Every part of it is a fixed box.** The heading, the latest-wins line, the streamed
+ * prose and the log all declare a height, so the region's own height is the sum of four
+ * constants and cannot move a pixel of the page below it however much arrives. That is
+ * Ryan's first criterion — nothing reflows under a reading eye — expressed as CSS, and
+ * `held-still.ts` is the assertion that holds it.
+ *
+ * The mockups already clip the streamed line (`white-space: nowrap; overflow: hidden;
+ * text-overflow: ellipsis`). E5-0 gives the latest-wins line the same treatment, because
+ * a two-line progress sentence would otherwise grow the box — the one place a mockup
+ * rule was carried onto its sibling, and it is flagged in #80 rather than done quietly.
+ */
+.live-region {
+  background: var(--live-fill);
+  border: 1px solid var(--live-edge);
+  border-radius: var(--radius-control);
+  padding: 11px 14px;
+  margin-bottom: var(--row-pad);
+}
+
+.live-region__heading {
+  height: 1.5em;
+  line-height: 1.5;
+  font-size: var(--type-label);
+  font-weight: 400;
+  letter-spacing: var(--track-live);
+  text-transform: uppercase;
+  color: var(--live);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.live-region__heading::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--live);
+  flex: none;
+  /*
+   * `ease-in-out`, which is what the lifecycle pip uses. The mockups spell this animation
+   * two ways in the same file — the pip eases in-out, the live dot omits the keyword and
+   * falls back to `ease` — so the two indicators drift out of phase on the one screen
+   * that shows both. Nothing suggests that was meant. The halo is a box-shadow, so it
+   * reserves no space and cannot move a row either way.
+   */
+  animation: pulse 1.6s ease-in-out infinite;
+}
+
+/* Latest-wins: one line, replaced in place, clipped rather than wrapped. */
+.live-region__latest {
+  height: 1.5em;
+  line-height: 1.5;
+  font-size: var(--type-body);
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/*
+ * Accumulating. The three declarations are the mockups' own, untouched; what E5-0 adds is
+ * in `LiveRegion.tsx`, which keeps the box scrolled to its right edge as chunks land — so
+ * the line shows what the model is saying NOW rather than what it said first. The box
+ * itself never changes size, whatever it holds.
+ */
+.live-region__stream {
+  height: 1.5em;
+  line-height: 1.5;
+  font-size: var(--type-meta);
+  color: var(--muted);
+  font-style: italic;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/*
+ * The log. A fixed height and its own scrollbar — `max-height` would have been the
+ * scaffolding's mistake in a nicer font: a box that grows from nothing up to its maximum
+ * shoves everything under it on the way, which is exactly the reflow Ryan ruled the E4
+ * drill off for.
+ */
+.live-region__log {
+  height: 9rem;
+  overflow-y: auto;
+  /* The platform's default bar is white, and a white bar on this fill reads as content. */
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--live-edge);
+  list-style: none;
+  font-size: var(--type-meta);
+  color: var(--ink-2);
+}
+
+.live-region__entry {
+  padding: 3px 0;
+}
+
+.live-region__seq {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  margin-right: 8px;
+}
+
+/* Nothing is running. The box holds its shape so that starting one moves nothing. */
+.live-region--idle {
+  background: none;
+  border-color: var(--line);
+  border-style: dashed;
+}
+
+.live-region--idle .live-region__heading {
+  color: var(--muted);
+}
+
+.live-region--idle .live-region__heading::before {
+  background: var(--track-pip);
+  animation: none;
+}
+
+@keyframes pulse {
+  50% {
+    box-shadow: 0 0 0 5px rgba(109, 179, 242, 0.18);
+  }
+}
+
+/* ── The accessibility baseline (E5's job, per mockups/README.md) ─────────────────
+ * The foundation every screen inherits. A full per-screen audit rides that screen's own
+ * issue; what is set here is what a screen should never have to think about again.
+ */
+
+/* Focus that is actually visible on this page's near-black. `--live` on `--page` is
+ * 8.68:1, the brightest ring in the palette that is not also a severity colour. */
+:focus-visible {
+  outline: 2px solid var(--live);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+/* Skip past the shell's doors straight to the screen. First thing in the tab order. */
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  background: var(--card-raised);
+  color: var(--ink);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-chip);
+  padding: 8px 12px;
+  font-size: var(--type-meta);
+  z-index: 10;
+}
+
+.skip-link:focus {
+  left: var(--page-pad-x);
+  top: var(--page-pad-y);
+}
+
+/* Said in words for a screen reader; drawn for an eye. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ── The responsive baseline (E5's job, per mockups/README.md) ────────────────────
+ * The mockups are drawn at ~1180–1320px and stop there. What a screen inherits is that
+ * it degrades by STACKING rather than by scrolling sideways: no horizontal page scroll
+ * at any width, and a wide artifact (a script, a scene grid, a season map) scrolls
+ * inside its own box instead of dragging the page with it.
+ */
+html {
+  overflow-x: hidden;
+}
+
+.scrolls-sideways {
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+@media (max-width: 800px) {
+  :root {
+    --page-pad-x: 18px;
+    --page-pad-y: 20px;
+    --panel-pad-x: 16px;
+  }
+
+  .shell-bar {
+    gap: 10px;
+  }
+
+  .shell-door[data-standing='scaffolding'] {
+    margin-left: 0;
+  }
+
+  /* Anything the screens lay out in columns comes back to one. */
+  .stacks {
+    display: block;
+  }
+
+  .stacks > * {
+    margin-bottom: var(--panel-gap);
+  }
+}

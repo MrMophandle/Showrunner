@@ -13,6 +13,7 @@ import {
   type BenchStanding,
   type SheetDraft,
 } from './canon-bench.ts'
+import { cockpitView } from './cockpit.ts'
 import type { Store } from './db/store.ts'
 import { artifactFreshness, findArtifact, type Artifact } from './domain/artifact.ts'
 import { ENTITY_STANDING, findEntityById } from './domain/canon.ts'
@@ -146,6 +147,14 @@ export function createApp(
 
   /** Everything the operating page renders: shows, episodes, lifecycle, buttons, spend. */
   app.get('/api/operating', (c) => c.json(operatingView(store, paths, operating.readiness())))
+
+  /**
+   * What the cockpit's rooms are called, what each one is for in Ryan's words, and what
+   * each can honestly say about itself today (E5-0). A read, so opening the shell starts
+   * nothing — and the reason it is a read at all rather than a constant in the browser is
+   * E4-7's rule: no name, no explanation and no "not built yet" is authored in `app/web/`.
+   */
+  app.get('/api/cockpit', (c) => c.json(cockpitView(store)))
 
   /** One run in full — its steps, its events, its spend, and the gate it is parked on. */
   app.get('/api/run/:id', (c) => {
