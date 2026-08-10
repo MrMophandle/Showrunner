@@ -194,7 +194,14 @@ the note at this artifact's gate or at a later one. It is still disabled for one
 and the reason is a different sentence and a true one: *"ep02 already has a premise-gate run,
 and it is waiting on your ruling… One run per episode (D7)."*
 
-So rule. Press **Approve** on the round-2 presentation, and watch the lifecycle column:
+So rule. **You are about to approve the very draft you just rejected, and that is the honest
+exit rather than a contradiction**: your note landed on the draft in front of you, so this gate
+re-presented the same bytes as round 2 — there is no writer behind a presenting gate to redo
+them — and while it stands open D7 holds both the writing button and your own hand. Ruling is
+the only way out, approving does not withdraw your note (only a new version answers one), and
+the button above is what answers it, in step 3, with the note in the call.
+
+Press **Approve** on the round-2 presentation, and watch the lifecycle column:
 
 > ep02 moves from premise to outline — you approved its premise gate.
 

@@ -1029,6 +1029,35 @@ own call site** (`write-context.test.ts` for the desk, `writing-room.test.ts` fo
 producer's own — because E7's import and any hand-made artifact arrive in the same shape and
 none of it is about `demo`.
 
+### A presenting gate has one exit, and it is approve (E4-7, #76 — E5 inherits this)
+
+**Rejecting at a presenting gate re-presents the same bytes as the next round, and approving is
+the only way the run ends.** `present-step.ts` ends the run on a rejection *only* when every note
+was routed to another artifact — its own words, and E4-5's argument for them: re-presenting a
+script Ryan has just sent back to the outline would park his episode on a decision he has already
+made. A note that LANDS on the presented draft gets the opposite treatment, and there is no
+producer behind this gate to redo the draft, so round 2 renders the same file.
+
+It is defensible and it was left alone deliberately when #76 was closed. A presenting gate has
+nothing to regenerate: the work its note asks for is behind the writing stage's button, which
+#76 made reachable and which the note's own sentence now names. So the honest reading is "the
+gate stays open until you rule", and approving does not withdraw the note — only a new version
+answers one (`domain/routing.ts`), so the reopened writing offer survives the approval and the
+episode moves on at the same time.
+
+**But it is a chosen quirk rather than a rule, and it has two live costs.** D7 holds both the
+writing button and Ryan's hand while that gate stands open, so the rewrite his note asked for
+cannot happen until he approves the draft he just rejected — which reads as a contradiction on
+screen and needs a sentence saying why (the E4 drill's step 1 now carries one). And a
+rejection he means as "put this down for now" has no verb: he must approve, or leave the run
+parked forever.
+
+**E5's gate room is where that is answered, not here.** The candidate is a reject-that-closes —
+a fourth disposition at a presenting gate that ends the run with the note standing, freeing D7
+so the writing stage or his own hand can answer it immediately. It is a real ruling about what
+the three verbs mean (`runner/gate.ts`: they take no preconditions and there are exactly three),
+so it belongs to a session that can make one. **Inherit this as a decision, not a discovery.**
+
 ### One cluster renderer, three surfaces — and the wall's sentence moved with it (E4-7, #67)
 
 `ClusterSay.sentence` ("world-rules · severity high · confidence high · text, a reading") is
