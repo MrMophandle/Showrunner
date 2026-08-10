@@ -110,13 +110,27 @@ export interface ClaimExtractionOutcome extends ClaimsRaised {
 export function extractTheCanonClaims(
   library: LibraryPaths,
   producerName: string,
-): Step<ClaimExtractionOutcome> {
+): Step<ClaimExtractionOutcome | null> {
   return {
     name: EXTRACT_CLAIMS_STEP,
     inputs: [producerName],
 
-    async execute(context: StepContext): Promise<ClaimExtractionOutcome> {
+    async execute(context: StepContext): Promise<ClaimExtractionOutcome | null> {
       const outcome = context.input<CorrectionOutcome>(producerName)
+      // **It reads the draft Ryan APPROVED, and a rejection is not one** (E4-5, D21). A
+      // rejection whose notes were all routed elsewhere ends the stage with the draft standing
+      // exactly as it was, so there is nothing here that has been ruled into the episode — and
+      // spending a paid reading on a draft he sent back would be money on prose he has already
+      // said is wrong. Nothing downstream reads this step's output, so `null` is the honest
+      // answer rather than an empty extraction pretending a reading happened.
+      if (outcome.verdict === 'reject') {
+        context.progress(
+          'Nothing to read for canon claims — the draft was rejected and the notes were routed ' +
+            'elsewhere, so no draft was approved into this episode (D21).',
+        )
+        return null
+      }
+
       const scope = claimScope(context.store, library, outcome.artifactId)
       const label = episodeLabel(scope.where.episode.number)
       const subject = `the ${label} ${scope.artifact.kind}`

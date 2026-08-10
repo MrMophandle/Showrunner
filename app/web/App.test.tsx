@@ -419,6 +419,38 @@ describe('the operating page — the canon bench, founded', () => {
   })
 })
 
+// ── Ryan's two doors, on the card that refuses the writing stage (E4-5) ────────
+
+describe('the page — what may be done with what is already written', () => {
+  it('renders both doors the refusal names, with their sentences and their cost', () => {
+    const html = render(operatingView(store, paths, READY))
+
+    // The refusal, and then the two things it promises — on the same card, both pressable.
+    expect(html).toContain('ep01 already has a script — rule on it at its gate, or edit it')
+    expect(html).toContain('Present the ep01 script v1 for your ruling')
+    expect(html).toContain('Edit the ep01 script yourself')
+    expect(html).toContain('lands word for word as v2')
+    expect(html).toContain('No model call · $0.00')
+  })
+
+  it('renders the draft in a field once he opens it, and never before', () => {
+    const showId = store.get<{ id: string }>("SELECT id FROM show WHERE key = 'greyharbor'")!.id
+    const ep01 = episodesOf(store, seasonsOf(store, showId)[0]!.id).find(
+      (episode) => episode.number === 1,
+    )!.id
+    const script = artifactsOf(store, ep01).find((one) => one.kind === 'script')!
+    const closed = render(operatingView(store, paths, READY))
+    expect(closed).not.toContain('Leave it as it stands')
+
+    const open = render(operatingView(store, paths, READY), {
+      editing: { artifactId: script.id, text: '## 1 · INT. SOMEWHERE — 06:00' },
+    })
+    expect(open).toContain('textarea')
+    expect(open).toContain('INT. SOMEWHERE')
+    expect(open).toContain('Leave it as it stands')
+  })
+})
+
 // ── Test kit ────────────────────────────────────────────────────────────────────
 
 /**
@@ -442,6 +474,11 @@ function render(
       draft={{ note: '', depth: '', target: '', comment: '' }}
       onDraft={() => undefined}
       onLaunch={() => undefined}
+      editing={null}
+      onEdit={() => undefined}
+      onEditDraft={() => undefined}
+      onLandEdit={() => undefined}
+      onCancelEdit={() => undefined}
       onShowRun={() => undefined}
       onRule={() => undefined}
       bench={null}

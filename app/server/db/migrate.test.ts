@@ -867,7 +867,7 @@ describe('0012 · what a check was handed, and what it could not reach', () => {
       tableNames(store).map((name) => [name, store.all<unknown>(`SELECT * FROM ${name}`)]),
     )
 
-    expect(migrate(store).map((m) => m.number)).toEqual([12, 13])
+    expect(migrate(store).map((m) => m.number)).toEqual([12, 13, 14])
 
     for (const [name, rows] of Object.entries(before)) {
       if (name === 'schema_migration') continue
@@ -1019,7 +1019,7 @@ describe('0013 · a scene may stop existing', () => {
       tableNames(store).map((name) => [name, store.all<unknown>(`SELECT * FROM ${name}`)]),
     )
 
-    expect(migrate(store).map((m) => m.number)).toEqual([13])
+    expect(migrate(store).map((m) => m.number)).toEqual([13, 14])
 
     for (const [name, rows] of Object.entries(before)) {
       if (name === 'schema_migration') continue
@@ -1131,5 +1131,99 @@ describe('0013 · the pin list is checked against the table, not trusted', () =>
     expect(store.get('SELECT reviewer_note FROM finding WHERE id = ?', 'find1')).toEqual({
       reviewer_note: 'rewritten',
     })
+  })
+})
+
+/**
+ * **0014 · the address a routed note carries** (E4-5).
+ *
+ * D21's routing has been carried as data on a note since 0004 and acted on by nobody. E4-5 is
+ * where the writing line acts on it, and two things had to give: the closed set of depths had
+ * no word for the OUTLINE, and a note that names a target had no way to say which version of
+ * it was standing when Ryan wrote the note.
+ */
+describe('0014 · a routed note names its target and the version it stood at', () => {
+  /** A gate over the ep02 script, rejected, with one note on it — the shape 0004 already held. */
+  function aRejectionWithANote(): void {
+    store.run("INSERT INTO show (id, key, title) VALUES ('show1', 'greyharbor', 'Grey Harbor')")
+    store.run("INSERT INTO season (id, show_id, number) VALUES ('season1', 'show1', 1)")
+    store.run("INSERT INTO episode (id, season_id, number, title) VALUES ('ep2', 'season1', 2, 'Dry Stores')")
+    store.run("INSERT INTO artifact (id, episode_id, kind, file_path) VALUES ('art1', 'ep2', 'script', 'ep02/script.md')")
+    store.run("INSERT INTO run (id, episode_id, stage) VALUES ('run1', 'ep2', 'write-the-script')")
+    store.run("INSERT INTO step (id, run_id, ordinal, name) VALUES ('step1', 'run1', 1, 'write-the-script')")
+    store.run(
+      `INSERT INTO gate (id, run_id, step_id, episode_id, artifact_id)
+            VALUES ('gate1', 'run1', 'step1', 'ep2', 'art1')`,
+    )
+    store.run("INSERT INTO gate_round (gate_id, round, artifact_version) VALUES ('gate1', 1, 1)")
+    store.run("INSERT INTO gate_ruling (gate_id, round, verdict) VALUES ('gate1', 1, 'reject')")
+    store.run(
+      `INSERT INTO gate_note (gate_id, round, note, depth, target)
+            VALUES ('gate1', 1, 'the tag scene is in the wrong place', 'scene', 'sc4')`,
+    )
+  }
+
+  it('carries every note across the rebuild with its seq and its routing', () => {
+    applyThrough(13)
+    aRejectionWithANote()
+    const before = store.all<unknown>('SELECT * FROM gate_note')
+
+    expect(migrate(store).map((m) => m.number)).toEqual([14])
+
+    expect(store.all<unknown>('SELECT seq, gate_id, round, note, depth, target FROM gate_note')).toEqual(
+      before,
+    )
+    // The new column is on every row that predates it, saying nothing rather than zero.
+    expect(store.get('SELECT target_version FROM gate_note WHERE seq = 1')).toEqual({
+      target_version: null,
+    })
+    // And the counter goes on above the highest seq it copied rather than back to 1.
+    store.run("INSERT INTO gate_note (gate_id, round, note) VALUES ('gate1', 1, 'and another')")
+    expect(store.get<{ seq: number }>('SELECT MAX(seq) AS seq FROM gate_note')!.seq).toBe(2)
+  })
+
+  it('accepts `outline` as a depth, and still refuses a word nobody ruled', () => {
+    migrate(store)
+    aRejectionWithANote()
+
+    store.run(
+      `INSERT INTO gate_note (gate_id, round, note, depth, target, target_version)
+            VALUES ('gate1', 1, 'the middle movement does not turn', 'outline', 'art2', 3)`,
+    )
+    expect(store.get('SELECT depth, target, target_version FROM gate_note WHERE seq = 2')).toEqual({
+      depth: 'outline',
+      target: 'art2',
+      target_version: 3,
+    })
+    // The five 0004 ruled are all still legal, and a sixth word is not.
+    for (const depth of ['artifact', 'scene', 'shot', 'take', 'premise']) {
+      store.run("INSERT INTO gate_note (gate_id, round, note, depth) VALUES ('gate1', 1, 'n', ?)", depth)
+    }
+    expect(() =>
+      store.run("INSERT INTO gate_note (gate_id, round, note, depth) VALUES ('gate1', 1, 'n', 'sequence')"),
+    ).toThrow(/CHECK constraint failed/)
+    // 0004's pair rule survives the rebuild: nothing may target without a depth.
+    expect(() =>
+      store.run("INSERT INTO gate_note (gate_id, round, note, target) VALUES ('gate1', 1, 'n', 'art2')"),
+    ).toThrow(/CHECK constraint failed/)
+  })
+
+  it('alters nothing else, and leaves the file sound', () => {
+    applyThrough(13)
+    aRejectionWithANote()
+    const before = Object.fromEntries(
+      tableNames(store).map((name) => [name, store.all<unknown>(`SELECT * FROM ${name}`)]),
+    )
+
+    expect(migrate(store).map((m) => m.number)).toEqual([14])
+
+    for (const [name, rows] of Object.entries(before)) {
+      if (name === 'schema_migration' || name === 'gate_note') continue
+      expect({ [name]: store.all<unknown>(`SELECT * FROM ${name}`) }).toEqual({ [name]: rows })
+    }
+    expect(tableNames(store).filter((name) => !(name in before))).toEqual([])
+    expect(store.get('PRAGMA integrity_check')).toEqual({ integrity_check: 'ok' })
+    expect(store.all('PRAGMA foreign_key_check')).toEqual([])
+    expect(migrate(store)).toEqual([])
   })
 })

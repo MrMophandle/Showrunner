@@ -137,6 +137,33 @@ export function advanceOnApproval(
 }
 
 /**
+ * Where the episode stands, and why nothing moved it — the same shape `advanceOnApproval`
+ * returns when it declines to move one (E4-5).
+ *
+ * It exists because a stage can now finish without an approval: a rejection whose notes were
+ * all routed elsewhere ends the run with the work still to do (D21, `runner/write-step.ts`).
+ * That closing step still has to say where the episode stands, and it may not say it by
+ * calling `advanceOnApproval` — the function's name is its precondition, and a caller passing
+ * a rejection through the thing that advances on approvals is one refactor away from
+ * advancing on one.
+ *
+ * It writes nothing. There is deliberately no verb here that moves an episode BACK: a
+ * lifecycle position is how far an episode has got (rule 1 above), and a rejection sends work
+ * back into the stage the episode is still at.
+ */
+export function stayedAt(store: Store, episodeId: string, because: string): LifecycleMove {
+  const episode = findEpisode(store, episodeId)
+  if (!episode) throw new Error(`No such episode: ${episodeId}`)
+  return {
+    episode,
+    from: episode.lifecycle,
+    to: episode.lifecycle,
+    moved: false,
+    sentence: because,
+  }
+}
+
+/**
  * Why work at this stage cannot start on this episode yet, in words — or null when it can.
  *
  * The mirror of `advanceOnApproval`: that one says an approval moved the episode here, this

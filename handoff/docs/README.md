@@ -457,6 +457,12 @@ motion (or its equivalent), because a version nobody has read looks identical to
 version read clean, and the wall cannot tell the difference from findings alone. The
 three-kinds-of-nothing rule, at the artifact layer.
 
+*Paid by E4-5 (#65), and by ONE FUNCTION rather than an equivalent.* The motion is
+`landNewVersion` (still `remediation.ts`), and it has two callers: the pre-drafted rewrite
+behind a finding, and Ryan's direct edit (`edit.ts`). An equivalent was the other road and it
+is only equivalent until somebody changes one of them. **Any third path — E7's import — calls
+it too.**
+
 ### The check tier is retry-atomic, and the loop's resume depends on it (E3-2/E3-4, #44)
 
 The correction loop decides "has this draft been read" by "a pass exists at this
@@ -521,8 +527,9 @@ cannot repeat it.
 Written as E4's issues land, for the same reason as every list above. The first four are
 E4-1's (#61) and the first three bound E4-2 directly; the three after them are E4-2's (#62)
 and bound E4-3; then three of E4-3's (#63), and the scene rules among them bind E4-5's
-direct editor and E6's shot manifest before anything else touches a scene. The last three are
-E4-4's (#64), and the first of them binds E4-6's sweep gate directly.
+direct editor and E6's shot manifest before anything else touches a scene. Then three of
+E4-4's (#64), the first of which binds E4-6's sweep gate directly — and the last four are
+E4-5's (#65), of which the first two bind E4-6 and the third binds E6's review desk.
 
 ### One seam moves an episode's lifecycle, and the builder is what makes it a seam (E4-1, #61)
 
@@ -690,6 +697,13 @@ and E7's import both. It is the artifact-layer sibling of E3-5's rule that every
 must be read before the wall can trust it: a version delineated against the previous draft's
 headings is a grid nobody derived, and nothing downstream can tell it from one that was.
 
+*Paid by E4-5 (#65), for the edit AND for the rewrite.* Both motions moved inside
+`landNewVersion`, so the obligation is discharged by construction rather than by remembering:
+delineate before the bytes land, then revise, delineate and re-read in one transaction. It
+also closed a hole nobody had noticed — E3-5's span rewrite could replace a HEADING and leave
+a scene row whose heading is not in the draft, which is the row `domain/delineate.ts` says
+cannot locate itself. `remediation.test.ts` now watches that scene go.
+
 ### A paid step past the gate is money the launch button already promised (E4-4, #64)
 
 The script stage has three steps since E4-4, and the third runs on the far side of Ryan's
@@ -758,6 +772,80 @@ the former already had — so the refusal a closed or provisional fact earns is 
 wherever the claim came from. And the usage context is quoted by `quotedLines` (remediation.ts,
 exported for this), because a proposal's second part is "the passage that made it necessary"
 and two composers would put two shapes of one argument on one queue.
+
+### A stage can now finish without an approval, and every step past a gate must ask (E4-5, #65)
+
+D21 is real on the writing line: a rejection whose notes are all routed to ANOTHER artifact
+ends the run instead of writing the draft again (`correction-loop.ts` returns `verdict:
+'reject'`; `present-step.ts` returns rather than re-presenting). Nothing regenerates, the note
+stands against what it named, and what changes is that artifact's OFFER.
+
+Two steps already sat past a gate and both had to learn the third verdict. **`advance-past-the-…-gate`
+does not advance** — an approval is the only thing that moves an episode (E4-1), so it says
+where the episode stayed through `stayedAt` (domain/lifecycle.ts) rather than passing a
+rejection through the function whose name is its precondition. **`extract-the-canon-claims`
+does not read** — it reads the draft Ryan APPROVED, and a rejection is not one, so it returns
+`null` and buys nothing.
+
+**E4-6's sweep gate inherits this directly.** Any stage that grows a step past its gate owes
+the same question — E4-4's ledger entry above says the COST must cover the whole run, and this
+is its other half: the steps past the gate must consult the verdict, because one of the three
+means the work did not happen.
+
+### A routed note is a record with an address, and "addressed" is a comparison (E4-5, #65)
+
+`gate_note` carried `depth` and `target` from E1-4 and nothing acted on them. E4-5 acts, and
+the two things it needed are in **migration 0014**: `outline` joined the closed depth set (4.7
+named the depths before E4-2 made the outline an artifact), and `target_version` records what
+the target stood at when the note landed. That column is the whole reason **"addressed" is
+derived and never flagged** — a newer version of the target exists, or it does not
+(`domain/routing.ts`). Nothing is ever written back to a note.
+
+Three things a later epic inherits rather than re-decides:
+
+- **A depth resolves ONCE, at the ruling, and never refuses.** Nothing may block a ruling
+  (`gate.ts`), so a route to a kind this episode has not written lands as a note with no
+  address rather than as a rejected verdict.
+- **The desk carries routed notes with a THIRD origin**, not a third list — `routed-rejection`
+  beside `gate-rejection` and `finding-dismissal` (`write-context.ts`). A writer's prompt can
+  say "your note from the ep02 script gate, routed here" versus "your round-2 rejection"
+  versus "a finding you dismissed", and a note routed AWAY leaves the desk it was written at.
+- **`shot` and `take` reach nothing yet, and the mechanism is waiting for them.** D21 was ruled
+  about the REVIEW DESK; E6 wires the same three functions (`addressOf`, `landsOn`,
+  `unaddressedNotesTo`) to a shot's prompt and a held slot, and needs no new table to do it.
+
+### An edit does not re-extract, and that was chosen (E4-5, #65)
+
+A hand edit lands verbatim as a new version and runs the free deterministic tier over it, and
+that is ALL it runs. It does not buy E4-4's paid extraction: that reads the draft Ryan
+approved, a hand edit is not an approval, and a door that spent a model call would break the
+one promise on its button — "no model call · $0.00" (invariant 5). So the canon consequences
+of his own words are his to raise at the bench (#39's add-a-fact door) or nobody's.
+
+**E4-6's sweep collects whatever is riding the episode either way**, which is why this is a
+gap with no hole in it — but if a later session wants an edit to raise claims, it is a second
+button with its own cost, never a silent tail on this one. `edit.ts`'s header says the same
+thing where the next person will be standing.
+
+### A sentence may not name a door, and the writing stage's refusal names two (E4-5, #65)
+
+"ep02 already has a premise-brief, in slot “demo” — rule on it at its gate, or edit it
+directly" is what a writing stage says about an episode that already has its artifact. E4-3
+built the gates and nothing offered them; E4-5 built the edit. Both doors are now on the card
+that carries the refusal (`operating.ts`'s `WrittenOnThePage`), per written artifact, with the
+freshness sentence beside them.
+
+Two things had to give, and both are the same mistake in two places. The presenting stage
+asked the CHECKS' question — the singular slot a producer owns — so it could not open over
+ep02's demo-era brief, which is the exact artifact the refusal names and the E4 drill's
+opening move. It asks `writtenOfKind` now (`write-step.ts`, exported for this), which is the
+question the refusal asks. And the writer declared no freshness edge at all, so a hand edit of
+an outline the APP wrote staled nothing: `recordInputs` runs every writing round now, and the
+fixture's own `built from` stopped being the only edge in the library.
+
+**The rule generalizes and E5 inherits it:** a refusal that names an affordance owes that
+affordance a button on the same screen. E5 owns how the eight screens render these; it does
+not get to drop one and leave the sentence.
 
 ## Working agreements that bind every session
 

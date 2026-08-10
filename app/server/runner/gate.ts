@@ -1,6 +1,7 @@
 import type { Store } from '../db/store.ts'
 import type { EventLog } from '../events.ts'
 import { newId } from '../domain/id.ts'
+import { addressOf } from '../domain/routing.ts'
 import { findRun } from './run.ts'
 import type { Runner } from './runner.ts'
 
@@ -50,13 +51,22 @@ export const RULING_VERDICT = ['approve', 'reject', 'override'] as const
 export type RulingVerdict = (typeof RULING_VERDICT)[number]
 
 /**
- * How deep a rejection note sends the work back (4.7, D21). E1 carries it and acts on none
- * of it — the freshness graph that regenerates only what must is E4/E6.
+ * How deep a rejection note sends the work back (4.7, D21).
+ *
+ * E1 carried it and acted on none of it. **E4-5 acts on it for the written kinds**: a note at
+ * `outline` or `premise` depth is addressed to that artifact of the episode when the ruling
+ * lands (`domain/routing.ts`), and what it changes is that artifact's OFFER — nothing
+ * regenerates until Ryan clicks. `artifact` and `scene` are the draft in front of him, which
+ * is the correction loop's own path; `shot` and `take` are E6's and reach nothing yet.
+ *
+ * `outline` joined the set in 0014, and the migration carries the argument: 4.7 named the
+ * depths from the screening room, before E4-2 made the outline a real artifact between the
+ * premise and the script. The set is closed again, and the next one is a ruling, not an ALTER.
  *
  * A const array and a union type, never a TS `enum`: the server runs its TypeScript under
  * Node's type stripping, which only erases.
  */
-export const NOTE_DEPTH = ['artifact', 'scene', 'shot', 'take', 'premise'] as const
+export const NOTE_DEPTH = ['artifact', 'scene', 'outline', 'premise', 'shot', 'take'] as const
 export type NoteDepth = (typeof NOTE_DEPTH)[number]
 
 export interface Gate {
@@ -74,8 +84,17 @@ export interface Gate {
 export interface GateNote {
   note: string
   depth: NoteDepth | null
-  /** Which scene/shot/take, when the depth names one. Null when the depth does not. */
+  /**
+   * Which scene/shot/take — or, when the depth names a written kind, which ARTIFACT (0014).
+   * Null when the depth names nothing to address.
+   */
   target: string | null
+  /**
+   * The version the target stood at when the note landed, when the target is an artifact.
+   * It is what makes "has this been answered" a comparison rather than a flag
+   * (`domain/routing.ts`); null on every other kind of note.
+   */
+  targetVersion: number | null
 }
 
 export interface Ruling {
@@ -259,13 +278,20 @@ export function createRulings(store: Store, events: EventLog, runner: Runner): R
         given.comment ?? null,
       )
       for (const note of notes) {
+        // The address is resolved HERE, inside the ruling's transaction, because it is about
+        // the version standing at the moment Ryan wrote the note — and there is nowhere later
+        // to recover that from (`domain/routing.ts`, 0014). It resolves and never refuses: a
+        // route to a kind this episode has not written yet lands as a note with no address,
+        // because nothing may block a ruling.
+        const address = addressOf(store, before.gate, note)
         store.run(
-          'INSERT INTO gate_note (gate_id, round, note, depth, target) VALUES (?, ?, ?, ?, ?)',
+          'INSERT INTO gate_note (gate_id, round, note, depth, target, target_version) VALUES (?, ?, ?, ?, ?, ?)',
           gateId,
           round,
           note.note,
           note.depth ?? null,
-          note.target ?? null,
+          address.target,
+          address.targetVersion,
         )
       }
     })
@@ -392,7 +418,7 @@ export function gateStanding(store: Store, gateId: string): GateStanding | undef
   )) {
     notes.set(row.round, [
       ...(notes.get(row.round) ?? []),
-      { note: row.note, depth: row.depth, target: row.target },
+      { note: row.note, depth: row.depth, target: row.target, targetVersion: row.target_version },
     ])
   }
 
@@ -589,6 +615,7 @@ interface NoteRow {
   note: string
   depth: NoteDepth | null
   target: string | null
+  target_version: number | null
 }
 
 const hydrateGate = (row: GateRow): Gate => ({

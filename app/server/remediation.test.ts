@@ -858,14 +858,17 @@ describe('a scene is a scene at both ends, or it is not a scene', () => {
     })
     expect(onDisk(findArtifact(store, script.id)!)).not.toContain(scenes[3]!.heading)
 
-    // `sceneSpans` hands a heading it cannot find the WHOLE text — the honest fallback for a
-    // check that must still refuse an invented quote, and a hole with a green light on it
-    // here: the "narrowed" pass would have been handed the entire script, would have accepted
-    // a quote out of any scene as belonging to this one, and would have cost what the panel
-    // costs while claiming D14's saving.
+    // **A scene is its heading** (E4-3), and E4-5 put the re-delineation inside the one motion
+    // — so a rewrite that renames a heading now takes the scene with it, exactly as a writer's
+    // own rewrite does, and the finding that was anchored there has degraded to the whole
+    // artifact (0013). The row this re-check would have narrowed to is gone.
+    expect(scenesOf(store, episodeId).map((one) => one.id)).not.toContain(scenes[3]!.id)
+    expect(scenesOf(store, episodeId).map((one) => one.heading)).toContain(
+      'EXT. THE LONG PIER — 07:09',
+    )
     await expect(
       recheckScene(store, llm, paths, { artifactId: script.id, sceneId: scenes[3]!.id }),
-    ).rejects.toThrow(/does not carry that heading any more/)
+    ).rejects.toThrow(/does not belong to this episode/)
     expect(llm.calls).toEqual([])
   })
 

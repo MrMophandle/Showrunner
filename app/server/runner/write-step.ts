@@ -6,6 +6,7 @@ import {
   artifactsOf,
   declareProvenance,
   recordArtifact,
+  recordInputs,
   reviseArtifact,
   type Artifact,
   type ArtifactKind,
@@ -14,7 +15,13 @@ import { positionsOf } from '../domain/arc.ts'
 import { categoriesForArtifactKind } from '../domain/category.ts'
 import { craftChecksFor } from '../domain/craft.ts'
 import { delineateScript } from '../domain/delineate.ts'
-import { advanceOnApproval, notYetReachedBecause, type LifecycleMove } from '../domain/lifecycle.ts'
+import { routedNoteSentence, unaddressedNotesTo } from '../domain/routing.ts'
+import {
+  advanceOnApproval,
+  notYetReachedBecause,
+  stayedAt,
+  type LifecycleMove,
+} from '../domain/lifecycle.ts'
 import {
   delineateScenes,
   episodeInShow,
@@ -249,8 +256,11 @@ export const WRITE_EFFORT: LLMEffort = 'medium'
 /** What the closing step returns: the ruling, where it left the episode, and what it cost. */
 export interface WriteClose {
   artifactId: string
-  /** How the round that closed the gate was ruled: 'approve' or 'override'. */
-  verdict: 'approve' | 'override'
+  /**
+   * How the round that closed the gate was ruled. `reject` is E4-5's: every note was routed
+   * away from this draft, so nothing was rewritten and nothing moved (D21).
+   */
+  verdict: 'approve' | 'override' | 'reject'
   gateRound: number
   /** Where the approval left the episode on the lifecycle, and why (domain/lifecycle.ts). */
   lifecycle: LifecycleMove
@@ -522,14 +532,23 @@ function offerFor(store: Store, episode: Episode, step: WriteStep): StageOffer {
 
   const write = projectLLMCost(WRITING[step].call)
   const panel = projectLLMCost({ ...TEXT_CHECK_CALL, calls: reviewers })
-  const standing = alreadyWritten(store, episode.id, kind)
+  const standing = writtenOfKind(store, episode.id, kind)
+  // **The already-has-one refusal yields to a routed note, and to nothing else** (E4-5, D21).
+  // A note Ryan wrote at a LATER gate and sent back here is work this stage owes and nobody
+  // else can do; until a newer version of this artifact exists it is unanswered, and that is
+  // derived rather than flagged (`domain/routing.ts`). Nothing regenerates because of it —
+  // what changes is that the button is pressable and says why.
+  const routed = standing ? unaddressedNotesTo(store, standing.id) : []
 
   return {
     sentence:
-      `Write the ${label} ${kind} from the writer’s desk and present it for your ruling — ` +
-      `“${episode.title}”, one call, then up to ${reviewers} reviewer${
-        reviewers === 1 ? '' : 's'
-      } read it`,
+      routed.length > 0
+        ? `Write the ${label} ${kind} again from the writer’s desk — ` +
+          `${routedNoteSentence(routed, `the ${label} ${kind}`)}`
+        : `Write the ${label} ${kind} from the writer’s desk and present it for your ruling — ` +
+          `“${episode.title}”, one call, then up to ${reviewers} reviewer${
+            reviewers === 1 ? '' : 's'
+          } read it`,
     cost:
       `${write.sentence} + up to ${panel.sentence} to check it, per draft — and the loop ` +
       `stops at ${MAX_CORRECTION_ROUNDS} drafts (invariant 5)` +
@@ -543,9 +562,11 @@ function offerFor(store: Store, episode: Episode, step: WriteStep): StageOffer {
         : ''),
     callsModel: true,
     nothingToDoBecause:
-      standing !== undefined
-        ? alreadyWrittenBecause(label, standing)
-        : notYetReachedBecause(store, episode.id, step),
+      standing === undefined
+        ? notYetReachedBecause(store, episode.id, step)
+        : routed.length > 0
+          ? null
+          : alreadyWrittenBecause(label, standing),
   }
 }
 
@@ -558,8 +579,18 @@ function offerFor(store: Store, episode: Episode, step: WriteStep): StageOffer {
  * this episode exist", and a brief E1's retired demo stage wrote into its own slot is still a
  * premise for this episode. A hand-made asset always wins and re-runs fill gaps only (D20):
  * the answer to "there is one already" is to rule on it or edit it, never to write a second.
+ *
+ * **Exported because the sentence that refuses on it promises a gate** (E4-5). "Rule on it at
+ * its gate" has to open over the artifact this question found, slot and all, or the refusal
+ * points at a door that is not there — which is exactly ep02's demo-era brief in Ryan's own
+ * library. `present-step.ts` asks this rather than the checks' narrower one, and the two
+ * questions stay different on purpose: a check reads the draft the producer owns.
  */
-function alreadyWritten(store: Store, episodeId: string, kind: ArtifactKind): Artifact | undefined {
+export function writtenOfKind(
+  store: Store,
+  episodeId: string,
+  kind: ArtifactKind,
+): Artifact | undefined {
   return artifactsOf(store, episodeId).find((artifact) => artifact.kind === kind)
 }
 
@@ -685,6 +716,21 @@ function writer(library: LibraryPaths, step: WriteStep): Producer {
         .filter((held) => nameAppearingIn(text, held.entity) !== undefined)
         .map((held) => held.entity.id)
 
+      // ── The freshness edge, declared out of what it READ ─────────────────────
+      // The desk handed this step the ruled artifact above it, so the draft is built from that
+      // artifact at that version — and saying so is what makes "edit the outline and the
+      // script says it was built from a draft the outline has moved past" a computation over
+      // edges rather than a thing anybody remembers (1.3, `domain/artifact.ts`). The fixture's
+      // own episodes have carried these edges since E1-7; before E4-5 nothing the APP wrote
+      // did, so a hand edit upstream staled nothing it had written itself.
+      //
+      // Re-recorded every round, never only on the first: `recordInputs` moves the edge to the
+      // version standing now, which is what makes a rewrite AFTER an upstream edit come back
+      // fresh instead of staying stale forever.
+      const builtFrom = desk.upstream.artifact
+        ? [{ artifactId: desk.upstream.artifact.id }]
+        : []
+
       const standing = find(context)
       if (!standing) {
         recordArtifact(context.store, {
@@ -692,10 +738,12 @@ function writer(library: LibraryPaths, step: WriteStep): Producer {
           kind,
           filePath,
           touches,
+          builtFrom,
         })
         return
       }
       declareProvenance(context.store, standing.id, touches)
+      if (builtFrom.length > 0) recordInputs(context.store, standing.id, builtFrom)
       reviseArtifact(context.store, standing.id, {
         summary:
           brief.findings.length > 0
@@ -726,11 +774,31 @@ function advancePastTheGate(step: WriteStep, producerName: string): Step<WriteCl
 
     async execute(context: StepContext): Promise<WriteClose> {
       const outcome = context.input<CorrectionOutcome>(producerName)
-      const lifecycle = advanceOnApproval(context.store, context.episodeId, step)
+      // **An approval is the only thing that moves an episode on** (E4-1). A rejection whose
+      // notes were all routed elsewhere ends the stage without one, so this says where the
+      // episode stayed rather than passing a rejection through the function that advances on
+      // approvals (`domain/lifecycle.ts`).
+      const where = episodeInShow(context.store, context.episodeId)
+      const lifecycle =
+        outcome.verdict === 'reject'
+          ? stayedAt(
+              context.store,
+              context.episodeId,
+              `${where ? episodeLabel(where.episode.number) : 'The episode'} stays at ${step} — ` +
+                `you rejected it and routed ${
+                  outcome.routed.length === 1 ? 'the note' : 'every note'
+                } elsewhere, and a rejection is not an approval.`,
+            )
+          : advanceOnApproval(context.store, context.episodeId, step)
       const spend = costOfRun(context.store, context.runId)
       const sentence =
-        `${outcome.verdict === 'override' ? 'Overridden' : 'Approved'} at round ` +
-        `${outcome.gateRound} · ${lifecycle.sentence} · ${spentSentence(spend)}`
+        `${
+          outcome.verdict === 'override'
+            ? 'Overridden'
+            : outcome.verdict === 'reject'
+              ? 'Rejected and routed away'
+              : 'Approved'
+        } at round ` + `${outcome.gateRound} · ${lifecycle.sentence} · ${spentSentence(spend)}`
 
       context.progress(sentence)
       return {

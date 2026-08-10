@@ -500,10 +500,13 @@ describe('the notes Ryan has already written', () => {
     const outline = rejectTheOutlineTwice()
     const context = outlineDesk()
 
+    // Round 1's note was routed at PREMISE depth, so it is addressed to the premise-brief and
+    // is not this writer's to answer (E4-5, `domain/routing.ts`) — handing it over here as
+    // well would print one instruction to two writers. What is left is round 2's, which lands
+    // on this draft because a scene is a scene OF it.
     const rejections = context.notes.filter((note) => note.origin.kind === 'gate-rejection')
     expect(rejections.map((note) => note.note)).toEqual([
       'Tobin cannot be the one who notices — he is off shift.',
-      'the exchanger is a plot device, not a problem.',
     ])
 
     const latest = rejections[0]!
@@ -514,6 +517,25 @@ describe('the notes Ryan has already written', () => {
       depth: 'scene',
     })
     expect(latest.sentence).toContain('round 2')
+  })
+
+  it('sends the note he routed to the premise onto the premise-brief’s desk instead', () => {
+    rejectTheOutlineTwice()
+
+    const premise = composeWriteContext(store, paths, { episodeId: ep02.id, step: 'premise' })
+    const routed = premise.notes.filter((note) => note.origin.kind === 'routed-rejection')
+
+    expect(routed.map((note) => note.note)).toEqual([
+      'the exchanger is a plot device, not a problem.',
+    ])
+    expect(routed[0]!.sentence).toBe('your note from the ep02 outline gate, routed here')
+    expect(routed[0]!.origin).toMatchObject({
+      kind: 'routed-rejection',
+      depth: 'premise',
+      fromKind: 'outline',
+      round: 1,
+      addressed: false,
+    })
   })
 
   it('reads a dismissal note through the reader the checks use', () => {
@@ -530,14 +552,23 @@ describe('the notes Ryan has already written', () => {
     expect(dismissals[0]!.sentence).toContain('world-rules')
   })
 
-  it('tells a rejection and a dismissal apart in one stream', () => {
+  it('tells the three origins apart in one stream, and puts each on the right desk', () => {
     rejectTheOutlineTwice()
     dismissAFinding()
 
-    const kinds = outlineDesk().notes.map((note) => note.origin.kind)
-    expect(kinds).toContain('gate-rejection')
-    expect(kinds).toContain('finding-dismissal')
-    expect(kinds).toHaveLength(3)
+    // The outline's desk: his round-2 rejection of THIS draft, and the finding he dismissed.
+    const outline = outlineDesk().notes.map((note) => note.origin.kind)
+    expect(outline).toContain('gate-rejection')
+    expect(outline).toContain('finding-dismissal')
+    expect(outline).toHaveLength(2)
+
+    // The premise-brief's: the note he routed there, and the same dismissal — the show's whole
+    // dismissal stream reaches every desk (finding.ts), and a routed note reaches one.
+    const premise = composeWriteContext(store, paths, { episodeId: ep02.id, step: 'premise' })
+    expect(premise.notes.map((note) => note.origin.kind).sort()).toEqual([
+      'finding-dismissal',
+      'routed-rejection',
+    ])
   })
 })
 

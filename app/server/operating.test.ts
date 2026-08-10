@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { FREE } from './cost.ts'
 import type { Store } from './db/store.ts'
 import { artifactsOf, recordArtifact } from './domain/artifact.ts'
+import { editArtifact } from './edit.ts'
 import { recordCheckPass } from './domain/finding.ts'
 import { EPISODE_LIFECYCLE, episodesOf, findEpisode, scenesOf, seasonsOf } from './domain/spine.ts'
 import { createEventLog, type EventLog } from './events.ts'
@@ -190,6 +191,50 @@ describe('the operating page — the launch button', () => {
     expect(present.enabled).toBe(true)
     expect(present.sentence).toContain('Present the ep01 script v1 for your ruling')
     expect(present.cost).toBe(FREE)
+  })
+
+  /**
+   * **The half-door, closed** (E4-5, #65). The refusal above promises two things — "rule on it
+   * at its gate, or edit it directly" — and until E4-5 neither was on the card it appears on.
+   * E4-3 built the gates; this puts both doors beside the refusal that names them, per written
+   * artifact, so nothing in this app points at a door Ryan cannot open.
+   */
+  it('puts both doors the refusal names on the card, per written artifact', () => {
+    const episode = operatingView(store, paths, READY).shows[0]!.episodes[0]!
+
+    expect(episode.artifacts.map((one) => one.kind)).toEqual(['outline', 'premise-brief', 'script'])
+    const script = episode.artifacts.find((one) => one.kind === 'script')!
+
+    expect(script.present.enabled).toBe(true)
+    expect(script.present.sentence).toContain('Present the ep01 script v1 for your ruling')
+    expect(script.present.cost).toBe(FREE)
+    expect(script.presentStage).toBe(SCRIPT_GATE_STAGE)
+
+    expect(script.edit.enabled).toBe(true)
+    expect(script.edit.sentence).toContain('Edit the ep01 script yourself')
+    expect(script.edit.sentence).toContain('lands word for word as v2')
+    expect(script.edit.cost).toBe(FREE)
+
+    // Fresh, nothing routed at it, and no sentence claiming otherwise.
+    expect(script.status).toBe('fresh')
+    expect(script.staleBecause).toBeNull()
+    expect(script.standing).toEqual([])
+  })
+
+  it('renders staleness as a sentence on the artifact it is true of', () => {
+    editArtifact(store, paths, {
+      artifactId: artifactsOf(store, ep01).find((one) => one.kind === 'outline')!.id,
+      text: '# The Long Pier — outline\n\nOne movement, and it is a different episode.\n',
+    })
+
+    const episode = operatingView(store, paths, READY).shows[0]!.episodes[0]!
+    const script = episode.artifacts.find((one) => one.kind === 'script')!
+
+    expect(script.status).toBe('stale')
+    expect(script.staleBecause).toContain('was built from the ep01 outline v1')
+    expect(script.staleBecause).toContain('stands at v2 now — you edited it by hand')
+    // The outline itself is fresh: staleness flows downstream and never back up.
+    expect(episode.artifacts.find((one) => one.kind === 'outline')!.status).toBe('fresh')
   })
 
   /**
@@ -419,6 +464,24 @@ describe('the operating page — one run, and the gate it parks on', () => {
     expect(view.spend.sentence).toMatch(/^3 calls · \$\d+\.\d\d$/)
     expect(view.spend.entries).toHaveLength(3)
     expect(view.spend.entries[0]).toMatchObject({ kind: 'llm', priced: 'rate-card' })
+  })
+
+  it('says what a note routed elsewhere does, before he writes one', async () => {
+    queueThePremise()
+    const run = runner.enqueueRun({ episodeId: ep02, stage: PREMISE_STAGE })
+    await runner.settled(run.id)
+    const reject = runView(store, paths, run.id)!.gate!.reject
+
+    expect(reject.sentence).toContain('writes it again against them')
+    // …and the other half of D21, said on the same button: a note he sends somewhere else
+    // rewrites nothing here, and turns up as an offer on the stage that writes what it names.
+    expect(reject.sentence).toContain(
+      'But a note you route to another artifact lands there instead — nothing here is ' +
+        'rewritten, and the stage that writes it becomes offerable with your note on it (D21)',
+    )
+    expect(reject.enabled).toBe(true)
+    // Every depth he may pick, including the `outline` E4-5 added to the closed set (0014).
+    expect(runView(store, paths, run.id)!.gate!.noteDepths).toContain('outline')
   })
 
   it('closes both verdicts once the round is ruled, and says why', async () => {

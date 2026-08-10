@@ -11,6 +11,7 @@ import {
   type FindingSeverity,
 } from '../domain/finding.ts'
 import { verdictBoard, type VerdictBoard } from '../domain/panel.ts'
+import { landsOn, unaddressedNotesTo } from '../domain/routing.ts'
 import { episodeLabel, findEpisode, scenesOf } from '../domain/spine.ts'
 import type { GateNote, GateRound } from './gate.ts'
 import { stageBlockingFindings } from './stage-wall.ts'
@@ -176,11 +177,21 @@ export interface CorrectionReport extends DraftsUnderReview {
   sentence: string
 }
 
-/** What the step returns once Ryan has ruled, which is the only way it returns at all. */
+/**
+ * What the step returns once Ryan has ruled, which is the only way it returns at all.
+ *
+ * `reject` is the third verdict this can end on, and it is E4-5's: **every note was routed
+ * away from the draft under review** (D21), so there is nothing here to write again and the
+ * run ends with the note standing against whatever it named. A rejection whose notes land HERE
+ * does not return at all — it writes the draft again and presents the next round, which is
+ * what the loop has always done.
+ */
 export interface CorrectionOutcome extends CorrectionReport {
-  /** How the round that closed it was ruled: 'approve' or 'override'. */
-  verdict: 'approve' | 'override'
+  /** How the round that closed it was ruled. `reject`: routed away, and nothing was rewritten. */
+  verdict: 'approve' | 'override' | 'reject'
   gateRound: number
+  /** The notes that were routed elsewhere, when that is why this returned. */
+  routed: readonly GateNote[]
 }
 
 /** Why the producer is being called, and with what. Round 1 carries no notes at all. */
@@ -246,7 +257,35 @@ export function correctionLoop(produce: Producer, check: Step): Step<CorrectionO
           `${ruled.verdict === 'override' ? 'Overridden' : 'Approved'} at round ${standing.round}` +
             ' — nothing rewritten, nothing re-checked, nothing re-spent',
         )
-        return { ...report, verdict: ruled.verdict, gateRound: standing.round }
+        return { ...report, verdict: ruled.verdict, gateRound: standing.round, routed: [] }
+      }
+
+      // ── Back in on a rejection that was routed elsewhere (E4-5, D21) ─────────
+      // Every note names ANOTHER artifact — the outline, the premise. There is nothing here
+      // for this producer to answer: writing this draft again against a note about the
+      // artifact above it is precisely the rewind D21 replaced. So the run ends, the note
+      // stands against what it named, and **nothing regenerates until Ryan clicks** the stage
+      // that writes it (`domain/routing.ts` reopens that offer with the note in its sentence).
+      //
+      // A MIXED rejection is not this case and is deliberately not treated as one: a note that
+      // lands here is work for this producer whatever else he wrote beside it, so the loop
+      // takes the ones that landed and writes the draft again against exactly those.
+      const landed =
+        ruled?.verdict === 'reject'
+          ? ruled.notes.filter((note) => landsOn(note, standing!.gate.artifactId))
+          : []
+      if (ruled?.verdict === 'reject' && landed.length === 0) {
+        const report = reportOf(store, standing!.gate.artifactId)
+        context.progress(
+          `Rejected at round ${standing!.round}, and every note was routed elsewhere — nothing ` +
+            'here is rewritten, and nothing regenerates until you ask for it (D21)',
+        )
+        return {
+          ...report,
+          verdict: 'reject',
+          gateRound: standing!.round,
+          routed: ruled.notes,
+        }
       }
 
       // The draft Ryan last ruled on. He has had his opinion of it, so the next thing that
@@ -254,8 +293,20 @@ export function correctionLoop(produce: Producer, check: Step): Step<CorrectionO
       // not capped (gate.ts) and they start the machine's own count over: the correction
       // budget bounds how long it argues with itself unattended, and it is not unattended any
       // more once he has spoken.
-      const ruledVersion = lastRuledVersion(standing?.rounds)
-      const rulingNotes = ruled?.verdict === 'reject' ? ruled.notes : []
+      //
+      // **A note routed here from another gate counts as one of those rulings** (E4-5, D21).
+      // He read this draft while standing at a LATER artifact's gate and sent it back; the
+      // version it landed on is a version he has had his opinion of, so the loop owes a
+      // rewrite rather than a re-presentation of the words he just argued with. Unanswered
+      // ones only — a note a newer version already answered is history, and re-opening on it
+      // would make this stage rewrite itself forever.
+      const routedHere = unaddressedNotesTo(store, produce.find(context)?.id ?? '')
+      const ruledVersion = Math.max(
+        lastRuledVersion(standing?.rounds),
+        ...routedHere.map((note) => note.routedAtVersion),
+        0,
+      )
+      const rulingNotes = landed
 
       // Every iteration re-derives where it stands from rows, and holds nothing across an
       // await. That is what makes a resumed step — after a crash, after a failed attempt —

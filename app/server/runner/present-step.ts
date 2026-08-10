@@ -1,11 +1,13 @@
 import { FREE } from '../cost.ts'
 import type { Store } from '../db/store.ts'
-import type { ArtifactKind } from '../domain/artifact.ts'
+import type { Artifact, ArtifactKind } from '../domain/artifact.ts'
+import { landsOn } from '../domain/routing.ts'
 import { episodeInShow, episodeLabel, type EpisodeInShow } from '../domain/spine.ts'
 import { WRITE_STEP, producedBy, type WriteStep } from '../domain/write-context.ts'
 import { draftsUnderReview, type CorrectionReport } from './correction-loop.ts'
 import type { Stage, StageCatalogue, StageOffer, Step, StepContext } from './step.ts'
-import { artifactOf, noArtifactBecause } from './text-check-step.ts'
+import { noArtifactBecause } from './text-check-step.ts'
+import { writtenOfKind } from './write-step.ts'
 
 /**
  * **Presenting a written artifact for Ryan's ruling** (4.6, D15) — the stage that produces
@@ -86,8 +88,12 @@ export interface Presentation {
   /** The version that was under review when he ruled. */
   version: number
   round: number
-  /** 'approve' or 'override' — a rejection re-presents rather than returning. */
-  verdict: 'approve' | 'override'
+  /**
+   * How the round that closed it was ruled. A rejection whose notes are about THIS draft
+   * re-presents rather than returning; `reject` is E4-5's — every note was routed to another
+   * artifact, so the run ends and nothing is re-presented (D21).
+   */
+  verdict: 'approve' | 'override' | 'reject'
   /** How many deterministic findings his override was standing over. 0 on a plain approval. */
   stoodOver: number
   sentence: string
@@ -112,7 +118,7 @@ function presentingStage(step: WriteStep): Stage {
     steps: [presentForYourRuling(kind)],
     offerOn: (store, episode): StageOffer => {
       const label = episodeLabel(episode.number)
-      const artifact = artifactOf(store, episode.id, kind)
+      const artifact = presentable(store, episode.id, kind)
       if (!artifact) {
         return {
           sentence: `Present the ${label} ${kind} for your ruling`,
@@ -160,7 +166,7 @@ export function presentForYourRuling(kind: ArtifactKind): Step<Presentation> {
     async execute(context: StepContext): Promise<Presentation> {
       const where = requireEpisode(context.store, context.episodeId)
       const label = episodeLabel(where.episode.number)
-      const artifact = artifactOf(context.store, context.episodeId, kind)
+      const artifact = presentable(context.store, context.episodeId, kind)
       if (!artifact) throw new Error(noArtifactBecause(label, kind))
 
       const standing = context.gate()
@@ -188,6 +194,30 @@ export function presentForYourRuling(kind: ArtifactKind): Step<Presentation> {
         }
       }
 
+      // ── Back in on a rejection routed to another artifact (E4-5, D21) ────────
+      // There is no producer behind this gate, so a rejection has always re-presented the same
+      // draft as the next round — right for a note about THIS draft, wrong for one Ryan sent
+      // somewhere else. Re-presenting a script he has just routed back to the outline would
+      // park his episode on a decision he has already made, and the work he asked for is
+      // behind a different stage's button. So the run ends and the note stands where it was
+      // addressed (`domain/routing.ts`).
+      const landsHere = ruled?.notes.some((note) => landsOn(note, artifact.id)) ?? false
+      if (ruled && ruled.verdict === 'reject' && !landsHere) {
+        const sentence =
+          `Rejected at round ${standing!.round}, and every note was routed elsewhere — the ` +
+          `${label} ${kind} is exactly as you ruled on it, and nothing regenerates until you ` +
+          'ask for it (D21).'
+        context.progress(sentence)
+        return {
+          artifactId: artifact.id,
+          version: artifact.version,
+          round: standing!.round,
+          verdict: 'reject',
+          stoodOver: 0,
+          sentence,
+        }
+      }
+
       const round = ruled ? standing!.round + 1 : (standing?.round ?? 1)
       const under = draftsUnderReview(context.store, artifact.id)
       const sentence =
@@ -205,6 +235,24 @@ export function presentForYourRuling(kind: ArtifactKind): Step<Presentation> {
       context.openGate({ artifactId: artifact.id, payload, reason: sentence })
     },
   }
+}
+
+/**
+ * The artifact this stage would put in front of Ryan — **whatever slot it sits in.**
+ *
+ * The checks' `artifactOf` asks the narrower question (the singular slot the producer owns),
+ * and that is right for a check: it reads the draft a writer wrote. This stage's question is
+ * the one the WRITING stage's refusal asks — "is there one of these to rule on" — and the two
+ * have to be the same question, because that refusal promises this gate ("rule on it at its
+ * gate, or edit it directly"). ep02's demo-era premise-brief in Ryan's own library is the case
+ * that makes the difference real: written into slot `demo` by a stage E4-1 retired, refused by
+ * the writing stage naming its slot, and unopenable here until E4-5 asked the wider question.
+ *
+ * A recorded artifact nobody has produced still has nothing to present, and that is unchanged.
+ */
+function presentable(store: Store, episodeId: string, kind: ArtifactKind): Artifact | undefined {
+  const artifact = writtenOfKind(store, episodeId, kind)
+  return artifact?.filePath ? artifact : undefined
 }
 
 function requireEpisode(store: Store, episodeId: string): EpisodeInShow {

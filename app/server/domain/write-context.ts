@@ -12,6 +12,7 @@ import {
   type ArcWaypoint,
 } from './arc.ts'
 import { findArtifact, provenanceOf, type Artifact, type ArtifactKind } from './artifact.ts'
+import { landsOn, routedNotesTo } from './routing.ts'
 import { entitiesOfShow, type CanonEntity } from './canon.ts'
 import { factsInScope, factsOfEntity, findFact, type Fact } from './fact.ts'
 import { dismissalNotes, type CheckGapReason } from './finding.ts'
@@ -247,7 +248,17 @@ export interface ArcInContext {
   position: ArcPosition | null
 }
 
-/** Where a note came from. A discriminated union so a third origin is an arm, not a list. */
+/**
+ * Where a note came from. A discriminated union so a third origin is an arm, not a list —
+ * and E4-5 is the third.
+ *
+ * The three are three different AUTHORITIES and a writer's prompt has to be able to say which:
+ * "your round-2 rejection of this draft" is Ryan's opinion of the thing being rewritten;
+ * "your note from the ep02 script gate, routed here" is his opinion of THIS artifact, given
+ * while he was standing at a later one (D21); "a finding you dismissed" is his ruling on a
+ * check, which is a different act again. Flattened into a bag of sentences they would all read
+ * as instructions with no provenance.
+ */
 export type NoteOrigin =
   | {
       kind: 'gate-rejection'
@@ -256,6 +267,20 @@ export type NoteOrigin =
       round: number
       depth: NoteDepth | null
       target: string | null
+    }
+  | {
+      /** Written at another artifact's gate and addressed HERE (E4-5, `domain/routing.ts`). */
+      kind: 'routed-rejection'
+      gateId: string
+      round: number
+      depth: NoteDepth
+      /** The artifact the gate was over — where he was standing when he wrote it. */
+      fromArtifactId: string
+      fromKind: ArtifactKind
+      /** The version THIS artifact stood at when the note landed. */
+      routedAtVersion: number
+      /** A newer version of this artifact exists. Computed, never a flag. */
+      addressed: boolean
     }
   | {
       kind: 'finding-dismissal'
@@ -710,7 +735,7 @@ function notesFor(store: Store, where: EpisodeInShow, producing: Artifact | null
       : store
           .all<RejectionRow>(
             `SELECT g.id AS gate_id, g.artifact_id, n.round, n.note, n.depth, n.target,
-                    r.ruled_at
+                    n.target_version, r.ruled_at
                FROM gate_note n
                JOIN gate g ON g.id = n.gate_id
                JOIN gate_ruling r ON r.gate_id = n.gate_id AND r.round = n.round
@@ -718,6 +743,11 @@ function notesFor(store: Store, where: EpisodeInShow, producing: Artifact | null
               ORDER BY n.round DESC, n.seq DESC`,
             producing.id,
           )
+          // A note Ryan wrote at THIS artifact's gate and routed somewhere ELSE is not this
+          // writer's to answer — it is the target's, and it arrives on the target's desk
+          // below. Handing it over here as well would be the rewind D21 replaced, printed
+          // twice (E4-5, `domain/routing.ts`).
+          .filter((row) => landsOn({ ...row, targetVersion: row.target_version }, producing.id))
           .map((row) => ({
             note: row.note,
             at: row.ruled_at,
@@ -734,6 +764,30 @@ function notesFor(store: Store, where: EpisodeInShow, producing: Artifact | null
             },
           }))
 
+  // **The third origin** (E4-5): notes written at a LATER artifact's gate and addressed here.
+  // They ride until they are answered and then keep riding — the desk hands over everything
+  // Ryan has said about this artifact, and `addressed` is what the OFFER reads, not the
+  // prompt. A note dropped from the desk the moment v2 landed would vanish from round 2 of
+  // the very rewrite it asked for.
+  const routed: WriteNote[] =
+    producing === null
+      ? []
+      : routedNotesTo(store, producing.id).map((one) => ({
+          note: one.note,
+          at: one.ruledAt,
+          sentence: `your note from the ${label} ${one.fromKind} gate, routed here`,
+          origin: {
+            kind: 'routed-rejection' as const,
+            gateId: one.gateId,
+            round: one.round,
+            depth: one.depth,
+            fromArtifactId: one.fromArtifactId,
+            fromKind: one.fromKind,
+            routedAtVersion: one.routedAtVersion,
+            addressed: one.addressed,
+          },
+        }))
+
   // The show's whole stream, not one check's: a writer is not a reviewer (finding.ts).
   const dismissals: WriteNote[] = dismissalNotes(store, { showId: where.show.id }).map((one) => ({
     note: one.note,
@@ -749,7 +803,9 @@ function notesFor(store: Store, where: EpisodeInShow, producing: Artifact | null
     },
   }))
 
-  return [...rejections, ...dismissals].sort((a, b) => (a.at === b.at ? 0 : a.at < b.at ? 1 : -1))
+  return [...rejections, ...routed, ...dismissals].sort((a, b) =>
+    a.at === b.at ? 0 : a.at < b.at ? 1 : -1,
+  )
 }
 
 function episodeLabelOf(store: Store, episodeId: string): string {
@@ -817,5 +873,6 @@ interface RejectionRow {
   note: string
   depth: NoteDepth | null
   target: string | null
+  target_version: number | null
   ruled_at: string
 }

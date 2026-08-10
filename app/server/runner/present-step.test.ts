@@ -1,13 +1,14 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { Store } from '../db/store.ts'
-import { artifactsOf, type Artifact } from '../domain/artifact.ts'
+import { artifactsOf, recordArtifact, type Artifact } from '../domain/artifact.ts'
 import { runBoardRules } from '../domain/board-rules.ts'
 import { recordExtractedBoard } from '../domain/board.ts'
 import { factsOfEntity } from '../domain/fact.ts'
 import { findingsIn } from '../domain/finding.ts'
+import { unaddressedNotesTo } from '../domain/routing.ts'
 import { findEpisode } from '../domain/spine.ts'
 import { createEventLog, type EventLog } from '../events.ts'
 import { greyHarborFounded } from '../fixture/founded.ts'
@@ -210,6 +211,36 @@ describe('the script gate — the three verdicts, and what each leaves behind', 
     expect(view.gate!.reject.sentence).not.toContain('writes it again')
     expect(llm.calls).toEqual([])
   })
+
+  /**
+   * **A note routed to another artifact ends the run instead of re-presenting** (E4-5, D21).
+   *
+   * The presenting stage has no producer to re-run, so a rejection has always re-presented
+   * the same draft as the next round. That is right for a note about THIS draft and wrong for
+   * one routed away: re-presenting the script Ryan has just sent back to the outline would
+   * park his own episode on a gate he has already ruled, and the work he asked for is at a
+   * different stage's button (`domain/routing.ts`).
+   */
+  it('ends the run instead, when the note was routed to another artifact', async () => {
+    theBoard()
+    const runId = await present()
+
+    rulings.reject(openGates(store)[0]!.gate.id, {
+      notes: [{ note: 'the outline never turns here', depth: 'outline' }],
+    })
+    await runner.settled(runId)
+
+    const view = runView(store, paths, runId)!
+    expect(view.run.status).toBe('done')
+    expect(view.gate!.round).toBe(1)
+    expect(view.gate!.isOpen).toBe(false)
+    expect(openGates(store)).toEqual([])
+    // Nothing regenerated and nothing re-presented — and the ep01 outline is where the note is.
+    expect(llm.calls).toEqual([])
+    expect(
+      unaddressedNotesTo(store, artifactsOf(store, episodeId).find((one) => one.kind === 'outline')!.id),
+    ).toHaveLength(1)
+  })
 })
 
 // ── The collision, resolved (E4-3, #63) ────────────────────────────────────────
@@ -239,6 +270,41 @@ describe('one artifact, one ruling — and two doors onto it', () => {
    * is TRUE for an artifact whose writing run never existed, which is what retiring this
    * stage would have taken away. ep01's script was written by hand into the fixture.
    */
+  /**
+   * **The E4 drill's opening move** (#67): ep02 in Ryan's real library carries a premise-brief
+   * E1's retired `demo` stage wrote into its own slot, and the writing stage refuses it with
+   * "ep02 already has a premise-brief, in slot “demo” — rule on it at its gate, or edit it
+   * directly". Both halves of that sentence have to be true of THAT artifact, slot and all.
+   */
+  it('presents an artifact a retired stage wrote into its own slot — the drill’s opening move', () => {
+    const ep02 = store.get<{ id: string }>("SELECT id FROM episode WHERE title = 'Dry Stores'")!.id
+    const demo = recordArtifact(store, {
+      episodeId: ep02,
+      kind: 'premise-brief',
+      slot: 'demo',
+      filePath: 'greyharbor/s01e02/premise-brief-demo.md',
+    })
+    mkdirSync(join(paths.artifactDir, 'greyharbor', 's01e02'), { recursive: true })
+    writeFileSync(
+      join(paths.artifactDir, demo.filePath!),
+      'A relay goes dark, and the part that replaces it was promised to the water plant.\n',
+      'utf8',
+    )
+
+    const ready = describeLLMBackend({ ANTHROPIC_API_KEY: 'sk-ant-x' })
+    // The writing stage refuses it, naming both doors…
+    const write = stageOffer(store, ready, ep02, stageCatalogue(paths)[PREMISE_STAGE]!)
+    expect(write.blockedBecause).toBe(
+      'ep02 already has a premise-brief, in slot “demo” — rule on it at its gate, or edit it ' +
+        'directly (E4-5).',
+    )
+    // …and the gate it names opens over that very artifact, free and refused by nothing.
+    const present = stageOffer(store, ready, ep02, stageCatalogue(paths)[PREMISE_GATE_STAGE]!)
+    expect(present.enabled).toBe(true)
+    expect(present.blockedBecause).toBeNull()
+    expect(present.sentence).toContain('Present the ep02 premise-brief v1 for your ruling')
+  })
+
   it('makes “rule on it at its gate” truthful for an artifact no run ever wrote', () => {
     const episode = findEpisode(store, episodeId)!
     expect(
