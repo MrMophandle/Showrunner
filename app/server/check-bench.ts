@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import { BENCH_REFUSALS } from './canon-bench.ts'
 import { criedWolf, type CheckRecord } from './cried-wolf.ts'
 import type { Store } from './db/store.ts'
-import type { Artifact } from './domain/artifact.ts'
+import type { Artifact, ArtifactKind } from './domain/artifact.ts'
 import { inheritedDismissal, type StandingDismissal } from './domain/concern.ts'
 import {
   checkPassesOf,
@@ -30,7 +30,6 @@ import {
   type FindingRemediations,
   type RecheckOnTheBench,
 } from './remediation.ts'
-import { SCRIPT_GATE_KIND } from './runner/script-gate-step.ts'
 import { stageBlockedBecause, stageBlockingFindings } from './runner/stage-wall.ts'
 import { stageCatalogue } from './runner/stages.ts'
 import { artifactOf } from './runner/text-check-step.ts'
@@ -93,6 +92,14 @@ import { artifactOf } from './runner/text-check-step.ts'
  * `panel.ts` and `composeTextCheck` both take an explicit text for. If a real episode ever
  * makes it slow, the fix is passing the text in, not caching it here.
  */
+
+/**
+ * The artifact this bench is about. It is the SCRIPT because that is where the deterministic
+ * tier reads (3.2b) and where the fixture's planted defects live — the bench's own subject,
+ * declared here rather than borrowed off a stage. A stage's kind is about what that stage
+ * presents; this is about what this screen is for, and E4-3 gave three stages the first one.
+ */
+const BENCH_KIND: ArtifactKind = 'script'
 
 /**
  * The three preconditions the PAGE owns, because each lives in a field the server has never
@@ -279,7 +286,7 @@ export function checkBenchView(
     offer: stageOffer(store, llm, episodeId, stage),
   }))
 
-  const artifact = artifactOf(store, episodeId, SCRIPT_GATE_KIND)
+  const artifact = artifactOf(store, episodeId, BENCH_KIND)
   const common = {
     episodeId,
     label,
@@ -299,12 +306,12 @@ export function checkBenchView(
       ...common,
       artifact: {
         id: '',
-        kind: SCRIPT_GATE_KIND,
+        kind: BENCH_KIND,
         slot: '',
         version: 0,
         filePath: null,
         text: null,
-        note: `${label} has no ${SCRIPT_GATE_KIND} on the volume.`,
+        note: `${label} has no ${BENCH_KIND} on the volume.`,
       },
       version: 0,
       board: emptyBoard(),
@@ -314,7 +321,7 @@ export function checkBenchView(
       rechecks: [],
       tune: [],
       emptyBecause:
-        `${label} has no ${SCRIPT_GATE_KIND} to check. Checks fire at artifact boundaries ` +
+        `${label} has no ${BENCH_KIND} to check. Checks fire at artifact boundaries ` +
         'and never continuously (4.1) — there is no boundary here yet, so there is nothing ' +
         'on this bench and nothing it could cost you to find that out.',
     }
@@ -349,7 +356,7 @@ export function checkBenchView(
     tune: common.record.map((one) => one.tune).filter((one) => one !== null),
     emptyBecause:
       board.rows.length === 0
-        ? `Nothing has read the ${label} ${SCRIPT_GATE_KIND} v${artifact.version} yet, and no ` +
+        ? `Nothing has read the ${label} ${BENCH_KIND} v${artifact.version} yet, and no ` +
           'reviewer is convened over it. Run the checks above — the deterministic ones cost ' +
           'nothing, and a clean run is a measurement rather than an absence.'
         : null,
@@ -455,7 +462,7 @@ function fixFor(row: BoardRow): string | null {
     // can disagree with the first, which is the freshness pattern's own complaint.
     return (
       'The continuity board these rules read was built out of a draft the ' +
-      `${SCRIPT_GATE_KIND} has moved past. Re-running them costs nothing and tells you what ` +
+      `${BENCH_KIND} has moved past. Re-running them costs nothing and tells you what ` +
       'they still say about the board as it stands; reading the new draft into a fresh board ' +
       'is the reading that costs money, and it is the only thing that makes these rows green ' +
       'about the draft in front of you.'

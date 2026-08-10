@@ -13,8 +13,16 @@ import {
 import { positionsOf } from '../domain/arc.ts'
 import { categoriesForArtifactKind } from '../domain/category.ts'
 import { craftChecksFor } from '../domain/craft.ts'
+import { delineateScript } from '../domain/delineate.ts'
 import { advanceOnApproval, notYetReachedBecause, type LifecycleMove } from '../domain/lifecycle.ts'
-import { episodeInShow, episodeLabel, type Episode, type EpisodeInShow } from '../domain/spine.ts'
+import {
+  delineateScenes,
+  episodeInShow,
+  episodeLabel,
+  type Episode,
+  type EpisodeInShow,
+  type EpisodeLifecycle,
+} from '../domain/spine.ts'
 import {
   composeWriteContext,
   nameAppearingIn,
@@ -38,7 +46,8 @@ import type { Stage, StageCatalogue, StageOffer, Step, StepContext } from './ste
 import { checkTextAgainstCanon, TEXT_CHECK_CALL } from './text-check-step.ts'
 
 /**
- * **The writing line, as stages** (E4-1/E4-2, 1.1, 4.4) — the premise, then the outline.
+ * **The writing line, as stages** (E4-1/E4-2/E4-3, 1.1, 4.4) — the premise, the outline, the
+ * script.
  *
  * One stage is one writing step: compose the desk, make one call, file what came back, run
  * the panel over it, correct it while the panel has something to say, and present whatever
@@ -100,6 +109,33 @@ import { checkTextAgainstCanon, TEXT_CHECK_CALL } from './text-check-step.ts'
  * completion is filed verbatim, exactly as the premise's is. A parser that lifted "movements"
  * out of an outline would be the scene list arriving through the back door, with the added
  * insult of being inferred rather than asked for.
+ *
+ * ## And the script, where the scenes finally fall (E4-3, 1.1, D3)
+ *
+ * The third step is the second one again with a bigger ask — and one thing no other writing
+ * step does: **when a script draft lands, its scenes are derived from it.** `num_scenes` is an
+ * output and this is where the output happens (`domain/delineate.ts` holds the convention and
+ * the identity rule; `delineateScenes` holds the write).
+ *
+ * Three properties, and each of them is a decision:
+ *
+ *   * **Per landed draft, inside the loop.** Findings anchor by scene, the continuity board is
+ *     one row per scene, and the panel runs the moment the producer returns — so a draft
+ *     checked against the PREVIOUS draft's grid would anchor this round's findings in last
+ *     round's scenes. Delineation at approval would be a whole correction loop reading a stale
+ *     grid, so it happens here, before the checks read a word.
+ *   * **Derived before the bytes land.** A reply whose scenes cannot be read out of it is a
+ *     reply nobody can use, so it throws before `writeIfAbsent` — which is what makes the
+ *     runner's retry (invariant 5) buy a NEW draft rather than re-read the broken one three
+ *     times. It is the same shape as `parseExtraction` and `readTextCheckReply`: nothing trusts
+ *     the model, and nothing salvages half an answer. It has the same price, too, and the price
+ *     is the point: three script calls for one draft, billed honestly, and then it is Ryan's
+ *     with the attempt history rather than a scene grid nobody can anchor in.
+ *   * **The ask names no count.** E4-2 kept a grid out of the outline so that this step could
+ *     collect the restraint, and collecting it means the script writer decides how many scenes
+ *     there are — the ask says the count is the writer's, and says not to match the outline's
+ *     movements one for one. What the ask DOES name is the heading convention, because a scene
+ *     is its heading and two the same cannot be told apart afterwards.
  *
  * ## Where "it already has one" is enforced, and where it deliberately is not
  *
@@ -168,6 +204,21 @@ import { checkTextAgainstCanon, TEXT_CHECK_CALL } from './text-check-step.ts'
 /** The stage names, as they are persisted on `run.stage` and as the API takes them. */
 export const PREMISE_STAGE = 'write-the-premise'
 export const OUTLINE_STAGE = 'write-the-outline'
+export const SCRIPT_STAGE = 'write-the-script'
+
+/**
+ * The writing line as a map from the lifecycle stop an episode is AT to the stage that does
+ * that stop's work — the thing E4-2 could not close because there was a hole in it (#62).
+ *
+ * It is `Partial` and it always will be: `assets`, `assembled` and `published` are E6's and
+ * E7's, and a map that pretended to cover them would be a button promising work no code does.
+ * `operating.ts` is what decides what a card offers when there is no writing left to do.
+ */
+export const WRITING_STAGE: Partial<Record<EpisodeLifecycle, string>> = {
+  premise: PREMISE_STAGE,
+  outline: OUTLINE_STAGE,
+  script: SCRIPT_STAGE,
+}
 
 /**
  * The effort behind every draft, and it is one number for all three steps on purpose.
@@ -192,13 +243,14 @@ export interface WriteClose {
 }
 
 /**
- * The writing stages this build ships. E4-3 adds `script` by adding a line here and filling
- * in its entry in `WRITING` below — TypeScript and a test, never a row (Archon).
+ * The writing stages this build ships — the whole line, since E4-3. Each one is a line here
+ * and an entry in `WRITING` below: TypeScript and a test, never a row (Archon).
  */
 export function writeStages(library: LibraryPaths): StageCatalogue {
   return {
     [PREMISE_STAGE]: writingStage(library, 'premise', PREMISE_STAGE),
     [OUTLINE_STAGE]: writingStage(library, 'outline', OUTLINE_STAGE),
+    [SCRIPT_STAGE]: writingStage(library, 'script', SCRIPT_STAGE),
   }
 }
 
@@ -315,14 +367,76 @@ const WRITING: Record<WriteStep, WritingAsk> = {
       'Return the outline and nothing else.',
     ],
   },
-  // Written by E4-3, which is also when `writeStages` gains its stage. The entry is here
-  // rather than absent because the record is exhaustive over `WriteStep`, and a partial one
-  // would let a stage be registered with nothing to ask the model for. The numbers are a
-  // placeholder in the shape of the answer, and E4-3 sets them against a real script.
+  /**
+   * **The script: the outline written, and the scenes where they fall** (1.1, D3, 4.1).
+   *
+   * The outline above it carries no grid, on purpose and at some cost (E4-2). This is the ask
+   * that collects the restraint: the count is stated to be the writer's, and the one thing that
+   * would quietly hand it back — "one scene per movement" — is refused in words with its reason,
+   * because a model given a numbered outline and a scene format will pair them off.
+   *
+   * What the ask DOES fix is the heading, because a scene is its heading
+   * (`domain/delineate.ts`): the format is stated exactly, and so is the rule that two scenes
+   * may not share one, since two identical headings cannot be told apart in the text afterwards
+   * and every span after the first would be wrong.
+   */
   script: {
-    call: { promptTokens: 14000, outputTokens: 8000 },
-    maxTokens: 16000,
-    instructions: ['E4-3 writes the script step.'],
+    // The prompt is the outline's desk plus the whole ruled outline (700 words) plus this ask,
+    // and the desk grows with canon — over-stating is the safe direction for a number on a
+    // button (E3-7's rule, and the ledger afterwards is what was really spent).
+    //
+    // The output is the one number here that is not a guess at a prompt. The fixture's own
+    // six-scene script is ~1,100 tokens and it is a demonstration rather than an episode; a
+    // full episode of this show is several times it, so 9,000 is the generous shape of one.
+    // The CEILING is nearly three times the projection for the reason E4-1 recorded: Opus
+    // thinks by default, thinking is billed as output, and a ceiling the reasoning eats before
+    // a word is written is a truncated script that reads as a finished one.
+    call: { promptTokens: 16000, outputTokens: 9000 },
+    maxTokens: 24000,
+    instructions: [
+      'Write the script for this episode. Break it into scenes where the story breaks, and head',
+      'every scene exactly like this:',
+      '',
+      '    ## 1 · INT. GREY HARBOR STATION — MESS DECK — 06:10',
+      '',
+      '    > One line saying what this scene does.',
+      '',
+      'An ordinal, a middle dot, then the heading: inside or outside, where, and when. Number',
+      'them in the order you write them. Under the heading put the one-line summary as a',
+      'blockquote, and under that the scene itself — action in the present tense, and each',
+      'speaker’s name on its own line above what they say.',
+      '',
+      '**Every heading must differ from every other one.** A scene IS its heading: that is how',
+      'a note, a finding or a rewrite says which scene it means, so two scenes called the same',
+      'thing cannot be told apart afterwards. Say the hour, or the side of the hull, or which',
+      'pass at the pier.',
+      '',
+      '**How many scenes there are is yours to decide, and nothing above has decided it.** The',
+      'outline is INTENT — the movement of the story — and it is deliberately not a scene list.',
+      'Do not pair its movements off against scenes: one movement may take three scenes and',
+      'three movements may take one. Write the episode, and count the scenes afterwards.',
+      '',
+      'Five things it has to do:',
+      '',
+      '1. **Be the outline, written.** It is ruled, and it is what you are writing from. Every',
+      '   movement in it happens here, in the order it happens there, and nothing that is not in',
+      '   it becomes the point of the episode.',
+      '2. **Put every scene in a place, at a time.** The heading says both. Where a scene runs',
+      '   straight on from the one before it, say CONTINUOUS in place of the clock — and mean it,',
+      '   because a body cannot be in two places at one time and the continuity board reads',
+      '   these headings to find out.',
+      '3. **Obey the world rules and the house style exactly.** They are the prose the show does',
+      '   not get to bend. What the rules make impossible does not happen off screen either.',
+      '4. **Stand on the canon above.** Use the entities you were given, by the names they carry.',
+      '   What you were not given, you were not given.',
+      '5. **Put it on screen.** What the audience cannot see or hear is not in the script — no',
+      '   interiority, no narration of what somebody is thinking. If it matters, it happens.',
+      '',
+      'You may invent what the episode needs. What you invent is a CLAIM and not canon: nothing',
+      'here writes canon, and only Ryan ruling a proposal ever does (invariant 1).',
+      '',
+      'Return the script and nothing else.',
+    ],
   },
 }
 
@@ -471,6 +585,7 @@ function writer(library: LibraryPaths, step: WriteStep): Producer {
       // hand? It is what he rules on, and no call is made for it. Re-runs fill gaps only
       // (D20), and here that rule is worth money as well as bytes.
       let text: string
+      let called = false
       if (existsSync(onDisk)) {
         context.progress(
           `Round ${brief.round}’s draft was already in the library — kept as it stands, and no ` +
@@ -487,6 +602,7 @@ function writer(library: LibraryPaths, step: WriteStep): Producer {
           effort: WRITE_EFFORT,
         })
         text = `${completion.text.trim()}\n`
+        called = true
         // 'max_tokens' means the draft stops mid-sentence. It was paid for and it is real, so
         // it is filed and it goes to the panel and to Ryan like any other draft — but he is
         // told, rather than handed something truncated that reads as finished (invariant 4).
@@ -496,10 +612,37 @@ function writer(library: LibraryPaths, step: WriteStep): Producer {
               'mid-sentence',
           )
         }
+      }
+
+      // ── The scenes, derived, before a single byte lands ──────────────────────
+      // Scenes are an OUTPUT of the written episode (1.1, D3) and this is the step whose draft
+      // has them. It runs here — before the file, before the row, and therefore before the
+      // panel the loop is about to convene — for two separate reasons:
+      //
+      //   * a draft whose scenes cannot be read out of it is a reply nobody can use, and
+      //     throwing before `writeIfAbsent` is what makes the runner's retry buy a NEW draft
+      //     rather than re-read the broken one three times (invariant 5); and
+      //   * findings anchor by SCENE, so the grid a round is checked against must be this
+      //     round's. Delineating at approval instead would run a whole correction loop against
+      //     the last draft's scenes.
+      const drafted = step === 'script' ? delineateScript(text, draftLabel(desk, step)) : undefined
+
+      if (called) {
         mkdirSync(dirname(onDisk), { recursive: true })
         // Belt and braces with the check above: the same rule, once for the money and once
         // for the bytes. Nothing this app writes may land on a file already there.
         writeIfAbsent(onDisk, text)
+      }
+      if (drafted) {
+        // Re-delineated every version, and a scene is its heading — so a rewrite that moves a
+        // scene keeps its id and its anchors, and one that renames a scene raises a new one
+        // (`domain/delineate.ts`).
+        delineateScenes(context.store, context.episodeId, drafted)
+        context.progress(
+          `${draftLabel(desk, step)} breaks into ${drafted.length} scene${
+            drafted.length === 1 ? '' : 's'
+          } — derived from the draft, never asked for`,
+        )
       }
 
       // ── The row, and what it declares it touches ─────────────────────────────
@@ -698,5 +841,9 @@ function noteLines(notes: WriteContext['notes']): string[] {
     ...notes.map((note) => `- ${note.sentence}: “${note.note}”`),
   ]
 }
+
+/** "The ep02 script draft" — what a delineation refusal calls the thing it could not read. */
+const draftLabel = (desk: WriteContext, step: WriteStep): string =>
+  `The ${episodeLabel(desk.where.episode.number)} ${producedBy(step)} draft`
 
 const pad = (n: number): string => String(n).padStart(2, '0')

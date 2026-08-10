@@ -20,6 +20,7 @@ import {
   findEpisode,
   seasonsOf,
   shows,
+  type Episode,
   type EpisodeLifecycle,
 } from './domain/spine.ts'
 import {
@@ -51,7 +52,8 @@ import {
 import { stageBlockedBecause, stageBlockingFindings, type StageBlock } from './runner/stage-wall.ts'
 import { stageCatalogue } from './runner/stages.ts'
 import type { Stage, StageCatalogue } from './runner/step.ts'
-import { PREMISE_STAGE } from './runner/write-step.ts'
+import { SCRIPT_GATE_STAGE } from './runner/present-step.ts'
+import { WRITING_STAGE } from './runner/write-step.ts'
 
 /**
  * The operating page's read model — everything the bare-bones page renders, composed
@@ -170,6 +172,9 @@ export function operatingView(
       episodesOf(store, season.id).map((episode) => {
         const run = runsOfEpisode(store, episode.id)[0]
         const spend = costOfEpisode(store, episode.id)
+        // **The stage the episode's lifecycle is at** — closed here by E4-3, once, for all
+        // three writing stages (see `stageForEpisode`).
+        const stage = stageForEpisode(episode)
         return {
           id: episode.id,
           label: episodeLabel(episode.number),
@@ -180,21 +185,8 @@ export function operatingView(
           spend,
           spendSentence: spentSentence(spend),
           run: run ? runOnThePage(run, waiting.get(run.id) ?? null) : null,
-          // **One button, and E4-1 moved which stage is behind it.** E1's `demo` was
-          // retired (`runner/stages.ts`), and the writing line's first real stage took its
-          // place: the premise. It is the honest offer for an episode that has not started
-          // and it says so in words for one that has — a card that offered nothing at all
-          // once ep02 had a brief would be a screen with a hole in it.
-          //
-          // It is still ONE stage for every episode, which is E5's to fix rather than this
-          // module's: the offer an episode's card should carry is the stage its lifecycle is
-          // at. **E4-2 landed `write-the-outline` and deliberately did not point this at it.**
-          // A lifecycle→stage map would have a hole in it while E4-3's script stage is
-          // missing (ep01 sits at `script`), and inventing a fallback for that hole here is
-          // the screen decision E5 owns. The stage is reachable by name through `POST
-          // /api/run` in the meantime, which is how E4-2's own boot proof exercised it.
-          launch: stageOffer(store, llm, episode.id, catalogue[PREMISE_STAGE]!),
-          launchStage: PREMISE_STAGE,
+          launch: stageOffer(store, llm, episode.id, catalogue[stage]!),
+          launchStage: stage,
         }
       }),
     )
@@ -221,6 +213,31 @@ export function operatingView(
         : null,
     stream: { kinds: EVENT_KIND, prose: PROSE_KIND },
   }
+}
+
+/**
+ * **Which stage an episode's card offers** — the map E4-2 could not close, closed (E4-3, #62).
+ *
+ * The lifecycle names the stage an episode is AT, meaning the work it still owes
+ * (`domain/lifecycle.ts`), so the honest offer is the stage that does that work. For the three
+ * writing stops there is one, and `WRITING_STAGE` is the whole map: premise → outline → script,
+ * done once rather than by special-casing two of them. E1's single `demo` button and E4-1's
+ * single premise button were both this question answered with a constant.
+ *
+ * **Past the writing line there is no producer in this build**, and that is stated rather than
+ * papered over: an episode at `assets` is waiting on E6, and the one thing this app can still
+ * honestly do with it is put its script in front of Ryan again — free, never walled, and a
+ * ruling he may make at any time (`present-step.ts`). A card that offered nothing at all would
+ * be a screen with a hole in it, and a card that offered a stage with no code behind it would
+ * be a button promising work nothing is going to do. E6 replaces the tail with its own stages
+ * by adding them to the map.
+ *
+ * **This is the map, not the card.** E5 owns how it renders (D24); what lives here is which
+ * stage is behind the button, because the button's sentence, its cost and its refusal all come
+ * off that stage's own declaration (step.ts) and are already tested where they are written.
+ */
+export function stageForEpisode(episode: Episode): string {
+  return WRITING_STAGE[episode.lifecycle] ?? SCRIPT_GATE_STAGE
 }
 
 /** premise → … → published, with where this episode stands on it. */

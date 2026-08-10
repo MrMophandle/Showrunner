@@ -397,8 +397,9 @@ function seedEpisode(
     episode = moveLifecycleTo(store, episode.id, fixture.lifecycle)
   }
 
-  // Scenes come out of the script and are rewritten in place, which keeps the id of every
-  // scene that stayed at its ordinal — so anything anchored to a scene stays anchored.
+  // Scenes come out of the script through the one delineator (`domain/delineate.ts`) and are
+  // rewritten in place, which keeps the id of every scene whose HEADING is still there — so
+  // anything anchored to a scene stays anchored, wherever the scene has moved to (E4-3).
   if (fixture.scenes.length > 0) {
     report.scenes += delineateScenes(store, episode.id, fixture.scenes).length
   }

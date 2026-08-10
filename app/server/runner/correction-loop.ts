@@ -13,6 +13,7 @@ import {
 import { verdictBoard, type VerdictBoard } from '../domain/panel.ts'
 import { episodeLabel, findEpisode, scenesOf } from '../domain/spine.ts'
 import type { GateNote, GateRound } from './gate.ts'
+import { stageBlockingFindings } from './stage-wall.ts'
 import type { Step, StepContext } from './step.ts'
 
 /**
@@ -123,26 +124,55 @@ export interface CorrectionRound {
   gaps: CorrectionGap[]
 }
 
-/** The loop history, as the gate renders it beside the artifact. */
-export interface CorrectionReport {
+/** One deterministic finding standing on the draft, as the round records it. */
+export interface BlockingSnapshot {
+  findingId: string
+  checkKey: string
+  /** The scene it sits in, as the episode numbers it. Null: it is about the whole artifact. */
+  scene: number | null
+  concern: string
+}
+
+/**
+ * **What a ruling on a written artifact is made of** — every draft that has been read, the
+ * verdict board over the one it ends on, and what stands on it (E4-3).
+ *
+ * ## One artifact, one payload, two doors
+ *
+ * A gate belongs to a STEP (`gate.ts`), and two steps can present one artifact: the correction
+ * loop's, when a writing run produced the draft, and the presenting stage's, when the run that
+ * wrote it is long gone (`present-step.ts` — a fixture-written script, a hand-made one, a
+ * re-ruling after a rewrite). D7's one-run-per-episode is what stops both being open at once;
+ * this type is what stops them being two different screens over one thing. **Whichever door
+ * Ryan comes in by, he is handed the same shape** — the drafts, the board, the wall — and only
+ * the sentence differs, because only the sentence is about why this gate opened.
+ *
+ * Every field is a SNAPSHOT of a read and never a source of truth. `verdictBoard`,
+ * `historyOf` and `stageBlockingFindings` all compute fresh from rows whenever anybody asks;
+ * what lands in the payload is what Ryan was shown at this round, the same kind of record as
+ * `gate_round.artifact_version`. A disposition that lands afterwards changes the live answer
+ * and does not change this one, which is right: this is history, and the screen recomputes.
+ */
+export interface DraftsUnderReview {
   artifactId: string
   /** Every draft that has been read, in order — "every attempt kept" (4.4). */
   rounds: CorrectionRound[]
-  /**
-   * The verdict board for the draft this ends on — one row per convened reviewer (4.5, E3-4).
-   *
-   * A SNAPSHOT of a read, and never a source of truth. `verdictBoard` computes it fresh from
-   * rows every time anybody asks, and what lands in the payload is what Ryan was shown at
-   * this round — the same kind of record as `gate_round.artifact_version`. A disposition that
-   * lands afterwards changes the live answer and does not change this one, which is right:
-   * this is history, and the screen recomputes.
-   */
+  /** One row per convened reviewer over the draft this ends on (4.5, E3-4). */
   board: VerdictBoard
   /** The last draft read left no findings. An artifact nothing checks converges vacuously. */
   converged: boolean
   /** Converged, checked, and with nothing it could not look at. Never a synonym for the above. */
   clean: boolean
-  /** Why the loop stopped, in the words the floor shows while it waits. */
+  /**
+   * The deterministic findings standing on this draft — what an approval here would be an
+   * override OF (D12). None of them blocks this gate, ever: they block the next STAGE.
+   */
+  blocking: BlockingSnapshot[]
+}
+
+/** The loop history, as the gate renders it beside the artifact. */
+export interface CorrectionReport extends DraftsUnderReview {
+  /** Why this gate is open, in the words the floor shows while it waits. */
   sentence: string
 }
 
@@ -379,14 +409,19 @@ function noteOf(finding: Finding, scenes: Map<string, number>): CorrectionNote {
   }
 }
 
-/** The history, and the three sentences it can end on. */
-function reportOf(store: Store, artifactId: string, unchecked = false): CorrectionReport {
-  const artifact = findArtifact(store, artifactId)!
+/**
+ * Everything a ruling on this artifact is made of, composed fresh from rows.
+ *
+ * Exported because the presenting stage composes the same value over an artifact whose writing
+ * run is long gone (`present-step.ts`). One composer, two doors — see `DraftsUnderReview`.
+ */
+export function draftsUnderReview(store: Store, artifactId: string): DraftsUnderReview {
+  const artifact = findArtifact(store, artifactId)
+  if (!artifact) throw new Error(`No such artifact: ${artifactId}`)
+
   const rounds = historyOf(store, artifact)
   const latest = rounds.at(-1)
   const converged = latest === undefined || latest.findings.length === 0
-  const gaps = latest?.gaps.length ?? 0
-  const subject = subjectOf(store, artifact)
 
   return {
     artifactId,
@@ -397,8 +432,32 @@ function reportOf(store: Store, artifactId: string, unchecked = false): Correcti
     converged,
     // An artifact nothing read is not clean, and neither is one whose checks reached a hole.
     // "Never render a weak check as a green checkmark" is the same rule said about silence.
-    clean: converged && latest !== undefined && gaps === 0,
-    sentence: sentenceFor({ subject, rounds, converged, gaps, unchecked }),
+    clean: converged && latest !== undefined && (latest?.gaps.length ?? 0) === 0,
+    blocking: stageBlockingFindings(store, artifact.episodeId)
+      .filter((block) => block.artifact.id === artifact.id)
+      .map((block) => ({
+        findingId: block.finding.id,
+        checkKey: block.finding.checkKey,
+        scene: block.scene,
+        concern: block.finding.concern,
+      })),
+  }
+}
+
+/** The history, and the three sentences it can end on. */
+function reportOf(store: Store, artifactId: string, unchecked = false): CorrectionReport {
+  const under = draftsUnderReview(store, artifactId)
+  const latest = under.rounds.at(-1)
+
+  return {
+    ...under,
+    sentence: sentenceFor({
+      subject: subjectOf(store, findArtifact(store, artifactId)!),
+      rounds: under.rounds,
+      converged: under.converged,
+      gaps: latest?.gaps.length ?? 0,
+      unchecked,
+    }),
   }
 }
 

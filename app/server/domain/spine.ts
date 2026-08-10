@@ -1,4 +1,5 @@
 import type { Store } from '../db/store.ts'
+import { releaseScene } from './artifact.ts'
 import { newId } from './id.ts'
 
 /**
@@ -217,23 +218,66 @@ export function markAbandoned(store: Store, episodeId: string): Episode {
  * written episode: there is no scene-count parameter here, on `createEpisode`, or in the
  * schema, and there must never be one.
  *
- * Re-delineating an episode keeps the id of every scene that stayed at its ordinal, so
- * artifacts anchored to a scene stay anchored across a rewrite.
+ * ## A scene is its heading (E4-3)
+ *
+ * Re-delineating matches the new drafts to the standing rows **by heading and by nothing
+ * else**: a heading that is still there is the same scene wherever it has moved to, a heading
+ * that is gone takes its scene with it, and a heading that is new is a new scene. So a rewrite
+ * that inserts a scene in the middle shifts every ordinal after it and moves no anchor at all,
+ * and a rewrite that renames one raises a new scene rather than quietly re-pointing the old
+ * one's findings at prose nobody checked (they degrade to the whole artifact — `finding`,
+ * `artifact`, `artifact_revision` and `artifact_input` all declare `ON DELETE SET NULL` on
+ * `scene_id` for exactly this). **`domain/delineate.ts` carries the argument**, and the whole
+ * app already reads scenes this way: `sceneSpans` finds a scene's text by its heading and
+ * knows nothing about ordinals.
+ *
+ * Which is also why two scenes may not share a heading. It is not a duplicate, it is an
+ * ambiguity: `sceneSpans` would hand both rows the same first occurrence, and every span after
+ * it would be wrong — including the ones a finding's anchor was verified against.
+ *
+ * Ordinals are reassigned through a negative pass, because `UNIQUE (episode_id, ordinal)`
+ * (0001) is what stops two scenes claiming one position and a shuffle would otherwise collide
+ * with a row it is about to move.
  */
 export function delineateScenes(store: Store, episodeId: string, drafts: SceneDraft[]): Scene[] {
   return store.transaction(() => {
-    const existing = scenesOf(store, episodeId)
+    const wanted = new Set<string>()
+    for (const draft of drafts) {
+      if (wanted.has(draft.heading)) {
+        throw new Error(
+          `Two scenes of this episode are both “${draft.heading}”, and a scene is its heading ` +
+            '(D3): where each one begins and ends is found by looking the heading up in the ' +
+            'draft, so two the same makes every span after the first one wrong. Give them ' +
+            'headings that differ — the hour, the side of the hull, which pass at the pier.',
+        )
+      }
+      wanted.add(draft.heading)
+    }
 
-    store.run('DELETE FROM scene WHERE episode_id = ? AND ordinal > ?', episodeId, drafts.length)
+    const kept = new Map<string, Scene>()
+    for (const scene of scenesOf(store, episodeId)) {
+      if (wanted.has(scene.heading) && !kept.has(scene.heading)) {
+        kept.set(scene.heading, scene)
+        continue
+      }
+      // What the rows pointing at it do about that, before it goes (`releaseScene`). Findings
+      // and the artifact itself degrade through their own foreign keys; the two tables with a
+      // uniqueness rule over the degraded value need a decision, and it is made there.
+      releaseScene(store, scene.id)
+      store.run('DELETE FROM scene WHERE id = ?', scene.id)
+    }
+    // Parked out of the way, so a scene moving from 5 to 3 does not collide with the 3 that is
+    // still standing while the shuffle is half done.
+    store.run('UPDATE scene SET ordinal = -ordinal WHERE episode_id = ?', episodeId)
 
     drafts.forEach((draft, index) => {
       const ordinal = index + 1
       const summary = draft.summary ?? ''
-      const held = existing[index]
+      const held = kept.get(draft.heading)
       if (held) {
         store.run(
-          'UPDATE scene SET heading = ?, summary = ? WHERE id = ?',
-          draft.heading,
+          'UPDATE scene SET ordinal = ?, summary = ? WHERE id = ?',
+          ordinal,
           summary,
           held.id,
         )

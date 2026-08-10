@@ -2,6 +2,7 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { ARC_KIND, ARC_SCOPE, type ArcKind, type ArcScope } from '../domain/arc.ts'
 import { ARTIFACT_KIND, type ArtifactKind } from '../domain/artifact.ts'
+import { delineateScript } from '../domain/delineate.ts'
 import { ENTITY_STANDING, ENTITY_STATUS, type EntityStanding, type EntityStatus } from '../domain/canon.ts'
 import {
   RELATION_CARDINALITY,
@@ -9,7 +10,7 @@ import {
   type RelationTypeDeclaration,
 } from '../domain/category.ts'
 import { UNKNOWN_TARGET } from '../domain/relation.ts'
-import { EPISODE_LIFECYCLE, type EpisodeLifecycle } from '../domain/spine.ts'
+import { EPISODE_LIFECYCLE, type EpisodeLifecycle, type SceneDraft } from '../domain/spine.ts'
 import { field, fields, parseSheet, section, type Section, type Sheet } from './sheet.ts'
 
 /**
@@ -97,11 +98,11 @@ export interface FixtureArtifact {
   touches: string[]
 }
 
-/** One scene as the script broke it. Read out of the script; never declared (D3). */
-export interface FixtureScene {
-  heading: string
-  summary: string
-}
+/**
+ * One scene as the script broke it is a `SceneDraft` — the domain's own shape, because the
+ * fixture's scenes and a written draft's scenes come out of one delineator (E4-3). A
+ * `FixtureScene` beside it would be a second name for the same three fields.
+ */
 
 export interface FixtureEpisode {
   seasonNumber: number
@@ -110,7 +111,7 @@ export interface FixtureEpisode {
   lifecycle: EpisodeLifecycle
   positions: { arcName: string; waypointOrdinal: number }[]
   artifacts: FixtureArtifact[]
-  scenes: FixtureScene[]
+  scenes: SceneDraft[]
   /** Absolute, so the loader can read the artifact files. */
   dir: string
   /** Relative, so an error can name the sheet that is wrong. */
@@ -530,21 +531,18 @@ function readArtifacts(dir: string, sheet: Sheet, slug: string): FixtureArtifact
  * This is where D3 is enforced rather than described. There is no scene list in
  * `episode.md` and no scene count anywhere in the fixture — delete a scene from the
  * script and the count changes, because the count is `scenes.length` and never a field.
+ *
+ * **Through `delineateScript`, which is the one delineator this app has** (E4-3). The fixture
+ * had its own reading of the same headings until the script stage needed the same answer about
+ * a draft a model had just written, and two readings of one convention is how "the fixture's
+ * scenes" and "a draft's scenes" become quietly different things. The proof they are one is
+ * `domain/delineate.test.ts`, which delineates this very file and gets back the rows
+ * `load.ts` plants.
  */
-function readScenes(dir: string, path: string): FixtureScene[] {
-  const sheet = open(dir, path)
-
-  return sheet.sections.map((scene, index) => {
-    const at = scene.name.indexOf(' · ')
-    const ordinal = Number(scene.name.slice(0, at))
-    if (at === -1 || !Number.isInteger(ordinal)) {
-      fail(sheet, `“## ${scene.name}” is not a scene. Every heading in a script is one: \`## 4 · EXT. THE LONG PIER — CONTINUOUS\`.`)
-    }
-    if (ordinal !== index + 1) {
-      fail(sheet, `scene ${ordinal} is the ${index + 1}th in the file; scenes are numbered in order`)
-    }
-    return { heading: scene.name.slice(at + 3).trim(), summary: scene.quote }
-  })
+function readScenes(dir: string, path: string): SceneDraft[] {
+  const full = join(dir, path)
+  if (!existsSync(full)) throw new Error(`${path}: the fixture expects this file, and it is not there.`)
+  return delineateScript(readFileSync(full, 'utf8'), path)
 }
 
 /** Provenance names entities that exist (invariant 2 is worth nothing pointing at nothing). */

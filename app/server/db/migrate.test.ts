@@ -867,7 +867,7 @@ describe('0012 · what a check was handed, and what it could not reach', () => {
       tableNames(store).map((name) => [name, store.all<unknown>(`SELECT * FROM ${name}`)]),
     )
 
-    expect(migrate(store).map((m) => m.number)).toEqual([12])
+    expect(migrate(store).map((m) => m.number)).toEqual([12, 13])
 
     for (const [name, rows] of Object.entries(before)) {
       if (name === 'schema_migration') continue
@@ -934,5 +934,202 @@ describe('0012 · what a check was handed, and what it could not reach', () => {
     store.run("DELETE FROM artifact WHERE id = 'art1'")
     expect(store.get('SELECT COUNT(*) AS n FROM check_gap')).toEqual({ n: 0 })
     expect(store.get('SELECT COUNT(*) AS n FROM check_pass_fact')).toEqual({ n: 0 })
+  })
+})
+
+/**
+ * 0013 narrows one trigger, and the whole of what is under test is which updates it still
+ * aborts. E4-3 ruled that a scene is its heading, so a rewrite that renames one DELETES the
+ * scene — and 0010's `ON DELETE SET NULL` on `finding.scene_id`, which was designed for exactly
+ * that, could not fire, because SQLite runs it as an UPDATE and 0010's own immutability trigger
+ * aborted it.
+ *
+ * The degradation is now reachable. Everything else about a finding is still frozen, and the
+ * one that matters most is the last: an anchor may lose its scene, and may never be moved to a
+ * different one.
+ */
+describe('0013 · a scene may stop existing', () => {
+  function aFindingAnchoredInAScene(): void {
+    store.run("INSERT INTO show (id, key, title) VALUES ('show1', 'greyharbor', 'Grey Harbor')")
+    store.run("INSERT INTO season (id, show_id, number) VALUES ('season1', 'show1', 1)")
+    store.run(
+      "INSERT INTO episode (id, season_id, number, title) VALUES ('ep1', 'season1', 1, 'The Long Pier')",
+    )
+    store.run(
+      `INSERT INTO scene (id, episode_id, ordinal, heading) VALUES
+         ('sc4', 'ep1', 4, 'EXT. THE LONG PIER — 07:07'),
+         ('sc5', 'ep1', 5, 'INT. HARBOURMASTER OFFICE — 07:20')`,
+    )
+    store.run(
+      "INSERT INTO artifact (id, episode_id, kind, file_path) VALUES ('art1', 'ep1', 'script', 'ep01/script.md')",
+    )
+    store.run(
+      `INSERT INTO check_pass (id, check_key, tier, artifact_id, artifact_version)
+            VALUES ('pass1', 'world-rules', 'text', 'art1', 1)`,
+    )
+    store.run(
+      `INSERT INTO finding (id, pass_id, artifact_id, artifact_version, scene_id, quote, concern,
+                            severity, confidence)
+            VALUES ('find1', 'pass1', 'art1', 1, 'sc4', 'in his coveralls',
+                    'A body outside the hull with nothing between it and the void.', 'high', 'high')`,
+    )
+  }
+
+  it('lets a deleted scene degrade its findings to the whole artifact, at last', () => {
+    migrate(store)
+    aFindingAnchoredInAScene()
+
+    store.run("DELETE FROM scene WHERE id = 'sc4'")
+
+    // The finding is still there — it is a record of what a check said, and the scene going
+    // does not unsay it. What it has lost is the place, which is the honest answer: it is now
+    // a finding about the whole artifact (0010's own words for this case).
+    expect(store.get('SELECT scene_id, quote, concern FROM finding WHERE id = ?', 'find1')).toEqual({
+      scene_id: null,
+      quote: 'in his coveralls',
+      concern: 'A body outside the hull with nothing between it and the void.',
+    })
+  })
+
+  it('still refuses every other edit, and above all a move to a different scene', () => {
+    migrate(store)
+    aFindingAnchoredInAScene()
+
+    const refused = /a later opinion is a later pass/
+    // The one that E4-3's identity rule turns on: an anchor may degrade, never migrate.
+    expect(() => store.run("UPDATE finding SET scene_id = 'sc5' WHERE id = 'find1'")).toThrow(refused)
+    expect(() => store.run("UPDATE finding SET severity = 'low' WHERE id = 'find1'")).toThrow(refused)
+    expect(() => store.run("UPDATE finding SET confidence = 'low' WHERE id = 'find1'")).toThrow(refused)
+    expect(() => store.run("UPDATE finding SET concern = 'never mind' WHERE id = 'find1'")).toThrow(refused)
+    expect(() => store.run("UPDATE finding SET quote = 'something else' WHERE id = 'find1'")).toThrow(refused)
+    expect(() => store.run('UPDATE finding SET artifact_version = 2 WHERE id = ?', 'find1')).toThrow(refused)
+    // And the degradation itself may not smuggle a second change in beside it.
+    expect(() =>
+      store.run("UPDATE finding SET scene_id = NULL, severity = 'low' WHERE id = 'find1'"),
+    ).toThrow(refused)
+    // A finding that never had a scene has nothing to degrade, so every update is still an edit.
+    store.run("UPDATE finding SET scene_id = NULL WHERE id = 'find1'")
+    expect(() => store.run("UPDATE finding SET scene_id = NULL WHERE id = 'find1'")).toThrow(refused)
+  })
+
+  it('alters no data, and leaves the file sound', () => {
+    applyThrough(12)
+    aFindingAnchoredInAScene()
+    const before = Object.fromEntries(
+      tableNames(store).map((name) => [name, store.all<unknown>(`SELECT * FROM ${name}`)]),
+    )
+
+    expect(migrate(store).map((m) => m.number)).toEqual([13])
+
+    for (const [name, rows] of Object.entries(before)) {
+      if (name === 'schema_migration') continue
+      expect({ [name]: store.all<unknown>(`SELECT * FROM ${name}`) }).toEqual({ [name]: rows })
+    }
+    // It adds no table at all: a ruling that was already made, made reachable.
+    expect(tableNames(store).filter((name) => !(name in before))).toEqual([])
+
+    expect(store.get('PRAGMA integrity_check')).toEqual({ integrity_check: 'ok' })
+    expect(store.all('PRAGMA foreign_key_check')).toEqual([])
+    expect(migrate(store)).toEqual([])
+  })
+})
+
+/**
+ * **The tripwire under 0013's obligation.**
+ *
+ * 0007 chose a blanket ABORT over a guarded UPDATE for `fact` and wrote down why: tables here
+ * grow by ADD COLUMN, and a WHEN clause that enumerates the immutable columns silently stops
+ * covering the column added after it. 0013 re-opened that exposure on `finding` deliberately,
+ * because the alternative was a foreign key the schema declares and cannot fire — and it stated
+ * the price in its header.
+ *
+ * A price stated in a header is a price the next session pays only if it reads the header. This
+ * is what makes it paid or refused: the pin list is read off the DEPLOYED trigger and diffed
+ * against the table's real columns, so a new column with no pin fails here, with the sentence
+ * that says what to do about it.
+ */
+describe('0013 · the pin list is checked against the table, not trusted', () => {
+  /** The column the trigger exists to let go. Everything else must be pinned. */
+  const DEGRADES = 'scene_id'
+
+  /**
+   * The columns the trigger pins, read off `sqlite_master` — **the deployed trigger, never the
+   * migration file.** The file is provenance; what is running is the truth, so this also
+   * catches a later migration that replaces this trigger and forgets a column.
+   */
+  function pinnedByTheTrigger(): Set<string> {
+    const row = store.get<{ sql: string }>(
+      "SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = 'finding_is_history'",
+    )
+    if (!row) throw new Error('there is no `finding_is_history` trigger on this store at all')
+    return new Set([...row.sql.matchAll(/NEW\.(\w+)\s+IS\s+OLD\.\1/g)].map((match) => match[1]!))
+  }
+
+  const columnsOfFinding = (): string[] =>
+    store.all<{ name: string }>('PRAGMA table_info(finding)').map((column) => column.name)
+
+  /** 0013's own sentence, said about the column that is missing from the list. */
+  const obligation = (column: string): string =>
+    `\`finding.${column}\` exists and the finding_is_history trigger does not pin it — a ` +
+    'scene-degradation UPDATE can smuggle a change to it. Extend the pin list in a NEW ' +
+    'migration (0013 is applied, and an applied migration is history); ' +
+    '0013_scene-identity.sql is where the obligation and its reasoning are written down.'
+
+  const unpinned = (): string[] =>
+    columnsOfFinding()
+      .filter((name) => name !== DEGRADES && !pinnedByTheTrigger().has(name))
+      .map(obligation)
+
+  it('pins every column of `finding` but the one that degrades', () => {
+    migrate(store)
+
+    expect(unpinned()).toEqual([])
+    // Not vacuously: the parse really found the list, and it names no column that has since
+    // stopped existing — a pin for a column that is gone is a WHEN clause nobody re-read.
+    const pinned = [...pinnedByTheTrigger()]
+    expect(pinned.length).toBeGreaterThan(0)
+    expect(pinned.filter((name) => !columnsOfFinding().includes(name))).toEqual([])
+    expect(pinned).not.toContain(DEGRADES)
+  })
+
+  it('names the next ADD COLUMN, and says the fix is a new migration', () => {
+    migrate(store)
+
+    // The tripwire, tripped — the exact move 0007 warned about, made here on purpose so that
+    // the failure a future session sees is the one this test promises.
+    store.run('ALTER TABLE finding ADD COLUMN reviewer_note TEXT')
+
+    expect(unpinned()).toEqual([
+      '`finding.reviewer_note` exists and the finding_is_history trigger does not pin it — a ' +
+        'scene-degradation UPDATE can smuggle a change to it. Extend the pin list in a NEW ' +
+        'migration (0013 is applied, and an applied migration is history); ' +
+        '0013_scene-identity.sql is where the obligation and its reasoning are written down.',
+    ])
+  })
+
+  it('is a real hole while it stands, which is why the tripwire is not advisory', () => {
+    migrate(store)
+    store.run('ALTER TABLE finding ADD COLUMN reviewer_note TEXT')
+    store.run("INSERT INTO show (id, key, title) VALUES ('show1', 'greyharbor', 'Grey Harbor')")
+    store.run("INSERT INTO season (id, show_id, number) VALUES ('season1', 'show1', 1)")
+    store.run("INSERT INTO episode (id, season_id, number, title) VALUES ('ep1', 'season1', 1, 'x')")
+    store.run("INSERT INTO scene (id, episode_id, ordinal, heading) VALUES ('sc4', 'ep1', 4, 'EXT.')")
+    store.run("INSERT INTO artifact (id, episode_id, kind, file_path) VALUES ('art1', 'ep1', 'script', 'x.md')")
+    store.run(
+      `INSERT INTO check_pass (id, check_key, tier, artifact_id, artifact_version)
+            VALUES ('pass1', 'world-rules', 'text', 'art1', 1)`,
+    )
+    store.run(
+      `INSERT INTO finding (id, pass_id, artifact_id, artifact_version, scene_id, quote, concern,
+                            severity, confidence, reviewer_note)
+            VALUES ('find1', 'pass1', 'art1', 1, 'sc4', 'q', 'a concern', 'high', 'high', 'as raised')`,
+    )
+
+    // Nulling the scene is permitted, and an unpinned column rides along with it unchallenged.
+    // That is the exposure in one statement, and it is what the test above refuses to let ship.
+    store.run("UPDATE finding SET scene_id = NULL, reviewer_note = 'rewritten' WHERE id = 'find1'")
+    expect(store.get('SELECT reviewer_note FROM finding WHERE id = ?', 'find1')).toEqual({
+      reviewer_note: 'rewritten',
+    })
   })
 })

@@ -16,12 +16,12 @@ import { BOARD_CHECK_STAGE, BOARD_STAGE } from './board-step.ts'
 import { createRulings, presentForRuling } from './gate.ts'
 import { findStepByName, markRunDone, reconcileSteps, recordRun, stepsOf } from './run.ts'
 import { createRunner, type Runner } from './runner.ts'
-import { SCRIPT_GATE_STAGE } from './script-gate-step.ts'
+import { OUTLINE_GATE_STAGE, PREMISE_GATE_STAGE, SCRIPT_GATE_STAGE } from './present-step.ts'
 import { scaffoldStage } from './stage-fixture.ts'
 import { stageCatalogue } from './stages.ts'
 import { STAGE_WORK } from './step.ts'
 import { TEXT_CHECK_STAGE } from './text-check-step.ts'
-import { OUTLINE_STAGE, PREMISE_STAGE } from './write-step.ts'
+import { OUTLINE_STAGE, PREMISE_STAGE, SCRIPT_STAGE } from './write-step.ts'
 
 /**
  * The stage catalogue: what this build ships, and what it no longer offers.
@@ -97,14 +97,21 @@ function aDemoEraRun(): { runId: string; artifact: Artifact } {
 }
 
 describe('what this build ships', () => {
-  it('is these six stages, and adding one is a code change with a test', () => {
+  it('is these eight stages, and adding one is a code change with a test', () => {
     expect(Object.keys(stageCatalogue(paths)).sort()).toEqual(
       [
+        // The writing line, whole (E4-3): one builder, three asks (`write-step.ts`).
         PREMISE_STAGE,
         OUTLINE_STAGE,
+        SCRIPT_STAGE,
         BOARD_STAGE,
         BOARD_CHECK_STAGE,
         TEXT_CHECK_STAGE,
+        // And a presenting stage per written kind, which is E3-7's `script-gate` generalized
+        // rather than retired (`present-step.ts`). `script-gate` keeps its name: there are runs
+        // under it, and a stage that leaves the catalogue holds its episode forever.
+        PREMISE_GATE_STAGE,
+        OUTLINE_GATE_STAGE,
         SCRIPT_GATE_STAGE,
       ].sort(),
     )

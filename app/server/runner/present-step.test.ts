@@ -15,23 +15,31 @@ import { theLongPierExtraction } from '../fixture/long-pier-board.ts'
 import { initLibrary, openLibraryStore, type LibraryPaths } from '../library.ts'
 import { describeLLMBackend } from '../llm/choose.ts'
 import { createFakeLLM, type FakeLLM } from '../llm/fake.ts'
-import { launchBlockedBecause, runView } from '../operating.ts'
+import { launchBlockedBecause, runView, stageOffer } from '../operating.ts'
 import { createRulings, openGates, type Rulings } from './gate.ts'
 import { createRunner, type Runner } from './runner.ts'
-import { SCRIPT_GATE_STAGE } from './script-gate-step.ts'
+import { draftsUnderReview, type CorrectionReport } from './correction-loop.ts'
+import { OUTLINE_GATE_STAGE, PREMISE_GATE_STAGE, SCRIPT_GATE_STAGE } from './present-step.ts'
 import { stageBlockedBecause } from './stage-wall.ts'
 import { stageCatalogue } from './stages.ts'
-import { PREMISE_STAGE } from './write-step.ts'
+import { PREMISE_STAGE, SCRIPT_STAGE } from './write-step.ts'
 
 /**
- * The gate over the script (E3-7): **the stage that produces nothing, and the door the wall's
- * override is behind.**
+ * The gate over a written artifact (E3-7, generalized by E4-3): **the stage that produces
+ * nothing, and the door the wall's override is behind.**
  *
  * D12 says a deterministic finding blocks the next stage and never Ryan's gate. Both halves
  * are asserted here against the fixture's own planted contradiction, and the second half is
  * the one that needed a stage built for it: `overriddenThrough` is asked per artifact, so an
  * override is only an override of what is standing on the artifact under review — and until
  * this stage there was no gate anywhere in the app over the ep01 script.
+ *
+ * ## And the collision E3-7 left for E4 (#63)
+ *
+ * E4's writing line opened its own gate over the script, which is two stages able to put one
+ * artifact in front of Ryan — the state the E3 ledger forbids. The affordance was kept and
+ * generalized rather than retired, and the last block below is what that resolution is worth:
+ * the two gates can never be open at once, and the two payloads are one shape.
  */
 
 let root: string
@@ -201,5 +209,96 @@ describe('the script gate — the three verdicts, and what each leaves behind', 
     expect(view.gate!.reject.sentence).toContain('presents it again with them recorded against it')
     expect(view.gate!.reject.sentence).not.toContain('writes it again')
     expect(llm.calls).toEqual([])
+  })
+})
+
+// ── The collision, resolved (E4-3, #63) ────────────────────────────────────────
+
+describe('one artifact, one ruling — and two doors onto it', () => {
+  /** Every written kind has one, and each presents its own. */
+  it('offers a presenting stage per written artifact, and each names what it presents', () => {
+    const episode = findEpisode(store, episodeId)!
+    const offers = [PREMISE_GATE_STAGE, OUTLINE_GATE_STAGE, SCRIPT_GATE_STAGE].map((name) =>
+      stageCatalogue(paths)[name]!.offerOn(store, episode),
+    )
+
+    expect(offers.map((offer) => offer.sentence)).toEqual([
+      'Present the ep01 premise-brief v1 for your ruling — what the panel found is under it, and nothing deterministic stands',
+      'Present the ep01 outline v1 for your ruling — what the panel found is under it, and nothing deterministic stands',
+      'Present the ep01 script v1 for your ruling — what the panel found is under it, and nothing deterministic stands',
+    ])
+    // None of them spends anything, and none of them may be walled (D12, invariant 3).
+    for (const name of [PREMISE_GATE_STAGE, OUTLINE_GATE_STAGE, SCRIPT_GATE_STAGE]) {
+      expect(stageCatalogue(paths)[name]!.work).toBe('reads')
+      expect(stageCatalogue(paths)[name]!.offerOn(store, episode).callsModel).toBe(false)
+    }
+  })
+
+  /**
+   * The refusal E4-1 and E4-2 already say — "rule on it at its gate, or edit it directly" —
+   * is TRUE for an artifact whose writing run never existed, which is what retiring this
+   * stage would have taken away. ep01's script was written by hand into the fixture.
+   */
+  it('makes “rule on it at its gate” truthful for an artifact no run ever wrote', () => {
+    const episode = findEpisode(store, episodeId)!
+    expect(
+      stageCatalogue(paths)[SCRIPT_STAGE]!.offerOn(store, episode).nothingToDoBecause,
+    ).toContain('rule on it at its gate')
+    expect(store.get<{ n: number }>('SELECT COUNT(*) AS n FROM run')!.n).toBe(0)
+
+    // And the gate that sentence points at is offerable, right now, for nothing.
+    const offer = stageOffer(store, describeLLMBackend({ PATH: '' }), episodeId, stageCatalogue(paths)[SCRIPT_GATE_STAGE]!)
+    expect(offer.enabled).toBe(true)
+    expect(offer.blockedBecause).toBeNull()
+  })
+
+  /**
+   * **Never two gates at once**, and it is D7 that guarantees it rather than anything in this
+   * file: one run per episode, refused with the same string the API refuses with (D15).
+   */
+  it('refuses the writing stage while this gate is open, and itself while a writing gate is', async () => {
+    await present()
+
+    const ready = describeLLMBackend({ ANTHROPIC_API_KEY: 'sk-ant-x' })
+    const refused = launchBlockedBecause(store, ready, episodeId, stageCatalogue(paths)[SCRIPT_STAGE]!)
+    expect(refused).toContain('ep01 already has a script-gate run')
+    expect(refused).toContain('waiting on your ruling')
+    expect(refused).toContain('One run per episode (D7)')
+    // And the reverse, on the same rule: this stage is refused while any run of ep01 stands.
+    expect(
+      launchBlockedBecause(store, ready, episodeId, stageCatalogue(paths)[SCRIPT_GATE_STAGE]!),
+    ).toBe(refused)
+    expect(openGates(store)).toHaveLength(1)
+  })
+
+  /**
+   * **Never two screens**, and that is this module's half: the payload is composed by the same
+   * function the correction loop composes its own from, so what Ryan is handed over one
+   * artifact does not depend on which door he came in by.
+   */
+  it('hands over the same shape a writing gate does — the drafts, the board, the wall', async () => {
+    theBoard()
+    const runId = await present()
+
+    const payload = runView(store, paths, runId)!.gate!.rounds[0]!.payload as CorrectionReport
+    expect(Object.keys(payload).sort()).toEqual(
+      ['artifactId', 'blocking', 'board', 'clean', 'converged', 'rounds', 'sentence'].sort(),
+    )
+    expect(payload.artifactId).toBe(script.id)
+    expect(payload).toMatchObject({ ...draftsUnderReview(store, script.id) })
+    // The rounds are every draft a check has read, and a hand-written script has none: the
+    // board's rules recorded their pass against the BOARD and anchored their findings in the
+    // SCRIPT, which is the divergence 0010 built two columns for. So the history is empty and
+    // the wall is two — both true, and the same two answers the writing loop would give.
+    expect(payload.rounds).toEqual([])
+    expect(payload.blocking.map((one) => one.checkKey)).toEqual([
+      'vacuum-without-protection',
+      'dual-presence',
+    ])
+    // Only the sentence is this door's own, because only the sentence is about why THIS gate
+    // opened. It says the wall is standing and that it does not stand here.
+    expect(payload.sentence).toContain('Presenting the ep01 script v1 for your ruling')
+    expect(payload.sentence).toContain('none of them blocks this gate (D12)')
+    expect(payload.sentence).not.toContain('correction budget')
   })
 })

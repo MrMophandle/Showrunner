@@ -27,7 +27,7 @@ import { createFakeLLM, type FakeLLM } from '../server/llm/fake.ts'
 import { operatingView, runView } from '../server/operating.ts'
 import { openGates } from '../server/runner/gate.ts'
 import { createRunner, type Runner } from '../server/runner/runner.ts'
-import { SCRIPT_GATE_STAGE } from '../server/runner/script-gate-step.ts'
+import { SCRIPT_GATE_STAGE } from '../server/runner/present-step.ts'
 import { stageCatalogue } from '../server/runner/stages.ts'
 import { PREMISE_STAGE } from '../server/runner/write-step.ts'
 import { TEXT_CHECK_STAGE } from '../server/runner/text-check-step.ts'
@@ -118,13 +118,15 @@ describe('the operating page — the floor of it', () => {
     expect(html).toContain('<strong>[script]</strong>')
     expect(html).toContain('<strong>[premise]</strong>')
 
-    // Verb + object + scope, and the cost stated before the click.
+    // Verb + object + scope, and the cost stated before the click. Each card offers the stage
+    // its own lifecycle is at (E4-3, `stageForEpisode`), so the two cards offer two stages.
     expect(html).toContain('Write the ep02 premise-brief from the writer’s desk')
+    expect(html).toContain('Write the ep01 script from the writer’s desk')
     expect(html).toContain('your money, spent when you click')
-    // ep01 already has a premise-brief, so its button is disabled with the reason in words —
-    // a blocked action never fails after the click (D15).
+    // ep01 already has a script, so its button is disabled with the reason in words — a
+    // blocked action never fails after the click (D15).
     expect(html).toContain('Blocked:')
-    expect(html).toContain('ep01 already has a premise-brief')
+    expect(html).toContain('ep01 already has a script')
   })
 
   it('disables the button and prints the reason when nothing can reach a model', () => {
