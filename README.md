@@ -15,6 +15,16 @@ mandatory story-craft, the three remediations, cried-wolf tracking) ran on real 
 Aug 9 — $1.32 against ~$1.60 projected, both planted contradictions surfaced, and the wall
 came down through both doors.
 
+**E4 · The writing line is built, and its exit is the drill below, not yet operated.** The
+writer's desk (canon as *this episode's audience* knows it, the entities left out with the rule
+that kept each one out, Ryan's notes with their three origins), the three writing stages with
+their gates and their correction loops, scenes derived from the written script, the extraction
+that reads an approved draft for what it claims of canon, direct hand editing, the reject that
+routes rather than rewinds, and the completion sweep — all of it on fakes, in 947 tests. The
+drill below is what turns that into an operated exit. Writing it exposed one wall it does not
+step on: **[issue #76](https://github.com/MrMophandle/Showrunner/issues/76)**, and step 1 is
+where it bites.
+
 Each epic ends with a drill Ryan operates, not a test suite that passes. **The current
 epic's drill lives below; retired drills live in git history**, and their operated-exit
 records are in `handoff/docs/concept-and-architecture.md` §6.2.
@@ -79,21 +89,24 @@ One click, six rulings on the ledger, entities `active`. Checks read *ratified* 
 first. Ruling the seventh sheet, Sefa Doule the deliberate `candidate`, stays yours to
 do or not at the bench.
 
-## The E3 drill — running the checks, and operating the wall
+## The E4 drill — writing an episode, and ruling what it claims
 
-The checks epic's exit, as one sitting. It takes about twenty minutes and the buttons project
-**about $1.60** of real money — the panel is $1.20 of it. Every button states its cost before
-you press it and says whose money it is; the ledger afterwards is what was really spent.
+The writing line's exit, as one sitting. It takes about forty minutes and the buttons project
+**about $3.85** of real money — the three panels are $3.24 of it. Every button states its cost
+before you press it and says whose money it is; the ledger afterwards is what was really spent.
 
-Four of the six buttons on this bench cost **nothing at all**, and that is the point rather
-than a saving: the deterministic tier reads rows a reading already paid for, so a correction
-loop never bills you twice for the same script — and three of the free four are the stages that
-simply put a written artifact in front of you for a ruling (E4-3).
+**Five of its eight steps cost nothing at all**, and that is the point rather than a saving:
+presenting a draft for your ruling, typing over one yourself, moving an episode's pin on an arc,
+and ruling every proposal it raised are all `$0.00`. **Money is spent writing and checking. It
+is never spent ruling.**
 
-The sentence you are about to make true four times: **checks argue, they never veto.** A red
-finding makes an artifact loud. One kind of finding — the deterministic kind, which counts rows
-and cannot be wrong about them — blocks *the next stage* and never your gate, and it comes down
-three ways, all of them yours.
+The sentence you are about to make true four times: **an approval is the only thing that moves
+an episode on.** Not a producer writing. Not a check reading. Not your own hand editing. The
+lifecycle names the stage an episode is *at* — the work it still owes — and a gate you approve
+is what carries it to the next one.
+
+And the one you are about to watch fail: **a rejection at a gate with no writer behind it has
+nowhere to go.** That is step 1, and it is [issue #76](https://github.com/MrMophandle/Showrunner/issues/76).
 
 ### Before you start
 
@@ -111,256 +124,280 @@ npm run fixture:load           # spends nothing, safe to run twice
 Open <http://localhost:4455>.
 
 **Found Grey Harbor first if you have not already** — the canon section's button, per
-**Founding Grey Harbor** above. It costs nothing and it takes one click. Checks read
-*ratified* canon (invariant 2); a show whose sheets are still sitting in the queue has no
-canon for them to argue with, and the panel would read a script against nothing and say so
-honestly.
+**Founding Grey Harbor** above. It costs nothing and it takes one click. A writer is handed
+*ratified* canon and nothing else (invariant 2); on a show whose sheets are still in the queue,
+the desk in step 1 says so honestly — *0 canon entities in scope and 7 left out* — and every
+draft below would be written against an empty world.
 
-### 1 · Open the ep01 check bench
+### 1 · The half-door, and the note that gets read back ($0.00)
 
-On **ep01 · The Long Pier**, press **Open the ep01 check bench below**. It is a read: it starts
-nothing and costs nothing.
+**This is the step your own library's history is for.** On **ep02 · Dry Stores**, read the
+launch button. It is disabled, and it says why:
 
-Scroll to **Checks — ep01 · The Long Pier**. You should see:
+> ep02 already has a premise-brief, in slot “demo” — rule on it at its gate, or edit it
+> directly (E4-5).
 
-- the script itself, whole and readable, not a filename;
-- **Verdict board — script v1** above it saying *0 of 10 reviewers have read this draft*. Not
-  "clean". Nothing has read it, and a board that rendered an unread panel as a short clean one
-  would be the exact lie this epic exists to prevent;
-- six buttons under **Read it**, two of them priced and four of them `No model call · $0.00`;
-- **The next stage: Not blocked.**
+That brief was written by E1's `demo` stage, which E4-1 retired, and approved at a gate that
+predates the lifecycle seam. **A sentence in this app may not name a door you cannot open**, so
+both doors it names are on the card. Press **Open the ep02 writing room below** and use the
+first one:
 
-### 2 · Build the continuity board — the deterministic tier (~$0.12)
-
-Press:
-
-> Read the ep01 script into a continuity board and run the rules over it — one reading of the
-> whole script
-> *1 Opus call, ~$0.12 · your money, spent when you click*
-
-One call reads the script into a grid; then four rules read the grid **for nothing**. Watch the
-**Live** panel: the extraction's progress line, then `Checking the ep01 continuity board — 4
-deterministic rules, free`.
-
-When it finishes, four things are true and every one of them is exact — this tier counts rows,
-so it says the same thing every time:
-
-1. **Scenes 5–6, the dual presence.** A card anchored at scene 6, marked **STAGE-BLOCKING**:
-   *Ilse Renn is in two places at one time.* Severity **high**, confidence **certain** — two
-   values, never one — and *deterministic, from the rows*.
-2. **Scene 4, the vacuum violation.** The board's own rule, also blocking: *Tobin Wick is
-   outside the pressure hull in scene 4 with nothing between them and the void.*
-3. **The next stage** now reads **Blocked**, with the whole sentence:
-
-   > ep01 is blocked — the vacuum-without-protection finding at scene 4 of the ep01 script
-   > stands unresolved: “…”. 1 more deterministic finding stands with it. Deterministic
-   > findings block the next stage and never your gate (D12): rule on it at the gate as a
-   > recorded override, put it down with a note, or fix it and re-run the checks — the
-   > deterministic ones cost nothing.
-
-   Scroll **up** to the ep01 card. Its launch button is disabled too — but read what it says:
-   *ep01 already has a script — rule on it at its gate, or edit it directly (E4-5).* Since E4-3
-   the card offers the stage the episode's **lifecycle** is at, and ep01 is at `script`; a stage
-   with nothing to do says so before the wall is ever consulted. The gate that sentence points
-   at is real — *Present the ep01 script v1 for your ruling* — and it is what step 5 rules on.
-   The wall and the refusal still come out of one composer (`launchBlockedBecause`), and you can
-   watch them be the same string on an episode where a producing stage still has work: **ep02**,
-   which has no premise yet.
-4. **The two obeyed rules are on the board, green.** `impossible-adjacency` and
-   `duplicate-arrival` each read the grid and found nothing, and each has a row saying so.
-   That is a **measurement**, not an absence — and it is the denominator the cried-wolf record
-   at the bottom of the bench counts against.
-
-Note what is *not* blocked: all six **Read it** buttons are still live. The wall's own sentence
-tells you to re-run the checks, and a wall that then refused that button would be a dead end
-built out of its own advice.
-
-### 3 · Convene the panel — the semantic tier (~$1.20)
-
-Press:
-
-> Check the ep01 script v1 — 5 category checks, 1 arc position and 4 craft reviewers read it,
-> 10 reviewers · 10 Opus calls, ~$1.20
-> *10 Opus calls, ~$1.20 · your money, spent when you click*
-
-Ten reviewers, ten calls, one progress line each — *3 of 10 · Species — 4 facts in scope*. The
-craft reviewers say something different on purpose: *reading it as craft, with no canon in
-front of it* (D13).
-
-This tier is a model reading a script, so unlike step 2 its exact words are its own. What the
-drill expects is the **shape**, and it should hold:
-
-- **The world-rules check fires on scene 4**, semantic, severity high — the same moment the
-  board's rule caught from the other side. Its card **quotes the Halvani fact it argues with**,
-  with its lineage: *a Halvani in unprotected vacuum loses consciousness in about nine
-  seconds…* That fact is only in scope because Tobin's sheet declares `species: Halvani` and
-  facts travel that edge (D22). Two reviewers, two readings, one scene — that is a panel, not
-  a duplicate.
-- **The two are separate cards, in the same scene.** The board's rule anchors at the scene
-  heading; the reading anchors at the line it argues with. Cards merge only where the quoted
-  spans *overlap*, which is what puts two reviewers who read the same sentence on one card.
-- **Hull rules 2 and 3 stay silent, and you can see that the silence was measured.** On the
-  verdict board, under the `world-rules` row, every fact it was handed is listed with what it
-  did about it. Rule 1 reads `cited`. The other two read **`loaded, and not cited`** —
-  the rules the script obeys. Loaded and left
-  alone is a measurement; absent is not, and only the pass row can tell them apart.
-  (Rule 2 begins *Sound does not carry outside the hull*; rule 3, *The harbour language is
-  idiom, not physics.* Both are obeyed by that script on purpose — they are the controls.)
-- **What could not be checked at all** should say *Nothing.* — every reviewer reached
-  everything it was handed. That is the third kind of nothing, and it is kept out of both of
-  the others.
-
-The wall has not moved. Ten semantic findings would not move it either: **checks argue, they
-never veto**, and only the deterministic tier is allowed to block anything at all.
-
-### 4 · Door one — the gate, and the override ($0.00)
-
-Press:
-
-> Present the ep01 script v1 for your ruling — 2 deterministic findings stand on it, and
-> approving over them is recorded as your override
+> Present the ep02 premise-brief v1 for your ruling — what the panel found is under it, and
+> nothing deterministic stands
 > *No model call · $0.00*
 
-The run parks. A **Gate** section appears with the script in it and **three** verbs, not two:
+The run parks. Under **The gates**, the brief is on screen — readable, not a filename — with
+its **Loop history** (round 1, open) and three verbs, none of them disabled.
 
-> Approve the ep01 script — round 1, and present-the-script-for-your-ruling carries the run on
->
-> Approve the ep01 script OVER the vacuum-without-protection finding at scene 4 and 1 more
-> deterministic finding — round 1, recorded as your override forever, and the next stage stops
-> being refused on it
->
-> Reject the ep01 script with notes — … presents it again with them recorded against it; there
-> is no writer behind this gate to route them to yet, so the notes land and ride (D21)
+**Now reject it, with a real note.** Type something you actually mean — *say what it costs her,
+not what it costs the harbour* — leave the depth **unrouted**, and press:
 
-**None of the three is disabled.** That is D12 said out loud: a deterministic finding blocks the
-next stage and never your ruling.
-
-Press the **OVER** button. Back on the check bench:
-
-- **The next stage: Not blocked.**
-- Both findings are **still open**, still exactly what the checks said. Nothing wrote an
-  unblock, because there is nothing to write: "blocked" is a question asked again every time,
-  and one of its conditions stopped being true.
-
-### 5 · The rewrite, and what an override is *not* (~$0.04, then $0.00)
-
-Find the **world-rules** card at scene 4. Press:
-
-> Pre-draft a rewrite of the world-rules span in scene 4 of the ep01 script — one span,
-> editable before anything is applied
-> *1 Opus call, ~$0.04 · your money, spent when you click*
-
-One span, one scene, one call — that is why this is four cents and not a dollar (D14). It comes
-back into the box with a sentence saying what it changed, and **nothing has moved**.
-
-**Now edit it.** Change a word, any word — put the collar on him in your own phrasing. Then
-press **Apply the rewrite…** (`$0.00`). What lands is what is in the box, character for
-character: your edit is a hand-made asset and it wins.
-
-Four things happen in one motion, and the fourth is the one worth waiting for:
-
-1. `script-v2.md` is on the volume, **beside** `script.md`. Nothing is ever written over.
-2. The world-rules finding is gone from the cards. It argued with a draft that no longer
-   exists, and nothing was written to it — its row is still what that check said at v1, forever.
-3. The deterministic rules **re-ran for free before the motion returned**, so there is never a
-   moment where v2 exists and nothing has read it.
-4. **The next stage is blocked again.** Your override was your opinion of the draft in front of
-   you at v1; the twins now stand at v2, and it does not reach them. An override that licensed
-   every future draft would be a permanent pass on work you had not seen.
-
-The deterministic rows on the verdict board now read **stale**, with what answers them:
-*built from … a draft the script has moved past.* They are not green and they are not silent —
-they are a reading of a grid that is now behind the script.
-
-### 6 · The scene-scoped re-check, and the board back to fresh (~$0.13, then ~$0.12)
-
-Under **Scenes still owed a reading**:
-
-> Re-read scene 4 of the script with the 2 reviewers that argued with it — 2 reviewers · 2 Opus
-> calls, ~$0.13
-> *… your money, spent when you click*
-
-Two of the ten, not ten of the ten. That narrowing is the whole of D14, and it is on the button
-rather than in the code's opinion of itself.
-
-Afterwards those reviewers' rows read **partial** — *read scene 4 of this draft and found
-nothing there — the rest of this draft it has not read.* Not clean. A reviewer that read a
-paragraph has not read the episode, and rendering it green would be the collapse invariant 4
-forbids.
-
-Then press **Read the ep01 script into a continuity board…** again (~$0.12). It re-extracts,
-because the script has moved past the board it built, and the deterministic rows go from
-**stale** back to a fresh reading of v2.
-
-### 7 · Door two — dismiss with a note ($0.00)
-
-Two deterministic findings still stand at v2. Take them down the other way. On each card, type
-a note — *scene 6 is a flash-forward; leave it*, *he is suited in the pickup* — and press:
-
-> Put the … finding down with your note — the note is read back by later runs (4.4) and counted
-> against the check that raised it (D11)
+> Reject the ep02 premise-brief with notes — …
 > *No model call · $0.00*
 
 Try it with the box empty first. The button is disabled, with the reason in words:
 
-> Dismissing a finding takes a note. It is read back by later runs (4.4) and counted against the
-> check that raised it (D11) — an empty one teaches nothing and still spends the check's
-> credibility.
+> Rejecting the ep02 premise-brief needs at least one note — “reject with notes” is the verb,
+> and the notes are what the step reopens with. A rejection that said nothing would reopen the
+> round with nothing to write against, and later runs read your notes back off the desk (4.4).
 
-That is the same string the API refuses with. After the second note lands, **the next stage is
-not blocked** — and again, nothing wrote an unblock: two disposition rows, and not one finding
-row touched.
+That is the same string the API refuses with, byte for byte.
 
-### 8 · The moment your own ruling does the work ($0.00)
+**Then look at the desk.** Under **The writing line**, on the `premise` card, press *What the
+premise writer would be handed*. Scroll to **What you have already said, and where you said
+it**:
 
-Press the free one:
+> **gate-rejection** · your round 1 rejection of the ep02 premise-brief: “…”
+> *Your own rejection of this draft, at its gate — round 1, unrouted, which is the legal
+> default. It is your opinion of the thing being rewritten.*
 
-> Re-run the 4 deterministic rules over the ep01 continuity board — they read the rows an
-> extraction already wrote, and read no script
+And below it, in **The prompt this would send**, your words are in the call itself, under
+`── WHAT THE SHOWRUNNER HAS ALREADY SAID ──`, verbatim, with where you gave them.
+
+**That is the exit's "a re-run provably reads the notes back", and you can see it before you
+spend a cent.** The desk is composed by the same function the writing step calls — not a
+reconstruction of it — so what is on this screen is what the next call gets.
+
+#### Where this stops, and why
+
+Now read the premise button again. It still says *already has a premise-brief*. The presenting
+gate you just ruled at carries no lifecycle step, so approving there moves nothing; a hand edit
+deliberately moves nothing (E4-5); and the outline button says *"Rule on the ep02 premise first,
+and this becomes offerable"* — which you have, twice.
+
+**That is [#76](https://github.com/MrMophandle/Showrunner/issues/76)**: your note is on the desk
+and it is not on the button. `unaddressedNotesTo` reads a predicate written for the *desk* — it
+drops a note whose gate was over the artifact it names, so the desk does not print your words
+twice — and the *offer* reads the same function and inherits an exclusion it should not have.
+
+Approve the round-2 presentation to let ep02 go, and **stop here until #76 lands.** Steps 2
+through 8 below need an ep02 the writing stage may write; the moment that button is pressable,
+they run as written.
+
+### 2 · Declare the waypoint, before a word is written ($0.00)
+
+In the writing room, scroll to **Where ep02 stands on its arcs**. It reads:
+
+> ep02 declares no position on any arc — it is **vanilla**, which is legal, tracked and never a
+> failure state (1.1). Declaring one is a choice, not a repair.
+
+Press:
+
+> Declare ep02 at waypoint 2 “The harbor is worth spending on” of “What the harbor is for” —
+> the pin moves, and the landing proposal is raised when the script is read
 > *No model call · $0.00*
 
-The rules read the same unchanged rows and raise **identical twins** of both concerns. They are
-**open**. They are counted. And:
+The sentence changes to *"A pin is not a fact: the landing proposal is raised when the script is
+read, with the subject the writer answers (D8)."* **Nothing was raised and nothing became
+canon.** Declaring is a production decision — you saying which waypoint this episode is written
+to land. The *landing* is a claim about the world, so it needs a subject entity, and that is a
+writing judgement only the writer can make out of the written episode. Step 5 is where it
+arrives.
 
-**The next stage is still not blocked.**
+Do it now rather than later, and watch what it costs you: every writing button below gains one
+reviewer, because an arc position is a check. The premise goes from *up to 7 reviewers* to
+*up to 8*.
 
-Read the line on each card:
+### 3 · The premise, written from your note (~$1.03)
 
-> **Your standing ruling reaches this one.** You put this exact concern down at v… — “scene 6 is
-> a flash-forward; leave it”. This is a later firing of it, raised by a check re-reading rows
-> nobody touched. It is open, and it counts in the cried-wolf record below; what it does not do
-> is put the wall back up, because your ruling reaches it.
+Press the premise button. Whatever sentence it carries — that depends on how #76 was closed —
+**its cost line is the thing to read before you click**, and it is exact:
 
-That is the whole of it. Every rewrite you apply anywhere in this episode re-runs this tier for
-free — so without that line, a check you had already answered could put the wall back up
-indefinitely, at no cost, for as long as you kept fixing other things. **A veto on a slow
-clock is still a veto**, and the identity that prevents it is exact: same check, same span, same
-scene, same canon, same words. A genuinely new contradiction raises the wall exactly as before.
+> *1 Opus call, ~$0.07 + up to 8 Opus calls, ~$0.96 to check it, per draft — and the loop stops
+> at 3 drafts (invariant 5) · your money, spent when you click*
 
-### 9 · Read the reviewers, and check the projection against the ledger
+Eight, not seven, because you declared the pin in step 2 and an arc position is a reviewer.
 
-At the bottom of the bench, **Cried-wolf record**. Every check that has read anything for this
-show lately is on it, including the ones that never fired — `impossible-adjacency` with its
-readings and its silences is as much a part of the record as the ones that complained.
+Watch the **Live** panel. The first progress line is the desk describing itself:
 
-The two you just dismissed now carry those dismissals. Neither has earned a maintenance
-question yet: the floor is three ruled concerns, because two is a coincidence and one is an
-anecdote. When one does, the line appears, ends in a question mark, and **nothing acts on it** —
-no check is ever disabled, demoted or re-weighted by any number on this page.
+> The ep02 premise desk — writing from canon alone, 6 canon entities in scope and 1 left out,
+> canon as the audience knows it at ep02, 1 arc (1 declared), 1 note standing.
 
-Last, scroll up to the ep01 card and read **Spend on this episode**. Compare it with what the
-buttons projected before you pressed them: about $1.60. It will be lower, and the difference is
-the projections deliberately over-stating — a button that under-states is a button that lies
+Six in scope, one left out — that one is **Sefa Doule**, the fixture's deliberate candidate, and
+the desk says why in words: a sheet nobody has ruled is on nobody's desk. One note standing is
+the one you wrote in step 1. Then the draft streams, then the panel reads it.
+
+When it parks, **read the brief against your note.** It should have answered it. If it has not,
+reject it again — that is what the loop is for, and it stops at three drafts whatever happens.
+
+Approve it. Then watch two things:
+
+1. The lifecycle track moves: `premise → **[outline]** → script → …`. **Your ruling did that**,
+   and nothing else can.
+2. The outline button stops being refused. Its sentence was *"ep02 is at premise and has not
+   reached outline yet"*; the column that answers is the lifecycle, because an approval is the
+   only thing that writes it.
+
+### 4 · The outline, and then your own hands on it (~$1.19, then $0.00)
+
+Press:
+
+> Write the ep02 outline from the writer’s desk and present it for your ruling — “Dry Stores”,
+> one call, then up to 9 reviewers read it
+> *1 Opus call, ~$0.11 + up to 9 Opus calls, ~$1.08 to check it, per draft — …*
+
+What comes back is **prose about the movement of the story** — what turns, in what order, and
+what the audience knows after each turn. Check the one thing this artifact exists to not be:
+**there is no scene list in it, no numbering, and no count anywhere.** That restraint is spent
+in step 5, and it was expensive to keep.
+
+Approve it. The lifecycle moves to `script`.
+
+**Now take it over.** Under **What is written**, on the outline, press:
+
+> Edit the ep02 outline yourself — what you type lands word for word as v2, and the free checks
+> read it before the button comes back
+> *No model call · $0.00*
+
+Change something you actually want changed — a movement's name, an order, a withholding. Press
+it. What lands is what is in the box, character for character: **a hand-made asset always wins**,
+and nothing tidied your wording on the way in. `outline-v2.md` is on the volume beside
+`outline.md`; nothing is ever written over.
+
+Read the sentence it answers with:
+
+> Your ep02 outline is on the volume as v2, word for word. … **ep02 is still at script — an
+> approval is the only thing that moves an episode on.**
+
+Then open the **script** desk (*What the script writer would be handed*) and look at **What it
+writes from**. It is your v2, whole. **The script below is built from your words, not the
+model's** — and that is visible before you spend anything on it.
+
+### 5 · The script, where the scenes fall (~$1.50, then ~$0.11)
+
+Press:
+
+> Write the ep02 script from the writer’s desk and present it for your ruling — “Dry Stores”,
+> one call, then up to 10 reviewers read it
+> *1 Opus call, ~$0.30 + up to 10 Opus calls, ~$1.20 to check it, per draft — and the loop stops
+> at 3 drafts (invariant 5), **then 1 Opus call, ~$0.11 after you approve it, to read what the
+> script claims of canon into proposals for your ruling** · your money, spent when you click*
+
+Read that last clause before you click it. **One click buys the whole run**, including the step
+that lands on the far side of your ruling — so the button covers the whole run or it lies
 cheaply.
+
+In the **Live** panel, after the draft streams, this line:
+
+> The ep02 script draft breaks into **N** scenes — derived from the draft, never asked for
+
+**`N` is an output.** Nothing upstream chose it: the outline carries no grid on purpose, the ask
+tells the writer the count is theirs and refuses the pairing-off in as many words, and nothing
+in this app reads the outline's headings. If `N` happens to equal the number of movements in
+your outline, that is a coincidence and not a mechanism.
+
+Approve it at its gate. Then watch the run keep going — **the extraction is a paid step past
+your ruling**, and it reads the draft you approved rather than a round the loop replaced:
+
+> Reading the ep02 script for what it claims of canon…
+
+### 6 · The sweep, ruled one at a time ($0.00)
+
+Back on the ep02 card, a sentence has appeared that was not there before:
+
+> ep02 carries N proposals to rule — … They ride ep02 until you rule them, one at a time —
+> approving the script was not a ruling on any of them.
+
+**Approving the script was not a ruling on any of them.** It never is: only ratification writes
+canon, and it is one proposal, one ruling, one row on the ledger. Press:
+
+> Rule the N proposals riding ep02 — the completion sweep, one at a time, each on its own row of
+> the ledger
+> *No model call · $0.00*
+
+Each rider carries its five parts: the change, the usage context (the passage from the script
+that made it necessary), the **implications** — computed at read time, so they are about canon
+as it stands now — and the three verbs.
+
+Do all three of these, on three different riders:
+
+1. **Ratify one fact delta.** Something the episode established that you want to be true.
+2. **Reject one with a note.** Something the writer invented that you do not want in the bible.
+   The note is required, in the same sentence the API refuses with, and it is read back by later
+   writer runs — the rejection is not a delete, it is a record.
+3. **Rule the landing on its merits.** The `landing` rider is *"arc1 reached waypoint 2 in
+   ep02"*, with the subject entity the writer answered for. Read the quote it cites against the
+   waypoint's own **landing criteria**, which are on the arc in step 2. If the script really did
+   it, ratify. If it overshot into waypoint 3, reject with a note saying so. **The pin does not
+   move either way** — what your ruling changes is whether landing it is canon.
+
+**There is no fourth button.** Three riders take three rulings. `POST /api/sweep/:id/ratify-all`
+is a 404 because it does not exist, not because something refuses it.
+
+When the last one is ruled, the sentence on the card goes. Nothing was marked: "swept" is a
+question asked again every time, off the queue, and there is no `swept_at` column to go and look
+at.
+
+Then go to the canon bench, open the entity whose delta you ratified, and read its lineage line:
+
+> established in ep02 · ratified at ruling **N** · 2026-08-…
+
+That is what an episode does to canon, with the whole chain on one line.
+
+### 7 · Read the projection against the ledger
+
+Scroll to the ep02 card and read **Spend on this episode**. Compare it with what the buttons
+projected before you pressed them: **about $3.85**.
+
+It will be lower, and the difference is the projections deliberately over-stating in three
+places, all of them named on the buttons: the reviewer counts are **upper bounds** (how many
+categories *declare* this artifact kind, not how many convene — a category with no entity in
+provenance correctly stays home), the prompt-token figures are generous against what is really
+sent, and the loop is priced at three drafts when it usually stops at one.
+
+**A button that under-states is a button that lies cheaply.** If any projection surprised you in
+the other direction, that is a finding about a button — write it down.
+
+### 8 · ep01, untouched
+
+Last, prove the drill kept to its own episode. In a terminal:
+
+```
+for f in premise outline script; do
+  diff -q fixtures/greyharbor/episode/01-the-long-pier/$f.md \
+          library/artifact/greyharbor/s01e01/$f.md
+done
+```
+
+Silence is the result. The three files ep01 was seeded with are byte-identical to the fixture,
+and nothing this drill did touched them. (If your library carries `script-v2.md` beside
+`script.md`, that is the E3 drill's rewrite — still there, still beside the original, because
+nothing in this app is ever written over.)
 
 ### What this drill deliberately does not do
 
-Nothing ratified anything. The **Propose the canon change** button on each card raises a fact
-delta onto the queue and stops; ruling it is yours, at the canon bench, through the same one
-ruling API the gate uses. And the **gate room** — the screen you actually want, with the script
-laid out, the findings folded to their anchors and the decision dock at the bottom — is E5's,
-drawn in `mockups/gate-room.html`. None of it was built here. What was built is every record
-that screen renders and every act it convenes.
+**It does not check ep02.** The panel ran inside every correction loop and its findings are on
+the gates, but the continuity board, the D12 wall and the cried-wolf record are E3's drill, and
+they read the script. Open the ep02 check bench afterwards if you want them.
+
+**It does not abandon anything.** `abandoned_at` is a column beside the lifecycle enum and
+abandoning raises a revert per ratified fact, one ruling at a time — none of it is built, and
+none of it is here.
+
+**And it is not the episode room.** The screen you actually want — the lifecycle rail, the desk
+folded beside the draft, the gate with its findings at their anchors and a decision dock — is
+E5's, drawn in `mockups/episode-room.html` and `mockups/gate-room.html`. None of it was built
+here. What was built is every record those screens render and every act they convene.
 
 ## Where things are
 

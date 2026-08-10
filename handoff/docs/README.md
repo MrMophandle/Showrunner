@@ -231,6 +231,59 @@ nothing ever acts on it.
 `POST /api/gate/:id/override`; the bench's add-a-fact route from #39). The bench renders
 every record kind above, unstyled — E5 restyles, it does not re-derive.
 
+## What E4 built, and where
+
+Same purpose again: which module an E5+ issue extends rather than rebuilds. Everything below is
+tested on fakes with no key in the environment. **The exit is the drill in `README.md`, and it
+has not been operated yet** — issue #76 stands between Ryan's library and its writing line, and
+the constraints list below says exactly where.
+
+**The writer's desk** (`domain/write-context.ts`). One composer, three steps, and the only door
+onto canon a writing step has. Canon as **this episode's audience** knows it — a lineage
+question, never a clock question — with every inclusion carrying the door it came through, every
+entity left OUT carrying the rule that kept it there, every fact carrying its reach, and Ryan's
+notes arriving in one stream with three origins on them. Computed, never remembered; there is no
+`write_context` table and there must never be one.
+
+**The three writing stages** (`runner/write-step.ts`). `writingStage` builds each one with the
+correction loop, the panel, the gate and the lifecycle seam already on it, so a fourth cannot be
+assembled without them. `WRITING` holds what each step is asked for and what one call of it is
+projected to cost, keyed by step because the steps are not the same size. Provenance runs
+backwards for a producer: it declares what it WROTE, through the desk's own matcher.
+
+**The lifecycle seam** (`domain/lifecycle.ts`). Lifecycle names the stage an episode is AT, and
+a stage's **gate approving** is the only thing that moves it — four rules, tested one apiece.
+`notYetReachedBecause` is the same function read backwards, and it is how a writing stage asks
+"was the upstream ruled" without growing a second opinion of "approved".
+
+**Scenes, derived** (`domain/delineate.ts`, `spine.ts`'s `delineateScenes`, migration `0013`). A
+scene IS its heading; re-delineating matches by heading and by nothing else, so insertion is
+safe and a rename degrades its findings to the whole artifact. One delineator, two callers, and
+the fixture is its proof. `num_scenes` is an output of the written script and there is no column
+for it.
+
+**What writing does to canon** (`claim.ts`, `runner/claim-step.ts`). One paid reading of the
+draft Ryan APPROVED, after the gate and inside the run, raising fact deltas and one landing per
+declared arc position — with the subject only a writer can answer for. Four laws, one
+`claimScope` read by both the prompt and the parser, and a malformed reply fails the step
+because a zero-claims pass is a real answer.
+
+**Ryan's hand** (`edit.ts`, `domain/routing.ts`, migration `0014`). An edit lands verbatim as a
+new version through E3-5's one motion, declares provenance out of the whole show, moves no
+lifecycle and buys no extraction. A rejection note picks its depth, resolves its address once at
+the ruling, and "addressed" is derived from a version comparison — nothing is ever written back
+to a note.
+
+**The completion sweep** (`sweep.ts`). A ruling pass an approved episode OWES, computed from the
+queue, reached from the episode, ruled one rider at a time through the one ruling API. No
+`swept_at`, no sweep table, no bulk verb, and no route for one.
+
+**Surfaces** (`writing-room.ts` behind `/api/writing/:episodeId`; `app/web/WritingRoom.tsx`).
+The room renders every record kind above, unstyled, and composes none of them: the offers are
+the stages', the gates are `operating.ts`'s, the riders are the sweep's, the pin is the canon
+bench's, the clusters are `panel.ts`'s. The one new render is the desk inspector. **E5 restyles;
+it does not re-derive, and it does not get to drop a door and leave the sentence that names it.**
+
 ## Constraints E1 leaves behind
 
 Decisions one epic made that bind a later one. Each was correct where it was made and
@@ -538,8 +591,11 @@ E4-1's (#61) and the first three bound E4-2 directly; the three after them are E
 and bound E4-3; then three of E4-3's (#63), and the scene rules among them bind E4-5's
 direct editor and E6's shot manifest before anything else touches a scene. Then three of
 E4-4's (#64), the first of which bound E4-6 directly; four of E4-5's (#65), of which the first
-two bound E4-6 and the third binds E6's review desk — and the last three are E4-6's (#66),
-which close the epic's canon side and bind E5's episode room and E6's watch-through.
+two bound E4-6 and the third binds E6's review desk — then three of E4-6's (#66), which close
+the epic's canon side and bind E5's episode room and E6's watch-through. **The last four are
+E4-7's (#67), the issue that closes the epic**, and they bind E5 hardest of all: E5 rebuilds
+every surface in this list to the mockups, and three of the four are about what it may not drop
+on the way.
 
 ### One seam moves an episode's lifecycle, and the builder is what makes it a seam (E4-1, #61)
 
@@ -912,6 +968,64 @@ are one answer wherever Ryan is standing — only the SCOPE differs, which is th
 `draftsUnderReview` already holds for a gate's payload (E4-3). A third surface over proposals
 calls this rather than composing its own; two renderers drift the day one of them learns
 something.
+
+### The desk is a preview, not a post-mortem, and that is what it is FOR (E4-7, #67)
+
+`writing-room.ts`'s inspector renders `composeWriteContext` **before the click**, off the same
+composer the step calls — no second read, no cached copy, no `write_context` table (E4-0 forbids
+one and always will). That placement is the whole feature: Ryan judges a draft against what the
+writer KNEW, and four questions come up at every writing gate that the draft cannot answer —
+*why did it write that* (the facts, each with its reach), *why did it not know about X*
+(`leftOut`, with the rule in words), *did it read my note* (the three origins, kept apart), and
+*what is this about to buy*.
+
+**The prompt is rendered and it is honest about being a floor.** `composeWritePrompt` is the
+step's own function, so what is on screen is what would be sent — except for one part that
+cannot exist before the click: the CHECKS' notes from a round that has not run. So the round
+number is computed the way the loop computes it (`historyOf`) and `promptCaveat` names the
+missing clause. **Any later surface that previews a call owes the same confession**; rendering a
+guess as the real thing is invariant 4 one layer out from the checks.
+
+### A refusal that names a door owes that door a lifecycle, not just a button (E4-7, #67)
+
+E4-5's ledger entry above generalized the rule *"a refusal that names an affordance owes that
+affordance a button on the same screen"*. E4-7 built both buttons and found the rule does not go
+far enough: **ep02's demo-era premise-brief has two doors and neither one moves the episode.**
+The writing stage is refused because the artifact exists; the presenting stage opens a gate and
+carries no lifecycle step; a hand edit deliberately moves nothing; and the outline's refusal
+says *"Rule on the ep02 premise first, and this becomes offerable"* to a showrunner who has
+ruled on it twice.
+
+**It is [issue #76](https://github.com/MrMophandle/Showrunner/issues/76), filed rather than
+fixed** — the #39 precedent, and the reason it is not a one-line fix is worth keeping: the
+predicate that drops it (`AND g.artifact_id <> n.target`, `routedNotesTo`) is CORRECT for the
+desk, which must not print Ryan's words twice, and over-broad for the OFFER, which reads the
+same function. One predicate, two questions. Whoever closes it decides one thing explicitly —
+**does approving at a presenting gate move the lifecycle?** — because that is a ruling about
+what an approval means, not a detail. `writing-room.test.ts` walks all four doors and pins the
+answer, so the day it changes the test says so. **E7's import arrives in exactly this shape.**
+
+### One cluster renderer, three surfaces — and the wall's sentence moved with it (E4-7, #67)
+
+`ClusterSay.sentence` ("world-rules · severity high · confidence high · text, a reading") is
+composed in `domain/panel.ts` now, and D12's card sentence is `BLOCKS_THE_NEXT_STAGE` in
+`runner/stage-wall.ts`. Both were `check-bench.ts`'s, which was right while the check bench was
+the only surface that rendered a cluster — and it is **script-only** (`BENCH_KIND`), so the
+premise-brief's and the outline's reviewers had no surface anywhere until the writing room's
+gates. Two copies would drift, and the one that drifted would be the one telling Ryan a
+deterministic finding reaches his gate. **E5's gate room is the fourth reader and composes
+neither.**
+
+### Every gate refusal is one string now, and the browser holds none of them (E4-7, #67)
+
+`rejectionNeedsANote(subject)` (`runner/gate.ts`) is thrown by the ruling, refused with by the
+route, and shown on the disabled button — which came down the wire as `GateOnThePage.rejectNeedsNote`
+rather than living in `App.tsx`. Until E4-7 those were **three different sentences** for one
+rule, and the browser's copy was the one Ryan actually read: "preconditions before the button"
+decorated rather than kept (D15). The bench pattern (`CHECK_REFUSALS`, `BENCH_REFUSALS`) had
+covered every other typed-field precondition since E2-6; the gate's was the one that got missed
+because it predates the pattern. **Nothing in `app/web/` may hold a refusal string**, and
+`App.test.tsx` asserts the API's exact sentence rather than a paraphrase of it.
 
 ## Working agreements that bind every session
 

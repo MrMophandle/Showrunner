@@ -18,6 +18,7 @@ import { createFakeLLM, type FakeLLM } from './llm/fake.ts'
 import type { ArtifactEdited } from './edit.ts'
 import type { ArtifactOnTheWire } from './app.ts'
 import type { RunView } from './operating.ts'
+import type { WritingRoomView } from './writing-room.ts'
 import { BOARD_CHECK_STAGE, BOARD_STAGE } from './runner/board-step.ts'
 import { createRulings, openGates } from './runner/gate.ts'
 import { createRunner, type Runner } from './runner/runner.ts'
@@ -726,6 +727,50 @@ describe('the app process — the wire itself', () => {
 
   it('says so for a run that does not exist', async () => {
     const res = await app.request('/api/run/run_nope')
+    expect(res.status).toBe(404)
+  })
+})
+
+// ── The writing room, over the wire (E4-7) ────────────────────────────────────
+
+describe('the app process — the writing room', () => {
+  it('answers with the line, the desks, the doors and the pin, and starts nothing', async () => {
+    const room = await get<WritingRoomView>(`/api/writing/${ep02}`)
+
+    expect(room.label).toBe('ep02')
+    expect(room.line.map((step) => step.step)).toEqual(['premise', 'outline', 'script'])
+    expect(room.line[0]!.offer.sentence).toContain('Write the ep02 premise-brief')
+    // The desk is composed on the read — that is what makes it a preview of what a click
+    // would buy rather than a post-mortem of one.
+    expect(room.line[0]!.desk.prompt).toContain('WRITE THE ep02 PREMISE-BRIEF')
+    expect(room.line[0]!.desk.leftOut.length).toBeGreaterThan(0)
+    expect(room.positions!.waypoints.length).toBeGreaterThan(0)
+
+    // A GET runs nothing and costs nothing (invariant 5, at page-load scale).
+    expect(llm.calls).toEqual([])
+    expect(store.all('SELECT id FROM run')).toEqual([])
+  })
+
+  it('refuses the rejection with the exact sentence the room’s button was showing', async () => {
+    queueThePremise()
+    const started = await post<{ runId: string }>('/api/run', {
+      episodeId: ep02,
+      stage: PREMISE_STAGE,
+    })
+    await runner.settled(started.body.runId)
+
+    const room = await get<WritingRoomView>(`/api/writing/${ep02}`)
+    const gate = room.gates[0]!
+    expect(gate.isOpen).toBe(true)
+
+    // One string, byte for byte: what the disabled button shows and what the route answers.
+    const refused = await post<{ error: string }>(`/api/gate/${gate.id}/reject`, { notes: [] })
+    expect(refused.status).toBe(400)
+    expect(refused.body.error).toBe(gate.rejectNeedsNote)
+  })
+
+  it('says so for an episode that does not exist', async () => {
+    const res = await app.request('/api/writing/ep_nope')
     expect(res.status).toBe(404)
   })
 })

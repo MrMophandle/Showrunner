@@ -25,13 +25,14 @@ import { initLibrary, openLibraryStore, type LibraryPaths } from '../server/libr
 import { describeLLMBackend, type LLMReadiness } from '../server/llm/choose.ts'
 import { createFakeLLM, type FakeLLM } from '../server/llm/fake.ts'
 import { operatingView, runView } from '../server/operating.ts'
-import { openGates } from '../server/runner/gate.ts'
+import { createRulings, openGates } from '../server/runner/gate.ts'
 import { createRunner, type Runner } from '../server/runner/runner.ts'
 import { SCRIPT_GATE_STAGE } from '../server/runner/present-step.ts'
 import { stageCatalogue } from '../server/runner/stages.ts'
 import { PREMISE_STAGE } from '../server/runner/write-step.ts'
 import { TEXT_CHECK_STAGE } from '../server/runner/text-check-step.ts'
 import { sweepView, type SweepView } from '../server/sweep.ts'
+import { writingRoomView, type WritingRoomView } from '../server/writing-room.ts'
 import { App, Page } from './App.tsx'
 import { EMPTY_BENCH, type BenchDraft } from './CanonBench.tsx'
 import { EMPTY_CHECK_DRAFT, type CheckDraft } from './CheckBench.tsx'
@@ -160,11 +161,14 @@ describe('the operating page — the gate', () => {
     expect(html).toContain('greyharbor/s01e02/premise-brief-round-1.md')
 
     // Both verdicts, each stating its own cost. The rejection is disabled until the note
-    // it needs has been written — the same shape as every other blocked button.
+    // it needs has been written — the same shape as every other blocked button, and since
+    // E4-7 in the SERVER's words rather than in a string the browser bundle held privately.
     expect(html).toContain('Approve the ep02 premise-brief')
     expect(html).toContain('No model call · $0.00')
     expect(html).toContain('reopens as round 2')
-    expect(html).toContain('Write the note first')
+    expect(html).toContain(
+      'Rejecting the ep02 premise-brief needs at least one note — “reject with notes” is the verb',
+    )
 
     // Run state is always visible: the steps, and what it cost.
     expect(html).toContain('write-the-premise-brief')
@@ -186,7 +190,7 @@ describe('the operating page — the gate', () => {
       draft: { note: 'Too tidy.', depth: 'premise', target: '', comment: '' },
     })
 
-    expect(html).not.toContain('Write the note first')
+    expect(html).not.toContain('needs at least one note')
     expect(html).toContain('reopens as round 2')
   })
 })
@@ -510,6 +514,154 @@ describe('the page — the completion sweep an approved episode still owes', () 
   })
 })
 
+// ── The writing room (E4-7) ────────────────────────────────────────────────────
+
+describe('the page — the writing room', () => {
+  /**
+   * **The HIL contract, as a string search.** Everything pertinent, present, zero
+   * archaeology: the three buttons with their costs, the desk with every door it opened and
+   * every entity it did not, the gate readable with its loop history and its findings, the
+   * pin, and the pass. If Ryan has to leave this screen to answer "why did it write that",
+   * the screen has failed.
+   */
+  /** A founded show and nothing in flight — the room as Ryan first opens it. */
+  function quietRoom(): WritingRoomView {
+    greyHarborFounded(store, paths)
+    return writingRoomView(store, paths, ep02, READY)!
+  }
+
+  /**
+   * The room after a premise was written and REJECTED, re-opened at round 2 — the drill's
+   * rejection round trip, standing where Ryan reads it back.
+   */
+  async function rejectedRoom(): Promise<WritingRoomView> {
+    const harbor = greyHarborFounded(store, paths)
+    // A backend per round. The show is FOUNDED here, so the panel convenes more than the two
+    // craft reviewers an unfounded one does, and how many is a consequence of who the draft
+    // turns out to be about (4.1) — so a round that convenes fewer than were queued would
+    // leave answers behind and the NEXT round's producer would file one as its draft.
+    const fresh = (): void => {
+      llm = createFakeLLM()
+      runner = createRunner(store, stageCatalogue(paths), events, llm)
+    }
+    const round = (text: string): void => {
+      fresh()
+      llm.reply(text)
+      for (let reviewer = 0; reviewer < 20; reviewer += 1) llm.reply('{"findings": []}')
+    }
+
+    round(WRITTEN)
+    const run = runner.enqueueRun({ episodeId: ep02, stage: PREMISE_STAGE })
+    await runner.settled(run.id)
+
+    round(`${WRITTEN} She pays for it in the count.`)
+    createRulings(store, events, runner).reject(openGates(store)[0]!.gate.id, {
+      notes: [{ note: 'Too tidy. Say what it costs her.' }],
+    })
+    await runner.settled(run.id)
+    // A rider, so the pass is owed and the room says so.
+    raiseProposal(store, {
+      entityId: harbor.entity('Ilse Renn').id,
+      kind: 'fact-delta',
+      raisedBy: 'writer',
+      episodeId: ep02,
+      facts: [{ statement: 'Ilse writes her diversions into the spares ledger by hand.' }],
+    })
+    return writingRoomView(store, paths, ep02, READY)!
+  }
+
+  it('renders the three stage buttons with their sentences and their costs', () => {
+    const html = renderRoom(quietRoom())
+
+    expect(html).toContain('The ep02 writing room')
+    // Verb + object + scope + cost, three times, in line order.
+    expect(html).toContain('Write the ep02 premise-brief from the writer’s desk')
+    expect(html).toContain('Write the ep02 outline from the writer’s desk')
+    expect(html).toContain('Write the ep02 script from the writer’s desk')
+    expect(html).toContain('your money, spent when you click')
+    // The two it has not reached are disabled with the reason in words, before the click.
+    expect(html).toContain('ep02 is at premise and has not reached outline yet')
+    // And the script button says what lands past its gate, because one click buys it.
+    expect(html).toContain('after you approve it')
+  })
+
+  it('renders the desk inspector — every door, every silence, and the three note origins', async () => {
+    const html = renderRoom(await rejectedRoom(), 'premise')
+
+    // The desk's own line about itself.
+    expect(html).toContain('The ep02 premise desk —')
+    expect(html).toContain('canon as the audience knows it at ep02')
+
+    // Inclusions, with the words for the door each entity came through.
+    expect(html).toContain('On the desk because:')
+    expect(html).toContain('standing core')
+
+    // What it was NOT handed, with the rule that kept it out — the half that cannot be
+    // inferred from a list of what was included.
+    expect(html).toContain('What it was not handed, and the rule that kept each one out')
+    expect(html).toContain('Sefa Doule')
+    expect(html).toContain('so not core')
+
+    // Facts, each with the door in TIME it came through, in the prompt's own words.
+    expect(html).toContain('show canon, true before the first episode')
+
+    // The three origins, distinguishable — the drill's rejection round trip, on screen.
+    expect(html).toContain('gate-rejection')
+    expect(html).toContain('Your own rejection of this draft, at its gate')
+    expect(html).toContain('Too tidy. Say what it costs her.')
+
+    // The prompt the next click would send, and what it is a floor of.
+    expect(html).toContain('The prompt this would send, round')
+    expect(html).toContain('floor on what the ep02 writer will be handed, never a ceiling')
+
+    // Vanilla is legal, tracked, and never a failure state.
+    expect(html).toContain('legal, tracked, and never a failure state')
+  })
+
+  it('renders the gate readable, with its loop history and its verbs', async () => {
+    const html = renderRoom(await rejectedRoom())
+
+    // The artifact itself, not its filename (D15, 4.6).
+    expect(html).toContain(WRITTEN)
+    expect(html).toContain('Loop history')
+    // Round 1 is kept, marked stale, with the verdict and the note Ryan wrote on it —
+    // prior rounds persist; they are marked, never replaced (0004).
+    expect(html).toContain(
+      'Round 1 · v1 · stale — from before your last rejection · reject — “Too tidy. Say what it costs her.”',
+    )
+    expect(html).toContain('Round 2 · v2 · open')
+
+    // The three verbs, and the note composer with its depth picker (D21).
+    expect(html).toContain('Approve the ep02 premise-brief')
+    expect(html).toContain('OVER')
+    expect(html).toContain('How deep it goes back:')
+    expect(html).toContain('unrouted — the legal default')
+    // The rejection is blocked until the note is typed, in the API's own sentence.
+    expect(html).toContain('Rejecting the ep02 premise-brief needs at least one note')
+  })
+
+  it('renders the doors on each draft, the arc pin, and the owed pass', async () => {
+    const html = renderRoom(await rejectedRoom())
+
+    // E4-5's two doors, both free — and the rejection wrote v2, so they point at v2.
+    expect(html).toContain('Edit the ep02 premise-brief yourself')
+    expect(html).toContain('lands word for word as v3')
+    expect(html).toContain('Present the ep02 premise-brief v2 for your ruling')
+
+    // E4-4's door: the pin, free, raising nothing.
+    expect(html).toContain('Where ep02 stands on its arcs')
+    expect(html).toContain('Declare ep02 at waypoint 1')
+    expect(html).toContain('the landing proposal is raised when the script is read')
+
+    // E4-6's owed pass — and no fourth button that rules it all at once.
+    expect(html).toContain('ep02 carries 1 proposal to rule')
+    expect(html).toContain('Rule the 1 proposal riding ep02')
+    for (const bulk of [/ratify all/i, /approve all/i, /rule them all/i, /rule the rest/i]) {
+      expect(html).not.toMatch(bulk)
+    }
+  })
+})
+
 // ── Test kit ────────────────────────────────────────────────────────────────────
 
 /**
@@ -548,9 +700,38 @@ function render(
       sweep={null}
       sweepEpisode={null}
       onShowSweep={() => undefined}
+      room={null}
+      roomEpisode={null}
+      onShowRoom={() => undefined}
       {...over}
     />,
   ).replaceAll('<!-- -->', '')
+}
+
+/**
+ * The writing room, with the real room the server composed. Handlers are no-ops: what is
+ * under test is what Ryan READS. `openDesk` folds one step's inspector open, because a desk
+ * is a read the server has already composed rather than a fetch.
+ */
+function renderRoom(room: WritingRoomView, openDesk: string | null = null): string {
+  return render(operatingView(store, paths, READY), {
+    roomEpisode: room.episodeId,
+    room: {
+      room,
+      busy: false,
+      openDesk,
+      onOpenDesk: () => undefined,
+      onLaunch: () => undefined,
+      note: { note: '', depth: '', target: '' },
+      onNote: () => undefined,
+      onRule: () => undefined,
+      onEdit: () => undefined,
+      onDeclare: () => undefined,
+      onShowSweep: () => undefined,
+      onShowRun: () => undefined,
+      onClose: () => undefined,
+    },
+  })
 }
 
 /** The completion sweep, with the real pass the server composed. Handlers are no-ops. */

@@ -37,10 +37,11 @@ import {
   recheckScene,
   remediationsFor,
 } from './remediation.ts'
-import type { NoteDraft, Rulings } from './runner/gate.ts'
+import { gateStanding, rejectionNeedsANote, type NoteDraft, type Rulings } from './runner/gate.ts'
 import type { Runner } from './runner/runner.ts'
 import { stageCatalogue } from './runner/stages.ts'
 import { notOnAnEpisodeSweepBecause, sweepView } from './sweep.ts'
+import { writingRoomView } from './writing-room.ts'
 
 const WEB_ROOT = './dist/web'
 
@@ -228,14 +229,14 @@ export function createApp(
     const body = await json(c.req.raw)
     const notes = notesFrom(body['notes'])
     if (notes.length === 0) {
-      return c.json(
-        {
-          error:
-            'Rejecting needs at least one note — "reject with notes" is the verb, and the ' +
-            'notes are what the step reopens with.',
-        },
-        400,
-      )
+      // Refused in the sentence the disabled button was already showing, which is what makes
+      // "preconditions before the button" true rather than decorative (D15). It is composed
+      // by `gate.ts` and it names the subject, so this loads the gate rather than wording a
+      // second refusal here — until E4-7 the button, this route and the ruling said three
+      // different things about one rule.
+      const standing = gateStanding(store, c.req.param('id'))
+      if (!standing) return c.json({ error: `No such gate: ${c.req.param('id')}` }, 404)
+      return c.json({ error: rejectionNeedsANote(standing.subject) }, 400)
     }
     return rule(c, () => operating.rulings.reject(c.req.param('id'), { notes }))
   })
@@ -249,6 +250,22 @@ export function createApp(
    */
   app.get('/api/checks/:episodeId', (c) => {
     const view = checkBenchView(store, paths, c.req.param('episodeId'), operating.readiness())
+    if (!view) return c.json({ error: `No such episode: ${c.req.param('episodeId')}` }, 404)
+    return c.json(view)
+  })
+
+  /**
+   * The writing room for one episode (E4-7) — the writing line's three buttons with their
+   * declared sentences and costs, the desk behind each one, every gate readable with its loop
+   * history and its clustered findings, the edit doors, the arc pin, and the owed sweep.
+   *
+   * A GET, and it starts nothing: the whole room is a read over rows seven issues already
+   * wrote (`writing-room.ts`). Opening it costs nothing and makes no model call, which is
+   * invariant 5 said about a page load — and it is what makes the desk a preview of what a
+   * click would buy rather than a post-mortem of one.
+   */
+  app.get('/api/writing/:episodeId', (c) => {
+    const view = writingRoomView(store, paths, c.req.param('episodeId'), operating.readiness())
     if (!view) return c.json({ error: `No such episode: ${c.req.param('episodeId')}` }, 404)
     return c.json(view)
   })

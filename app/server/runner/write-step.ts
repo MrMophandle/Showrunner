@@ -36,6 +36,7 @@ import {
   producedBy,
   type ArcInContext,
   type EntityInContext,
+  type FactReach,
   type WriteContext,
   type WriteStep,
 } from '../domain/write-context.ts'
@@ -890,8 +891,16 @@ function entityLines(held: EntityInContext): string[] {
   return lines
 }
 
-/** The audience-knowledge door a fact came through, in words a writer can act on. */
-const REACH: Record<string, string> = {
+/**
+ * The audience-knowledge door a fact came through, in words a writer can act on.
+ *
+ * **Exported for E4-7's desk inspector**, and typed to the closed set rather than to `string`
+ * so a fifth reach cannot be added without this map failing to compile. The inspector answers
+ * "why did the writer know that" with the same four sentences the prompt below hands the model
+ * — a second vocabulary on the screen would let Ryan read one thing and the writer be told
+ * another, which is the whole failure the desk exists to make impossible.
+ */
+export const REACH: Record<FactReach, string> = {
   'show-level': 'show canon, true before the first episode',
   'established-earlier': 'established in an earlier episode, already on screen',
   'established-here': 'established in this episode',

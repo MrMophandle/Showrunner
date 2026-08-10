@@ -30,7 +30,11 @@ import {
   type FindingRemediations,
   type RecheckOnTheBench,
 } from './remediation.ts'
-import { stageBlockedBecause, stageBlockingFindings } from './runner/stage-wall.ts'
+import {
+  BLOCKS_THE_NEXT_STAGE,
+  stageBlockedBecause,
+  stageBlockingFindings,
+} from './runner/stage-wall.ts'
 import { stageCatalogue } from './runner/stages.ts'
 import { artifactOf } from './runner/text-check-step.ts'
 
@@ -404,19 +408,12 @@ function clustersOn(
         quote: say.quote,
         status: say.status,
         facts: say.facts,
-        // Severity and confidence beside each other and never folded (invariant 4): "how bad
-        // if true" and "how sure it is true" are two questions, and one word cannot answer
-        // both. The tier rides with them because `certain` means something different from a
-        // model's certainty, and 4.2 says so.
-        sentence:
-          `${say.checkKey} · severity ${say.severity} · confidence ${say.confidence} · ` +
-          `${say.tier === 'deterministic' ? 'deterministic, from the rows' : 'text, a reading'}`,
+        // Severity and confidence beside each other and never folded (invariant 4) — composed
+        // by `panel.ts`, where a say is defined, because E4-7's writing room renders the
+        // premise-brief's and the outline's clusters and this bench is script-only.
+        sentence: say.sentence,
         blocking: blocks,
-        blockingSentence: blocks
-          ? 'Blocks the next stage until it is resolved, and never this gate (D12): approving ' +
-            'over it at the gate is recorded as your override, putting it down with a note is ' +
-            'your answer, and a rewrite that re-reads clean is the third way.'
-          : null,
+        blockingSentence: blocks ? BLOCKS_THE_NEXT_STAGE : null,
         dismissal:
           finding?.disposition === null || finding?.disposition === undefined
             ? null

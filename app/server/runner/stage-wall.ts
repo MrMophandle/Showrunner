@@ -70,6 +70,21 @@ import { overriddenThrough } from './gate.ts'
  * The override below is still the third way, and still the only one that takes a gate.
  */
 
+/**
+ * **What a blocking finding says on the card it appears on** — D12 in one sentence, and the
+ * three ways down from it.
+ *
+ * It lives here rather than on the surface that renders it because there is more than one
+ * surface now: E3-7's check bench marks the script's blocking findings with it, and E4-7's
+ * writing room marks them at the gate the override is pressed at. Two copies would drift, and
+ * the one that drifted would be the one telling Ryan a deterministic finding reaches his gate
+ * — which is the single thing D12 exists to deny.
+ */
+export const BLOCKS_THE_NEXT_STAGE =
+  'Blocks the next stage until it is resolved, and never this gate (D12): approving over it ' +
+  'at the gate is recorded as your override, putting it down with a note is your answer, and ' +
+  'a rewrite that re-reads clean is the third way.'
+
 /** One finding standing in the way, with what a sentence needs to name it. */
 export interface StageBlock {
   finding: Finding

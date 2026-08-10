@@ -5,6 +5,7 @@ import type { EventRecord } from '../server/events.ts'
 import type { EpisodeOnThePage, OperatingView, RunView } from '../server/operating.ts'
 import type { NoteDepth } from '../server/runner/gate.ts'
 import type { SweepView } from '../server/sweep.ts'
+import type { WritingRoomView } from '../server/writing-room.ts'
 import {
   CanonBench,
   EMPTY_BENCH,
@@ -20,6 +21,7 @@ import {
   type CheckDraft,
 } from './CheckBench.tsx'
 import { EMPTY_SWEEP, Sweep, type SweepDraft, type SweepProps } from './Sweep.tsx'
+import { WritingRoom, type WritingRoomProps } from './WritingRoom.tsx'
 import { ARTIFACT, Button, CARD, FAINT, needing, PAGE, STREAM } from './kit.tsx'
 
 /**
@@ -110,6 +112,18 @@ export function App() {
   const [sweep, setSweep] = useState<SweepView | null>(null)
   const [sweepDraft, setSweepDraft] = useState<SweepDraft>(EMPTY_SWEEP)
 
+  // The writing room (E4-7). Episode-scoped and opened by hand, like the check bench and the
+  // sweep — a page that picked an episode silently would be composing three writer's desks
+  // for an episode Ryan never asked about. It IS on the event stream, unlike the other two:
+  // every button in it starts a run, and what a run does to the desk, the gates, the wall and
+  // the offers is exactly what the room renders.
+  const [roomEpisode, setRoomEpisode] = useState<string | null>(null)
+  const [room, setRoom] = useState<WritingRoomView | null>(null)
+  /** Which desk is folded open, by step. A read the server already composed — never a fetch. */
+  const [openDesk, setOpenDesk] = useState<string | null>(null)
+  /** Which room is on screen, readable inside the stream's listener without re-subscribing. */
+  const inTheRoom = useRef<string | null>(null)
+
   /** Where the bench's controls stand, as the API reads them — a string, so an effect can watch it. */
   const controls = new URLSearchParams({
     ...(entityId !== null && { entity: entityId }),
@@ -147,6 +161,11 @@ export function App() {
   const loadSweep = useCallback(async (episodeId: string): Promise<void> => {
     const res = await fetch(`/api/sweep/${episodeId}`)
     setSweep(res.ok ? ((await res.json()) as SweepView) : null)
+  }, [])
+
+  const loadRoom = useCallback(async (episodeId: string): Promise<void> => {
+    const res = await fetch(`/api/writing/${episodeId}`)
+    setRoom(res.ok ? ((await res.json()) as WritingRoomView) : null)
   }, [])
 
   // First load. It also picks up whatever this process came back to: a run left parked on
@@ -187,6 +206,13 @@ export function App() {
     if (sweepEpisode) void loadSweep(sweepEpisode)
   }, [sweepEpisode, loadSweep])
 
+  // The writing room re-reads when Ryan opens a different episode's, and on nothing else. A
+  // GET, so opening it writes nothing and spends nothing (invariant 5).
+  useEffect(() => {
+    inTheRoom.current = roomEpisode
+    if (roomEpisode) void loadRoom(roomEpisode)
+  }, [roomEpisode, loadRoom])
+
   /**
    * The stream. It opens at sequence 0, so this panel is also the log — after a restart it
    * replays everything the killed process wrote before it died, which is how "it resumed"
@@ -210,10 +236,14 @@ export function App() {
         // cards. It is re-read rather than patched: the whole thing is computed off rows, so
         // there is nothing here that could be kept up to date by hand (1.3).
         if (benched.current !== null) void loadChecks(benched.current)
+        // Everything in the writing room moves when a run does: the desk (a note landed, a
+        // finding was dismissed), the gates, the wall, and every offer. It is re-read rather
+        // than patched, for the reason the bench is — the whole thing is computed off rows.
+        if (inTheRoom.current !== null) void loadRoom(inTheRoom.current)
       })
     }
     return () => source.close()
-  }, [stream, loadView, loadRun, loadChecks])
+  }, [stream, loadView, loadRun, loadChecks, loadRoom])
 
   /**
    * Ryan's click on one stage's button — the demo's, or one of the check bench's.
@@ -261,6 +291,39 @@ export function App() {
       else setEditing(null)
       await loadView()
       if (checkEpisode) await loadChecks(checkEpisode)
+      if (roomEpisode) await loadRoom(roomEpisode)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  /**
+   * **Moving the pin** (E4-4, D8): free, and it raises nothing. The landing proposal that
+   * turns a pin into a fact is raised when the script is read, with the subject only the
+   * writer can answer for — which is why declaring and landing are two calls (`canon-bench.ts`).
+   *
+   * The route answers with the canon bench, because that is where it was built; the room is
+   * re-read afterwards because the pin is on its desks as well as on its door.
+   */
+  async function declare(episodeId: string, arcId: string, waypointId: string): Promise<void> {
+    setBusy(true)
+    setProblem(null)
+    try {
+      const res = await fetch(`/api/canon/episode/${episodeId}/position`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ arcId, waypointId }),
+      })
+      const payload: unknown = await res.json()
+      if (!res.ok) {
+        setProblem(
+          (payload as { error?: string }).error ??
+            'The declaration was refused, and said nothing about why.',
+        )
+      } else if (benchShow) {
+        setCanon(payload as CanonBenchView)
+      }
+      if (roomEpisode) await loadRoom(roomEpisode)
     } finally {
       setBusy(false)
     }
@@ -280,6 +343,7 @@ export function App() {
       else if (body.runId) setRunId(body.runId)
       await loadView()
       if (checkEpisode) await loadChecks(checkEpisode)
+      if (roomEpisode) await loadRoom(roomEpisode)
     } finally {
       setBusy(false)
     }
@@ -311,6 +375,7 @@ export function App() {
         return null
       }
       if (checkEpisode) await loadChecks(checkEpisode)
+      if (roomEpisode) await loadRoom(roomEpisode)
       await loadView()
       return payload
     } finally {
@@ -370,6 +435,9 @@ export function App() {
       // An override takes D12's wall down (`stage-wall.ts`), and the bench is where Ryan
       // watches it fall. Nothing wrote an unblock — this is a re-read of the same question.
       if (checkEpisode) await loadChecks(checkEpisode)
+      // A rejection lands a note that the next writer run reads back off the desk, so the
+      // room's inspector is where "it provably read it" is seen — before the next click.
+      if (roomEpisode) await loadRoom(roomEpisode)
     } finally {
       setBusy(false)
     }
@@ -439,6 +507,9 @@ export function App() {
       // A ratified rider is canon now, so the bench's own facts, ledger and queue have all
       // moved. Re-read rather than patched: every number on it is computed off rows.
       if (benchShow) await loadCanon(benchShow, controls)
+      // And so has every desk in the room: a fact ratified onto this episode reaches its own
+      // writer as `established-here` rather than as a claim still riding (`write-context.ts`).
+      if (roomEpisode) await loadRoom(roomEpisode)
     } finally {
       setBusy(false)
     }
@@ -491,6 +562,33 @@ export function App() {
         setCheckDraft(EMPTY_CHECK_DRAFT)
       }}
       checkEpisode={checkEpisode}
+      roomEpisode={roomEpisode}
+      onShowRoom={(episodeId) => {
+        setRoomEpisode(episodeId)
+        setOpenDesk(null)
+      }}
+      room={
+        room === null || roomEpisode === null
+          ? null
+          : {
+              room,
+              busy,
+              openDesk,
+              onOpenDesk: setOpenDesk,
+              onLaunch: (stage) => void launch(roomEpisode, stage),
+              note: { note: draft.note, depth: draft.depth, target: draft.target },
+              onNote: (next) => setDraft({ ...draft, ...next }),
+              onRule: (gateId, verdict) => void rule(gateId, verdict),
+              onEdit: (artifactId) => void openEdit(artifactId),
+              onDeclare: (arcId, waypointId) => void declare(roomEpisode, arcId, waypointId),
+              onShowSweep: (episodeId) => {
+                setSweepEpisode(episodeId)
+                setSweepDraft(EMPTY_SWEEP)
+              },
+              onShowRun: setRunId,
+              onClose: () => setRoomEpisode(null),
+            }
+      }
       sweepEpisode={sweepEpisode}
       onShowSweep={(episodeId) => {
         setSweepEpisode(episodeId)
@@ -620,6 +718,16 @@ export interface PageProps {
   /** Which episode's pass is open, so the button for it can say it already is. */
   sweepEpisode: string | null
   onShowSweep(episodeId: string): void
+  /**
+   * **The writing room, whole** (E4-7): the writing line's three buttons with the writer's
+   * desk behind each, every gate readable, the doors onto each draft, the arc pin, and the
+   * owed sweep. Null until one is opened — three desks composed for an episode Ryan is not
+   * looking at is work nobody asked for.
+   */
+  room: WritingRoomProps | null
+  /** Which episode's room is open, so the button for it can say it already is. */
+  roomEpisode: string | null
+  onShowRoom(episodeId: string): void
   /**
    * Which show the bench is standing at. Canon is scoped to a show and this page renders
    * one bench, so a library with two shows needs a way to say which — never a first one
@@ -777,6 +885,18 @@ export function Page(props: PageProps) {
                 </div>
               )}
 
+              {/* Not an action and so not a costed sentence: it opens a read. The writing
+                  room's own buttons are where anything is written or spent (E4-7). */}
+              <p>
+                {props.roomEpisode === episode.id ? (
+                  <em>The writing room below is standing at {episode.label}.</em>
+                ) : (
+                  <button type="button" onClick={() => props.onShowRoom(episode.id)}>
+                    Open the {episode.label} writing room below
+                  </button>
+                )}
+              </p>
+
               {/* Not an action and so not a costed sentence: it opens a read. The check
                   bench's own buttons are where anything is run or spent (E3-7). */}
               <p>
@@ -900,8 +1020,11 @@ export function Page(props: PageProps) {
                   />
                 </label>
               </p>
+              {/* The one precondition this section applies rather than reads — the note is in
+                  a textarea the server has never seen. The SENTENCE is still the server's, and
+                  it is the one the API refuses with (E4-7, `runner/gate.ts`). */}
               <Button
-                offer={needing(run.gate.reject, draft.note, GATE_NOTE_REQUIRED)}
+                offer={needing(run.gate.reject, draft.note, run.gate.rejectNeedsNote)}
                 busy={busy}
                 onClick={() => props.onRule(run.gate!.id, 'reject')}
               />
@@ -957,6 +1080,10 @@ export function Page(props: PageProps) {
       )}
       {props.bench && <CanonBench {...props.bench} />}
 
+      {/* The writing room (E4-7). It renders what seven issues recorded and invents no
+          mechanic: every button on it is a route that existed before it did. */}
+      {props.room && <WritingRoom {...props.room} />}
+
       {/* Checks (E3-7). It renders what six issues recorded and records nothing of its own;
           the acts on it raise, revise or record, and not one of them ratifies. */}
       {props.checks && <CheckBench {...props.checks} />}
@@ -983,12 +1110,3 @@ export function Page(props: PageProps) {
     </main>
   )
 }
-
-/**
- * The one precondition the gate section owns rather than reads: a rejection needs a note,
- * and the note is in a textarea the server has never seen. The canon section states its
- * three the same way, off the sentences the bench hands down (`refusals`).
- */
-const GATE_NOTE_REQUIRED =
-  'Write the note first — "reject with notes" is the verb, and the note is what the ' +
-  'step reopens with.'
