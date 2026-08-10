@@ -461,7 +461,7 @@ surface that renders them as one "approve anyway" button, or any query that coun
 interchangeably outside cried-wolf's explicit both-count rule, breaks a distinction two
 separate rulings created on purpose.
 
-### `script-gate` exists for the override door, and E4 decides its fate (E3-7, #47)
+### `script-gate` exists for the override door, and E4 decides its fate (E3-7, #47) — **decided in E4-3**
 
 The override verb needs an open gate on the artifact the finding stands in, and until
 E3-7 nothing ever opened a gate over a script — so `script-gate` is a zero-spend,
@@ -472,7 +472,25 @@ unexamined means two gates over one artifact with different payloads.
 
 *E4-1 looked and left it standing, deliberately: the gate it convenes is over the SCRIPT, and
 the only writing gate this build has is over the premise-brief — so there are not yet two
-gates over one artifact. **E4-3 is where the call gets made.***
+gates over one artifact.*
+
+**E4-3 (#63) made the call: generalized, not retired** — `runner/present-step.ts`, one
+presenting stage per written kind (`premise-gate`, `outline-gate`, `script-gate`). Retiring it
+would have turned two sentences this app already says into lies: a writing stage refuses an
+episode that already has its artifact with "rule on it at its gate, or edit it directly", and a
+writing gate exists only while its run does — so a script the fixture wrote by hand, an E7
+import, or a re-ruling after a rewrite would have had no gate to be ruled at, and ep01's
+override door (the one the E3 drill operates) would have closed. `script-gate` keeps E3-7's
+name because rows are records and there are runs under it; renaming it would retire a stage
+still parked on a decision.
+
+Two gates over one artifact are prevented by two different things, and both are load-bearing.
+**Never at once**: a gate belongs to a STEP, and D7's one-run-per-episode refuses every stage
+while a run is queued, running or paused — asserted in both directions in
+`present-step.test.ts`. **Never two screens**: both doors compose the payload from one
+function, `draftsUnderReview` (`correction-loop.ts`), so what Ryan is handed over one artifact
+does not depend on which door he came in by. Only the *sentence* differs, because only the
+sentence is about why that particular gate opened.
 
 ### New stages declare, refusals consult (E3-7, #47)
 
@@ -487,7 +505,8 @@ cannot repeat it.
 
 Written as E4's issues land, for the same reason as every list above. The first four are
 E4-1's (#61) and the first three bound E4-2 directly; the three after them are E4-2's (#62)
-and they bind E4-3.
+and bound E4-3; the last three are E4-3's (#63), and the scene rules among them bind E4-5's
+direct editor and E6's shot manifest before anything else touches a scene.
 
 ### One seam moves an episode's lifecycle, and the builder is what makes it a seam (E4-1, #61)
 
@@ -577,7 +596,13 @@ it would do it silently — `num_scenes` would simply come out equal to the numb
 and look like a coincidence. `outline-stage.test.ts`'s zero-scene-rows test is the assertion
 that fails on the outline side; E4-3 owes the one that fails on the script side.
 
-### E4-2 shipped a stage the floor cannot click, on purpose (E4-2, #62)
+*Paid by E4-3: the ask states the count is the writer's and refuses the pairing-off in as many
+words ("do not pair its movements off against scenes"), and `script-stage.test.ts` reads the
+captured prompt for both. The fixture's own outline has three movements and the test's draft
+has three scenes; the assertion that keeps that a coincidence rather than a mechanism is that
+nothing anywhere reads the outline's headings — the desk hands it over whole, as prose.*
+
+### E4-2 shipped a stage the floor cannot click, on purpose (E4-2, #62) — **closed in E4-3**
 
 `operatingView` still offers ONE stage per episode and it is still the premise (operating.ts).
 Pointing it at "the stage this episode's lifecycle is at" needs a map with no hole in it, and
@@ -585,6 +610,69 @@ there is a hole until E4-3's script stage exists — ep01 sits at `script`. So `
 is reachable by name through `POST /api/run` (which is how E4-2's boot proof exercised it) and
 by nothing on a screen. **E4-3 completes the map and E5 owns the card**; whoever closes it
 should do it once, for all three stages, rather than special-casing two.
+
+*Closed by E4-3 in `stageForEpisode` (operating.ts): `WRITING_STAGE` maps premise → outline →
+script onto the three writing stages, once, and the card offers the stage its episode's
+lifecycle names. **Past the writing line the map is deliberately partial** — `assets`,
+`assembled` and `published` are E6's and E7's, and a map that pretended to cover them would be
+a button promising work no code does. An episode past `script` is offered the script presented
+for a ruling instead: free, never walled, and the one thing this build can still honestly do
+with it. E6 replaces that tail by adding its stages to the map.*
+
+### A scene is its heading, and that is now load-bearing everywhere (E4-3, #63)
+
+E4-3 had to decide how a scene survives a whole-script rewrite, and ruled it in one sentence:
+**re-delineating matches a new draft's scenes to the standing rows by heading and by nothing
+else.** A heading still there is the same scene wherever it has moved to; a heading gone takes
+its scene with it; a heading that is new is a new scene. The argument lives in
+`domain/delineate.ts`, the write in `delineateScenes` (spine.ts), and the three edges have a
+test apiece (`spine.test.ts`) plus an end-to-end one (`script-stage.test.ts`).
+
+The decisive edge is **insertion**, not renaming: under the ordinal identity this replaced,
+a scene added in the middle moved every anchor after it up by one, silently. Identity therefore
+cannot be the ordinal, and the ordinal is recomputed from the draft every time.
+
+Three things fall out that a later epic inherits rather than re-decides:
+
+- **Two scenes may not share a heading**, and `delineateScenes` refuses it in words. It is an
+  ambiguity, not a duplicate: `sceneSpans` locates a scene by looking its heading up in the
+  text, so two the same makes every span after the first wrong — including the ones an anchor
+  was verified against. The script ask says so to the writer as well.
+- **A rename degrades its findings to the whole artifact**, which is what 0010's
+  `ON DELETE SET NULL` was designed for. It had never been reachable: SQLite runs SET NULL as
+  an UPDATE and 0010's own immutability trigger aborted it. **Migration 0013** narrows that
+  trigger to permit exactly that one update — an anchor may lose its scene and may never be
+  moved to a different one — and nothing else about a finding moved.
+- **`releaseScene` (artifact.ts) is what the artifact tables do about it**, because
+  `artifact_revision` and `artifact_input` both index over `COALESCE(scene_id, '')` and two rows
+  degrading together would collide. A revision is a record and merges; an input edge is a
+  per-scene reading and goes, which is 0011's ruling for `board_scene` about the same fact.
+
+### One delineator, two callers, and the fixture is its proof (E4-3, #63)
+
+`delineateScript` (`domain/delineate.ts`) is the only thing in this app that reads scenes out of
+a script. The fixture's loader goes through it (`fixture/read.ts`) and so does every landed
+draft, because "the fixture's scenes" and "a draft's scenes" being two readings of one
+convention is the second-parser failure at the scene layer. The proof is not a comment:
+`delineate.test.ts` delineates `fixtures/greyharbor/episode/01-the-long-pier/script.md` and
+gets back the rows `fixture:load` plants, ids included.
+
+**The fixture's script is a fixed point** (the E1 ledger, still): scene 4 is the world-rules
+violation and 5–6 are the dual presence. A delineator that wants that file changed is the
+delineator that is wrong.
+
+### Delineation runs per landed draft, and E4-5's editor inherits that (E4-3, #63)
+
+Scenes are derived inside the correction loop, by the producer, **before that round's checks
+read a word** — findings anchor by scene, so a panel reading a fresh draft against the last
+draft's grid would anchor everything in the wrong place. It also runs BEFORE the bytes land, so
+a draft whose scenes cannot be read out of it fails without a file and the runner's retry buys
+a NEW draft rather than re-reading the broken one three times.
+
+**Any later path that writes a script version owes the same two motions** — E4-5's direct edit
+and E7's import both. It is the artifact-layer sibling of E3-5's rule that every new version
+must be read before the wall can trust it: a version delineated against the previous draft's
+headings is a grid nobody derived, and nothing downstream can tell it from one that was.
 
 ## Working agreements that bind every session
 

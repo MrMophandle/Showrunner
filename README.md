@@ -85,9 +85,10 @@ The checks epic's exit, as one sitting. It takes about twenty minutes and the bu
 **about $1.60** of real money — the panel is $1.20 of it. Every button states its cost before
 you press it and says whose money it is; the ledger afterwards is what was really spent.
 
-Two of the four buttons on this bench cost **nothing at all**, and that is the point rather
+Four of the six buttons on this bench cost **nothing at all**, and that is the point rather
 than a saving: the deterministic tier reads rows a reading already paid for, so a correction
-loop never bills you twice for the same script.
+loop never bills you twice for the same script — and three of the free four are the stages that
+simply put a written artifact in front of you for a ruling (E4-3).
 
 The sentence you are about to make true four times: **checks argue, they never veto.** A red
 finding makes an artifact loud. One kind of finding — the deterministic kind, which counts rows
@@ -126,7 +127,7 @@ Scroll to **Checks — ep01 · The Long Pier**. You should see:
 - **Verdict board — script v1** above it saying *0 of 10 reviewers have read this draft*. Not
   "clean". Nothing has read it, and a board that rendered an unread panel as a short clean one
   would be the exact lie this epic exists to prevent;
-- four buttons under **Read it**, two of them priced and two of them `No model call · $0.00`;
+- six buttons under **Read it**, two of them priced and four of them `No model call · $0.00`;
 - **The next stage: Not blocked.**
 
 ### 2 · Build the continuity board — the deterministic tier (~$0.12)
@@ -158,17 +159,19 @@ so it says the same thing every time:
    > deterministic ones cost nothing.
 
    Scroll **up** to the ep01 card. Its launch button is disabled too — but read what it says:
-   *ep01 already has a premise-brief — rule on it at its gate, or edit it directly.* E4-1
-   retired the `demo` stage and put the **premise stage** behind that button, and a stage with
-   nothing to do says so before the wall is ever consulted. The wall and the refusal still come
-   out of one composer (`launchBlockedBecause`), and you can watch them be the same string on
-   an episode where a producing stage still has work: **ep02**, which has no premise yet.
+   *ep01 already has a script — rule on it at its gate, or edit it directly (E4-5).* Since E4-3
+   the card offers the stage the episode's **lifecycle** is at, and ep01 is at `script`; a stage
+   with nothing to do says so before the wall is ever consulted. The gate that sentence points
+   at is real — *Present the ep01 script v1 for your ruling* — and it is what step 5 rules on.
+   The wall and the refusal still come out of one composer (`launchBlockedBecause`), and you can
+   watch them be the same string on an episode where a producing stage still has work: **ep02**,
+   which has no premise yet.
 4. **The two obeyed rules are on the board, green.** `impossible-adjacency` and
    `duplicate-arrival` each read the grid and found nothing, and each has a row saying so.
    That is a **measurement**, not an absence — and it is the denominator the cried-wolf record
    at the bottom of the bench counts against.
 
-Note what is *not* blocked: all four **Read it** buttons are still live. The wall's own sentence
+Note what is *not* blocked: all six **Read it** buttons are still live. The wall's own sentence
 tells you to re-run the checks, and a wall that then refused that button would be a dead end
 built out of its own advice.
 

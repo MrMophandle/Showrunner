@@ -236,6 +236,46 @@ export function replaceInputs(store: Store, artifactId: string, inputs: Artifact
   })
 }
 
+/**
+ * What the artifact tables do about a scene that is about to stop existing (E4-3).
+ *
+ * A rewrite that renames a heading raises a new scene and takes the old one with it — a scene
+ * is its heading (`domain/delineate.ts`) — and `delineateScenes` calls this before the row
+ * goes. The FK on `artifact.scene_id` handles itself (SET NULL, one column, nothing unique to
+ * collide with) and `finding.scene_id` degrades the same way through 0013. These two need a
+ * decision, because both carry a UNIQUE index over `COALESCE(scene_id, '')` and two rows of
+ * one artifact degrading together would land on it — and the right answer differs by table:
+ *
+ *   * **A revision is a record and it stays.** "Your scene-3 edit made v4" degrades to "v4
+ *     changed the whole artifact", which is the same claim with less detail. Merged rather
+ *     than duplicated: two degraded rows at one version would be one fact written twice, and
+ *     the loop below leaves exactly one because the second finds the first already there.
+ *   * **An input edge is a per-scene reading, and it goes.** An edge saying this artifact
+ *     consumed a scene that no longer exists is a row about nothing — 0011's own ruling for
+ *     `board_scene`, about the same fact — and it would freeze a whole-artifact edge at an old
+ *     version, which is the permanent staleness `replaceInputs` exists to prevent. The next
+ *     rebuild writes the whole set again.
+ */
+export function releaseScene(store: Store, sceneId: string): void {
+  store.transaction(() => {
+    store.run('DELETE FROM artifact_input WHERE scene_id = ?', sceneId)
+
+    for (const row of store.all<{ rowid: number; artifact_id: string; version: number }>(
+      'SELECT rowid, artifact_id, version FROM artifact_revision WHERE scene_id = ?',
+      sceneId,
+    )) {
+      const whole = store.get<{ one: number }>(
+        `SELECT 1 AS one FROM artifact_revision
+          WHERE artifact_id = ? AND version = ? AND scene_id IS NULL`,
+        row.artifact_id,
+        row.version,
+      )
+      if (whole) store.run('DELETE FROM artifact_revision WHERE rowid = ?', row.rowid)
+      else store.run('UPDATE artifact_revision SET scene_id = NULL WHERE rowid = ?', row.rowid)
+    }
+  })
+}
+
 // ── Reading ─────────────────────────────────────────────────────────────────────
 
 export function findArtifact(store: Store, id: string): Artifact | undefined {

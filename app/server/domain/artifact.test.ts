@@ -236,3 +236,103 @@ describe('artifacts, provenance, and computed freshness', () => {
     expect(staleArtifacts(store, episode.id).map((s) => s.artifact.id)).not.toContain(staleShot.id)
   })
 })
+
+/**
+ * **What the artifact tables do about a scene that stops existing** (E4-3, `releaseScene`).
+ *
+ * A rewrite that renames a heading raises a new scene and takes the old one with it, so this
+ * is the first thing in the app that deletes a scene other rows point at. Both tables here
+ * carry a UNIQUE index over `COALESCE(scene_id, '')`, so two rows of one artifact degrading
+ * together would land on it — and the two tables want opposite things about that.
+ */
+describe('a scene that stops existing', () => {
+  function twoScenesConsumedAndRevised() {
+    const show = createShow(store, { key: 'greyharbor', title: 'Grey Harbor' })
+    const season = createSeason(store, { showId: show.id, number: 1 })
+    const episode = createEpisode(store, { seasonId: season.id, number: 5, title: 'The Quiet Deck' })
+    const scenes = delineateScenes(store, episode.id, [
+      { heading: 'Mess deck' },
+      { heading: 'Corridor spine' },
+      { heading: 'The quiet deck (deck 9)' },
+    ])
+    const script = recordArtifact(store, {
+      episodeId: episode.id,
+      kind: 'script',
+      filePath: 'ep05/script.md',
+    })
+    const board = recordArtifact(store, {
+      episodeId: episode.id,
+      kind: 'continuity-board',
+      filePath: 'ep05/continuity.json',
+    })
+    // One edge per scene, which is how a continuity board declares what it read (E3-1).
+    recordInputs(
+      store,
+      board.id,
+      scenes.map((scene) => ({ artifactId: script.id, sceneId: scene.id })),
+    )
+    // And one revision naming two scenes at one version — E3-5's rewrite touching two.
+    reviseArtifact(store, script.id, {
+      summary: 'the first two scenes rewritten',
+      touchedScenes: [scenes[0]!.id, scenes[1]!.id],
+    })
+    return { episode, script, board, scenes }
+  }
+
+  it('drops the input edges that read it, and merges the revisions that named it', () => {
+    const { episode, script, board } = twoScenesConsumedAndRevised()
+
+    // Both of the first two headings renamed at once: two edges and two revisions degrade in
+    // the same delineation, which is exactly the case the UNIQUE indexes would refuse.
+    delineateScenes(store, episode.id, [
+      { heading: 'Mess deck, later' },
+      { heading: 'Corridor spine, dark' },
+      { heading: 'The quiet deck (deck 9)' },
+    ])
+
+    // The edges are gone with the scenes: an edge saying the board read a scene that no longer
+    // exists is a row about nothing (0011's ruling for `board_scene`, about the same fact), and
+    // it would freeze a whole-artifact edge at an old version — permanent staleness.
+    expect(
+      store.all<{ scene_id: string | null }>(
+        'SELECT scene_id FROM artifact_input WHERE artifact_id = ?',
+        board.id,
+      ),
+    ).toHaveLength(1)
+
+    // The revision is a RECORD and it stays — degraded to the whole artifact, and merged, so
+    // the version says once what it used to say twice.
+    expect(
+      store.all<{ version: number; scene_id: string | null; summary: string }>(
+        'SELECT version, scene_id, summary FROM artifact_revision WHERE artifact_id = ? ORDER BY version',
+        script.id,
+      ),
+    ).toEqual([
+      { version: 1, scene_id: null, summary: 'first version' },
+      { version: 2, scene_id: null, summary: 'the first two scenes rewritten' },
+    ])
+  })
+
+  it('leaves the rows of a scene that only MOVED exactly where they were', () => {
+    const { episode, board, scenes } = twoScenesConsumedAndRevised()
+
+    // A scene inserted above them: every ordinal shifts, no heading changes, and nothing here
+    // is touched at all — which is the whole point of identity not being the ordinal.
+    delineateScenes(store, episode.id, [
+      { heading: 'The airlock, ninety seconds' },
+      { heading: 'Mess deck' },
+      { heading: 'Corridor spine' },
+      { heading: 'The quiet deck (deck 9)' },
+    ])
+
+    expect(
+      store
+        .all<{ scene_id: string }>(
+          'SELECT scene_id FROM artifact_input WHERE artifact_id = ? ORDER BY scene_id',
+          board.id,
+        )
+        .map((row) => row.scene_id)
+        .sort(),
+    ).toEqual(scenes.map((scene) => scene.id).sort())
+  })
+})

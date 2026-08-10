@@ -24,7 +24,7 @@ import { applyRewrite, recheckScene } from './remediation.ts'
 import { BOARD_CHECK_STAGE, BOARD_STAGE } from './runner/board-step.ts'
 import { createRulings, openGates, type Rulings } from './runner/gate.ts'
 import { createRunner, type Runner } from './runner/runner.ts'
-import { SCRIPT_GATE_STAGE } from './runner/script-gate-step.ts'
+import { OUTLINE_GATE_STAGE, PREMISE_GATE_STAGE, SCRIPT_GATE_STAGE } from './runner/present-step.ts'
 import { stageCatalogue } from './runner/stages.ts'
 import { PREMISE_STAGE } from './runner/write-step.ts'
 import { TEXT_CHECK_STAGE } from './runner/text-check-step.ts'
@@ -198,12 +198,16 @@ describe('the check bench — the buttons that read', () => {
   it('offers one per stage whose work is reading, each stating verb, object, scope and cost', () => {
     const runs = bench().runs
 
-    // The catalogue filtered by DECLARATION, never by a list of names here — the premise
-    // stage produces, so it is not on this bench at all.
+    // The catalogue filtered by DECLARATION, never by a list of names here — the three
+    // writing stages produce, so none of them is on this bench at all. The three that present
+    // an artifact for a ruling only read, and they arrived here by declaring `reads` when
+    // E4-3 generalized `script-gate`: nobody edited this module to add them.
     expect(runs.map((one) => one.stage)).toEqual([
       BOARD_STAGE,
       BOARD_CHECK_STAGE,
       TEXT_CHECK_STAGE,
+      PREMISE_GATE_STAGE,
+      OUTLINE_GATE_STAGE,
       SCRIPT_GATE_STAGE,
     ])
     for (const one of runs) {

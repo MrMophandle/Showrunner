@@ -6,18 +6,19 @@ import { FREE } from './cost.ts'
 import type { Store } from './db/store.ts'
 import { artifactsOf, recordArtifact } from './domain/artifact.ts'
 import { recordCheckPass } from './domain/finding.ts'
-import { episodesOf, findEpisode, scenesOf, seasonsOf } from './domain/spine.ts'
+import { EPISODE_LIFECYCLE, episodesOf, findEpisode, scenesOf, seasonsOf } from './domain/spine.ts'
 import { createEventLog, type EventLog } from './events.ts'
 import { loadFixture } from './fixture/load.ts'
 import { initLibrary, openLibraryStore, type LibraryPaths } from './library.ts'
 import { describeLLMBackend, type LLMReadiness } from './llm/choose.ts'
 import { createFakeLLM, type FakeLLM } from './llm/fake.ts'
-import { launchBlockedBecause, operatingView, runView } from './operating.ts'
+import { launchBlockedBecause, operatingView, runView, stageForEpisode, stageOffer } from './operating.ts'
 import { createRulings, openGates, type Rulings } from './runner/gate.ts'
 import { createRunner, type Runner } from './runner/runner.ts'
 import { stageCatalogue } from './runner/stages.ts'
 import { STAGE_WORK, type Stage } from './runner/step.ts'
-import { PREMISE_STAGE } from './runner/write-step.ts'
+import { SCRIPT_GATE_STAGE } from './runner/present-step.ts'
+import { OUTLINE_STAGE, PREMISE_STAGE, SCRIPT_STAGE } from './runner/write-step.ts'
 
 /**
  * The operating page's read model: the sentences Ryan reads, and the preconditions that
@@ -171,16 +172,54 @@ describe('the operating page — the launch button', () => {
   })
 
   it('says so, in words, when the episode already has the artifact it would write (D20)', () => {
-    // ep01 carries the fixture's own hand-written premise. A hand-made asset always wins,
-    // and a stage with nothing to do says so before the click rather than after it.
+    // ep01 is at `script` and carries the fixture's own hand-written one. A hand-made asset
+    // always wins, and a stage with nothing to do says so before the click rather than after
+    // it. The sentence points at a gate, and since E4-3 there is one to point at: `script-gate`
+    // presents a written artifact for a ruling whether or not the run that wrote it still
+    // exists (`present-step.ts`).
     const launch = operatingView(store, paths, READY).shows[0]!.episodes[0]!.launch
 
     expect(launch.enabled).toBe(false)
     expect(launch.blockedBecause).toBe(
-      'ep01 already has a premise-brief — rule on it at its gate, or edit it directly (E4-5).',
+      'ep01 already has a script — rule on it at its gate, or edit it directly (E4-5).',
     )
     // Stated even when it is blocked: what it would have cost is not a secret.
     expect(launch.cost).toContain('Opus call')
+    // And the gate it names is reachable, free, and refused by nothing.
+    const present = stageOffer(store, READY, ep01, stageCatalogue(paths)[SCRIPT_GATE_STAGE]!)
+    expect(present.enabled).toBe(true)
+    expect(present.sentence).toContain('Present the ep01 script v1 for your ruling')
+    expect(present.cost).toBe(FREE)
+  })
+
+  /**
+   * **The floor's stage map, completed** (E4-3, #62). E1 offered `demo` on every card and E4-1
+   * offered the premise on every card; the honest offer is the stage the episode's lifecycle
+   * names, and it could not be pointed there while the writing line had a hole in it.
+   */
+  it('offers the stage the episode’s lifecycle is at, for every stop of the writing line', () => {
+    const episode = findEpisode(store, ep01)!
+
+    expect(stageForEpisode({ ...episode, lifecycle: 'premise' })).toBe(PREMISE_STAGE)
+    expect(stageForEpisode({ ...episode, lifecycle: 'outline' })).toBe(OUTLINE_STAGE)
+    expect(stageForEpisode({ ...episode, lifecycle: 'script' })).toBe(SCRIPT_STAGE)
+    // Past the writing line this build has no producer at all, and the card says what it CAN
+    // do rather than naming a stage with no code behind it: the script, presented for a ruling.
+    for (const lifecycle of ['assets', 'assembled', 'published'] as const) {
+      expect(stageForEpisode({ ...episode, lifecycle })).toBe(SCRIPT_GATE_STAGE)
+    }
+    // Every stage it can name is one the catalogue really has — a card offering a stage this
+    // build has no code for is a click that queues a run nothing will ever pick up.
+    for (const lifecycle of EPISODE_LIFECYCLE) {
+      expect(stageCatalogue(paths)[stageForEpisode({ ...episode, lifecycle })]).toBeDefined()
+    }
+  })
+
+  it('carries that map onto the page, so ep01 and ep02 are offered different stages', () => {
+    const [first, second] = operatingView(store, paths, READY).shows[0]!.episodes
+
+    expect([first!.lifecycle, first!.launchStage]).toEqual(['script', SCRIPT_STAGE])
+    expect([second!.lifecycle, second!.launchStage]).toEqual(['premise', PREMISE_STAGE])
   })
 
   it('is blocked, with the reason in words, when nothing can reach a model', () => {
