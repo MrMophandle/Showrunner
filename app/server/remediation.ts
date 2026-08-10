@@ -1183,8 +1183,16 @@ function usageContextFor(at: Standing): string {
  */
 const CONTEXT_LINES = 3
 
-/** The span's own lines, blockquoted, with the one it starts on marked. */
-function quotedLines(text: string, span: { from: number; to: number }): string {
+/**
+ * The span's own lines, blockquoted, with the one it starts on marked.
+ *
+ * **Exported for E4-4's fact extraction** (`claim.ts`), which needs the identical thing for
+ * the identical reason: a claim a script makes, raised as a proposal, carries the passage that
+ * made it as the second of the five parts. One composer for "a passage, quoted" — a second one
+ * would put two different-looking usage contexts on one queue, and Ryan would be reading two
+ * shapes of the same argument depending on which door raised it.
+ */
+export function quotedLines(text: string, span: { from: number; to: number }): string {
   const lines = text.split('\n')
   const starts = lines.reduce<number[]>((at, line, index) => {
     at.push(index === 0 ? 0 : at[index - 1]! + lines[index - 1]!.length + 1)

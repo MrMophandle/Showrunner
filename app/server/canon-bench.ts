@@ -1,6 +1,17 @@
 import { FREE } from './cost.ts'
 import type { Store } from './db/store.ts'
 import {
+  arcsOf,
+  declarePosition,
+  findArc,
+  findWaypoint,
+  positionsOf,
+  waypointsOf,
+  type Arc,
+  type ArcPosition,
+  type ArcWaypoint,
+} from './domain/arc.ts'
+import {
   ENTITY_STANDING,
   entitiesOfShow,
   findEntity,
@@ -33,7 +44,14 @@ import {
   type ProposalOrigin,
 } from './domain/proposal.ts'
 import { relationsFrom, UNKNOWN_TARGET } from './domain/relation.ts'
-import { episodeLabel, findEpisode, findShow, type Show } from './domain/spine.ts'
+import {
+  episodeInShow,
+  episodeLabel,
+  findEpisode,
+  findShow,
+  type Episode,
+  type Show,
+} from './domain/spine.ts'
 import type { Offer } from './operating.ts'
 
 /**
@@ -120,6 +138,8 @@ export interface CanonBenchView {
   ledger: RulingOnTheBench[]
   found: Offer
   create: CreateEntityForm
+  /** Where one episode stands on this show's arcs, and the door to move a pin (E4-4, D8). */
+  positions: DeclarePositionSection | null
   refusals: BenchRefusals
   /** What to do about a show with no canon in it at all, or null when there is some. */
   emptyBecause: string | null
@@ -242,10 +262,53 @@ export interface RequiredRelation {
   sentence: string
 }
 
-/** Where the bench's two controls stand when the view is composed. */
+/**
+ * **The door E4-4 found missing**: nothing in this app called `declarePosition` except the
+ * fixture loader, so an episode's pin on an arc could be read everywhere and moved nowhere.
+ *
+ * It is the smallest honest affordance and it stops exactly where the design says it should.
+ * **Declaring is free and raises nothing** — it moves the pin, which is Ryan saying "this
+ * episode is written to land waypoint 2". The LANDING proposal that turns that into a fact is
+ * raised later, by the script's extraction, because a landing is a fact and a fact is about an
+ * ENTITY — and which entity it reads on is a writing judgement nobody but the writer can
+ * answer (the E2-3 constraint, and `claim.ts` is where it finally gets answered).
+ *
+ * So this door and that step are two halves of D8 and neither is the other's shortcut: pin
+ * first, at no cost, whenever Ryan likes; the claim afterwards, out of the written episode,
+ * for his ruling.
+ *
+ * The arc page (D24) is where E5 renders this properly. What is built here is what that page
+ * needs already queryable — the sentence, the cost, and the reason a button is disabled.
+ */
+export interface DeclarePositionSection {
+  episodeId: string
+  /** "ep02". */
+  label: string
+  /** "ep02 declares no position on any arc — it is vanilla, which is legal and tracked." */
+  standing: string
+  /** Every waypoint of every arc this episode is written under, in arc then waypoint order. */
+  waypoints: WaypointOnTheBench[]
+}
+
+export interface WaypointOnTheBench {
+  arcId: string
+  arcName: string
+  arcKind: Arc['kind']
+  waypointId: string
+  ordinal: number
+  name: string
+  landingCriteria: string
+  /** True when this is the waypoint the episode's pin currently sits on. */
+  declared: boolean
+  declare: Offer
+}
+
+/** Where the bench's controls stand when the view is composed. */
 export interface BenchStanding {
   /** The entity whose sheet is open. */
   entityId?: string
+  /** The episode whose arc positions are open. */
+  episodeId?: string
   /** The as-of control: a ruling number, a date (`YYYY-MM-DD`), or neither, which is now. */
   ruling?: number
   date?: string
@@ -278,6 +341,10 @@ export function canonBenchView(
     ledger,
     found: foundingOffer(store, show, entities),
     create: createForm(store, show, categories, entities),
+    positions:
+      standing.episodeId === undefined
+        ? null
+        : (positionSection(store, show.id, standing.episodeId) ?? null),
     refusals: BENCH_REFUSALS,
     emptyBecause:
       entities.length === 0
@@ -764,6 +831,111 @@ function requiredOf(
     }))
 }
 
+// ── Where an episode stands on this show's arcs (E4-4, D8) ─────────────────────
+
+/**
+ * One episode's pins, and the button for each waypoint it could be moved to.
+ *
+ * The arcs are the ones the episode is written UNDER — every show-scoped arc, and every arc
+ * of its own season — which is `write-context.ts`'s rule, read here rather than re-decided,
+ * because the desk and this door disagreeing about which arcs an episode is on would be two
+ * answers to one question.
+ */
+function positionSection(
+  store: Store,
+  showId: string,
+  episodeId: string,
+): DeclarePositionSection | undefined {
+  const where = episodeInShow(store, episodeId)
+  if (!where || where.show.id !== showId) return undefined
+
+  const standing = positionsOf(store, episodeId)
+  const pinned = new Map(standing.map((position) => [position.arc.id, position]))
+  const arcs = arcsOf(store, showId).filter(
+    (arc) => arc.scope === 'show' || arc.seasonId === where.season.id,
+  )
+
+  return {
+    episodeId,
+    label: episodeLabel(where.episode.number),
+    standing: positionStanding(where.episode, standing, arcs),
+    waypoints: arcs.flatMap((arc) =>
+      waypointsOf(store, arc.id).map((waypoint) => ({
+        arcId: arc.id,
+        arcName: arc.name,
+        arcKind: arc.kind,
+        waypointId: waypoint.id,
+        ordinal: waypoint.ordinal,
+        name: waypoint.name,
+        landingCriteria: waypoint.landingCriteria,
+        declared: pinned.get(arc.id)?.waypoint.id === waypoint.id,
+        declare: declareOffer(where.episode, arc, waypoint, pinned.get(arc.id)),
+      })),
+    ),
+  }
+}
+
+function positionStanding(episode: Episode, standing: ArcPosition[], arcs: Arc[]): string {
+  const label = episodeLabel(episode.number)
+  if (arcs.length === 0) return `This show declares no arcs, so ${label} has nothing to stand on.`
+  if (standing.length === 0) {
+    return (
+      `${label} declares no position on any arc — it is **vanilla**, which is legal, tracked ` +
+      'and never a failure state (1.1). Declaring one is a choice, not a repair.'
+    )
+  }
+  return (
+    `${label} is declared at ` +
+    standing
+      .map(
+        (position) =>
+          `waypoint ${position.waypoint.ordinal} “${position.waypoint.name}” of ` +
+          `“${position.arc.name}”`,
+      )
+      .join(', ') +
+    '. A pin is not a fact: the landing proposal is raised when the script is read, with the ' +
+    'subject the writer answers (D8).'
+  )
+}
+
+/**
+ * The button, and the two ways it is refused — **one string, two readers**, so the disabled
+ * button and the API's throw say the same thing (D15, `launchBlockedBecause`'s rule).
+ *
+ * Re-declaring the waypoint an episode already sits on is NOT refused, and that is arc.ts's
+ * ruling rather than an oversight: re-declaring is how an episode confirms it has been
+ * re-checked after a waypoint went in ahead of it, and the sentence says which act it is.
+ */
+function declareOffer(
+  episode: Episode,
+  arc: Arc,
+  waypoint: ArcWaypoint,
+  pinned: ArcPosition | undefined,
+): Offer {
+  const label = episodeLabel(episode.number)
+  const here = pinned?.waypoint.id === waypoint.id
+  const sentence = here
+    ? `Re-declare ${label} at waypoint ${waypoint.ordinal} “${waypoint.name}” of ` +
+      `“${arc.name}” — confirming it has been re-read where the waypoint now sits`
+    : `Declare ${label} at waypoint ${waypoint.ordinal} “${waypoint.name}” of “${arc.name}” — ` +
+      `the pin moves${
+        pinned ? `, off waypoint ${pinned.waypoint.ordinal} “${pinned.waypoint.name}”` : ''
+      }, and the landing proposal is raised when the script is read`
+
+  if (episode.abandonedAt !== null) {
+    return {
+      sentence,
+      cost: FREE,
+      enabled: false,
+      blockedBecause:
+        `${label} was abandoned on ${episode.abandonedAt} — it keeps the stage it reached and ` +
+        'declares nothing new. What it established is reverted one ruling at a time (3.3), and ' +
+        'a new pin on a dead episode would be a claim nobody can land.',
+    }
+  }
+  return { sentence, cost: FREE, enabled: true, blockedBecause: null }
+}
+
 // ── The acts: each one raises, and none of them writes canon ───────────────────
 
 /** The sheet Ryan typed at the bench — a promotion's five parts, in the words he used. */
@@ -922,17 +1094,34 @@ export function proposeFactChange(
  * them; this is the canon surface for everything outside the writing line — an import, a
  * correction, a showrunner filling a gap he left at creation.
  *
- * **It rides nothing, and that is the whole of its behaviour before the ruling.** The change
- * comes off the canon surface, not out of an episode's production, so there is no episode to
- * ride and therefore no provisional claim — `episode_id` is null for exactly the reason
- * founding's is (proposal.ts). Which means this writes NOTHING: no fact row, nothing visible
- * to a check, nothing on `canonAsOf`. The entity's sheet is unchanged until Ryan ratifies it,
- * and then the fact has lineage pointing at that ruling and no establishing episode.
+ * **Raised from the bench it rides nothing, and that is the whole of its behaviour before the
+ * ruling.** The change comes off the canon surface, not out of an episode's production, so
+ * there is no episode to ride and therefore no provisional claim — `episode_id` is null for
+ * exactly the reason founding's is (proposal.ts). Which means the bench's own additions write
+ * NOTHING: no fact row, nothing visible to a check, nothing on `canonAsOf`. The entity's sheet
+ * is unchanged until Ryan ratifies it, and then the fact has lineage pointing at that ruling
+ * and no establishing episode.
+ *
+ * **E4-4 is the other caller the paragraph above anticipated**, and it is why the three
+ * optional fields exist — the same three `proposeFactChange` already carries, for the same
+ * reason. A writer's mid-script addition rides the episode that needed it: the claim goes
+ * provisional, that episode's own checks see it, and the completion sweep collects it at
+ * approval. The alternative was a second builder in `claim.ts`, which is the thing this
+ * module's header refuses on every other payload it owns.
  */
 export function proposeNewFact(
   store: Store,
   entityId: string,
-  addition: { statement: string; field?: string; usageContext?: string },
+  addition: {
+    statement: string
+    field?: string
+    usageContext?: string
+    /** Who raised it (1.2's fifth part). The bench is `ryan`; an extraction is `writer`. */
+    raisedBy?: ProposalOrigin
+    /** Left out, it rides nothing. A writer's claim rides the episode that made it (3.3). */
+    episodeId?: string
+    alternatives?: string[]
+  },
 ): Proposal {
   const entity = findEntityById(store, entityId)
   if (!entity) throw new Error(`No such canon entity: ${entityId}`)
@@ -946,16 +1135,67 @@ export function proposeNewFact(
   return raiseProposal(store, {
     entityId: entity.id,
     kind: 'fact-delta',
-    raisedBy: 'ryan',
+    raisedBy: addition.raisedBy ?? 'ryan',
+    ...(addition.episodeId !== undefined && { episodeId: addition.episodeId }),
     facts: [{ statement, ...(addition.field !== undefined && { field: addition.field }) }],
     usageContext:
       addition.usageContext ??
       `Typed at the canon bench. Canon has said nothing about this so far — the sheet is ` +
         'silent on it, and every artifact written until now was checked against that silence.',
-    alternatives: [
+    alternatives: addition.alternatives ?? [
       'reject it — canon saying nothing is an answer, and the note says why it stays silent',
       'defer it — park the claim until an episode actually needs canon to have an answer',
     ],
+  })
+}
+
+/**
+ * **Moves the pin, and does nothing else.** It raises no proposal, writes no fact, and touches
+ * no ledger — declaring a position is Ryan saying which waypoint an episode is written to
+ * land, which is a production decision rather than a claim about the world.
+ *
+ * `landPosition` is the flow above `declarePosition` that raises the landing beside it
+ * (`domain/episode-canon.ts`), and this deliberately calls the lower one. A landing needs a
+ * SUBJECT entity that only the writer can supply (the E2-3 constraint), there is no episode
+ * text here to supply it from, and inventing one at a bench would put a claim in canon's queue
+ * that nobody decided — the same reason the fixture loader raises no landing for ep01's pin.
+ * The script's extraction is what calls `landPosition`, with the subject it read out of the
+ * draft (`claim.ts`).
+ */
+export function declareEpisodePosition(
+  store: Store,
+  request: { episodeId: string; arcId: string; waypointId: string },
+): ArcPosition {
+  const where = episodeInShow(store, request.episodeId)
+  if (!where) throw new Error(`no such episode: ${request.episodeId}`)
+
+  const arc = findArc(store, request.arcId)
+  if (!arc) throw new Error(`No such arc: ${request.arcId}`)
+  if (arc.showId !== where.show.id || (arc.scope === 'season' && arc.seasonId !== where.season.id)) {
+    throw new Error(
+      `“${arc.name}” is not an arc ${episodeLabel(where.episode.number)} is written under — a ` +
+        'season-scoped arc belongs to its own season, and an episode may only stand on the ' +
+        'arcs its writer was handed (domain/write-context.ts).',
+    )
+  }
+
+  const waypoint = findWaypoint(store, request.waypointId)
+  if (!waypoint || waypoint.arcId !== arc.id) {
+    throw new Error(`Waypoint ${request.waypointId} does not belong to arc ${arc.id}`)
+  }
+
+  const blocked = declareOffer(
+    where.episode,
+    arc,
+    waypoint,
+    positionsOf(store, request.episodeId).find((position) => position.arc.id === arc.id),
+  ).blockedBecause
+  if (blocked) throw new Error(blocked)
+
+  return declarePosition(store, {
+    episodeId: request.episodeId,
+    arcId: arc.id,
+    waypointId: waypoint.id,
   })
 }
 
