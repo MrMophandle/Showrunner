@@ -234,9 +234,12 @@ every record kind above, unstyled — E5 restyles, it does not re-derive.
 ## What E4 built, and where
 
 Same purpose again: which module an E5+ issue extends rather than rebuilds. Everything below is
-tested on fakes with no key in the environment. **The exit is the drill in `README.md`, and it
-has not been operated yet** — issue #76, which stood between Ryan's library and its writing
-line, is closed (the entry below says how), so the drill runs end to end.
+tested on fakes with no key in the environment. **The exit belongs to E5 now, by ruling (Aug 10
+2026):** Ryan began the drill on the scaffolding and ruled it off — four epics of records on one
+page had become a wall of shifting text that failed the HIL contract, and operating the writing
+line there tested his patience rather than the mechanisms. E5's exit ("E4 run entirely from the
+cockpit") closes both epics at once, and the ledger's last E4 entry below carries what that
+ruling binds.
 
 **The writer's desk** (`domain/write-context.ts`). One composer, three steps, and the only door
 onto canon a writing step has. Canon as **this episode's audience** knows it — a lineage
@@ -1079,6 +1082,26 @@ decorated rather than kept (D15). The bench pattern (`CHECK_REFUSALS`, `BENCH_RE
 covered every other typed-field precondition since E2-6; the gate's was the one that got missed
 because it predates the pattern. **Nothing in `app/web/` may hold a refusal string**, and
 `App.test.tsx` asserts the API's exact sentence rather than a paraphrase of it.
+
+### The exit moved to E5, and the scaffolding is why (ruled Aug 10 2026)
+
+Ryan began the E4 drill and ruled it off mid-run: *"a giant wall of changing text… I find
+myself literally doing a find on the webpage looking for the button in question."* Nothing
+mechanical was wrong — every step he'd have taken is fake-proven — but four epics of records
+stacked on one scaffolding page had crossed from "unstyled" to **failing the HIL contract**,
+and a drill that tests the operator's patience instead of the mechanisms measures nothing.
+So, by ruling: **E4 is code-done and stands unoperated; E5's exit — the E4 flow run entirely
+from the cockpit — is both epics' exit.** What that binds:
+
+- **E5's issues carry the drill's friction as acceptance criteria**: regions update in place
+  (nothing reflows under a reading eye); every section explains itself or is named in Ryan's
+  words, not the schema's; no flow requires find-in-page — the exit drill is the test, and
+  Ctrl+F appearing in it is a failure.
+- **The E4 drill's script is the flow E5 must carry**, re-scripted against the cockpit: the
+  half-door opening on ep02's demo-era brief, the routed-reject round trip, the hand edit,
+  the waypoint declared and landed, the sweep ruled one at a time, ep01 untouched.
+- **Any E4 mechanism gap the cockpit exposes is E4's debt, not E5's scope** — filed as its
+  own issue in the #39/#76 pattern, never absorbed into a screen's build.
 
 ## Working agreements that bind every session
 
