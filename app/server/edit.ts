@@ -13,7 +13,7 @@ import {
   type StaleReason,
 } from './domain/artifact.ts'
 import { entitiesOfShow } from './domain/canon.ts'
-import { unaddressedNotesTo, type RoutedNote } from './domain/routing.ts'
+import { notesOwedBy, type StandingNote } from './domain/routing.ts'
 import { episodeInShow, episodeLabel, type EpisodeLifecycle } from './domain/spine.ts'
 import { nameAppearingIn, producedBy, WRITE_STEP } from './domain/write-context.ts'
 import type { LibraryPaths } from './library.ts'
@@ -219,8 +219,13 @@ export interface WrittenArtifact {
   /** Why it is stale, in one sentence. Null when it is not. */
   staleBecause: string | null
   edit: Offer
-  /** Notes routed here from another gate that nothing has answered yet (D21). */
-  standing: RoutedNote[]
+  /**
+   * Every note standing against this artifact that nothing has answered yet — the same
+   * question the offer asks, so a screen and a button can never disagree about whether one
+   * stands (D21, #76). Ryan's own gate rounds included: an edit is one of the two things that
+   * can answer them, and the other is the stage that writes it (`domain/routing.ts`).
+   */
+  standing: StandingNote[]
 }
 
 /**
@@ -248,7 +253,7 @@ export function writtenArtifacts(
         staleBecause:
           held.status === 'stale' ? staleSentence(store, artifact, held.reasons) : null,
         edit: editOffer(store, library, artifact.id),
-        standing: unaddressedNotesTo(store, artifact.id),
+        standing: notesOwedBy(store, artifact.id),
       }
     })
 }

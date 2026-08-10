@@ -31,6 +31,16 @@ import { producedBy } from './write-context.ts'
  * written, and the note is answered by whatever version he lands, whether the writer wrote it
  * or he typed it himself (`edit.ts`).
  *
+ * ## Two questions over one row, and they are not the same question (#76)
+ *
+ * "Has anybody answered it?" is asked by two callers who want different sets, and answering
+ * both with one function is the bug issue #76 was filed for. `routedNotesTo` is the DESK's —
+ * notes from elsewhere, because the desk already reads an artifact's own gate rounds and
+ * printing them twice would hand one instruction to a writer as two. `notesOwedBy` is the
+ * OFFER's — every unanswered note addressed here, own gate included, because a **presenting**
+ * gate has no producer and every note it can write is written over the artifact it names.
+ * Each is stated at its own export, and each is tested where it is read.
+ *
  * ## Three authorities, never blurred
  *
  * A routed note is a `gate_note` row and there is no second table for one, so it reaches a
@@ -140,63 +150,117 @@ export function addressOf(
 export const landsOn = (note: AddressedNote, artifactId: string): boolean =>
   note.target === null || note.targetVersion === null || note.target === artifactId
 
-/** One note routed to an artifact, with where it was written and whether it still stands. */
-export interface RoutedNote {
+/** One note standing against an artifact, with where Ryan was standing when he wrote it. */
+export interface StandingNote {
   note: string
   gateId: string
   round: number
-  depth: NoteDepth
-  /** The artifact it was routed TO. */
+  /** Null when he routed it nowhere — the legal default, and it lands on the draft (D21). */
+  depth: NoteDepth | null
+  /** The artifact it stands against. */
   targetId: string
-  /** The version the target stood at when the note landed. */
-  routedAtVersion: number
+  /** The version THAT artifact stood at when the note landed. */
+  landedAtVersion: number
   /** The artifact the gate was over — where Ryan was standing when he wrote it. */
   fromArtifactId: string
   fromKind: ArtifactKind
   ruledAt: string
-  /** A newer version of the target exists. Computed on every read (see the header). */
+  /** A newer version of the artifact exists. Computed on every read (see the header). */
   addressed: boolean
 }
 
+/** A note ROUTED here from another gate. It named this artifact, so it carries a depth. */
+export interface RoutedNote extends StandingNote {
+  depth: NoteDepth
+  /** The version the target stood at when the note landed. `landedAtVersion`, named for it. */
+  routedAtVersion: number
+}
+
 /**
- * **Every note routed to this artifact from somewhere else**, newest first.
+ * **Every note standing against this artifact**, newest first, from whatever gate — the one
+ * read, from which the two questions below are asked.
  *
- * A note whose gate was over the artifact it names is deliberately not here: that is an
- * ordinary rejection of this artifact with a depth written on it, and `write-context.ts` has
- * read those since E4-0. Counting it twice would print Ryan's words to a writer twice.
+ * Two arms, and they are `landsOn` said in SQL: a note that NAMED this artifact from anywhere,
+ * and a note written at a gate over this artifact that named nothing else. Nothing else can be
+ * about this draft, and each arm carries its own answer to "what version was standing when he
+ * wrote it" — the routed one carries it on the note (0014 put it there because
+ * `gate_round.artifact_version` names another artifact for a routed note), and the one written
+ * here IS `gate_round.artifact_version`, which is the same column read where it does apply.
+ *
+ * Private, because "a note standing here" is not a question anything should be asking: the desk
+ * wants the ones from ELSEWHERE and the offer wants the ones still OWED, and a third caller
+ * taking the raw list would be taking whichever of those two answers happened to suit.
  */
-export function routedNotesTo(store: Store, artifactId: string): RoutedNote[] {
+function notesStandingAgainst(store: Store, artifactId: string): StandingNote[] {
   return store
-    .all<RoutedRow>(
-      `SELECT n.note, n.gate_id, n.round, n.depth, n.target_version, r.ruled_at,
-              g.artifact_id AS from_id, from_art.kind AS from_kind, target_art.version AS at_version
+    .all<StandingRow>(
+      `SELECT n.note, n.gate_id, n.round, n.depth, n.target, n.target_version, r.ruled_at,
+              COALESCE(n.target_version, gr.artifact_version) AS landed_at,
+              g.artifact_id AS from_id, from_art.kind AS from_kind, art.version AS at_version
          FROM gate_note n
          JOIN gate_ruling r ON r.gate_id = n.gate_id AND r.round = n.round
+         JOIN gate_round gr ON gr.gate_id = n.gate_id AND gr.round = n.round
          JOIN gate g ON g.id = n.gate_id
          JOIN artifact from_art ON from_art.id = g.artifact_id
-         JOIN artifact target_art ON target_art.id = n.target
-        WHERE n.target = ? AND n.target_version IS NOT NULL AND g.artifact_id <> n.target
-          AND r.verdict = 'reject'
+         JOIN artifact art ON art.id = ?
+        WHERE r.verdict = 'reject'
+          AND ((n.target = ? AND n.target_version IS NOT NULL)
+               OR (g.artifact_id = ? AND (n.target IS NULL OR n.target_version IS NULL)))
         ORDER BY r.ruled_at DESC, n.seq DESC`,
+      artifactId,
+      artifactId,
       artifactId,
     )
     .map((row) => ({
       note: row.note,
       gateId: row.gate_id,
       round: row.round,
-      depth: row.depth!,
+      depth: row.depth,
       targetId: artifactId,
-      routedAtVersion: row.target_version,
+      landedAtVersion: row.landed_at,
       fromArtifactId: row.from_id,
       fromKind: row.from_kind,
       ruledAt: row.ruled_at,
-      addressed: row.at_version > row.target_version,
+      addressed: row.at_version > row.landed_at,
     }))
 }
 
-/** The ones nobody has answered: no version of the target newer than the one they landed on. */
-export const unaddressedNotesTo = (store: Store, artifactId: string): RoutedNote[] =>
-  routedNotesTo(store, artifactId).filter((note) => !note.addressed)
+/**
+ * **Every note routed to this artifact from somewhere else** — the DESK's question
+ * (`write-context.ts`).
+ *
+ * A note whose gate was over the artifact it names is deliberately not here: that is an
+ * ordinary rejection of this artifact with a depth written on it, and `write-context.ts` has
+ * read those since E4-0. Counting it twice would print Ryan's words to a writer twice.
+ */
+export const routedNotesTo = (store: Store, artifactId: string): RoutedNote[] =>
+  notesStandingAgainst(store, artifactId)
+    .filter((note) => note.fromArtifactId !== artifactId && note.depth !== null)
+    .map((note) => ({
+      ...note,
+      depth: note.depth as NoteDepth,
+      routedAtVersion: note.landedAtVersion,
+    }))
+
+/**
+ * **Every note this artifact still owes an answer to** — the OFFER's question, and the other
+ * half of the split issue #76 was filed for (`runner/write-step.ts`, `edit.ts`, `app.ts`).
+ *
+ * It asks about the ARTIFACT and not about where Ryan was standing, so it keeps the notes he
+ * wrote at the artifact's own gate: the unrouted default, a scene of it, and a depth that
+ * resolved to this very artifact. That difference is the whole of #76 — a **presenting** gate
+ * has no producer behind it, so every note it can write is one of those, and read through the
+ * desk's exclusion they vanished, leaving an episode holding an artifact no writing gate ever
+ * approved with no door out of its lifecycle stop. The desk's exclusion is right where it is
+ * and was not weakened to fix this; the second question got its own function instead.
+ *
+ * **Answered means a newer version exists, and nothing else** — the same rule E4-5 wrote for a
+ * routed note, applied here rather than re-decided. A later ruling over the same words is a
+ * ruling on the draft, not an answer to the note: what the note asked for is a rewrite, and
+ * until one lands the stage that writes this artifact still owes it.
+ */
+export const notesOwedBy = (store: Store, artifactId: string): StandingNote[] =>
+  notesStandingAgainst(store, artifactId).filter((note) => !note.addressed)
 
 /**
  * What the reopened offer says, in Ryan's own words — the note quoted, and where he gave it.
@@ -205,7 +269,7 @@ export const unaddressedNotesTo = (store: Store, artifactId: string): RoutedNote
  * go and find out what he said, which is the archaeology the HIL contract forbids (4.6). The
  * newest is quoted and the rest counted, because a button has room for one.
  */
-export function routedNoteSentence(notes: readonly RoutedNote[], subject: string): string {
+export function routedNoteSentence(notes: readonly StandingNote[], subject: string): string {
   const [newest, ...rest] = notes
   if (!newest) return ''
   const where = `${newest.fromKind} gate`
@@ -216,14 +280,18 @@ export function routedNoteSentence(notes: readonly RoutedNote[], subject: string
   return `${subject} has ${what} standing against it — rewriting reads it: “${newest.note}”`
 }
 
-interface RoutedRow {
+interface StandingRow {
   note: string
   gate_id: string
   round: number
   depth: NoteDepth | null
-  target_version: number
+  target: string | null
+  target_version: number | null
+  /** The version the artifact stood at when the note landed — off the note, or off the round. */
+  landed_at: number
   ruled_at: string
   from_id: string
   from_kind: ArtifactKind
+  /** What the artifact stands at now. */
   at_version: number
 }

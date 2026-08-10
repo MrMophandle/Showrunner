@@ -235,8 +235,8 @@ every record kind above, unstyled — E5 restyles, it does not re-derive.
 
 Same purpose again: which module an E5+ issue extends rather than rebuilds. Everything below is
 tested on fakes with no key in the environment. **The exit is the drill in `README.md`, and it
-has not been operated yet** — issue #76 stands between Ryan's library and its writing line, and
-the constraints list below says exactly where.
+has not been operated yet** — issue #76, which stood between Ryan's library and its writing
+line, is closed (the entry below says how), so the drill runs end to end.
 
 **The writer's desk** (`domain/write-context.ts`). One composer, three steps, and the only door
 onto canon a writing step has. Canon as **this episode's audience** knows it — a lineage
@@ -989,21 +989,74 @@ guess as the real thing is invariant 4 one layer out from the checks.
 ### A refusal that names a door owes that door a lifecycle, not just a button (E4-7, #67)
 
 E4-5's ledger entry above generalized the rule *"a refusal that names an affordance owes that
-affordance a button on the same screen"*. E4-7 built both buttons and found the rule does not go
-far enough: **ep02's demo-era premise-brief has two doors and neither one moves the episode.**
-The writing stage is refused because the artifact exists; the presenting stage opens a gate and
-carries no lifecycle step; a hand edit deliberately moves nothing; and the outline's refusal
-says *"Rule on the ep02 premise first, and this becomes offerable"* to a showrunner who has
+affordance a button on the same screen"*. E4-7 built both buttons and found the rule did not go
+far enough: **ep02's demo-era premise-brief had two doors and neither one moved the episode.**
+The writing stage was refused because the artifact exists; the presenting stage opened a gate
+and carried no lifecycle step; a hand edit deliberately moves nothing; and the outline's refusal
+said *"Rule on the ep02 premise first, and this becomes offerable"* to a showrunner who had
 ruled on it twice.
 
-**It is [issue #76](https://github.com/MrMophandle/Showrunner/issues/76), filed rather than
-fixed** — the #39 precedent, and the reason it is not a one-line fix is worth keeping: the
-predicate that drops it (`AND g.artifact_id <> n.target`, `routedNotesTo`) is CORRECT for the
-desk, which must not print Ryan's words twice, and over-broad for the OFFER, which reads the
-same function. One predicate, two questions. Whoever closes it decides one thing explicitly —
-**does approving at a presenting gate move the lifecycle?** — because that is a ruling about
-what an approval means, not a detail. `writing-room.test.ts` walks all four doors and pins the
-answer, so the day it changes the test says so. **E7's import arrives in exactly this shape.**
+**It was [issue #76](https://github.com/MrMophandle/Showrunner/issues/76), filed rather than
+fixed under the #39 precedent, and it is CLOSED.** Two things opened the door, and both are
+rulings rather than details:
+
+**1 · A ruling is a ruling, whichever door convened it.** Approving at a presenting gate moves
+the episode on — the same seam the in-run gate carries, `advanceOnPresentedApproval`
+(`domain/lifecycle.ts`) delegating to `advanceOnApproval`, so the four rules are inherited
+rather than re-decided. It guards on **AT and only AT**: the episode must be standing at the
+stage that produces what he ruled on, because this is the one door with no precondition in
+front of it (free, never walled, renders any slot) and forward-only would otherwise let a
+script ruled on an episode at `premise` carry it three stops. Two corollaries, both recorded
+where the code decides: a script approved here has had **no extraction run** and the sentence
+says so, its claims' door being the bench (#39) — `edit.ts`'s no-silent-spend choice, reached
+by a second route; and **nothing is retroactive** — the E1-era rulings in Ryan's library move
+nothing, ep02 leaves `premise` because he rules AGAIN at a live door.
+
+**2 · The offer got its own question.** `notesOwedBy` beside `routedNotesTo` (`domain/routing.ts`),
+one read and two filters. The desk keeps its exclusion untouched — a note written at an
+artifact's own gate is already read as an ordinary rejection, and printing it twice hands one
+instruction to a writer as two — and the offer keeps those notes, which are the only kind a
+presenting gate can write: **the offer's set is `landsOn` said in SQL**, so the unrouted default
+(what the drill types), a scene of the draft, and a depth that resolved to this very artifact all
+count, each answered by a newer version and by nothing else. The version they landed on comes off
+the note when it named an artifact and off `gate_round.artifact_version` when it named none —
+0014's own column, read where it does apply. Three readers moved to the new question (`offerFor`, `writtenArtifacts`,
+`artifactOnTheWire`) and a fourth that had the same need for a different reason: the correction
+loop reads it to know the version Ryan has already ruled on, so the reopened button really
+rewrites instead of handing back the words he argued with. **Both questions are tested at their
+own call site** (`write-context.test.ts` for the desk, `writing-room.test.ts` for the offer), and
+`writing-room.test.ts`'s four-door walk now runs over **two slots** — the demo-era one and the
+producer's own — because E7's import and any hand-made artifact arrive in the same shape and
+none of it is about `demo`.
+
+### A presenting gate has one exit, and it is approve (E4-7, #76 — E5 inherits this)
+
+**Rejecting at a presenting gate re-presents the same bytes as the next round, and approving is
+the only way the run ends.** `present-step.ts` ends the run on a rejection *only* when every note
+was routed to another artifact — its own words, and E4-5's argument for them: re-presenting a
+script Ryan has just sent back to the outline would park his episode on a decision he has already
+made. A note that LANDS on the presented draft gets the opposite treatment, and there is no
+producer behind this gate to redo the draft, so round 2 renders the same file.
+
+It is defensible and it was left alone deliberately when #76 was closed. A presenting gate has
+nothing to regenerate: the work its note asks for is behind the writing stage's button, which
+#76 made reachable and which the note's own sentence now names. So the honest reading is "the
+gate stays open until you rule", and approving does not withdraw the note — only a new version
+answers one (`domain/routing.ts`), so the reopened writing offer survives the approval and the
+episode moves on at the same time.
+
+**But it is a chosen quirk rather than a rule, and it has two live costs.** D7 holds both the
+writing button and Ryan's hand while that gate stands open, so the rewrite his note asked for
+cannot happen until he approves the draft he just rejected — which reads as a contradiction on
+screen and needs a sentence saying why (the E4 drill's step 1 now carries one). And a
+rejection he means as "put this down for now" has no verb: he must approve, or leave the run
+parked forever.
+
+**E5's gate room is where that is answered, not here.** The candidate is a reject-that-closes —
+a fourth disposition at a presenting gate that ends the run with the note standing, freeing D7
+so the writing stage or his own hand can answer it immediately. It is a real ruling about what
+the three verbs mean (`runner/gate.ts`: they take no preconditions and there are exactly three),
+so it belongs to a session that can make one. **Inherit this as a decision, not a discovery.**
 
 ### One cluster renderer, three surfaces — and the wall's sentence moved with it (E4-7, #67)
 

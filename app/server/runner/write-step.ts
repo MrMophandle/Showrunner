@@ -15,7 +15,7 @@ import { positionsOf } from '../domain/arc.ts'
 import { categoriesForArtifactKind } from '../domain/category.ts'
 import { craftChecksFor } from '../domain/craft.ts'
 import { delineateScript } from '../domain/delineate.ts'
-import { routedNoteSentence, unaddressedNotesTo } from '../domain/routing.ts'
+import { routedNoteSentence, notesOwedBy } from '../domain/routing.ts'
 import {
   advanceOnApproval,
   notYetReachedBecause,
@@ -534,12 +534,19 @@ function offerFor(store: Store, episode: Episode, step: WriteStep): StageOffer {
   const write = projectLLMCost(WRITING[step].call)
   const panel = projectLLMCost({ ...TEXT_CHECK_CALL, calls: reviewers })
   const standing = writtenOfKind(store, episode.id, kind)
-  // **The already-has-one refusal yields to a routed note, and to nothing else** (E4-5, D21).
-  // A note Ryan wrote at a LATER gate and sent back here is work this stage owes and nobody
-  // else can do; until a newer version of this artifact exists it is unanswered, and that is
-  // derived rather than flagged (`domain/routing.ts`). Nothing regenerates because of it —
-  // what changes is that the button is pressable and says why.
-  const routed = standing ? unaddressedNotesTo(store, standing.id) : []
+  // **The already-has-one refusal yields to an unanswered note, and to nothing else** (E4-5,
+  // D21). A note standing against this artifact is work this stage owes and nobody else can
+  // do; until a newer version of it exists the note is unanswered, and that is derived rather
+  // than flagged (`domain/routing.ts`). Nothing regenerates because of it — what changes is
+  // that the button is pressable and says why.
+  //
+  // **`notesOwedBy` and not the desk's reader** (#76): the desk drops a note Ryan wrote at this
+  // artifact's own gate, because it has read those as ordinary rejections since E4-0 and would
+  // otherwise print his words to a writer twice. Read here that exclusion drops the only note a
+  // PRESENTING gate can write — it has no producer behind it, so its rejections are always
+  // written over the artifact they name — and an episode holding an artifact no writing gate
+  // ever approved had no door out of its lifecycle stop. Two questions, two functions.
+  const routed = standing ? notesOwedBy(store, standing.id) : []
 
   return {
     sentence:

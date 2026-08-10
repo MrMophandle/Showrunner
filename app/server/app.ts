@@ -16,7 +16,7 @@ import {
 import type { Store } from './db/store.ts'
 import { artifactFreshness, findArtifact, type Artifact } from './domain/artifact.ts'
 import { ENTITY_STANDING, findEntityById } from './domain/canon.ts'
-import { unaddressedNotesTo, routedNoteSentence } from './domain/routing.ts'
+import { notesOwedBy, routedNoteSentence } from './domain/routing.ts'
 import { findFact } from './domain/fact.ts'
 import { dismissFinding, findFinding } from './domain/finding.ts'
 import { foundCanon } from './domain/founding.ts'
@@ -791,7 +791,7 @@ function artifactOnTheWire(
     note,
     staleBecause:
       freshness?.status === 'stale' ? staleSentence(store, artifact, freshness.reasons) : null,
-    standing: unaddressedNotesTo(store, artifact.id).map((one) => ({
+    standing: notesOwedBy(store, artifact.id).map((one) => ({
       note: one.note,
       sentence: routedNoteSentence([one], label),
     })),
