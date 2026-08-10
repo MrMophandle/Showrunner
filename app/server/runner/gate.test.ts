@@ -196,8 +196,17 @@ describe('the gate — rejection notes carry routing depth (4.7, D21)', () => {
         note: 'send scene 4 back to writing — she is in two places.',
         depth: 'scene',
         target: sceneId,
+        // A scene is a scene OF this artifact, so there is no other artifact's version for it
+        // to have moved past — that stamp belongs to a note routed to another written kind
+        // (`domain/routing.ts`, 0014).
+        targetVersion: null,
       },
-      { note: 'the ledger-office shot is the wrong lens.', depth: 'shot', target: 'shot-05' },
+      {
+        note: 'the ledger-office shot is the wrong lens.',
+        depth: 'shot',
+        target: 'shot-05',
+        targetVersion: null,
+      },
     ]
 
     // Out of the ledger, in the order Ryan wrote them.
@@ -224,7 +233,7 @@ describe('the gate — rejection notes carry routing depth (4.7, D21)', () => {
     await untilSettled(store)
 
     expect(gateStanding(store, gate.id)!.rounds[0]!.ruling!.notes).toEqual([
-      { note: 'not yet.', depth: null, target: null },
+      { note: 'not yet.', depth: null, target: null, targetVersion: null },
     ])
   })
 

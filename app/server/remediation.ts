@@ -4,13 +4,16 @@ import { proposeFactChange } from './canon-bench.ts'
 import { FREE, projectLLMCost, type CostProjection } from './cost.ts'
 import type { Store } from './db/store.ts'
 import {
+  declareProvenance,
   findArtifact,
   reviseArtifact,
   staleArtifacts,
   type Artifact,
+  type StaleArtifact,
 } from './domain/artifact.ts'
 import { runBoardRules } from './domain/board-rules.ts'
 import { boardOf } from './domain/board.ts'
+import { delineateScript } from './domain/delineate.ts'
 import { findFact } from './domain/fact.ts'
 import {
   dismissalNotes,
@@ -22,6 +25,7 @@ import {
 import { panelFor } from './domain/panel.ts'
 import type { Proposal } from './domain/proposal.ts'
 import {
+  delineateScenes,
   episodeInShow,
   episodeLabel,
   scenesOf,
@@ -210,7 +214,7 @@ export function remediationsFor(
   // him, and "nothing to call" is a fact about the whole process that the page says once at
   // the top anyway.
   const blocked = rewriteBlockedBecause(at) ?? nothingToCall(llm)
-  const cannotApply = rewriteBlockedBecause(at) ?? targetTakenBecause(library, at)
+  const cannotApply = rewriteBlockedBecause(at) ?? targetTakenBecause(library, at.artifact)
   const cannotPropose = proposeBlockedBecause(store, at)
   const projection = projectLLMCost({ ...REWRITE_CALL })
   const where = at.scene ? `scene ${at.scene.ordinal} of ${at.subject}` : at.subject
@@ -546,7 +550,7 @@ export function applyRewrite(
   const at = whereItStands(store, library, request.findingId)
   // Both preconditions, in the sentences the disabled button was already showing — one
   // composer, two readers (`launchBlockedBecause`'s rule).
-  const blocked = rewriteBlockedBecause(at) ?? targetTakenBecause(library, at)
+  const blocked = rewriteBlockedBecause(at) ?? targetTakenBecause(library, at.artifact)
   if (blocked) throw new Error(blocked)
 
   const span = locateSpan(at)
@@ -557,69 +561,160 @@ export function applyRewrite(
     )
   }
 
-  const version = at.artifact.version + 1
-  const filePath = versionedPath(at.artifact.filePath!, version)
-  const onDisk = join(library.artifactDir, filePath)
-  const rewritten = at.text.slice(0, span.from) + request.replacement + at.text.slice(span.to)
+  const landed = landNewVersion(store, library, {
+    artifact: at.artifact,
+    text: at.text.slice(0, span.from) + request.replacement + at.text.slice(span.to),
+    summary: `rewrote the ${at.finding.checkKey} span${
+      at.scene ? ` in scene ${at.scene.ordinal}` : ''
+    }`,
+    // The scene is what makes staleness land where the edit did rather than everywhere: a
+    // scene-4 revision stales the consumers that consumed scene 4. Left off — a finding about
+    // the whole artifact — the whole artifact changed, and everything downstream is stale,
+    // which is the honest answer rather than a wider one.
+    ...(at.scene && { touchedScenes: [at.scene.id] }),
+    subject: at.subject,
+  })
 
-  // The new draft is a new file beside the old one, and `writeIfAbsent` is what makes "a
-  // hand-made asset always wins" true here rather than intended: if something is already at
-  // that path, somebody put it there and the motion stops instead of writing over it (D20).
+  const stale = landed.stale.map((one) => ({
+    artifactId: one.artifact.id,
+    kind: one.artifact.kind,
+    slot: one.artifact.slot,
+  }))
+  return {
+    findingId: at.finding.id,
+    artifactId: landed.artifact.id,
+    version: landed.artifact.version,
+    filePath: landed.filePath,
+    sceneId: at.scene?.id ?? null,
+    scene: at.scene?.ordinal ?? null,
+    read: landed.read.map((pass) => ({
+      checkKey: pass.checkKey,
+      artifactId: pass.artifactId,
+      artifactVersion: pass.artifactVersion,
+      findings: pass.findingCount,
+    })),
+    wall: landed.wall,
+    stale,
+    // Asked of the scene as it stands AFTER the motion: a re-delineation may have taken the
+    // heading with it, and a re-check offered over a scene row that is gone is a button
+    // pointing at nothing.
+    recheck: recheckOffer(
+      store,
+      landed.artifact,
+      at.scene && scenesOf(store, landed.artifact.episodeId).find((one) => one.id === at.scene!.id),
+      llm,
+    ),
+    sentence: appliedSentence(at, landed.artifact, landed.read, stale.length, landed.wall),
+  }
+}
+
+// ── The motion itself, and its two callers ──────────────────────────────────────
+
+/** What one motion left behind: the version, the receipt, and what moved because of it. */
+export interface LandedVersion {
+  artifact: Artifact
+  /** The new draft on the volume. The old one is still beside it (D20). */
+  filePath: string
+  /** Every deterministic pass that read it before the motion returned. **The receipt.** */
+  read: CheckPass[]
+  /** The scenes the draft broke into, for a script. Undefined for every other kind. */
+  scenes: Scene[] | undefined
+  /** What is stale now — asked of `staleArtifacts`, never set by this (1.3). */
+  stale: StaleArtifact[]
+  /** Whether the next stage may start on this episode now, in D12's own words. */
+  wall: string | null
+}
+
+/**
+ * **A new version of a written artifact, landed — as ONE MOTION.**
+ *
+ * This is what the module header above argues for, hoisted out of `applyRewrite` so that it
+ * has two callers rather than one: the pre-drafted rewrite behind a finding (E3-5) and Ryan's
+ * direct edit (`edit.ts`, E4-5). The E3 constraints ledger's first entry asked for exactly
+ * that — "any new path that writes an artifact version must go through that same motion (or
+ * its equivalent)" — and one function is a stronger answer than an equivalent, because an
+ * equivalent is only equivalent until somebody changes one of them.
+ *
+ * Four things happen, in this order, and the order is the argument:
+ *
+ *   1. **A script's scenes are derived from the new text, before a byte lands.** A scene is
+ *      its heading (`domain/delineate.ts`), so re-delineating is what keeps the grid the
+ *      draft's own; doing it before the file is written is what makes a draft whose scenes
+ *      cannot be read leave nothing behind (E4-3's ledger entry, which names both callers).
+ *   2. **The file is written beside the old one**, never over it — `writeIfAbsent` is what
+ *      makes "a hand-made asset always wins" true by the bytes rather than by the button.
+ *   3. **The revision, the delineation and the free deterministic tier commit together.**
+ *      Until the `check_pass` rows exist the revision has not committed, so at no point
+ *      observable to any reader does a version exist that nothing has read.
+ *   4. **Staleness and the wall are asked afterwards, never set.** Both are computations over
+ *      the rows this motion just wrote (1.3, D12).
+ *
+ * A rollback removes the file it wrote: left behind, it would refuse the next attempt at the
+ * same version with "a hand-made asset always wins" — a dead end built out of a rollback.
+ */
+export function landNewVersion(
+  store: Store,
+  library: LibraryPaths,
+  what: {
+    artifact: Artifact
+    /** The bytes, exactly as they will land. Nothing here trims, reflows or reformats them. */
+    text: string
+    summary: string
+    /** Left off, the whole artifact changed — which is the honest answer for a hand edit. */
+    touchedScenes?: string[]
+    /**
+     * Canon entities this version declares it touches (invariant 2), added before the free
+     * tier reads it — because the structural checks read PROVENANCE, so a version whose
+     * provenance lands afterwards is a version read against the draft it replaced.
+     */
+    touches?: readonly string[]
+    /** "the ep01 script" — what a refusal calls the thing it could not read. */
+    subject: string
+  },
+): LandedVersion {
+  const taken = targetTakenBecause(library, what.artifact)
+  if (taken) throw new Error(taken)
+
+  // Before anything is written: a draft whose scenes cannot be read out of it is not a draft,
+  // and it must not leave a file on the volume for the next attempt to trip over (E4-3).
+  const drafted =
+    what.artifact.kind === 'script' ? delineateScript(what.text, what.subject) : undefined
+
+  const version = what.artifact.version + 1
+  const filePath = versionedPath(what.artifact.filePath!, version)
+  const onDisk = join(library.artifactDir, filePath)
+
   mkdirSync(dirname(onDisk), { recursive: true })
-  if (writeIfAbsent(onDisk, rewritten) === 'kept') {
+  if (writeIfAbsent(onDisk, what.text) === 'kept') {
     // Checked above as a precondition and again here, because between the two is a filesystem
     // and this is the write that must never clobber. `writeIfAbsent` is the enforcement; the
     // precondition is the courtesy.
-    throw new Error(targetTakenBecause(library, at)!)
+    throw new Error(targetTakenBecause(library, what.artifact)!)
   }
 
   try {
     return store.transaction(() => {
-      const artifact = reviseArtifact(store, at.artifact.id, {
-        summary: `rewrote the ${at.finding.checkKey} span${
-          at.scene ? ` in scene ${at.scene.ordinal}` : ''
-        }`,
-        // The scene is what makes staleness land where the edit did rather than everywhere:
-        // a scene-4 revision stales the consumers that consumed scene 4. Left off — a finding
-        // about the whole artifact — the whole artifact changed, and everything downstream is
-        // stale, which is the honest answer rather than a wider one.
-        ...(at.scene && { touchedScenes: [at.scene.id] }),
+      const artifact = reviseArtifact(store, what.artifact.id, {
+        summary: what.summary,
+        ...(what.touchedScenes && { touchedScenes: what.touchedScenes }),
         filePath,
       })
+      // After the revision, so a revision naming a scene the new draft no longer carries
+      // degrades through `releaseScene` rather than being written against a row that is gone.
+      const scenes = drafted ? delineateScenes(store, artifact.episodeId, drafted) : undefined
+      if (what.touches?.length) declareProvenance(store, artifact.id, [...what.touches])
 
-      // The receipt. Inside the transaction on purpose: until these rows exist the revision
-      // has not committed, so nothing anywhere can read v2 as a draft with no findings on it.
       const read = readItForFree(store, artifact)
-      const stale = staleArtifacts(store, artifact.episodeId).map((one) => ({
-        artifactId: one.artifact.id,
-        kind: one.artifact.kind,
-        slot: one.artifact.slot,
-      }))
-      const wall = stageBlockedBecause(store, artifact.episodeId)
-
       return {
-        findingId: at.finding.id,
-        artifactId: artifact.id,
-        version: artifact.version,
+        artifact,
         filePath,
-        sceneId: at.scene?.id ?? null,
-        scene: at.scene?.ordinal ?? null,
-        read: read.map((pass) => ({
-          checkKey: pass.checkKey,
-          artifactId: pass.artifactId,
-          artifactVersion: pass.artifactVersion,
-          findings: pass.findingCount,
-        })),
-        wall,
-        stale,
-        recheck: recheckOffer(store, artifact, at.scene, llm),
-        sentence: appliedSentence(at, artifact, read, stale.length, wall),
+        read,
+        scenes,
+        stale: staleArtifacts(store, artifact.episodeId),
+        wall: stageBlockedBecause(store, artifact.episodeId),
       }
     })
   } catch (error) {
-    // The file was written moments ago by this call and no committed row references it. Left
-    // behind, it would refuse the next attempt at the same version with "a hand-made asset
-    // always wins" — a dead end built out of a rollback.
     rmSync(onDisk, { force: true })
     throw error
   }
@@ -1337,12 +1432,12 @@ function rewriteBlockedBecause(at: Standing): string | null {
  * every time, which is the failure-after-launch that "preconditions before the button" exists
  * to forbid.
  */
-function targetTakenBecause(library: LibraryPaths, at: Standing): string | null {
-  const filePath = versionedPath(at.artifact.filePath!, at.artifact.version + 1)
+export function targetTakenBecause(library: LibraryPaths, artifact: Artifact): string | null {
+  const filePath = versionedPath(artifact.filePath!, artifact.version + 1)
   if (!existsSync(join(library.artifactDir, filePath))) return null
   return (
     `${filePath} is already on the volume and nothing is ever written over it (D20). The ` +
-    `${at.artifact.kind} is still at v${at.artifact.version}, so that file is either one you ` +
+    `${artifact.kind} is still at v${artifact.version}, so that file is either one you ` +
     'wrote by hand — in which case it is the draft and there is nothing here to apply — or ' +
     'one a rewrite left behind when its transaction rolled back. Read it, then keep it or ' +
     'remove it.'

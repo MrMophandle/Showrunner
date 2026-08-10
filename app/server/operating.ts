@@ -12,7 +12,10 @@ import {
   type CostTotals,
 } from './cost.ts'
 import type { Store } from './db/store.ts'
-import { findArtifact, type Artifact } from './domain/artifact.ts'
+import { findArtifact, type Artifact, type FreshnessStatus } from './domain/artifact.ts'
+import { routedNoteSentence } from './domain/routing.ts'
+import { producedBy, WRITE_STEP } from './domain/write-context.ts'
+import { writtenArtifacts } from './edit.ts'
 import {
   EPISODE_LIFECYCLE,
   episodeLabel,
@@ -52,7 +55,7 @@ import {
 import { stageBlockedBecause, stageBlockingFindings, type StageBlock } from './runner/stage-wall.ts'
 import { stageCatalogue } from './runner/stages.ts'
 import type { Stage, StageCatalogue } from './runner/step.ts'
-import { SCRIPT_GATE_STAGE } from './runner/present-step.ts'
+import { PRESENTING_STAGE, SCRIPT_GATE_STAGE } from './runner/present-step.ts'
 import { WRITING_STAGE } from './runner/write-step.ts'
 
 /**
@@ -109,6 +112,39 @@ export interface EpisodeOnThePage {
    * is a browser that can ask for a stage this build does not have.
    */
   launchStage: string
+  /** Every written artifact this episode has, with its freshness and both of Ryan's doors. */
+  artifacts: WrittenOnThePage[]
+}
+
+/**
+ * **One written artifact, with the two doors the refusal names** (E4-5, #65).
+ *
+ * A writing stage refuses an episode that already has its artifact with "rule on it at its
+ * gate, or edit it directly", and until E4-5 neither door was on the card that sentence
+ * appears on: E4-3 built the presenting stages and nothing offered them, and the edit did not
+ * exist. Both are here now, beside the refusal, per artifact — because a sentence in this app
+ * may not point at a door Ryan cannot open.
+ *
+ * The freshness sentence rides with them for the same reason (5.2): "built from a draft the
+ * outline has moved past" is the answer to why he might want either door, and it is computed
+ * off the edges every time it is asked (1.3).
+ */
+export interface WrittenOnThePage {
+  id: string
+  kind: string
+  slot: string
+  version: number
+  filePath: string | null
+  status: FreshnessStatus
+  /** Why it is stale, in one sentence. Null when it is not. */
+  staleBecause: string | null
+  /** Notes routed here from another gate that nothing has answered yet (D21). */
+  standing: { note: string; sentence: string }[]
+  /** Type it over yourself. Free, verbatim, and one motion (`edit.ts`). */
+  edit: Offer
+  /** Put it in front of yourself for a ruling. Free, never walled (`present-step.ts`). */
+  present: Offer
+  presentStage: string
 }
 
 export interface LifecycleStop {
@@ -187,6 +223,7 @@ export function operatingView(
           run: run ? runOnThePage(run, waiting.get(run.id) ?? null) : null,
           launch: stageOffer(store, llm, episode.id, catalogue[stage]!),
           launchStage: stage,
+          artifacts: writtenOnThePage(store, library, llm, catalogue, episode.id),
         }
       }),
     )
@@ -239,6 +276,47 @@ export function operatingView(
 export function stageForEpisode(episode: Episode): string {
   return WRITING_STAGE[episode.lifecycle] ?? SCRIPT_GATE_STAGE
 }
+
+/**
+ * Every written artifact of this episode, with its freshness and Ryan's two doors onto it.
+ *
+ * The edit door and its sentences are `edit.ts`'s, where they have tests; the presenting door
+ * is a STAGE, so its offer comes off `stage.offerOn` like every other button in this app and
+ * `stageOffer` adds the same preconditions it adds to a launch — a run already holding the
+ * episode refuses both doors with one sentence, which is D7 said once (`launchBlockedBecause`).
+ */
+function writtenOnThePage(
+  store: Store,
+  library: LibraryPaths,
+  llm: LLMReadiness,
+  catalogue: StageCatalogue,
+  episodeId: string,
+): WrittenOnThePage[] {
+  return writtenArtifacts(store, library, episodeId).map((written) => {
+    const step = WRITE_STEP.find((one) => producedBy(one) === written.artifact.kind)!
+    const stage = PRESENTING_STAGE[step]
+    return {
+      id: written.artifact.id,
+      kind: written.artifact.kind,
+      slot: written.artifact.slot,
+      version: written.artifact.version,
+      filePath: written.artifact.filePath,
+      status: written.status,
+      staleBecause: written.staleBecause,
+      standing: written.standing.map((note) => ({
+        note: note.note,
+        sentence: routedNoteSentence([note], subject(store, episodeId, written.artifact.kind)),
+      })),
+      edit: written.edit,
+      present: stageOffer(store, llm, episodeId, catalogue[stage]!),
+      presentStage: stage,
+    }
+  })
+}
+
+/** "the ep01 outline" — what a routed note's sentence is about. */
+const subject = (store: Store, episodeId: string, kind: string): string =>
+  `the ${episodeLabel(findEpisode(store, episodeId)?.number ?? 0)} ${kind}`
 
 /** premise → … → published, with where this episode stands on it. */
 export function lifecycleTrack(lifecycle: EpisodeLifecycle): LifecycleStop[] {
@@ -543,7 +621,12 @@ function gateOnThePage(
           : stage.work === 'reads'
             ? 'and presents it again with them recorded against it; there is no writer behind ' +
               'this gate to route them to yet, so the notes land and ride (D21)'
-            : 'and writes it again against them'),
+            : 'and writes it again against them') +
+        // The other half of D21, on the same button (E4-5): a note that names another written
+        // artifact is not this producer's to answer, so nothing here is rewritten at all and
+        // the work turns up as an offer where it belongs (`domain/routing.ts`).
+        '. But a note you route to another artifact lands there instead — nothing here is ' +
+        'rewritten, and the stage that writes it becomes offerable with your note on it (D21)',
       cost: again === null || !again.callsModel ? FREE : `${again.cost} · your money, spent when you click`,
       enabled: standing.isOpen,
       blockedBecause: ruled,

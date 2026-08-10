@@ -71,6 +71,12 @@ export function App() {
   const [problem, setProblem] = useState<string | null>(null)
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT)
   const [busy, setBusy] = useState(false)
+  /**
+   * The draft Ryan is typing over, and nothing else about it. Null when no edit is open —
+   * there is deliberately no "dirty" flag and no autosave: an edit lands when he presses the
+   * button, and the volume is what says what the draft is until he does (E4-5).
+   */
+  const [editing, setEditing] = useState<{ artifactId: string; text: string } | null>(null)
   /** The kinds the stream will send. Fixed for the life of the process; read once. */
   const [stream, setStream] = useState<OperatingView['stream'] | null>(null)
   /** Which run is on screen, readable inside the stream's listener without re-subscribing. */
@@ -195,6 +201,50 @@ export function App() {
    * never holds its own copy of a stage name: a page that did could ask for a stage this
    * build does not have, and the catalogue is the one place they are written down.
    */
+  /**
+   * **Ryan's hand on a written artifact** (E4-5): the draft, fetched to type over, and the
+   * edit that lands it back verbatim.
+   *
+   * A GET to open it, so opening one costs nothing and starts nothing (invariant 5); a POST
+   * to land it, which is one motion on the server — revise, re-delineate, and let the free
+   * deterministic tier read the new version before it answers (`edit.ts`). The page re-reads
+   * afterwards rather than patching: freshness, the wall and the offers are all computed off
+   * rows, and a screen keeping them in step by hand would be the remembered state 1.3 refuses.
+   */
+  async function openEdit(artifactId: string): Promise<void> {
+    setBusy(true)
+    setProblem(null)
+    try {
+      const res = await fetch(`/api/artifact/${artifactId}`)
+      const body = (await res.json()) as { text?: string | null; error?: string }
+      if (!res.ok) setProblem(body.error ?? 'That artifact could not be read.')
+      else setEditing({ artifactId, text: body.text ?? '' })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function landEdit(): Promise<void> {
+    if (!editing) return
+    setBusy(true)
+    setProblem(null)
+    try {
+      const res = await fetch(`/api/artifact/${editing.artifactId}/edit`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        // Verbatim, character for character (D20). Nothing here trims it on the way past.
+        body: JSON.stringify({ text: editing.text }),
+      })
+      const body = (await res.json()) as { sentence?: string; error?: string }
+      if (!res.ok) setProblem(body.error ?? 'The edit was refused, and said nothing about why.')
+      else setEditing(null)
+      await loadView()
+      if (checkEpisode) await loadChecks(checkEpisode)
+    } finally {
+      setBusy(false)
+    }
+  }
+
   async function launch(episodeId: string, stage: string): Promise<void> {
     setBusy(true)
     setProblem(null)
@@ -365,7 +415,12 @@ export function App() {
       busy={busy}
       draft={draft}
       onDraft={(next) => setDraft({ ...draft, ...next })}
-      onLaunch={(episode) => void launch(episode.id, episode.launchStage)}
+      onLaunch={(episode, stage) => void launch(episode.id, stage ?? episode.launchStage)}
+      editing={editing}
+      onEdit={(artifactId) => void openEdit(artifactId)}
+      onEditDraft={(text) => setEditing(editing && { ...editing, text })}
+      onLandEdit={() => void landEdit()}
+      onCancelEdit={() => setEditing(null)}
       onShowRun={setRunId}
       onRule={(gateId, verdict) => void rule(gateId, verdict)}
       onShowBench={(id) => {
@@ -455,9 +510,19 @@ export interface PageProps {
   busy: boolean
   draft: Draft
   onDraft(next: Partial<Draft>): void
-  onLaunch(episode: EpisodeOnThePage): void
+  onLaunch(episode: EpisodeOnThePage, stage?: string): void
   onShowRun(runId: string): void
   onRule(gateId: string, verdict: 'approve' | 'reject' | 'override'): void
+  /**
+   * **Ryan's two doors onto a written artifact** (E4-5): put it in front of himself for a
+   * ruling, or type over it. Both offers were composed on the server, like every other
+   * sentence on this page; what lives here is the textarea his words are typed into.
+   */
+  editing: { artifactId: string; text: string } | null
+  onEdit(artifactId: string): void
+  onEditDraft(text: string): void
+  onLandEdit(): void
+  onCancelEdit(): void
   /**
    * The canon section, whole — its view, its draft and its handlers in one object rather
    * than ten props threaded through a page that does nothing with any of them. Null until
@@ -541,6 +606,61 @@ export function Page(props: PageProps) {
               <p>Spend on this episode: {episode.spendSentence}</p>
 
               <Button offer={episode.launch} busy={busy} onClick={() => props.onLaunch(episode)} />
+
+              {/* **The two doors the refusal above names** (E4-5): rule on it at its gate, or
+                  edit it directly. Both offers, both freshness sentences and every routed note
+                  were composed on the server; this renders the strings it was handed. */}
+              {episode.artifacts.length > 0 && (
+                <div>
+                  <h4>What is written, and what you may do with it</h4>
+                  {episode.artifacts.map((written) => (
+                    <div key={written.id} style={ARTIFACT}>
+                      <strong>
+                        {written.kind} v{written.version} — {written.status}
+                      </strong>
+                      {written.staleBecause && (
+                        <p>
+                          <small>{written.staleBecause}</small>
+                        </p>
+                      )}
+                      {written.standing.map((note) => (
+                        <p key={note.note}>
+                          <small>Standing against it: {note.sentence}</small>
+                        </p>
+                      ))}
+                      <Button
+                        offer={written.present}
+                        busy={busy}
+                        onClick={() => props.onLaunch(episode, written.presentStage)}
+                      />
+                      {props.editing?.artifactId === written.id ? (
+                        <div>
+                          <textarea
+                            value={props.editing.text}
+                            onChange={(event) => props.onEditDraft(event.target.value)}
+                            rows={20}
+                            style={{ width: '100%', fontFamily: 'inherit' }}
+                          />
+                          <Button
+                            offer={written.edit}
+                            busy={busy}
+                            onClick={() => props.onLandEdit()}
+                          />
+                          <button type="button" onClick={() => props.onCancelEdit()}>
+                            Leave it as it stands
+                          </button>
+                        </div>
+                      ) : (
+                        <Button
+                          offer={written.edit}
+                          busy={busy}
+                          onClick={() => props.onEdit(written.id)}
+                        />
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
 
               {episode.run && (
                 <p>

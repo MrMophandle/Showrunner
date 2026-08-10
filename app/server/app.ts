@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { serveStatic } from '@hono/node-server/serve-static'
 import { Hono, type Context } from 'hono'
 import { streamSSE } from 'hono/streaming'
@@ -12,7 +14,9 @@ import {
   type SheetDraft,
 } from './canon-bench.ts'
 import type { Store } from './db/store.ts'
+import { artifactFreshness, findArtifact, type Artifact } from './domain/artifact.ts'
 import { ENTITY_STANDING, findEntityById } from './domain/canon.ts'
+import { unaddressedNotesTo, routedNoteSentence } from './domain/routing.ts'
 import { findFact } from './domain/fact.ts'
 import { dismissFinding, findFinding } from './domain/finding.ts'
 import { foundCanon } from './domain/founding.ts'
@@ -23,7 +27,8 @@ import type { LibraryPaths } from './library.ts'
 import type { LLMAdapter } from './llm/adapter.ts'
 import type { LLMReadiness } from './llm/choose.ts'
 import { checkBenchView } from './check-bench.ts'
-import { findStage, launchBlockedBecause, operatingView, runView } from './operating.ts'
+import { editArtifact, editOffer, staleSentence, writtenArtifacts } from './edit.ts'
+import { findStage, launchBlockedBecause, operatingView, runView, type Offer } from './operating.ts'
 import {
   applyRewrite,
   canonChangePrefill,
@@ -37,6 +42,23 @@ import type { Runner } from './runner/runner.ts'
 import { stageCatalogue } from './runner/stages.ts'
 
 const WEB_ROOT = './dist/web'
+
+/**
+ * One written artifact, as the edit door hands it over: the draft itself, why it is stale,
+ * what Ryan has routed at it, and the button that types over it (E4-5).
+ *
+ * The artifact is rendered rather than named — the same rule a gate keeps (D15, 4.6): a door
+ * that handed over a path would make Ryan go and find the thing he is about to edit.
+ */
+export interface ArtifactOnTheWire {
+  artifact: Artifact
+  /** Off the volume. Null when there is nothing to read, with the reason beside it. */
+  text: string | null
+  note: string | null
+  staleBecause: string | null
+  standing: { note: string; sentence: string }[]
+  edit: Offer
+}
 
 /**
  * The one app process (2.1): web UI, API, and the event stream, all here.
@@ -369,6 +391,54 @@ export function createApp(
     }
   })
 
+  // ── Ryan's hand: editing a written artifact directly (E4-5) ───────────────────
+  //
+  // Two routes, and the GET is what makes the POST usable: an edit is Ryan typing over a
+  // draft, so he has to be handed the draft. Both read the path off the artifact ROW —
+  // nothing a browser sends chooses which file this process opens (`operating.ts`'s rule).
+  //
+  // Neither of them calls a model. The edit is E3-5's one motion generalized (`edit.ts`): it
+  // revises, re-delineates a script's scenes, and lets the free deterministic tier read the
+  // new version before it answers — so "no model call · $0.00" on the button is the whole
+  // truth about what pressing it spends.
+
+  /** The draft to type over, with its freshness, what stands against it, and the door. */
+  app.get('/api/artifact/:id', (c) => {
+    const artifact = findArtifact(store, c.req.param('id'))
+    if (!artifact) return c.json({ error: `No such artifact: ${c.req.param('id')}` }, 404)
+    return c.json(artifactOnTheWire(store, paths, artifact))
+  })
+
+  /**
+   * **Land his text as a new version, verbatim** — and refuse in the exact sentence the
+   * disabled button was already showing (D15).
+   *
+   * A `text` that is absent is a request with nothing in it; one that is EMPTY is a deletion
+   * he typed, and the two are different — the `''`-is-a-value rule this schema keeps
+   * everywhere. The empty one is refused by `editArtifact`, in words, with the reason.
+   */
+  app.post('/api/artifact/:id/edit', async (c) => {
+    const artifact = findArtifact(store, c.req.param('id'))
+    if (!artifact) return c.json({ error: `No such artifact: ${c.req.param('id')}` }, 404)
+
+    const body = await json(c.req.raw)
+    if (typeof body['text'] !== 'string') {
+      return c.json(
+        {
+          error:
+            'An edit needs the text — what should stand where this draft stands. It lands ' +
+            'word for word, so what you send is what is on the volume afterwards.',
+        },
+        400,
+      )
+    }
+    try {
+      return c.json(editArtifact(store, paths, { artifactId: artifact.id, text: body['text'] }))
+    } catch (error) {
+      return c.json({ error: messageOf(error) }, 409)
+    }
+  })
+
   // ── The canon bench (E2-6) ────────────────────────────────────────────────────
   //
   // Seven routes, and every one of them is Ryan's click. Six RAISE — founding aside, nothing
@@ -620,6 +690,54 @@ export function createApp(
   )
 
   return app
+}
+
+/**
+ * What `GET /api/artifact/:id` answers with. Composed here because it is a wire shape rather
+ * than a domain one — the sentences it carries are `edit.ts`'s and `routing.ts`'s, which is
+ * where they have tests.
+ */
+function artifactOnTheWire(
+  store: Store,
+  paths: LibraryPaths,
+  artifact: Artifact,
+): ArtifactOnTheWire {
+  const written = writtenArtifacts(store, paths, artifact.episodeId).find(
+    (one) => one.artifact.id === artifact.id,
+  )
+  const freshness = artifactFreshness(store, artifact.episodeId).find(
+    (one) => one.artifact.id === artifact.id,
+  )
+  const label = `the ${artifact.kind}${artifact.slot ? ` ${artifact.slot}` : ''}`
+
+  let text: string | null = null
+  let note: string | null = null
+  if (artifact.filePath === null) {
+    note = 'This artifact has been recorded but not produced yet.'
+  } else {
+    try {
+      text = readFileSync(join(paths.artifactDir, artifact.filePath), 'utf8')
+    } catch (error) {
+      note =
+        `${artifact.filePath} is recorded on the artifact but could not be read from ` +
+        `${paths.artifactDir} — ${messageOf(error)}`
+    }
+  }
+
+  return {
+    artifact,
+    text,
+    note,
+    staleBecause:
+      freshness?.status === 'stale' ? staleSentence(store, artifact, freshness.reasons) : null,
+    standing: unaddressedNotesTo(store, artifact.id).map((one) => ({
+      note: one.note,
+      sentence: routedNoteSentence([one], label),
+    })),
+    // The offer is the module's, never re-composed here: one composer, two readers, so the
+    // button and the refusal can never tell Ryan different stories (D15).
+    edit: written?.edit ?? editOffer(store, paths, artifact.id),
+  }
 }
 
 /** The stages this build has, for the refusal that names them when a request asks for one it does not. */

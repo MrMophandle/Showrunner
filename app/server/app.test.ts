@@ -15,6 +15,8 @@ import { loadFixture } from './fixture/load.ts'
 import { initLibrary, openLibraryStore, type LibraryPaths } from './library.ts'
 import { describeLLMBackend, type LLMReadiness } from './llm/choose.ts'
 import { createFakeLLM, type FakeLLM } from './llm/fake.ts'
+import type { ArtifactEdited } from './edit.ts'
+import type { ArtifactOnTheWire } from './app.ts'
 import type { RunView } from './operating.ts'
 import { BOARD_CHECK_STAGE, BOARD_STAGE } from './runner/board-step.ts'
 import { createRulings, openGates } from './runner/gate.ts'
@@ -49,6 +51,7 @@ let runner: Runner
 let app: ReturnType<typeof createApp>
 let readiness: LLMReadiness
 let ep02: string
+let ep01: string
 let showId: string
 
 beforeEach(() => {
@@ -70,7 +73,9 @@ beforeEach(() => {
 
   const show = store.get<{ id: string }>("SELECT id FROM show WHERE key = 'greyharbor'")!
   showId = show.id
-  ep02 = episodesOf(store, seasonsOf(store, show.id)[0]!.id).find((e) => e.number === 2)!.id
+  const episodes = episodesOf(store, seasonsOf(store, show.id)[0]!.id)
+  ep01 = episodes.find((e) => e.number === 1)!.id
+  ep02 = episodes.find((e) => e.number === 2)!.id
 })
 
 afterEach(() => {
@@ -184,7 +189,6 @@ describe('the app process — launching a run', () => {
     readiness = NOTHING
     // ep01 has the fixture script and a board is what the free tier reads; build one the way
     // the rules will find it, without a model.
-    const ep01 = episodesOf(store, seasonsOf(store, showId)[0]!.id).find((e) => e.number === 1)!.id
     const script = artifactsOf(store, ep01).find((artifact) => artifact.kind === 'script')!
     recordExtractedBoard(store, {
       episodeId: ep01,
@@ -227,7 +231,6 @@ describe('the app process — launching a run', () => {
 
 describe('the app process — the check bench', () => {
   it('answers with the bench for one episode, and runs nothing doing it', async () => {
-    const ep01 = episodesOf(store, seasonsOf(store, showId)[0]!.id).find((e) => e.number === 1)!.id
 
     const bench = await get<CheckBenchView>(`/api/checks/${ep01}`)
 
@@ -284,11 +287,20 @@ describe('the app process — ruling on a gate', () => {
       notes: [{ note: 'Too tidy.', depth: 'premise' }],
     })
     expect(ruled.status).toBe(200)
-    // The note is recorded with its routing depth (D21) the moment it is given; round 2
-    // opens when the step has written again, which is a model call away.
+    // The note is recorded with its routing depth (D21) the moment it is given, and with the
+    // ADDRESS that depth resolved to — the ep02 premise-brief at the version standing when he
+    // wrote it (E4-5, `domain/routing.ts`). It is the artifact this very gate is over, so the
+    // note lands here and round 2 opens when the step has written again, a model call away.
     expect(ruled.body.gate!.rounds[0]!.ruling).toMatchObject({
       verdict: 'reject',
-      notes: [{ note: 'Too tidy.', depth: 'premise', target: null }],
+      notes: [
+        {
+          note: 'Too tidy.',
+          depth: 'premise',
+          target: artifactsOf(store, ep02).find((one) => one.kind === 'premise-brief')!.id,
+          targetVersion: 1,
+        },
+      ],
     })
 
     await runner.settled(started.body.runId)
@@ -719,6 +731,73 @@ describe('the app process — the wire itself', () => {
 })
 
 // ── Test kit ────────────────────────────────────────────────────────────────────
+
+// ── Ryan's hand, over the wire (E4-5) ──────────────────────────────────────────
+
+describe('the app process — editing a written artifact by hand', () => {
+  const scriptOf = (episodeId: string) =>
+    artifactsOf(store, episodeId).find((one) => one.kind === 'script')!
+
+  it('hands over the draft to type over, with the door and its cost on it', async () => {
+    const script = scriptOf(ep01)
+    const view = await get<ArtifactOnTheWire>(`/api/artifact/${script.id}`)
+
+    expect(view.artifact.kind).toBe('script')
+    expect(view.text).toContain('## 4 · EXT. THE LONG PIER — 07:07')
+    expect(view.edit.enabled).toBe(true)
+    expect(view.edit.cost).toBe('No model call · $0.00')
+    expect(view.staleBecause).toBeNull()
+    expect(view.standing).toEqual([])
+    expect(llm.calls).toEqual([])
+  })
+
+  it('lands what he sends word for word, and reads it before it answers', async () => {
+    const script = scriptOf(ep01)
+    const before = await get<ArtifactOnTheWire>(`/api/artifact/${script.id}`)
+    const typed = before.text!.replace('Three minutes of it,', 'Two minutes of it,')
+
+    const edited = await post<ArtifactEdited>(`/api/artifact/${script.id}/edit`, { text: typed })
+
+    expect(edited.status).toBe(200)
+    expect(edited.body.version).toBe(2)
+    expect(edited.body.read.map((pass) => pass.checkKey)).toEqual([
+      'stale-exception',
+      'retired-reappearance',
+    ])
+    expect(edited.body.lifecycle).toBe('script')
+    expect((await get<ArtifactOnTheWire>(`/api/artifact/${script.id}`)).text).toBe(typed)
+    // The door that costs nothing costs nothing.
+    expect(llm.calls).toEqual([])
+    expect(store.all('SELECT * FROM cost_entry')).toEqual([])
+  })
+
+  it('refuses with the sentence the disabled button was already showing', async () => {
+    const script = scriptOf(ep01)
+    const offered = await get<ArtifactOnTheWire>(`/api/artifact/${script.id}`)
+    // The same text back: not a new draft, and the refusal says so rather than spending a
+    // version on nothing.
+    const refused = await post<{ error: string }>(`/api/artifact/${script.id}/edit`, {
+      text: offered.text,
+    })
+
+    expect(refused.status).toBe(409)
+    expect(refused.body.error).toContain('already on the volume, character for character')
+    expect(scriptOf(ep01).version).toBe(1)
+  })
+
+  it('is a 404 for an artifact this library does not have, and a 400 with no text', async () => {
+    const missing = await post<{ error: string }>('/api/artifact/art_nothing/edit', { text: 'x' })
+    expect(missing.status).toBe(404)
+    expect(missing.body.error).toContain('art_nothing')
+
+    const empty = await post<{ error: string }>(
+      `/api/artifact/${scriptOf(ep01).id}/edit`,
+      { nope: 1 },
+    )
+    expect(empty.status).toBe(400)
+    expect(empty.body.error).toContain('word for word')
+  })
+})
 
 async function get<T>(path: string): Promise<T> {
   const res = await app.request(path)

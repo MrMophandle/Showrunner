@@ -104,8 +104,13 @@ describe('the gate — surviving a restart', () => {
     ])
     // The rejection's routing crossed the process boundary with it.
     expect(done.standing.rounds[0]!.ruling!.notes).toEqual([
-      { note: 'scene 4 puts Mara in two places.', depth: 'scene', target: 'scene-4' },
-      { note: 'and the ledger-office shot is the wrong lens.', depth: 'shot', target: 'shot-05' },
+      { note: 'scene 4 puts Mara in two places.', depth: 'scene', target: 'scene-4', targetVersion: null },
+      {
+        note: 'and the ledger-office shot is the wrong lens.',
+        depth: 'shot',
+        target: 'shot-05',
+        targetVersion: null,
+      },
     ])
 
     // One unbroken log across the kill: the first process opened the gate, the second

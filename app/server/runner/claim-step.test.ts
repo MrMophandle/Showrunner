@@ -304,13 +304,13 @@ describe('extraction is the script stage’s third step, and the gate is what ca
     const replay = await replayStep(runId, again.name)
 
     expect(llm.calls).toHaveLength(spent)
-    expect(replay.called).toBe(false)
+    expect(replay!.called).toBe(false)
     expect(proposalsRiding(store, ep02)).toHaveLength(raised)
   })
 })
 
 /** Runs one of a settled run's steps again, as a resumed runner would. */
-async function replayStep(runId: string, name: string): Promise<ClaimExtractionOutcome> {
+async function replayStep(runId: string, name: string): Promise<ClaimExtractionOutcome | null> {
   const { extractTheCanonClaims } = await import('./claim-step.ts')
   const step = extractTheCanonClaims(paths, 'write-the-script')
   expect(step.name).toBe(name)
