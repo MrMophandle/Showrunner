@@ -15,7 +15,7 @@ import { runBoardRules } from '../server/domain/board-rules.ts'
 import { recordExtractedBoard } from '../server/domain/board.ts'
 import { findEntity } from '../server/domain/canon.ts'
 import { factsOfEntity } from '../server/domain/fact.ts'
-import { createProposalRulings } from '../server/domain/proposal.ts'
+import { createProposalRulings, raiseProposal } from '../server/domain/proposal.ts'
 import { episodesOf, seasonsOf } from '../server/domain/spine.ts'
 import { createEventLog, eventsOfRun, type EventLog } from '../server/events.ts'
 import { greyHarborFounded } from '../server/fixture/founded.ts'
@@ -31,9 +31,11 @@ import { SCRIPT_GATE_STAGE } from '../server/runner/present-step.ts'
 import { stageCatalogue } from '../server/runner/stages.ts'
 import { PREMISE_STAGE } from '../server/runner/write-step.ts'
 import { TEXT_CHECK_STAGE } from '../server/runner/text-check-step.ts'
+import { sweepView, type SweepView } from '../server/sweep.ts'
 import { App, Page } from './App.tsx'
 import { EMPTY_BENCH, type BenchDraft } from './CanonBench.tsx'
 import { EMPTY_CHECK_DRAFT, type CheckDraft } from './CheckBench.tsx'
+import { EMPTY_SWEEP, type SweepDraft } from './Sweep.tsx'
 
 /**
  * The page, rendered — with the real view objects the server composes, off a real library
@@ -369,7 +371,7 @@ describe('the operating page — the canon bench, founded', () => {
 
     // The ledger, which is where a bench ruling is read back from.
     expect(html).toContain('ratification')
-    expect(html).toContain('convened at the bench, no gate')
+    expect(html).toContain('convened away from a gate')
     expect(html).toContain('ruling 1 · ratification — the “Ilse Renn” promotion')
     expect(html).toContain('founded Grey Harbor from the sheets in')
   })
@@ -451,6 +453,63 @@ describe('the page — what may be done with what is already written', () => {
   })
 })
 
+// ── The completion sweep, on the card and on the pass (E4-6) ──────────────────
+
+describe('the page — the completion sweep an approved episode still owes', () => {
+  /** Two claims riding ep02, raised the way anything raises: never by ratifying anything. */
+  function twoRiders(): void {
+    const harbor = greyHarborFounded(store, paths)
+    for (const [who, statement] of [
+      ['Ilse Renn', 'Ilse writes her diversions into the spares ledger by hand.'],
+      ['Tobin Wick', 'Tobin Wick keeps the plant keys on his own ring.'],
+    ] as const) {
+      raiseProposal(store, {
+        entityId: harbor.entity(who).id,
+        kind: 'fact-delta',
+        raisedBy: 'writer',
+        episodeId: ep02,
+        facts: [{ statement }],
+      })
+    }
+  }
+
+  it('says nothing at all on a card whose episode owes nothing', () => {
+    const html = render(operatingView(store, paths, READY))
+
+    expect(html).not.toContain('proposals to rule')
+    expect(html).not.toContain('the completion sweep')
+  })
+
+  it('says what is owed on the card, and offers the pass — free, and never a wall', () => {
+    twoRiders()
+    const html = render(operatingView(store, paths, READY))
+
+    expect(html).toContain('ep02 carries 2 proposals to rule — 2 fact deltas.')
+    expect(html).toContain('They ride ep02 until you rule them, one at a time')
+    expect(html).toContain('Rule the 2 proposals riding ep02 — the completion sweep, one at a time')
+    expect(html).toContain('No model call · $0.00')
+    // The launch button beside it is untouched: the pass is owed, it does not block work.
+    expect(html).toContain('Write the ep02 premise-brief from the writer’s desk')
+  })
+
+  it('renders one rider at a time, with three verbs each and no fourth button', () => {
+    twoRiders()
+    const html = renderSweep(sweepView(store, ep02)!)
+
+    expect(html).toContain('The ep02 completion sweep')
+    expect(html).toContain('Implications:')
+    expect(html).toContain('this, and only this, writes it into canon')
+    expect(html).toContain('parks it, and it stops riding its episode')
+    // Two riders, three verbs apiece — and no button anywhere that rules the pass at once.
+    expect(html.match(/writes it into canon/g)).toHaveLength(2)
+    expect(html.match(/parks it, and it stops riding its episode/g)).toHaveLength(2)
+    for (const bulk of [/ratify all/i, /approve all/i, /rule them all/i, /rule the rest/i]) {
+      expect(html).not.toMatch(bulk)
+    }
+    expect(html).toContain('Rejecting a proposal needs the reason')
+  })
+})
+
 // ── Test kit ────────────────────────────────────────────────────────────────────
 
 /**
@@ -486,9 +545,27 @@ function render(
       checks={null}
       checkEpisode={null}
       onShowChecks={() => undefined}
+      sweep={null}
+      sweepEpisode={null}
+      onShowSweep={() => undefined}
       {...over}
     />,
   ).replaceAll('<!-- -->', '')
+}
+
+/** The completion sweep, with the real pass the server composed. Handlers are no-ops. */
+function renderSweep(sweep: SweepView, draft: SweepDraft = EMPTY_SWEEP): string {
+  return render(operatingView(store, paths, READY), {
+    sweepEpisode: sweep.episode.id,
+    sweep: {
+      sweep,
+      draft,
+      busy: false,
+      onDraft: () => undefined,
+      onRule: () => undefined,
+      onClose: () => undefined,
+    },
+  })
 }
 
 /** The checks section, with the real bench the server composed. Handlers are no-ops. */

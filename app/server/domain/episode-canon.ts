@@ -25,18 +25,25 @@ import { episodeLabel, findEpisode, markAbandoned, type Episode } from './spine.
  * **The sweep** collects; it does not rule. At episode approval every proposal still riding
  * the episode — the writer's fact deltas, a check remediation's, and the waypoint landings
  * below — comes to one final ruling pass, and Ryan rules them one at a time. This is a READ
- * (it writes nothing at all) because the collection is the whole job: E4's final gate calls
- * it to know what approving the episode still owes canon, and renders each proposal with
- * its own blast radius beside it.
+ * (it writes nothing at all) because the collection is the whole job: its caller asks it what
+ * approving the episode still owes canon, and renders each proposal with its own blast radius
+ * beside it.
  *
- * **NOTHING IN THIS APP ADVANCES A LIFECYCLE YET.** `sweepEpisode` is a callable flow with
- * a seam where E4's approval gate will invoke it, the way `pauseRun` was the seam E1-4 hung
- * gates off. It invents no approval mechanics of its own, and it must not grow any.
+ * **E4-6 (#66) is that caller, and it is not the gate this header used to name** — `sweep.ts`,
+ * reached from the episode rather than from inside a ruling. E2-3 wrote "E4's approval gate
+ * calls it", and E4-4 then ruled the step order that makes the literal reading impossible: the
+ * extraction runs on the FAR SIDE of the script gate, because it reads the draft Ryan approved,
+ * so at the moment that gate renders the riders it will raise do not exist. The sweep is
+ * therefore the pass that stands OWED once the script is approved and the extraction has landed
+ * — presented from the episode, one rider at a time, each on its own row of the ledger. The
+ * full argument, and the two roads not taken, are in `sweep.ts`'s header; nothing about THIS
+ * function changed to accommodate it, which is the point.
  *
  * It sweeps EXISTING proposals only. Extracting the implicit facts out of a written scene —
  * "she called him by his first name, so they are on those terms now" — is LLM work and
- * belongs to E3/E4; those extractors will raise proposals riding the episode, and this
- * sweep will collect them without changing a line.
+ * belongs to E3/E4; those extractors raise proposals riding the episode, and this sweep
+ * collects them without a line changing here. E4-4's `claim.ts` is the first of them, and it
+ * cost this file nothing, exactly as predicted.
  *
  * **Abandonment** puts an episode down at whatever stage it died at (`abandoned_at` is a
  * column, not a stage — 0009 says why) and then does two different things to two different
@@ -87,8 +94,8 @@ export interface Sweep {
 }
 
 /**
- * Every proposal riding this episode, split by whether it has been ruled — what E4's final
- * gate presents when Ryan approves the episode.
+ * Every proposal riding this episode, split by whether it has been ruled — the pass Ryan owes
+ * once its script is approved (`sweep.ts`, E4-6).
  *
  * Founding proposals are not here and cannot be: they ride nothing (D25), so no episode's
  * approval convenes them. `openProposals` is the queue that does.

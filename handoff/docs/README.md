@@ -399,9 +399,18 @@ this sweep collects them without a line changing here. That is the whole reason 
 as a collector rather than as something that also generates.
 
 *Half paid by E4-4 (#64): the extractor exists (`claim.ts`, `runner/claim-step.ts`) and the
-sweep collects what it raises with not a line changed, exactly as predicted. What still has no
-caller is the sweep itself — **E4-6's episode-approval gate is what convenes it**, and this
-paragraph's other half stays open until then.*
+sweep collects what it raises with not a line changed, exactly as predicted.*
+
+***Paid in full by E4-6 (#66) — and the first clause above turned out to be unbuildable as
+written.*** E4-4 put the extraction on the FAR SIDE of the script gate (it reads the draft Ryan
+approved), so at the moment that gate renders, the riders extraction will raise **do not exist
+yet**. A sweep convened from inside it would present an empty pass and then have nothing to say
+about the stack that lands a second later. The reconciliation, argued at length in `sweep.ts`'s
+header and tested rather than asserted: **the sweep is the pass that stands OWED once the script
+is approved and the extraction has landed**, surfaced from the EPISODE rather than from a gate,
+and "episode approval" in 1.2's sense is complete when the pass is. Everything else in the
+paragraph is kept literally — each rider with its own `blastRadius`, ruled one at a time through
+`createProposalRulings`, no bulk approve anywhere, and the collector still collects only.
 
 ### A `candidate` sheet raises nothing, and re-loading is not a sync (E2-4, issue #27)
 
@@ -528,8 +537,9 @@ Written as E4's issues land, for the same reason as every list above. The first 
 E4-1's (#61) and the first three bound E4-2 directly; the three after them are E4-2's (#62)
 and bound E4-3; then three of E4-3's (#63), and the scene rules among them bind E4-5's
 direct editor and E6's shot manifest before anything else touches a scene. Then three of
-E4-4's (#64), the first of which binds E4-6's sweep gate directly — and the last four are
-E4-5's (#65), of which the first two bind E4-6 and the third binds E6's review desk.
+E4-4's (#64), the first of which bound E4-6 directly; four of E4-5's (#65), of which the first
+two bound E4-6 and the third binds E6's review desk — and the last three are E4-6's (#66),
+which close the epic's canon side and bind E5's episode room and E6's watch-through.
 
 ### One seam moves an episode's lifecycle, and the builder is what makes it a seam (E4-1, #61)
 
@@ -749,6 +759,11 @@ paid, with the subject the writer answered.
 already queryable — the sentence, the `$0.00`, and the reason a button is disabled — reached
 through the bench view's `?episode=` control, the same shape `?entity=` already had.
 
+*Closed by E4-6 (#66): the landing raised out of the script is ratified at the completion sweep,
+and only then does "arc1 reached waypoint2 in ep02" become a fact with lineage. The pin never
+moves at that ruling and never needed to — what the ruling changes is whether landing it is
+canon (`sweep.test.ts` holds both halves).*
+
 ### The extractor's four laws, and the one scope they are read against (E4-4, #64)
 
 `claim.ts` inherits `domain/board.ts`'s pattern whole — nothing trusts the model — and adds the
@@ -846,6 +861,57 @@ fixture's own `built from` stopped being the only edge in the library.
 **The rule generalizes and E5 inherits it:** a refusal that names an affordance owes that
 affordance a button on the same screen. E5 owns how the eight screens render these; it does
 not get to drop one and leave the sentence.
+
+### The completion sweep is a pass Ryan OWES, not a payload a gate carries (E4-6, #66)
+
+The E2 ledger's `sweepEpisode` entry above records the sentence this amended and why it could
+not stand. What binds later epics is the shape that replaced it: **an owed pass is a first-class
+thing in this app now, and it is not a gate, a run, a step, or a stage.** It is a read over the
+proposals riding an episode (`sweep.ts`), reached from the episode, made whenever Ryan sits down
+to it, and finished when the last rider is ruled.
+
+Three properties a later surface inherits rather than re-decides:
+
+- **It stands owed rather than blocking.** The pass neither advances the lifecycle nor holds it
+  — E4-1's seam already moved the episode when the run's closing step moved it, and an episode
+  with riders standing is offerable to E6's assets work exactly as one without. A screen that
+  rendered the sweep as a wall would be inventing a gate out of a ruling pass.
+- **It convenes rulings; it never spends and never generates.** No adapter is imported here and
+  none may be. A script Ryan edited by hand may carry claims nobody raised — that was E4-5's
+  choice, and the door for them is the bench's add-a-fact (#39), never a sweep that helpfully
+  re-reads his prose. **If a sweep ever calls a model, this rule has been broken.**
+- **The riders arrive from more places than one.** Extraction after the gate (E4-4), a check
+  remediation mid-loop (E3-5), the bench's own door riding an episode (#39). The pass collects
+  whatever rides at the moment it is read, which is the property that made "computed from the
+  queue" the only honest implementation.
+
+**E6's watch-through gate is the next thing 1.2 calls "the final gate", and it inherits this
+directly:** it does not convene the sweep either. The pass is already reachable, already owed,
+and already Ryan's; a second convener would be two screens over one obligation.
+
+### "Swept" is derived, and the absence of a bulk verb is the feature (E4-6, #66)
+
+There is no `swept_at`, no sweep table and no lifecycle hook, and `sweep.test.ts` asserts the
+absence of the first two by querying `sqlite_master` and `pragma_table_info` rather than by
+comment. The episode card's sentence appears when something rides and goes when the last rider
+is ruled, off one read both times (`sweepOnThePage`, in `operating.ts`'s `EpisodeOnThePage`).
+
+**Three riders take three rulings and leave three rows on `canon_ruling`.** There is no bulk
+verb on the view, no `ratifyAll` anywhere, and no route for one — `POST /api/sweep/:id/ratify-all`
+is a 404 because it does not exist, not because something refuses it, and a test pins that. E5
+owns how the episode room renders this pass (5.2, D24); **it does not get to add a fourth
+button.** The same rule that makes founding legal makes this one binding: D25's `foundCanon`
+rules a stack one at a time through the same API and writes one ledger row per sheet, and it is
+a deliberate act over documents already read — not a precedent for a bulk approve elsewhere.
+
+### One proposal, one renderer, two surfaces (E4-6, #66)
+
+`proposalOnTheBench` (`canon-bench.ts`) is exported now and the sweep is its second reader. What
+a proposal IS, what ratifying it would write, what it would disturb and why a verb is refused
+are one answer wherever Ryan is standing — only the SCOPE differs, which is the same shape
+`draftsUnderReview` already holds for a gate's payload (E4-3). A third surface over proposals
+calls this rather than composing its own; two renderers drift the day one of them learns
+something.
 
 ## Working agreements that bind every session
 
