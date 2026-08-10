@@ -28,6 +28,10 @@ import {
  * exactly right, because "reject is routed, not rewound" (D21) sends the work back INTO the
  * stage the episode is still at.
  *
+ * **Two doors convene that ruling and both move it** (#76): the writing stage's own gate, and
+ * the presenting stage's gate over an artifact this app never wrote. `advanceOnPresentedApproval`
+ * below is the second, and it is this function with one extra test rather than a second seam.
+ *
  * ## Why a function and not a convention
  *
  * The writing line has three stages and E6/E7 add more, and every one of them ends the same
@@ -134,6 +138,60 @@ export function advanceOnApproval(
     moved: true,
     sentence: `${label} moves from ${from} to ${next} — you approved its ${completed} gate.`,
   }
+}
+
+/**
+ * **Move an episode on because a PRESENTING gate was approved** (#76) — the same seam, entered
+ * by the other door, with the one test that door has to make for itself.
+ *
+ * ## The ruling: a ruling is a ruling, whichever door convened it
+ *
+ * A gate says where Ryan was standing, never whether he may rule (`runner/gate.ts`), and the
+ * presenting stage (`runner/present-step.ts`) opens a real gate over a real artifact and takes
+ * a real verdict. So an approval there is an approval of that stage's work, and it moves the
+ * episode exactly as the writing stage's own gate does — through this function, so that the
+ * four rules above are inherited rather than re-decided.
+ *
+ * Before this, an episode holding an artifact **no writing gate ever approved** could not leave
+ * its lifecycle stop at all: the writing stage refuses an episode that already has one of
+ * those, a hand edit deliberately moves nothing (`edit.ts`), and the only door left carried no
+ * seam. That is one demo-era brief in Ryan's own library, every artifact E7's import arrives
+ * with, and anything he makes by hand — three shapes, one hole.
+ *
+ * ## The one test this door owes: the episode must be standing AT the stage
+ *
+ * The writing stage never has to ask, because `notYetReachedBecause` refused it before the
+ * click. This stage is free, never walled, and renders whatever is on the volume in whatever
+ * slot — so it is the one door that can be opened over an artifact belonging to a stage the
+ * episode is nowhere near, and `advanceOnApproval`'s forward-only rule would let a script
+ * approved on an episode at `premise` carry it three stops in one ruling.
+ *
+ * So the column is compared to the stage that PRODUCES what he ruled on, and nothing else is
+ * accepted. Both refusals are the same sentence because they are the same rule read in two
+ * directions, and **nothing is retroactive** is the reason underneath both: a ruling on an
+ * artifact the episode is past does not replay history into the column, and a ruling on one it
+ * has not reached does not skip the stages in between. Historical rulings do not move anything
+ * either — this is called when a ruling lands, never when one is read back.
+ */
+export function advanceOnPresentedApproval(
+  store: Store,
+  episodeId: string,
+  produced: EpisodeLifecycle,
+): LifecycleMove {
+  const episode = findEpisode(store, episodeId)
+  if (!episode) throw new Error(`No such episode: ${episodeId}`)
+
+  if (episode.lifecycle !== produced) {
+    return stayedAt(
+      store,
+      episodeId,
+      `${episodeLabel(episode.number)} stays at ${episode.lifecycle} — ${produced} is not the ` +
+        'stage it is standing at, and an approval moves an episode on from the stage it is AT. ' +
+        'Nothing is retroactive: ruling on an artifact this episode is already past moves no ' +
+        'column, and ruling on one it has not reached does not skip it there.',
+    )
+  }
+  return advanceOnApproval(store, episodeId, produced)
 }
 
 /**

@@ -5,7 +5,11 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { Store } from '../db/store.ts'
 import { initLibrary, openLibraryStore, type LibraryPaths } from '../library.ts'
 import { abandonEpisode } from './episode-canon.ts'
-import { advanceOnApproval, notYetReachedBecause } from './lifecycle.ts'
+import {
+  advanceOnApproval,
+  advanceOnPresentedApproval,
+  notYetReachedBecause,
+} from './lifecycle.ts'
 import {
   createEpisode,
   createSeason,
@@ -138,6 +142,53 @@ describe('a stage the episode has not reached yet', () => {
     // artifact rather than of the column (runner/write-step.ts).
     moveLifecycleTo(store, episode.id, 'assembled')
     expect(notYetReachedBecause(store, episode.id, 'outline')).toBeNull()
+  })
+})
+
+/**
+ * **A ruling is a ruling, whichever door convened it** (#76) — and the door that convenes one
+ * over an artifact nothing in this app wrote takes no precondition, so the "AT" test the
+ * writing stage gets from `notYetReachedBecause` is made here instead.
+ */
+describe('an approval at a presenting gate', () => {
+  it('moves the episode on when it is standing AT the stage that produces what he ruled on', () => {
+    const move = advanceOnPresentedApproval(store, episode.id, 'premise')
+
+    expect(move).toMatchObject({ from: 'premise', to: 'outline', moved: true })
+    expect(move.sentence).toBe('ep02 moves from premise to outline — you approved its premise gate.')
+    expect(lifecycleOf()).toBe('outline')
+  })
+
+  it('moves nothing when the episode is PAST that stage — nothing is retroactive', () => {
+    moveLifecycleTo(store, episode.id, 'script')
+
+    const move = advanceOnPresentedApproval(store, episode.id, 'premise')
+
+    expect(move).toMatchObject({ from: 'script', to: 'script', moved: false })
+    expect(move.sentence).toContain('premise is not the stage it is standing at')
+    expect(lifecycleOf()).toBe('script')
+  })
+
+  it('moves nothing when the episode has not reached that stage — no skipping ahead', () => {
+    // An imported episode holding a script while it stands at premise (E7's shape). Ruling on
+    // that script is a ruling; it is not four stages' worth of approvals nobody gave.
+    const move = advanceOnPresentedApproval(store, episode.id, 'script')
+
+    expect(move).toMatchObject({ from: 'premise', to: 'premise', moved: false })
+    expect(move.sentence).toContain('script is not the stage it is standing at')
+    expect(lifecycleOf()).toBe('premise')
+  })
+
+  it('carries the four rules whole — it does not re-decide one of them', () => {
+    // The abandoned rule, asked through this door: the episode is AT premise, so the "AT" test
+    // stands aside and `advanceOnApproval` answers, which is the point of delegating to it.
+    abandonEpisode(store, episode.id, { note: 'ep05 tells this better.' })
+
+    const move = advanceOnPresentedApproval(store, episode.id, 'premise')
+
+    expect(move.moved).toBe(false)
+    expect(move.sentence).toContain('was abandoned at premise')
+    expect(lifecycleOf()).toBe('premise')
   })
 })
 

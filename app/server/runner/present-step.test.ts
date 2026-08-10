@@ -8,8 +8,8 @@ import { runBoardRules } from '../domain/board-rules.ts'
 import { recordExtractedBoard } from '../domain/board.ts'
 import { factsOfEntity } from '../domain/fact.ts'
 import { findingsIn } from '../domain/finding.ts'
-import { unaddressedNotesTo } from '../domain/routing.ts'
-import { findEpisode } from '../domain/spine.ts'
+import { notesOwedBy } from '../domain/routing.ts'
+import { findEpisode, moveLifecycleTo } from '../domain/spine.ts'
 import { createEventLog, type EventLog } from '../events.ts'
 import { greyHarborFounded } from '../fixture/founded.ts'
 import { theLongPierExtraction } from '../fixture/long-pier-board.ts'
@@ -20,7 +20,13 @@ import { launchBlockedBecause, runView, stageOffer } from '../operating.ts'
 import { createRulings, openGates, type Rulings } from './gate.ts'
 import { createRunner, type Runner } from './runner.ts'
 import { draftsUnderReview, type CorrectionReport } from './correction-loop.ts'
-import { OUTLINE_GATE_STAGE, PREMISE_GATE_STAGE, SCRIPT_GATE_STAGE } from './present-step.ts'
+import {
+  OUTLINE_GATE_STAGE,
+  PREMISE_GATE_STAGE,
+  SCRIPT_GATE_STAGE,
+  type Presentation,
+} from './present-step.ts'
+import { findStepByName } from './run.ts'
 import { stageBlockedBecause } from './stage-wall.ts'
 import { stageCatalogue } from './stages.ts'
 import { PREMISE_STAGE, SCRIPT_STAGE } from './write-step.ts'
@@ -96,6 +102,10 @@ async function present(): Promise<string> {
   await runner.settled(run.id)
   return run.id
 }
+
+/** What the presenting step returned once a ruling sent the run onward. */
+const presented = (runId: string): Presentation =>
+  findStepByName(store, runId, 'present-the-script-for-your-ruling')!.output as Presentation
 
 describe('the script gate — presenting what stands', () => {
   it('opens a gate over the script with the verdict board under it, and calls nothing', async () => {
@@ -176,6 +186,60 @@ describe('the script gate — the three verdicts, and what each leaves behind', 
     expect(store.get<{ verdict: string }>('SELECT verdict FROM gate_ruling')!.verdict).toBe('override')
   })
 
+  /**
+   * **A ruling is a ruling, whichever door convened it** (#76, `domain/lifecycle.ts`).
+   *
+   * ep01 stands at `script` and its script was written by hand into the fixture, so this gate
+   * is the only door its script has ever had. Approving here is the approval of the script
+   * stage's work, and it moves the episode on exactly as a writing gate's would — the same
+   * seam, entered by the other door.
+   */
+  it('moves the episode on, because it is standing at the stage that produced what he ruled', async () => {
+    const runId = await present()
+    expect(findEpisode(store, episodeId)!.lifecycle).toBe('script')
+
+    rulings.approve(openGates(store)[0]!.gate.id, { comment: 'that is the episode' })
+    await runner.settled(runId)
+
+    expect(findEpisode(store, episodeId)!.lifecycle).toBe('assets')
+    const view = runView(store, paths, runId)!
+    expect(view.run.status).toBe('done')
+  })
+
+  /**
+   * **Corollary 1 of that ruling**: the script stage's extraction is a step of the WRITING run
+   * and it does not exist on this one. So the claims of a script approved here are unraised,
+   * and the run says so rather than leaving Ryan to notice the sweep is empty (invariant 4).
+   */
+  it('says out loud that no claims were read out of a script approved at this door', async () => {
+    const runId = await present()
+    const proposals = store.get<{ n: number }>('SELECT COUNT(*) AS n FROM proposal')!.n
+
+    rulings.approve(openGates(store)[0]!.gate.id, {})
+    await runner.settled(runId)
+
+    const said = presented(runId).sentence
+    expect(said).toContain('moves from script to assets')
+    expect(said).toContain('No claims were read out of it')
+    expect(said).toContain('#39')
+    // And it did not quietly spend one: no call, no cost row, no proposal.
+    expect(llm.calls).toEqual([])
+    expect(store.get<{ n: number }>('SELECT COUNT(*) AS n FROM cost_entry')!.n).toBe(0)
+    expect(store.get<{ n: number }>('SELECT COUNT(*) AS n FROM proposal')!.n).toBe(proposals)
+  })
+
+  it('moves nothing when the episode is not standing at that stage — no ruling replays', async () => {
+    moveLifecycleTo(store, episodeId, 'published')
+    const runId = await present()
+
+    rulings.approve(openGates(store)[0]!.gate.id, {})
+    await runner.settled(runId)
+
+    expect(findEpisode(store, episodeId)!.lifecycle).toBe('published')
+    expect(presented(runId).lifecycle).toMatchObject({ from: 'published', moved: false })
+    expect(presented(runId).sentence).toContain('script is not the stage it is standing at')
+  })
+
   it('leaves the wall up on a plain approval — the two verbs are two rulings, forever', async () => {
     theBoard()
     const runId = await present()
@@ -238,7 +302,7 @@ describe('the script gate — the three verdicts, and what each leaves behind', 
     // Nothing regenerated and nothing re-presented — and the ep01 outline is where the note is.
     expect(llm.calls).toEqual([])
     expect(
-      unaddressedNotesTo(store, artifactsOf(store, episodeId).find((one) => one.kind === 'outline')!.id),
+      notesOwedBy(store, artifactsOf(store, episodeId).find((one) => one.kind === 'outline')!.id),
     ).toHaveLength(1)
   })
 })

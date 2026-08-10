@@ -662,26 +662,33 @@ describe('the writing room — ep02 written end to end', () => {
   })
 })
 
-// ── The half-door, and the wall the drill routes around (issue #76) ────────────
+// ── The door out, and the four that lead to it (issue #76) ────────────────────
 
-describe('the writing room — an episode holding a pre-E4 artifact', () => {
+describe('the writing room — an episode holding an artifact no writing gate saw', () => {
   /**
-   * **Drill step 1**, and the shape of ep02 in Ryan's own library: a premise-brief written
-   * into slot `demo` by a stage E4-1 retired, approved at an E1 gate that carried no lifecycle
-   * step, so the episode still stands at `premise`.
+   * **Drill step 1**, and it is three shapes rather than one: a premise-brief this app's
+   * writing line never wrote and never ruled on.
+   *
+   * ep02 in Ryan's own library is the case that raised it — written into slot `demo` by the
+   * stage E4-1 retired, approved at an E1 gate that predates the lifecycle seam — but nothing
+   * below is about `demo`. **E7's import arrives in exactly this shape, and so does anything
+   * Ryan makes by hand**, so the slot is a parameter: the only thing that differs between the
+   * three is whether the artifact sits in the slot the producer owns.
    */
-  function theDemoEraBrief(): string {
-    const filePath = 'greyharbor/s01e02/premise-brief-demo.md'
+  function aBriefNoWritingGateSaw(slot: string): string {
+    const filePath = `greyharbor/s01e02/premise-brief${slot === '' ? '' : `-${slot}`}.md`
     const onDisk = join(paths.artifactDir, filePath)
     mkdirSync(dirname(onDisk), { recursive: true })
     writeFileSync(onDisk, 'The spare is gone and nobody has said so.\n')
     return recordArtifact(store, {
       episodeId: ep02,
       kind: 'premise-brief',
-      slot: 'demo',
+      slot,
       filePath,
     }).id
   }
+
+  const theDemoEraBrief = (): string => aBriefNoWritingGateSaw('demo')
 
   it('refuses the write and names both doors, and the presenting door really opens', async () => {
     theDemoEraBrief()
@@ -719,45 +726,136 @@ describe('the writing room — an episode holding a pre-E4 artifact', () => {
   })
 
   /**
-   * **The recorded gap (issue #76), pinned so the day it is closed this test says so.**
+   * **Issue #76, closed — the walk that was pinned as a wall.**
    *
-   * A rejection at a presenting gate has nowhere to go: there is no producer behind it, so the
-   * step re-presents; and the note cannot reopen the writing stage's offer, because
-   * `unaddressedNotesTo` reads `routedNotesTo`, which excludes a note whose gate was over the
-   * artifact it names. That exclusion is right for the DESK — it stops Ryan's words being
-   * printed to a writer twice — and over-broad for the OFFER, which is a different question.
+   * Until this landed, all four doors were refused and each for its own correct reason: the
+   * write stage because the artifact exists, the presenting gate because it carried no
+   * lifecycle step, Ryan's hand because an edit deliberately moves nothing (E4-5), and the
+   * outline because *"you have not approved its premise"* — said to a showrunner who had ruled
+   * on it twice. The episode could not leave its lifecycle stop at all.
    *
-   * The consequence is the whole of the gap: **an episode holding an artifact no writing gate
-   * ever approved cannot leave its lifecycle stop.** The write stage is refused because the
-   * artifact exists, the presenting stage carries no lifecycle step, and a hand edit
-   * deliberately moves nothing (E4-5). The E4 drill routes around it and does not step on it.
+   * Two things opened it, and both are rulings rather than details:
+   *
+   *   1. **A ruling is a ruling, whichever door convened it.** Approving at the presenting gate
+   *      moves the episode on when it is standing AT the stage that produces that artifact's
+   *      kind — the same seam, `advanceOnPresentedApproval` (`domain/lifecycle.ts`).
+   *   2. **The offer got its own question.** `notesOwedBy` keeps the note Ryan wrote at the
+   *      artifact's own gate, which is the only kind a presenting gate can write, so the stage
+   *      that could answer it becomes offerable with his words in its sentence (D21).
+   *
+   * **Nothing is retroactive**: ep02 leaves premise because he rules AGAIN at a live door, not
+   * because two E1-era rulings were replayed.
    */
-  it('records that neither door moves the lifecycle, which is issue #76', async () => {
+  // Two shapes and two notes, because neither is the special case. The drill leaves the depth
+  // UNROUTED — the legal default, and the only thing a note needs to stand against the draft in
+  // front of him (D21); a depth that resolves to that same artifact is the other way to write
+  // one, and both reopen the stage that could answer it.
+  for (const [slot, depth] of [
+    ['demo', undefined],
+    ['', 'premise' as const],
+  ] as const) {
+    it(`walks ep02 out of premise on a ruling at the presenting gate — slot “${slot}”`, async () => {
+      aBriefNoWritingGateSaw(slot)
+
+      // Door 1 — the write, refused: there is a brief, and it wants a ruling, not a second one.
+      expect(room().line[0]!.offer.enabled).toBe(false)
+      expect(room().line[0]!.offer.blockedBecause).toContain('already has a premise-brief')
+
+      // Door 2 — the presenting gate, which opens over that artifact whatever slot it is in.
+      const presented = runner.enqueueRun({ episodeId: ep02, stage: PREMISE_GATE_STAGE })
+      await runner.settled(presented.id)
+      expect(room().gates[0]!.isOpen).toBe(true)
+
+      // A rejection there reopens door 1 with his words in it — the half of #76 the predicate
+      // split fixed. It is held only by D7, and D7's refusal is a different sentence: rule on
+      // the gate that is open, and the button is live.
+      rulings.reject(openGates(store)[0]!.gate.id, {
+        notes: [{ note: 'Too tidy. Say what it costs her.', depth }],
+      })
+      await runner.settled(presented.id)
+      const reopened = room().line[0]!.offer
+      expect(reopened.sentence).toContain('Write the ep02 premise-brief again')
+      expect(reopened.sentence).toContain('Too tidy. Say what it costs her.')
+      expect(reopened.blockedBecause).toContain('One run per episode (D7)')
+
+      // And ruling again at that gate moves the episode — the other half.
+      rulings.approve(openGates(store)[0]!.gate.id, {})
+      await runner.settled(presented.id)
+
+      expect(room().lifecycle).toBe('outline')
+      // Which is the sentence that used to point nowhere, now pointing at a live button.
+      expect(room().line[1]!.offer.enabled).toBe(true)
+      expect(room().line[1]!.offer.blockedBecause).toBeNull()
+      // Nothing was written, nothing was called, and no claim was raised for it.
+      expect(llm.calls).toHaveLength(0)
+      expect(room().written.filter((one) => one.kind === 'premise-brief')).toHaveLength(1)
+    })
+  }
+
+  /**
+   * **Door 3 is unchanged, and it is what ANSWERS the note** (E4-5): a hand edit moves no
+   * episode and never will — the column is moved by an approval — but the version it lands is
+   * a newer version of the target, which is the only thing that answers a note anywhere in
+   * this app (`domain/routing.ts`).
+   */
+  it('leaves the lifecycle to the gate, and answers the standing note by hand', async () => {
     theDemoEraBrief()
     const presented = runner.enqueueRun({ episodeId: ep02, stage: PREMISE_GATE_STAGE })
     await runner.settled(presented.id)
     rulings.reject(openGates(store)[0]!.gate.id, {
-      notes: [{ note: 'Too tidy.', depth: 'premise' }],
+      notes: [{ note: 'Too tidy. Say what it costs her.' }],
     })
     await runner.settled(presented.id)
     rulings.approve(openGates(store)[0]!.gate.id, {})
     await runner.settled(presented.id)
 
-    // Approving at a presenting gate rules the artifact and moves no episode.
-    expect(room().lifecycle).toBe('premise')
-    expect(room().line[0]!.offer.enabled).toBe(false)
-    expect(room().line[0]!.offer.blockedBecause).toContain('already has a premise-brief')
-
-    // And a hand edit is explicit that it does not move it either.
     const brief = room().written.find((one) => one.kind === 'premise-brief')!
+    expect(brief.standing.map((one) => one.note)).toEqual(['Too tidy. Say what it costs her.'])
+
     const edited = editArtifact(store, paths, {
       artifactId: brief.id,
       text: 'Ilse takes the spare, and the plant is three weeks from finding out.\n',
     })
-    expect(edited.sentence).toContain('ep02 is still at premise')
-    expect(room().line[0]!.offer.enabled).toBe(false)
-    // The outline's refusal is the sentence that points nowhere while this stands.
-    expect(room().line[1]!.offer.blockedBecause).toContain('has not reached outline yet')
+
+    // The column is the gate's to move, and his hand says so in as many words.
+    expect(edited.sentence).toContain('ep02 is still at outline')
+    expect(room().lifecycle).toBe('outline')
+    // The note is answered by the version, not by the ruling that came before it: the offer
+    // stops asking for a rewrite and goes back to "there is one of those already".
+    expect(room().written.find((one) => one.kind === 'premise-brief')!.standing).toEqual([])
+    expect(room().line[0]!.offer.blockedBecause).toContain('already has a premise-brief')
+  })
+
+  /**
+   * **The reopened button keeps its promise** — it says "write it again, rewriting reads it",
+   * and the loop owes a draft past the version Ryan ruled on rather than presenting the words
+   * he has just argued with (`runner/correction-loop.ts`, and the third reader of the split).
+   *
+   * The slot is `''` here on purpose: that is the artifact the producer owns, so the rewrite is
+   * a NEW VERSION of the very thing the note is addressed to. A brief in another slot is not
+   * the producer's to rewrite (E4-5) and gets a first draft in the singular slot instead.
+   */
+  it('rewrites past the version he ruled on when the reopened button is pressed', async () => {
+    const briefId = aBriefNoWritingGateSaw('')
+    const presented = runner.enqueueRun({ episodeId: ep02, stage: PREMISE_GATE_STAGE })
+    await runner.settled(presented.id)
+    rulings.reject(openGates(store)[0]!.gate.id, {
+      notes: [{ note: 'Too tidy. Say what it costs her.', depth: 'premise' }],
+    })
+    await runner.settled(presented.id)
+    rulings.approve(openGates(store)[0]!.gate.id, {})
+    await runner.settled(presented.id)
+
+    queueADraft('Ilse takes the spare, and it costs Tobin his week.\n')
+    const rewrite = runner.enqueueRun({ episodeId: ep02, stage: PREMISE_STAGE })
+    await runner.settled(rewrite.id)
+
+    // v2 of the same artifact, written from a desk carrying his note — not a re-presentation.
+    const written = room().written.find((one) => one.kind === 'premise-brief')!
+    expect(written.id).toBe(briefId)
+    expect(written.version).toBe(2)
+    expect(written.standing).toEqual([])
+    expect(llm.calls[0]!.prompt).toContain('Too tidy. Say what it costs her.')
   })
 })
 

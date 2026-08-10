@@ -10,9 +10,9 @@ import { episodesOf, seasonsOf } from './spine.ts'
 import {
   addressOf,
   landsOn,
+  notesOwedBy,
   routedNotesTo,
   routedNoteSentence,
-  unaddressedNotesTo,
 } from './routing.ts'
 
 /**
@@ -181,16 +181,16 @@ describe('a routed note stands against its target until a newer version of it ex
 
   it('is addressed by a newer version of its target, and by nothing else', () => {
     reject(script, { note: 'the middle movement does not turn', depth: 'outline' })
-    expect(unaddressedNotesTo(store, outline.id)).toHaveLength(1)
+    expect(notesOwedBy(store, outline.id)).toHaveLength(1)
 
     // A new version of some OTHER artifact answers nothing.
     reviseArtifact(store, script.id, { summary: 'a fourth draft of the script' })
-    expect(unaddressedNotesTo(store, outline.id)).toHaveLength(1)
+    expect(notesOwedBy(store, outline.id)).toHaveLength(1)
 
     // A new version of the target is the whole of it. Nothing was written to the note.
     reviseArtifact(store, outline.id, { summary: 'rewritten against your note' })
     expect(routedNotesTo(store, outline.id)[0]).toMatchObject({ addressed: true })
-    expect(unaddressedNotesTo(store, outline.id)).toEqual([])
+    expect(notesOwedBy(store, outline.id)).toEqual([])
     expect(
       store.get<{ n: number }>('SELECT COUNT(*) AS n FROM gate_note WHERE target IS NOT NULL')!.n,
     ).toBe(1)
@@ -199,7 +199,7 @@ describe('a routed note stands against its target until a newer version of it ex
   it('says what stands, in the sentence the offer renders', () => {
     reject(script, { note: 'the middle movement does not turn', depth: 'outline' })
 
-    expect(routedNoteSentence(unaddressedNotesTo(store, outline.id), 'the ep01 outline')).toBe(
+    expect(routedNoteSentence(notesOwedBy(store, outline.id), 'the ep01 outline')).toBe(
       'the ep01 outline has your note from the script gate standing against it — rewriting ' +
         'reads it: “the middle movement does not turn”',
     )
@@ -209,8 +209,78 @@ describe('a routed note stands against its target until a newer version of it ex
     reject(script, { note: 'the middle movement does not turn', depth: 'outline' })
     reject(script, { note: 'and the tag lands too early', depth: 'outline' })
 
-    expect(routedNoteSentence(unaddressedNotesTo(store, outline.id), 'the ep01 outline')).toContain(
+    expect(routedNoteSentence(notesOwedBy(store, outline.id), 'the ep01 outline')).toContain(
       '2 notes from the script gate standing against it',
     )
+  })
+})
+
+/**
+ * **One predicate, two questions — the split issue #76 was filed for.**
+ *
+ * A note Ryan writes at an artifact's OWN gate, routed at the depth that names that same
+ * artifact, is read by two callers that want opposite answers:
+ *
+ *   * the DESK asks "what has he said that this writer has not already been handed", and
+ *     `write-context.ts` has read own-gate rejections since E4-0 — so counting it here as well
+ *     would print his words to a writer twice. `routedNotesTo` excludes it, and must.
+ *   * the OFFER asks "does an unanswered note stand against this artifact", which is what
+ *     reopens the stage that could write it again — and there the same exclusion drops the
+ *     only note a presenting gate can produce, because a presenting gate has no producer
+ *     behind it and its rejections are always written over the artifact they name.
+ *
+ * Both are asserted at their own call site as well (`write-context.test.ts`,
+ * `writing-room.test.ts`); what is pinned here is that the two functions really do answer
+ * differently about one row.
+ */
+describe('a note written at an artifact’s own gate', () => {
+  it('is owed by that artifact, and is not routed to it', () => {
+    reject(outline, { note: 'the middle movement does not turn', depth: 'outline' })
+
+    // The desk's question: nothing was routed here from anywhere else.
+    expect(routedNotesTo(store, outline.id)).toEqual([])
+    // The offer's: this artifact owes an answer, and the answer is a rewrite.
+    expect(notesOwedBy(store, outline.id)).toMatchObject([
+      { note: 'the middle movement does not turn', fromArtifactId: outline.id, landedAtVersion: 1 },
+    ])
+  })
+
+  /**
+   * **The unrouted note is the default and the drill's own case** (D21, README step 1): he
+   * types what he means and picks no depth, so the note names nothing and `landsOn` keeps it
+   * on the draft in front of him. It carries no `target_version`, so the version it was given
+   * against is the one the ROUND was over — `gate_round.artifact_version`, which 0014 names as
+   * exactly that and could not use for a routed note because that names another artifact.
+   */
+  it('is owed just the same when he routed it nowhere, which is the legal default', () => {
+    reject(outline, { note: 'say what it costs her' })
+
+    expect(notesOwedBy(store, outline.id)).toMatchObject([
+      { note: 'say what it costs her', depth: null, landedAtVersion: 1 },
+    ])
+    expect(routedNotesTo(store, outline.id)).toEqual([])
+
+    reviseArtifact(store, outline.id, { summary: 'rewritten against your note' })
+    expect(notesOwedBy(store, outline.id)).toEqual([])
+  })
+
+  it('is owed for a scene of it too — a scene note is a note about the draft', () => {
+    reject(outline, { note: 'Tobin is off shift', depth: 'scene', target: 'sc4' })
+
+    expect(notesOwedBy(store, outline.id)).toHaveLength(1)
+  })
+
+  it('is answered by a new version of the artifact, like every other note', () => {
+    reject(outline, { note: 'the middle movement does not turn', depth: 'outline' })
+
+    reviseArtifact(store, outline.id, { summary: 'rewritten against your note' })
+    expect(notesOwedBy(store, outline.id)).toEqual([])
+  })
+
+  it('leaves what was routed away owed by the artifact it names, and by nothing else', () => {
+    reject(outline, { note: 'the premise never says what it costs her', depth: 'premise' })
+
+    expect(notesOwedBy(store, outline.id)).toEqual([])
+    expect(notesOwedBy(store, brief.id)).toHaveLength(1)
   })
 })

@@ -6,7 +6,7 @@ import type { Store } from '../db/store.ts'
 import { artifactsOf, staleArtifacts, type Artifact } from '../domain/artifact.ts'
 import { dismissFinding, findingsIn, recordCheckPass } from '../domain/finding.ts'
 import { proposalsRiding } from '../domain/proposal.ts'
-import { unaddressedNotesTo } from '../domain/routing.ts'
+import { notesOwedBy } from '../domain/routing.ts'
 import { episodesOf, findEpisode, seasonsOf } from '../domain/spine.ts'
 import { composeWriteContext } from '../domain/write-context.ts'
 import { createEventLog, type EventLog } from '../events.ts'
@@ -275,8 +275,8 @@ describe('the note reopens exactly the stage it was routed to', () => {
     // The API and the button say the same thing (D15).
     expect(launchBlockedBecause(store, READY, ep02, stageCatalogue(paths)[OUTLINE_STAGE]!)).toBeNull()
     // And it is on the artifact, not on the gate it was written at.
-    expect(unaddressedNotesTo(store, artifact('outline').id)).toHaveLength(1)
-    expect(unaddressedNotesTo(store, artifact('script').id)).toEqual([])
+    expect(notesOwedBy(store, artifact('outline').id)).toHaveLength(1)
+    expect(notesOwedBy(store, artifact('script').id)).toEqual([])
   })
 
   it('leaves the depths he did not route to exactly as they were', async () => {
@@ -289,7 +289,7 @@ describe('the note reopens exactly the stage it was routed to', () => {
     // word the sentence it was already saying.
     expect(nothingToDoOn(PREMISE_STAGE)).toEqual(before)
     expect(offerFor(PREMISE_STAGE).blockedBecause).toContain('ep02 already has a premise-brief')
-    expect(unaddressedNotesTo(store, artifact('premise-brief').id)).toEqual([])
+    expect(notesOwedBy(store, artifact('premise-brief').id)).toEqual([])
   })
 
   it('closes again the moment a newer version of the outline exists — no flag anywhere', async () => {
@@ -304,7 +304,7 @@ describe('the note reopens exactly the stage it was routed to', () => {
 
     expect(artifact('outline').version).toBe(2)
     // Derived: nothing was written to the note, and the row still says what it said.
-    expect(unaddressedNotesTo(store, artifact('outline').id)).toEqual([])
+    expect(notesOwedBy(store, artifact('outline').id)).toEqual([])
     expect(
       store.get<{ n: number }>('SELECT COUNT(*) AS n FROM gate_note WHERE target IS NOT NULL')!.n,
     ).toBe(1)

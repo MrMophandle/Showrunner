@@ -198,6 +198,18 @@ function rejectTheOutlineTwice(): Artifact {
   return outline
 }
 
+/** One more round at that same gate — a note routed at the artifact he is standing at (#76). */
+function rejectTheOutlineAgain(outline: Artifact, note: { note: string; depth: 'outline' }): void {
+  const run = store.get<{ id: string }>('SELECT id FROM run WHERE episode_id = ?', ep02.id)!
+  const step = findStepByName(store, run.id, 'write-outline')!
+  const round = presentForRuling(
+    store,
+    { runId: run.id, stepId: step.id, episodeId: ep02.id },
+    { artifactId: outline.id },
+  )
+  createRulings(store, createEventLog(store), idleRunner).reject(round.gate.id, { notes: [note] })
+}
+
 /** A world-rules finding on the ep01 script, dismissed with a note (E3-5's reader). */
 function dismissAFinding(): string {
   const script = store.get<{ id: string }>(
@@ -536,6 +548,28 @@ describe('the notes Ryan has already written', () => {
       round: 1,
       addressed: false,
     })
+  })
+
+  /**
+   * **The desk's half of the split issue #76 closed** (`domain/routing.ts`).
+   *
+   * A note Ryan writes at the outline's own gate and routes at OUTLINE depth is addressed to
+   * the very artifact he was standing at. The OFFER now reads exactly that note — it is what
+   * reopens the stage that could write the draft again — and the desk must go on reading it
+   * once, as the ordinary rejection it is. Two origins for one row would hand a writer one
+   * instruction twice, with two different attributions on it.
+   */
+  it('reads a note he routed at its own artifact once, and as his rejection of it', () => {
+    const outline = rejectTheOutlineTwice()
+    rejectTheOutlineAgain(outline, {
+      note: 'the middle movement does not turn.',
+      depth: 'outline',
+    })
+
+    const notes = outlineDesk().notes.filter((note) => note.note.includes('does not turn'))
+    expect(notes).toHaveLength(1)
+    expect(notes[0]!.origin.kind).toBe('gate-rejection')
+    expect(notes[0]!.sentence).toBe('your round 3 rejection of the ep02 outline, routed at outline depth')
   })
 
   it('reads a dismissal note through the reader the checks use', () => {

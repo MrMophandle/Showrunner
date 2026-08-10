@@ -20,10 +20,11 @@ writer's desk (canon as *this episode's audience* knows it, the entities left ou
 that kept each one out, Ryan's notes with their three origins), the three writing stages with
 their gates and their correction loops, scenes derived from the written script, the extraction
 that reads an approved draft for what it claims of canon, direct hand editing, the reject that
-routes rather than rewinds, and the completion sweep — all of it on fakes, in 947 tests. The
-drill below is what turns that into an operated exit. Writing it exposed one wall it does not
-step on: **[issue #76](https://github.com/MrMophandle/Showrunner/issues/76)**, and step 1 is
-where it bites.
+routes rather than rewinds, and the completion sweep — all of it on fakes, in 963 tests. The
+drill below is what turns that into an operated exit. Writing it exposed one wall — an episode
+holding an artifact no writing gate ever saw could not leave its lifecycle stop — and step 1
+walks through where that wall was: **[issue #76](https://github.com/MrMophandle/Showrunner/issues/76)**,
+filed from the drill and closed before it was operated.
 
 Each epic ends with a drill Ryan operates, not a test suite that passes. **The current
 epic's drill lives below; retired drills live in git history**, and their operated-exit
@@ -105,8 +106,10 @@ an episode on.** Not a producer writing. Not a check reading. Not your own hand 
 lifecycle names the stage an episode is *at* — the work it still owes — and a gate you approve
 is what carries it to the next one.
 
-And the one you are about to watch fail: **a rejection at a gate with no writer behind it has
-nowhere to go.** That is step 1, and it is [issue #76](https://github.com/MrMophandle/Showrunner/issues/76).
+And the one step 1 is there to prove: **a rejection at a gate with no writer behind it still has
+somewhere to go.** Your note reopens the stage that could answer it, and ruling again at that
+same gate moves the episode on — [issue #76](https://github.com/MrMophandle/Showrunner/issues/76),
+found while writing this drill and closed before it was operated.
 
 ### Before you start
 
@@ -129,7 +132,7 @@ Open <http://localhost:4455>.
 the desk in step 1 says so honestly — *0 canon entities in scope and 7 left out* — and every
 draft below would be written against an empty world.
 
-### 1 · The half-door, and the note that gets read back ($0.00)
+### 1 · The other door, and the note that gets read back ($0.00)
 
 **This is the step your own library's history is for.** On **ep02 · Dry Stores**, read the
 launch button. It is disabled, and it says why:
@@ -178,21 +181,35 @@ And below it, in **The prompt this would send**, your words are in the call itse
 spend a cent.** The desk is composed by the same function the writing step calls — not a
 reconstruction of it — so what is on this screen is what the next call gets.
 
-#### Where this stops, and why
+#### And now read the premise button again
 
-Now read the premise button again. It still says *already has a premise-brief*. The presenting
-gate you just ruled at carries no lifecycle step, so approving there moves nothing; a hand edit
-deliberately moves nothing (E4-5); and the outline button says *"Rule on the ep02 premise first,
-and this becomes offerable"* — which you have, twice.
+It has changed, and your own words are on it:
 
-**That is [#76](https://github.com/MrMophandle/Showrunner/issues/76)**: your note is on the desk
-and it is not on the button. `unaddressedNotesTo` reads a predicate written for the *desk* — it
-drops a note whose gate was over the artifact it names, so the desk does not print your words
-twice — and the *offer* reads the same function and inherits an exclusion it should not have.
+> Write the ep02 premise-brief again from the writer’s desk — the ep02 premise-brief has your
+> note from the premise-brief gate standing against it — rewriting reads it: “…”
 
-Approve the round-2 presentation to let ep02 go, and **stop here until #76 lands.** Steps 2
-through 8 below need an ep02 the writing stage may write; the moment that button is pressable,
-they run as written.
+**A note standing against an artifact reopens the stage that could answer it** (D21) — that is
+what "reject is routed, not rewound" buys you, and it is the same mechanism whether you wrote
+the note at this artifact's gate or at a later one. It is still disabled for one round longer,
+and the reason is a different sentence and a true one: *"ep02 already has a premise-gate run,
+and it is waiting on your ruling… One run per episode (D7)."*
+
+So rule. Press **Approve** on the round-2 presentation, and watch the lifecycle column:
+
+> ep02 moves from premise to outline — you approved its premise gate.
+
+**A ruling is a ruling, whichever door convened it** ([#76](https://github.com/MrMophandle/Showrunner/issues/76)).
+That brief was written by a retired stage and approved at a gate that predates the lifecycle
+seam; nothing was replayed and nothing is retroactive — the episode moved because you ruled
+again, now, at a live door. Approving there moves it on only when the episode is standing *at*
+the stage that produces what you ruled on, which is why the same click on ep01's script (at
+`script`) takes it to `assets` and the same click on a brief of an episode already past
+`premise` moves nothing at all.
+
+**Leave the note standing.** It is what step 3's button is offering to answer, and a note is
+answered by a new version and by nothing else — so typing over the brief yourself here would
+close that button before you get to it. Step 4 is where your own hands go on a draft. Steps 2
+through 8 run from here.
 
 ### 2 · Declare the waypoint, before a word is written ($0.00)
 
@@ -220,8 +237,9 @@ reviewer, because an arc position is a check. The premise goes from *up to 7 rev
 
 ### 3 · The premise, written from your note (~$1.03)
 
-Press the premise button. Whatever sentence it carries — that depends on how #76 was closed —
-**its cost line is the thing to read before you click**, and it is exact:
+Press the premise button. It is the reopened one from step 1 — *"write the ep02 premise-brief
+again… rewriting reads it"* — and **its cost line is the thing to read before you click**, and
+it is exact:
 
 > *1 Opus call, ~$0.07 + up to 8 Opus calls, ~$0.96 to check it, per draft — and the loop stops
 > at 3 drafts (invariant 5) · your money, spent when you click*

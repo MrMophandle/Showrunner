@@ -1,6 +1,7 @@
 import { FREE } from '../cost.ts'
 import type { Store } from '../db/store.ts'
 import type { Artifact, ArtifactKind } from '../domain/artifact.ts'
+import { advanceOnPresentedApproval, stayedAt, type LifecycleMove } from '../domain/lifecycle.ts'
 import { landsOn } from '../domain/routing.ts'
 import { episodeInShow, episodeLabel, type EpisodeInShow } from '../domain/spine.ts'
 import { WRITE_STEP, producedBy, type WriteStep } from '../domain/write-context.ts'
@@ -51,6 +52,28 @@ import { writtenOfKind } from './write-step.ts'
  *     particular gate opened. That is what "one artifact, one ruling" means at the payload
  *     layer, and it is why this file composes no shape of its own.
  *
+ * ## And it moves the episode on, which is issue #76 (E4-7)
+ *
+ * **A ruling is a ruling, whichever door convened it.** This stage opens a real gate over a
+ * real artifact and takes a real verdict, so approving here is the approval of that stage's
+ * work and it carries the lifecycle seam the writing stage's own gate carries — the same
+ * function, `advanceOnPresentedApproval` (`domain/lifecycle.ts`), where the one extra test
+ * this door owes is argued: **the episode has to be standing AT the stage that produces what
+ * he ruled on.** Every other gate in this app got that test before the click, from a stage
+ * that refuses an episode it has not reached; this one is free, never walled, and renders
+ * whatever is on the volume, so it makes the test for itself.
+ *
+ * Two things follow, and they are the whole of what changed:
+ *
+ *   * **A script approved here has had no extraction run.** E4-4's paid reading is a step of
+ *     the WRITING run; the claims of a script ruled at this door are unraised and Ryan is told
+ *     so in the sentence, with the bench as their door (#39) — `edit.ts`'s recorded choice,
+ *     reached by a second route (`unextractedNote` below).
+ *   * **Nothing is retroactive.** This runs when a ruling lands and never when one is read
+ *     back: the E1-era approvals sitting in Ryan's library move nothing, and an episode holding
+ *     a pre-E4 artifact leaves its stop when he rules again at this door, not because two old
+ *     rulings were replayed. The record is never the state (2.3).
+ *
  * ## Nothing may block it, and the declaration is where that is said
  *
  * `work: 'reads'`, which is D12 read literally: deterministic findings block the next stage and
@@ -96,6 +119,11 @@ export interface Presentation {
   verdict: 'approve' | 'override' | 'reject'
   /** How many deterministic findings his override was standing over. 0 on a plain approval. */
   stoodOver: number
+  /**
+   * Where the ruling left the episode, and why (#76, `domain/lifecycle.ts`). The same shape the
+   * writing stage's closing step carries, because it is the same seam.
+   */
+  lifecycle: LifecycleMove
   sentence: string
 }
 
@@ -115,7 +143,7 @@ function presentingStage(step: WriteStep): Stage {
   return {
     name: PRESENTING_STAGE[step],
     work: 'reads',
-    steps: [presentForYourRuling(kind)],
+    steps: [presentForYourRuling(step)],
     offerOn: (store, episode): StageOffer => {
       const label = episodeLabel(episode.number)
       const artifact = presentable(store, episode.id, kind)
@@ -159,7 +187,8 @@ function presentingStage(step: WriteStep): Stage {
  * and nothing regenerates until the routing lands somewhere that can act — which for a written
  * artifact is now the writing stage's own gate, or E4-5's direct edit.
  */
-export function presentForYourRuling(kind: ArtifactKind): Step<Presentation> {
+export function presentForYourRuling(step: WriteStep): Step<Presentation> {
+  const kind = producedBy(step)
   return {
     name: `present-the-${kind}-for-your-ruling`,
 
@@ -176,13 +205,21 @@ export function presentForYourRuling(kind: ArtifactKind): Step<Presentation> {
       // Approved, or approved OVER something. Either way the decision is made and the run
       // carries on; what he stood over is counted here rather than re-derived later, because
       // by the time anything reads this the override has already taken the wall down.
+      //
+      // **And the episode moves on** (#76): a ruling is a ruling whichever door convened it,
+      // so this carries the lifecycle seam the writing stage's own gate carries, through the
+      // same function. The one test this door owes for itself — that the episode is standing
+      // AT the stage that produces what he ruled on — is `advanceOnPresentedApproval`'s, where
+      // it is argued (`domain/lifecycle.ts`).
       if (ruled && ruled.verdict !== 'reject') {
         const stoodOver = draftsUnderReview(context.store, artifact.id).blocking.length
+        const lifecycle = advanceOnPresentedApproval(context.store, context.episodeId, step)
         const sentence =
-          ruled.verdict === 'override'
+          (ruled.verdict === 'override'
             ? `Overridden at round ${standing!.round} — recorded as an override, and the next ` +
               'stage is no longer refused on the findings you ruled over'
-            : `Approved at round ${standing!.round}`
+            : `Approved at round ${standing!.round}`) +
+          ` · ${lifecycle.sentence}${unextractedNote(step)}`
         context.progress(sentence)
         return {
           artifactId: artifact.id,
@@ -190,6 +227,7 @@ export function presentForYourRuling(kind: ArtifactKind): Step<Presentation> {
           round: standing!.round,
           verdict: ruled.verdict,
           stoodOver,
+          lifecycle,
           sentence,
         }
       }
@@ -214,6 +252,10 @@ export function presentForYourRuling(kind: ArtifactKind): Step<Presentation> {
           round: standing!.round,
           verdict: 'reject',
           stoodOver: 0,
+          // A rejection is not an approval, so it is said through the verb that moves nothing
+          // rather than passed through the one that advances on approvals (E4-5's rule,
+          // `domain/lifecycle.ts`).
+          lifecycle: stayedAt(context.store, context.episodeId, sentence),
           sentence,
         }
       }
@@ -236,6 +278,27 @@ export function presentForYourRuling(kind: ArtifactKind): Step<Presentation> {
     },
   }
 }
+
+/**
+ * **What a script approved at THIS door did not buy** (#76, corollary 1) — said out loud,
+ * every time, because a silence that reads as "nothing to raise" is invariant 4 broken one
+ * layer out from the checks.
+ *
+ * `extractTheCanonClaims` is a step of the WRITING run and there is no such step here: the
+ * click that bought the writing run is what pays for the reading past its gate (E4-4,
+ * `claim-step.ts`), and this stage's whole promise is that it costs nothing (`FREE`, above).
+ * Spending a model call on the far side of a ruling nobody was told about would break that
+ * promise silently, which is the one way to break it that Ryan cannot see.
+ *
+ * So the claims of a script ruled here are unraised, and the door for them is the bench's
+ * add-a-fact (#39) — the same choice `edit.ts` recorded for his own hand and for the same
+ * reason. E4-6's sweep collects whatever is riding the episode either way.
+ */
+const unextractedNote = (step: WriteStep): string =>
+  step === 'script'
+    ? ' · No claims were read out of it — this door runs no extraction, and what the script ' +
+      'claims of canon is yours to raise at the bench (#39).'
+    : ''
 
 /**
  * The artifact this stage would put in front of Ryan — **whatever slot it sits in.**

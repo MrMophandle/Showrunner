@@ -11,7 +11,7 @@ import {
   type FindingSeverity,
 } from '../domain/finding.ts'
 import { verdictBoard, type VerdictBoard } from '../domain/panel.ts'
-import { landsOn, unaddressedNotesTo } from '../domain/routing.ts'
+import { landsOn, notesOwedBy } from '../domain/routing.ts'
 import { episodeLabel, findEpisode, scenesOf } from '../domain/spine.ts'
 import type { GateNote, GateRound } from './gate.ts'
 import { stageBlockingFindings } from './stage-wall.ts'
@@ -294,16 +294,23 @@ export function correctionLoop(produce: Producer, check: Step): Step<CorrectionO
       // budget bounds how long it argues with itself unattended, and it is not unattended any
       // more once he has spoken.
       //
-      // **A note routed here from another gate counts as one of those rulings** (E4-5, D21).
-      // He read this draft while standing at a LATER artifact's gate and sent it back; the
-      // version it landed on is a version he has had his opinion of, so the loop owes a
-      // rewrite rather than a re-presentation of the words he just argued with. Unanswered
-      // ones only — a note a newer version already answered is history, and re-opening on it
-      // would make this stage rewrite itself forever.
-      const routedHere = unaddressedNotesTo(store, produce.find(context)?.id ?? '')
+      // **A note standing against this draft from ANOTHER gate counts as one of those
+      // rulings** (E4-5, D21). He read this draft while standing at a different gate and sent
+      // it back; the version it landed on is a version he has had his opinion of, so the loop
+      // owes a rewrite rather than a re-presentation of the words he just argued with.
+      // Unanswered ones only — a note a newer version already answered is history, and
+      // re-opening on it would make this stage rewrite itself forever.
+      //
+      // "Another gate" includes the PRESENTING gate over this very artifact (#76), which is
+      // why this reads `notesOwedBy` rather than the desk's reader: that gate is not this
+      // step's, so its rounds are not in `standing.rounds`, and without it the button that
+      // reopened saying "write it again, rewriting reads it" would hand back the same draft.
+      // A note at this step's OWN gate needs nothing here — `lastRuledVersion` already has it,
+      // at the same version, so the two agree by construction rather than by coincidence.
+      const routedHere = notesOwedBy(store, produce.find(context)?.id ?? '')
       const ruledVersion = Math.max(
         lastRuledVersion(standing?.rounds),
-        ...routedHere.map((note) => note.routedAtVersion),
+        ...routedHere.map((note) => note.landedAtVersion),
         0,
       )
       const rulingNotes = landed
