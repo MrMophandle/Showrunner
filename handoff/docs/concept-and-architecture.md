@@ -325,11 +325,33 @@ done-condition. Repo CLAUDE.md carries the invariants. Fixtures before features
 - **E4 · The writing line** — premise → outline → script with scene delineation,
   writer context assembly, outline/script gates, direct editing + staleness. Ends:
   full fixture episode written incl. a rejection round-trip.
+  → **CODE DONE, Aug 10 2026; the exit is E5's now, by ruling.** Issues #49, #60–#67
+  and #76 merged: the writer's desk with its lineage-aware audience filter, the three
+  writing stages through one builder, scenes derived per draft (a scene is its
+  heading), claims extraction and landings riding as proposals, direct editing and the
+  routed reject, the completion sweep, the writing room. Ryan began the drill and
+  ruled it off (Aug 10): four epics of scaffolding on one page had compounded into a
+  wall of shifting text that failed the HIL contract — the drill was testing his
+  patience, not the mechanisms, every one of which is fake-proven. **E4 is not
+  operated until E5's exit runs this same flow from the cockpit; one exit now closes
+  two epics.**
+  → **Scope grew (rulings made in-epic):** provenance is declared from what the
+  writer wrote, through one exported matcher; a ruling is a ruling whichever gate
+  convened it — presenting-gate approval advances lifecycle at the producing stage
+  (#76), nothing retroactive; a hand edit and a presenting-gate approval raise no
+  claims — the bench is their door; a presenting gate's only exit is approve (E5's
+  gate room inherits the missing reject-that-closes verb).
 - **E5 · The cockpit** — the screens, built to the approved mockups in `mockups/`.
   Ends: E4 run entirely from the cockpit, from the couch.
   → **Scope grew (D24): eight screens, not seven** — the arc page is the eighth.
   All eight mockups are approved and in the repo; see `mockups/README.md` for the
   screen→epic map and for design intent ruled but not rendered.
+  → **The exit carries double weight (ruled Aug 10 2026): it is E4's operated exit
+  too.** And Ryan's scaffolding-drill feedback is acceptance criteria, not
+  preference: regions update in place, nothing reflows under a reading eye; every
+  section explains itself or is named in Ryan's words, not the schema's; no flow
+  ever requires find-in-page — the drill script is the test, and Ctrl+F appearing
+  anywhere in it is a failure.
 - **E6 · The media line** — shot manifests, GPU worker, image gen, TTS + mix, review
   desk, image checks, timeline + render, screening room, publish kit + configurable
   destination. Ends: fixture episode premise → watchable file.
