@@ -3,10 +3,9 @@
 Showrunner is a containerized web app for multi-show episodic video production — writing,
 canon, image and audio, assembly, publishing — with Ryan the showrunner ruling at every gate.
 
-This file is the distilled brief. The **ruled design** is
-`handoff/docs/concept-and-architecture.md` (D1–D19 in-section, **D20–D25 in the addendum at the
-end** — read it, it amends earlier sections). Start at `handoff/docs/README.md` for what's
-authoritative. Nothing overrides the concept doc except a later ruling from Ryan.
+This file is the distilled brief; `handoff/docs/README.md` says what is authoritative. The **ruled
+design** is `handoff/docs/concept-and-architecture.md`: D1–D19 in-section, **D20–D25 in the
+addendum, which amends earlier sections**. Nothing overrides it except a later ruling from Ryan.
 
 ## The domain nouns — use these words, not synonyms
 
@@ -87,18 +86,16 @@ authoritative. Nothing overrides the concept doc except a later ruling from Ryan
   two values, never one**, and is a record, not state (status derives from its disposition;
   D12's wall is computed). **A pass is recorded at zero findings** — that is D11's denominator.
 - **Event** — append-only log of every transition. Drives the live UI over SSE and is the audit
-  trail. **The record, never the state:** `run`, `step`, and `resource_lock` are the source of
-  truth; nothing rebuilds state by replaying events, and the runner never reads its own log
-  back. Order by the monotonic `seq`, never by the timestamp — `at` is for humans. A step
-  narrates itself with `progress()` (the "what" line, latest-wins) and `chunk()` (streamed
-  output, accumulating). Append-only is enforced by SQLite triggers: no update or delete path.
+  trail. **The record, never the state:** `run`, `step` and `resource_lock` are the source of
+  truth; nothing rebuilds state by replaying events, and the runner never reads its own log back.
+  Order by the monotonic `seq`, never the timestamp — `at` is for humans. A step narrates with
+  `progress()` (latest-wins) and `chunk()` (accumulating); SQLite triggers refuse update and delete.
 
 ## The five invariants — never violate
 
 1. **Only ratification writes canon.** Everything else *proposes* — not agents, checks,
    remediations, the runner, an import, or a migration. It is Ryan's approval, at a gate.
-2. **Every artifact declares provenance.** Checks load exactly the entities in scope, never
-   the whole bible.
+2. **Every artifact declares provenance.** Checks load the entities in scope, not the whole bible.
 3. **Checks argue, never veto.** A red finding makes an artifact loud; Ryan's approval over
    it is recorded as an explicit override. One exception (D12): **deterministic** findings
    (continuity board, canon graph) block the *next stage*, but never his gate.
@@ -126,6 +123,9 @@ mode this project exists to escape. Either party may say "Archon" and the other 
 - **Run state is always visible**: what's thinking, what changed, what waits on Ryan.
 - **The HIL contract**: everything pertinent, present, zero archaeology. If Ryan has to go
   find context, the screen has failed.
+- **The operator register** (#99). Every sentence Ryan reads — screen, refusal, cost line, README
+  drill — names its subject, states its condition, says who acts, in complete grammar, and cites
+  no doc. Design reasoning never renders on screen; ruled nouns carry `server/glossary.ts`'s words.
 - **Reject is routed, not rewound** (D21, 4.7): the note picks its depth — the shot's prompt,
   the scene, the premise, or a slot held for hand-made work. Nothing regenerates until it lands.
 - Eight screens (D24): floor · episode room · gate room · canon library · review desk ·
