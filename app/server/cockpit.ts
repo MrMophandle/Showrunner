@@ -173,7 +173,15 @@ const NOT_YET: Readonly<
   // is the only place standing is decided. E5-2 (#82) took the episode room out the same way,
   // and E5-3 (#83) took the gate room — which also ruled the fourth verb its entry named
   // (`runner/gate.ts`, migration 0015). E5-4 (#84) took the canon library, which is built on
-  // the same bench the old page still carries until #86 retires it.
+  // the same bench the old page still carries until #86 retires it. E5-5 (#85) took the last
+  // two together — the season map and the arc page, two screens sharing every query.
+  //
+  // **What is left is not E5's**, and that is a different sentence: these two name an EPIC
+  // rather than an issue, because "when" is not one click away and a number here would be one
+  // invented to look like an answer. Two things the mockups draw are absent as well and
+  // neither is a room — the idea pool has no table (#92) and pitching a premise against canon
+  // has no run to hang on (#93). Both say so on the season map itself, where they are drawn,
+  // rather than being hidden behind a standing in here.
   'review-desk': {
     standing: 'later-epic',
     lead: 'Not built yet, and not E5’s.',
@@ -187,20 +195,6 @@ const NOT_YET: Readonly<
     because:
       'E6 builds the screening room, when there is an assembled episode to watch — nothing ' +
       'assembles one yet, so there is nothing here to be missing.',
-  },
-  'season-map': {
-    standing: 'stub',
-    lead: 'Not built yet.',
-    because:
-      'E5-5 (#85) builds the season map and the arc page together. Until then arcs are ' +
-      'read on the canon bench of the old operating page.',
-  },
-  'arc-page': {
-    standing: 'stub',
-    lead: 'Not built yet.',
-    because:
-      'E5-5 (#85) builds the arc page and the season map together. Until then a waypoint ' +
-      'is declared from the canon bench on the old operating page.',
   },
 }
 

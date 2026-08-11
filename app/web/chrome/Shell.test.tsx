@@ -173,17 +173,30 @@ describe('the old operating page still serves, at its own address', () => {
   })
 })
 
-describe('the stubs are honest', () => {
-  it('say they are not built, and name the issue that builds them', async () => {
-    // The season map, because E5-4 built the canon library out of this test (#84 → #85). A
-    // stub leaves by being BUILT, which is the one way out of this table.
-    await open('/season')
-    expect(host.querySelector('.empty')!.textContent).toContain('Not built yet')
-    expect(host.querySelector('.empty')!.textContent).toContain('#85')
+describe('the unbuilt rooms are honest', () => {
+  /**
+   * **This test used to name an issue, and there is no longer one to name.** It walked the
+   * chain — #83 pointed it at the canon library, #84 pointed it at the season map — and E5-5
+   * (#85) built the last stub out of it. A stub leaves by being BUILT, which is the one way
+   * out of that table, and the table is empty of them now.
+   *
+   * So what it asserts is the end of the chain: no room in this cockpit still says "not built
+   * yet, see issue N", because every issue that was going to be named has been closed by the
+   * screen it named.
+   */
+  it('name no issue any more, because #85 built the last stub out of the table', async () => {
+    await open('/')
+
+    for (const room of cockpit.destinations) {
+      if (room.notYetBecause === null) continue
+      expect(room.standing, `${room.id} is still a stub`).toBe('later-epic')
+      expect(room.notYetBecause, `${room.id} names an issue`).not.toMatch(/#\d+/)
+    }
   })
 
   it('say the two E6 screens are not E5’s to build', async () => {
     await open('/review')
+    expect(host.querySelector('.empty')!.textContent).toContain('Not built yet, and not E5’s')
     expect(host.querySelector('.empty')!.textContent).toContain('E6')
     expect(host.querySelector('.empty')!.textContent).not.toContain('E5-')
   })
@@ -193,17 +206,22 @@ describe('the stubs are honest', () => {
     expect(host.textContent).toContain('Reached from an episode on the floor')
   })
 
+  /**
+   * Demonstrated against the review desk, because it is now one of the only two rooms that
+   * still renders an empty state — the rest are built, so a room that "gives way" would have
+   * had nothing to give way FROM.
+   */
   it('give way the moment a screen registers for that room', async () => {
-    window.history.replaceState(null, '', '/season')
+    window.history.replaceState(null, '', '/review')
     await act(async () => {
       root.render(
         <Shell
-          screens={{ 'season-map': ({ destination }) => <p>{destination.name} IS BUILT</p> }}
+          screens={{ 'review-desk': ({ destination }) => <p>{destination.name} IS BUILT</p> }}
           scaffolding={<p>the old page</p>}
         />,
       )
     })
-    expect(host.textContent).toContain('the season map IS BUILT')
+    expect(host.textContent).toContain('the review desk IS BUILT')
     expect(host.querySelector('.empty')).toBeNull()
   })
 })

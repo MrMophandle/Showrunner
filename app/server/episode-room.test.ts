@@ -297,7 +297,10 @@ describe('the room links to the rooms that own the decisions it does not', () =>
     const arc = view.arcs[0]!
     expect(arc.href).toBe(`/arc/${arc.arcId}`)
     expect(arc.room).toBe('the arc page')
-    expect(arc.roomNotYet).toContain('#85')
+    // Built by E5-5 (#85), so the link goes somewhere and carries no apology with it. The
+    // room's standing is read off `cockpit.ts` rather than restated here, which is what makes
+    // building a room and this sentence changing the same fact said once.
+    expect(arc.roomNotYet).toBeNull()
   })
 
   /**

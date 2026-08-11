@@ -119,18 +119,45 @@ describe('the eight rooms', () => {
     expect(room.reachedFrom).toBe('the bar, or any name on a screen')
   })
 
-  it('says which issue builds the remaining E5 rooms, and which epic builds the other two', () => {
+  /**
+   * The fifth and sixth, and they left together (E5-5, #85) — two screens, one issue, every
+   * query shared. `/season` is whichever season the bar's link lands on; `/arc/<id>` is one
+   * arc, and its bare address is the list of them, because an arc page with no arc has
+   * genuinely nothing on it and no door in this cockpit may be a dead end.
+   */
+  it('calls the season map and the arc page built, because E5-5 built them together', () => {
+    const by = new Map(cockpitView(store).destinations.map((room) => [room.id, room]))
+
+    for (const id of ['season-map', 'arc-page']) {
+      expect(by.get(id)!.standing, id).toBe('built')
+      expect(by.get(id)!.notYetBecause, id).toBeNull()
+      expect(by.get(id)!.lead, id).toBe('')
+    }
+    expect(by.get('season-map')!.path).toBe('/season')
+    expect(by.get('arc-page')!.path).toBe('/arc')
+    expect(by.get('arc-page')!.reachedFrom).toBe(
+      'the season map, or a name in the canon library',
+    )
+  })
+
+  /**
+   * **Every E5 room is built, so there is no stub left at all** — #85 was the last one out of
+   * `NOT_YET`, and what remains in that table is two rooms that are not E5's to build. That is
+   * a different kind of honesty from "not built yet": it names an EPIC rather than an issue,
+   * because "when" is not one click away and pretending otherwise would be the promise this
+   * table exists to avoid making.
+   */
+  it('has no stub left, and says the other two are E6’s rather than promising a date', () => {
     const view = cockpitView(store)
     const by = new Map(view.destinations.map((room) => [room.id, room]))
 
-    // Two stubs left, each naming the issue that fills it — "when" is one click away.
-    expect(by.get('season-map')!.notYetBecause).toContain('#85')
-    expect(by.get('arc-page')!.notYetBecause).toContain('#85')
+    expect(view.destinations.filter((room) => room.standing === 'stub')).toEqual([])
 
-    // And two that are not E5's at all, which say so rather than promising a date.
     for (const id of ['review-desk', 'screening-room']) {
       expect(by.get(id)!.standing).toBe('later-epic')
       expect(by.get(id)!.notYetBecause).toContain('E6')
+      // And no issue number, because there is no issue: naming one would be inventing it.
+      expect(by.get(id)!.notYetBecause).not.toMatch(/#\d+/)
     }
   })
 

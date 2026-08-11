@@ -559,7 +559,9 @@ describe('a decision made in another room is a link into that room', () => {
 
     const arc = host.querySelector('.room-arc__name')!
     expect(arc.getAttribute('href')).toMatch(/^\/arc\/arc_/)
-    expect(arc.getAttribute('title')).toContain('#85')
+    // E5-5 (#85) built the arc page, so the link carries no title at all: the tooltip was
+    // only ever the reason the room could not be opened yet, and there is no longer one.
+    expect(arc.getAttribute('title')).toBeNull()
     // The pin is drawn and a landing is not — only ratifying makes one a fact (D8).
     const here = host.querySelectorAll('.room-wp[data-standing="here"]')
     expect(here).toHaveLength(1)
