@@ -595,6 +595,67 @@ describe('the rows render the states the mockup designed for', () => {
   })
 })
 
+// ── #86 · the two tiles the scaffolding opened with ────────────────────────────
+
+/**
+ * **The adapter tile and the volume tile**, which were the first two things on the operating
+ * page and are the first two things here (E5-6, #86).
+ *
+ * `App.test.tsx` asserted them by searching a string of HTML — that the adapter says which
+ * backend and whether it is ready, that a process with nothing behind it says NOT READY with
+ * the reason in words, and that the button it blocks still states what it would have cost.
+ * The page those assertions were made against is gone; the assertions are not.
+ */
+describe('the health strip says what this process can reach and what the volume holds', () => {
+  it('names the backend, whether it is ready, and what chose it', () => {
+    still()
+
+    const tile = host.querySelector('.tile[data-tile="adapter"]')!
+    expect(tile.getAttribute('data-standing')).toBe('good')
+    expect(tile.textContent).toContain('Anthropic API')
+    // Never "connected": `ready` proves presence, not reach, and the tile says so.
+    expect(tile.textContent).toContain('something to call')
+    expect(tile.getAttribute('title')).toContain('Chosen because')
+
+    // And the volume, which is the other half of "where am I running": what this library
+    // holds, and the root it is mounted from.
+    const volume = host.querySelector('.tile[data-tile="library-volume"]')!
+    expect(volume.textContent).toContain(paths.root)
+  })
+
+  it('says NOT ready with the reason in words, and still prices the button it blocks', () => {
+    const nothing: LLMReadiness = describeLLMBackend({ PATH: '' })
+    still(floorView(store, paths, nothing))
+
+    const tile = host.querySelector('.tile[data-tile="adapter"]')!
+    // `attention` rather than a bad `good`: a container with neither backend is a legitimate
+    // state that reports itself (E1-8), and the colour is not the statement — the words are.
+    expect(tile.getAttribute('data-standing')).toBe('attention')
+    expect(tile.textContent).toContain('nothing to call')
+    expect(tile.textContent).toContain('no `claude` executable on PATH')
+
+    // The row's button is refused, in the same sentence, before the click — and it still
+    // says what it would have done and what that would have cost.
+    const button = host.querySelector(`#row-${ep02} button`) as HTMLButtonElement
+    expect(button.disabled).toBe(true)
+    expect(button.textContent).toContain('Write the ep02 premise-brief')
+    expect(button.querySelector('.cost')!.textContent).toContain(
+      'no `claude` executable on PATH',
+    )
+  })
+
+  it('refuses a stage on a row that already has what it would write, in the API’s own words', () => {
+    still()
+
+    // ep01 is at `script` and already has one. The refusal names the two doors that CAN be
+    // used, which is where E4-5's pair lives now (the episode room's artifacts panel).
+    const button = host.querySelector(`#row-${ep01} button`) as HTMLButtonElement
+    expect(button.disabled).toBe(true)
+    expect(button.querySelector('.cost')!.textContent).toContain('ep01 already has a script')
+    expect(button.querySelector('.cost')!.textContent).toContain('rule on it at its gate, or edit it')
+  })
+})
+
 // ── The browser writes none of the words ────────────────────────────────────────
 
 /**

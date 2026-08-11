@@ -17,6 +17,7 @@ import { factsOfEntity } from '../../server/domain/fact.ts'
 import { createProposalRulings } from '../../server/domain/proposal.ts'
 import { createEventLog, type EventLog } from '../../server/events.ts'
 import { greyHarborFounded, type FoundedFixture } from '../../server/fixture/founded.ts'
+import { loadFixture } from '../../server/fixture/load.ts'
 import { initLibrary, openLibraryStore, type LibraryPaths } from '../../server/library.ts'
 import { heldStill, stillTheSameNode } from '../chrome/held-still.ts'
 import {
@@ -428,6 +429,76 @@ describe('every door the bench opens is on this screen, priced and in words', ()
     expect(arc.textContent).toContain('never a landing')
     // Appearances link into the room where an episode's own decisions are made.
     expect(host.querySelector('.lib-appearance')!.getAttribute('href')).toContain('/episode/')
+  })
+})
+
+// ── #86 · the door that only ever had one home ─────────────────────────────────
+
+/**
+ * **Founding, on a library where founding has not happened** (E5-6, #86).
+ *
+ * Every other test in this file stands on `greyHarborFounded`, which is the state Ryan's
+ * library has been in since Aug 7 — so the one act that can only be done BEFORE it was
+ * asserted at a screen exactly once, in `App.test.tsx`, against `CanonBench.tsx`. That page
+ * is gone. The assertion is here, on a second library the test founds nothing on.
+ *
+ * It is also the state the drill's own preamble sends a fresh container into, which makes
+ * this the test behind the README's founding pointer.
+ */
+describe('a library nobody has founded yet is where D25’s one door stands', () => {
+  let fresh: string
+  let unfounded: Store
+  let unfoundedPaths: LibraryPaths
+  let showId: string
+
+  beforeEach(() => {
+    fresh = mkdtempSync(join(tmpdir(), 'showrunner-unfounded-'))
+    unfoundedPaths = initLibrary(fresh)
+    unfounded = openLibraryStore(unfoundedPaths)
+    // **Loading raises; only founding rules** (D25). This is what `npm run fixture:load`
+    // does and all it does: sheets registered, a promotion proposal per sheet, no canon.
+    loadFixture(unfounded, unfoundedPaths)
+    showId = unfounded.get<{ id: string }>("SELECT id FROM show WHERE key = 'greyharbor'")!.id
+  })
+
+  afterEach(() => {
+    unfounded.close()
+    rmSync(fresh, { recursive: true, force: true })
+  })
+
+  const unruled = (): CanonLibraryView => canonLibraryView(unfounded, showId, {})!
+
+  it('offers the founding button with its cost, and rules nothing by rendering it', () => {
+    const view = unruled()
+    still(view)
+
+    const found = host.querySelector('#found button') as HTMLButtonElement
+    expect(found.disabled).toBe(false)
+    expect(found.textContent).toContain('Found Grey Harbor')
+    expect(found.textContent).toContain('one ruling each on the ledger')
+    // Nothing on this bench calls a model, and the button says so before the click.
+    expect(found.querySelector('.cost')!.textContent).toBe('No model call · $0.00')
+
+    // And it has ruled nothing by being drawn: the ledger is empty and says why in words.
+    expect(host.querySelectorAll('.lib-ledger__row')).toHaveLength(0)
+    expect(host.querySelector('.lib-body--ledger .empty')!.textContent).toContain(
+      view.ledgerNone!.sentence,
+    )
+  })
+
+  it('puts every unruled sheet in the queue with its three verbs, and none of it in canon', () => {
+    const view = unruled()
+    still(view)
+
+    // Six founding sheets waiting, each its own card, each its own ruling. There is no
+    // button anywhere that rules them together.
+    expect(host.querySelectorAll('.lib-proposal').length).toBe(view.bench.queue.length)
+    expect(view.bench.queue.length).toBeGreaterThan(1)
+    for (const proposal of view.bench.queue) {
+      const card = host.querySelector(`#proposal-${proposal.id}`)!
+      expect([...card.querySelectorAll('button.btn')]).toHaveLength(3)
+    }
+    expect(library().textContent).not.toMatch(/ratify all|rule them all/i)
   })
 })
 

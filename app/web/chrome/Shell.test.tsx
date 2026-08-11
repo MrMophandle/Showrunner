@@ -65,6 +65,26 @@ async function open(path: string): Promise<void> {
   })
 }
 
+describe('before the API answers', () => {
+  /**
+   * **Nothing runs without a click, and a first render is not a click** (invariant 5, at the
+   * browser). `App.test.tsx` made this assertion against the scaffolding's own first paint;
+   * the shell is where the cockpit's first paint happens, so it is where the assertion is
+   * kept now. There is nothing to press until the server has said what may be pressed.
+   */
+  it('says so, and draws nothing pressable until it has been told what there is', async () => {
+    // A read that has not come back yet — the state every hard refresh passes through.
+    globalThis.fetch = (() => new Promise(() => {})) as unknown as typeof fetch
+    await act(async () => {
+      root.render(<Shell screens={{}} scaffolding={<p>THE OLD OPERATING PAGE</p>} />)
+    })
+
+    expect(host.textContent).toContain('The API has not answered yet.')
+    expect(host.querySelector('button')).toBeNull()
+    expect(host.querySelector('a')).toBeNull()
+  })
+})
+
 describe('the addresses', () => {
   it('reads a bare address and one holding an id as the same room', () => {
     expect(locate('/')).toEqual({ head: '', rest: null, path: '/' })
