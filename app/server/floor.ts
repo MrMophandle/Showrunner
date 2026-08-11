@@ -23,7 +23,7 @@ import {
   type Episode,
   type EpisodeLifecycle,
 } from './domain/spine.ts'
-import { EVENT_KIND, PROSE_KIND, proseOfRun, type EventKind } from './events.ts'
+import { EVENT_KIND, latestSeq, PROSE_KIND, proseOfRun, type EventKind } from './events.ts'
 import type { LibraryPaths } from './library.ts'
 import type { LLMReadiness } from './llm/choose.ts'
 import { openGates, type OpenGate } from './runner/gate.ts'
@@ -202,6 +202,12 @@ export interface FloorLive {
   latest: string | null
   /** Every `chunk()` this step has emitted, oldest first. */
   stream: string[]
+  /**
+   * The log position the two lines above are as of. The browser drops anything at or below
+   * it off the live stream, so the replay it is served on connecting cannot append a word
+   * this read already handed it (`events.ts`, `proseOfRun`).
+   */
+  seq: number
 }
 
 export interface EpisodeOnTheFloor {
@@ -262,8 +268,19 @@ export interface FloorView {
    * halves, because the honest empty state says the absence first and then the way out.
    */
   empty: { lead: string; sentence: string } | null
-  /** What the event stream will send. The browser holds no copy of a twenty-one-string list. */
-  stream: { kinds: readonly EventKind[]; prose: readonly EventKind[] }
+  /**
+   * What the event stream will send, and where this read was taken from.
+   *
+   * The kinds are handed over because SSE dispatches by event NAME and a second copy of a
+   * twenty-one-string list living in the browser is a list that drifts.
+   *
+   * `since` is the log position taken BEFORE this view was composed, so a browser opening
+   * the stream at it is served everything this read could possibly have missed. The overlap
+   * is deliberate and it is the safe direction: an event replayed is a re-read that changes
+   * nothing, and an event skipped is a screen quietly out of date. Nothing doubles, because
+   * every prose line carries the seq it is as of (`FloorLive.seq`).
+   */
+  stream: { kinds: readonly EventKind[]; prose: readonly EventKind[]; since: number }
 }
 
 // ── The floor ───────────────────────────────────────────────────────────────────
@@ -281,6 +298,11 @@ export function floorView(
   llm: LLMReadiness,
   now: Date = new Date(),
 ): FloorView {
+  // Taken FIRST, before a single row below is read: it is the position a browser opens the
+  // live stream at, so anything landing while this view is being composed is replayed to it
+  // rather than lost. Overlap is harmless (see `stream.since`); a gap would not be.
+  const since = latestSeq(store)
+
   // Read once for the whole page rather than per episode: both are one query each, and
   // every card and every row below is a filter over them.
   const gates = openGates(store)
@@ -325,7 +347,7 @@ export function floorView(
               'generates nothing, and is safe to run twice.',
           }
         : null,
-    stream: { kinds: EVENT_KIND, prose: PROSE_KIND },
+    stream: { kinds: EVENT_KIND, prose: PROSE_KIND, since },
   }
 }
 
@@ -712,7 +734,7 @@ function episodeOnTheFloor(
     done: past ? pastSentence(store, episode, label, spend) : null,
     launchStage: stage,
     wall,
-    queued: queuedSentence(store, runs, inFlight),
+    queued: queuedSentence(store, runs),
     href: `${roomFor(rooms, 'episode-room').path}/${episode.id}`,
   }
 }
@@ -771,23 +793,34 @@ function liveOf(
       : `${at?.name ?? run.stage} · running`
 
   const prose = proseOfRun(store, run.id)
-  return { runId: run.id, heading, latest: prose.latest, stream: prose.stream }
+  return { runId: run.id, heading, latest: prose.latest, stream: prose.stream, seq: prose.seq }
 }
 
-/** "Queued behind it: the script stage — waits for this run (one run per episode)" (D7). */
-function queuedSentence(
-  store: Store,
-  runs: readonly Run[],
-  inFlight: Run | undefined,
-): string | null {
-  const queued = runs.find((run) => run.status === 'queued' && run.id !== inFlight?.id)
+/**
+ * **What is queued behind whatever holds this episode** — D7's per-episode serialization,
+ * said rather than left to be discovered.
+ *
+ * It names what the queued run is waiting ON, out of that run's own status, because the two
+ * cases are different news. A run behind a RUNNING one waits for work to finish and there is
+ * nothing for Ryan to do. A run behind a PAUSED one waits for HIM — his ruling at that gate
+ * is what releases it — and a floor that showed the gate and stayed silent about the work
+ * stacked up behind it would be hiding the consequence of the decision it is asking for.
+ *
+ * (That second case is the one this missed until it was booted and looked at: the queued run
+ * WAS the in-flight one, so a guard meant to avoid naming a run behind itself dropped the
+ * only sentence there was to say.)
+ */
+function queuedSentence(store: Store, runs: readonly Run[]): string | null {
+  const queued = runs.find((run) => run.status === 'queued')
   if (!queued) return null
   const ahead = queuedBehind(store, queued.id)
   if (!ahead) return null
-  return (
-    `Queued behind it: the ${queued.stage} stage — it waits for the ${ahead.stage} run ` +
-    'to finish (one run per episode, D7)'
-  )
+
+  return ahead.status === 'paused'
+    ? `Queued behind your ruling: the ${queued.stage} stage — it starts when your ruling lets ` +
+        `the ${ahead.stage} run finish (one run per episode, D7)`
+    : `Queued behind it: the ${queued.stage} stage — it waits for the ${ahead.stage} run to ` +
+        'finish (one run per episode, D7)'
 }
 
 /**

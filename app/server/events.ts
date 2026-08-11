@@ -208,6 +208,18 @@ export interface ProseOfRun {
   latest: string | null
   /** The `chunk()`s behind it, oldest first, as the producer coalesced them. */
   stream: string[]
+  /**
+   * **The log position this answer is as of** — the highest `seq` it took anything from, or
+   * 0 when it found nothing.
+   *
+   * It is the whole reason this read and the live stream can coexist. A browser opening
+   * `GET /api/events` is served the gap before it goes live, and without a position it
+   * cannot tell a chunk it has already been handed here from one it has not: it appends
+   * both, and the line renders every word twice. (Which is precisely what it did, until the
+   * app was booted and looked at.) With it, the browser drops anything at or below this and
+   * the two sources meet exactly once.
+   */
+  seq: number
 }
 
 /**
@@ -225,18 +237,19 @@ export interface ProseOfRun {
  * is not there.
  */
 export function proseOfRun(store: Store, runId: string, chunks = 60): ProseOfRun {
-  const latest = store.get<{ summary: string | null }>(
-    "SELECT summary FROM event WHERE run_id = ? AND kind = 'step-progress' ORDER BY seq DESC LIMIT 1",
+  const latest = store.get<{ seq: number; summary: string | null }>(
+    "SELECT seq, summary FROM event WHERE run_id = ? AND kind = 'step-progress' ORDER BY seq DESC LIMIT 1",
     runId,
   )
-  const stream = store.all<{ summary: string | null }>(
-    "SELECT summary FROM event WHERE run_id = ? AND kind = 'step-chunk' ORDER BY seq DESC LIMIT ?",
+  const stream = store.all<{ seq: number; summary: string | null }>(
+    "SELECT seq, summary FROM event WHERE run_id = ? AND kind = 'step-chunk' ORDER BY seq DESC LIMIT ?",
     runId,
     chunks,
   )
   return {
     latest: latest?.summary ?? null,
     stream: stream.map((row) => row.summary ?? '').reverse(),
+    seq: Math.max(latest?.seq ?? 0, stream[0]?.seq ?? 0),
   }
 }
 

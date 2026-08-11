@@ -42,16 +42,33 @@ import './floor.css'
  * them in step by hand is the remembered state 1.3 refuses. The re-read cannot move
  * anything: `floor.css` gives every region above a row, and every row, a fixed height.
  *
+ * ── The row ratchet ────────────────────────────────────────────────────────────
+ * A row is compact until a run starts on it and tall for the rest of the page's life. A run
+ * starts because Ryan clicked, so the growth is his; a run ending is the system's, so the
+ * height does not come back. `Row` below carries the argument, and `floor.css` the numbers.
+ *
  * ── Why it is three exports ────────────────────────────────────────────────────
- * `Floor` holds the state and does the talking; `FloorScreen` is markup and nothing else;
- * `applyProse` is the reduction an arriving event performs. The split is testability
- * rather than architecture, and it is the same one `App.tsx` made: effects do not run under
- * `renderToString`, a socket is not what needs testing, and what `floor.test.tsx` has to be
- * able to do is push a REAL event down the REAL fan-out and watch the DOM not move.
+ * `Floor` holds the state and does the talking; `FloorScreen` is markup, plus the one latch
+ * that is about this viewing of this page rather than about the world; `applyProse` is the
+ * reduction an arriving event performs. The split is testability rather than architecture,
+ * and it is the same one `App.tsx` made: effects do not run under `renderToString`, a
+ * socket is not what needs testing, and what `floor.test.tsx` has to be able to do is push
+ * a REAL event down the REAL fan-out and watch the DOM not move.
  */
 
-/** What each run is saying, keyed by run — the browser's copy of the prose it has heard. */
-export type Prose = Readonly<Record<string, { latest: string | null; chunks: string[] }>>
+/**
+ * What each run is saying, keyed by run — the browser's copy of the prose it has heard, and
+ * **the log position it has heard it up to**.
+ *
+ * The position is the load-bearing field. Two sources feed one line: the server's read
+ * (`proseOfRun`), which is what a browser arriving mid-run is handed, and the live stream,
+ * which replays the gap before it goes live. Without a position the browser cannot tell a
+ * chunk it already has from one it does not — it appends both, and the line renders every
+ * word twice. It did exactly that until the app was booted and the line was read.
+ */
+export type Prose = Readonly<
+  Record<string, { latest: string | null; chunks: string[]; seq: number }>
+>
 
 export function Floor({ cockpit }: ScreenProps) {
   const [view, setView] = useState<FloorView | null>(null)
@@ -78,7 +95,10 @@ export function Floor({ cockpit }: ScreenProps) {
 
   useEffect(() => {
     if (!stream) return
-    const source = new EventSource('/api/events')
+    // Opened at the position the first read was taken from, so the replay is the gap rather
+    // than the whole log — and the gap is what a browser that arrived mid-run actually
+    // missed. Anything served twice is dropped by `applyProse`'s own seq check.
+    const source = new EventSource(`/api/events?since=${stream.since}`)
     for (const kind of stream.kinds) {
       source.addEventListener(kind, (event) => {
         const record = JSON.parse((event as MessageEvent).data) as EventRecord
@@ -139,17 +159,30 @@ export function Floor({ cockpit }: ScreenProps) {
  * "now". Every other kind changes nothing here — it changes rows, and rows are re-read.
  */
 export function applyProse(held: Prose, record: EventRecord): Prose {
-  const said = held[record.runId] ?? { latest: null, chunks: [] }
+  const said = held[record.runId] ?? { latest: null, chunks: [], seq: 0 }
+  // Already in this line. The stream replays the gap on connect, and the server's read has
+  // usually handed over the same words already — order by `seq`, never by the timestamp.
+  if (record.seq <= said.seq) return held
+
   switch (record.kind) {
     case 'step-progress':
-      return { ...held, [record.runId]: { latest: record.summary, chunks: said.chunks } }
+      return {
+        ...held,
+        [record.runId]: { latest: record.summary, chunks: said.chunks, seq: record.seq },
+      }
     case 'step-chunk':
       return {
         ...held,
-        [record.runId]: { latest: said.latest, chunks: [...said.chunks, record.summary ?? ''] },
+        [record.runId]: {
+          latest: said.latest,
+          chunks: [...said.chunks, record.summary ?? ''],
+          seq: record.seq,
+        },
       }
     case 'step-started':
-      return { ...held, [record.runId]: { latest: null, chunks: [] } }
+      // A new step is a new stream. The position moves with it, so the replay cannot put
+      // the last step's words back.
+      return { ...held, [record.runId]: { latest: null, chunks: [], seq: record.seq } }
     default:
       return held
   }
@@ -163,12 +196,14 @@ export function applyProse(held: Prose, record: EventRecord): Prose {
  * a fuller picture than a re-read does, and clobbering it would rewind the line mid-sentence.
  */
 export function seedProse(held: Prose, view: FloorView): Prose {
-  const seeded: Record<string, { latest: string | null; chunks: string[] }> = { ...held }
+  const seeded: Record<string, { latest: string | null; chunks: string[]; seq: number }> = {
+    ...held,
+  }
   for (const show of view.shows) {
     for (const episode of show.episodes) {
       const live = episode.live
       if (live && seeded[live.runId] === undefined) {
-        seeded[live.runId] = { latest: live.latest, chunks: [...live.stream] }
+        seeded[live.runId] = { latest: live.latest, chunks: [...live.stream], seq: live.seq }
       }
     }
   }
@@ -313,6 +348,29 @@ function Need({ card }: { card: NeedsYouCard }) {
   )
 }
 
+/**
+ * One episode's row, and **the ratchet** — the one piece of state this screen holds.
+ *
+ * A row is compact until a run starts on it, and then it is tall for the life of the page.
+ * That asymmetry is the whole design, and both halves of it are about who caused the move:
+ *
+ *   * **Growing is his.** A run starts on an episode because Ryan clicked to start it. The
+ *     row grows at the moment he acted, on the row he acted on — the only movement a page
+ *     is allowed, because he is looking at the thing he just moved.
+ *   * **Shrinking never is.** A run FINISHING is the system's doing. So the height stays
+ *     and the content changes inside it: the live region gives way to whatever the row says
+ *     next, in place, moving nothing. A row that snapped back when a run ended would shove
+ *     everything under it up the page at a moment Ryan had no part in — the original defect,
+ *     arriving from the polite direction.
+ *
+ * **Resetting it is a reload's job**, which is his act too. This is deliberately not
+ * remembered anywhere: it is a fact about one viewing of one page, not about the world, and
+ * a `row_height` column would be the remembered state 1.3 refuses, in the silliest place.
+ *
+ * The latch is set during render rather than in an effect, which is React's own pattern for
+ * adjusting state when props change: it re-renders before committing, so the row is never
+ * painted at the wrong height for a frame.
+ */
 function Row({
   episode,
   prose,
@@ -327,9 +385,16 @@ function Row({
   const live = episode.live
   const said = live === null ? undefined : prose[live.runId]
 
+  const [everRan, setEverRan] = useState(() => live !== null)
+  if (live !== null && !everRan) setEverRan(true)
+
   return (
     <li
-      className={`floor-row ${episode.past ? 'floor-row--past' : ''}`.trim()}
+      className={`floor-row ${everRan ? 'floor-row--tall' : ''} ${
+        episode.past ? 'floor-row--past' : ''
+      }`
+        .replace(/\s+/g, ' ')
+        .trim()}
       id={`row-${episode.id}`}
     >
       <div className="floor-row__id">

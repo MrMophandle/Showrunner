@@ -480,6 +480,27 @@ describe('an episode row states its next act, its cost, and its refusal before t
     expect(episode(floor(), 'ep01').wall).toContain('ep01 is blocked')
   })
 
+  /**
+   * Found by booting the app and looking at it, which is the only way this one was ever
+   * going to turn up: ep01 sat at an open gate with a run stacked up behind it, and the row
+   * said nothing at all about the queued work — because the queued run WAS the in-flight
+   * one, and a guard meant to stop a run being named behind itself ate the only sentence
+   * there was. It is the consequence of the very ruling the floor is asking for.
+   */
+  it('says what is queued behind a gate, because ruling it is what releases the work', async () => {
+    await openAGateOnEp02()
+    // A second run on the same episode: legal to ask for, and it waits (D7).
+    const second = runner.enqueueRun({ episodeId: ep02, stage: SCRIPT_GATE_STAGE })
+
+    const ep = episode(floor(), 'ep02')
+    expect(ep.waiting).toContain('Waiting on you')
+    expect(ep.queued).toContain('Queued behind your ruling')
+    expect(ep.queued).toContain(SCRIPT_GATE_STAGE)
+    expect(ep.queued).toContain('it starts when your ruling lets')
+    expect(ep.queued).toContain('one run per episode, D7')
+    expect(second.status).toBe('queued')
+  })
+
   it('says what a run is thinking, off the event log, for an eye that arrived mid-run', async () => {
     const started = new Promise<string>((resolve) => {
       const stop = events.subscribe((record) => {

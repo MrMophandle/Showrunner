@@ -19,7 +19,7 @@ import { initLibrary, openLibraryStore, type LibraryPaths } from '../../server/l
 import { describeLLMBackend, type LLMReadiness } from '../../server/llm/choose.ts'
 import { createFakeLLM } from '../../server/llm/fake.ts'
 import { createRulings, openGates } from '../../server/runner/gate.ts'
-import { markRunRunning, recordRun } from '../../server/runner/run.ts'
+import { markRunDone, markRunRunning, recordRun } from '../../server/runner/run.ts'
 import { createRunner } from '../../server/runner/runner.ts'
 import { scaffoldStage } from '../../server/runner/stage-fixture.ts'
 import { stageCatalogue } from '../../server/runner/stages.ts'
@@ -122,10 +122,17 @@ function still(view: FloorView = read()): void {
  * The screen as the app wires it: subscribed to the real log, re-reading the real view on a
  * transition and patching the prose in place on everything else. This is `Floor`'s two
  * effects with `fetch` and `EventSource` taken out and the same functions underneath.
+ *
+ * `replay` is what the stream serves on connect — the gap between the read and the socket,
+ * which the real `EventSource` delivers before it goes live. It is fed through the SAME
+ * `applyProse` the live events go through, because that is the whole point: the browser must
+ * not be able to tell them apart, and must not double what it already has.
  */
-function Harness({ log }: { log: EventLog }) {
+function Harness({ log, replay = [] }: { log: EventLog; replay?: readonly EventRecord[] }) {
   const [view, setView] = useState<FloorView>(read)
-  const [prose, setProse] = useState<Prose>(() => seedProse({}, read()))
+  const [prose, setProse] = useState<Prose>(() =>
+    replay.reduce(applyProse, seedProse({}, read())),
+  )
 
   useEffect(
     () =>
@@ -282,6 +289,135 @@ describe('the whole floor holds still while a real run talks under it', () => {
   })
 })
 
+// ── The row ratchet: it goes up when he pushes it, and never comes back down ────
+
+/**
+ * A row's height only ever moves for one reason, and the reason is Ryan.
+ *
+ * **Growing is his.** A run starts on an episode because he clicked to start it, so the row
+ * grows at the moment he acted, on the row he acted on.
+ *
+ * **Shrinking never is.** A run FINISHING is the system's doing, so the height stays and the
+ * content changes inside it. A row that snapped back when a run ended would shove everything
+ * under it up the page at a moment he had no part in — the original defect, arriving from
+ * the polite direction.
+ *
+ * Both halves are pinned here, because a ratchet is only a ratchet if the pawl is tested.
+ */
+describe('a row grows only when he starts a run on it, and never shrinks after', () => {
+  const heights = (): Record<string, string> =>
+    Object.fromEntries(
+      [...host.querySelectorAll('.floor-row')].map((row) => [
+        row.id,
+        getComputedStyle(row).height,
+      ]),
+    )
+
+  const COMPACT = '144px'
+  const TALL = '172px'
+
+  it('starts every idle row compact, because an idle row reserves room for nothing', () => {
+    still()
+
+    expect(heights()).toEqual({ [`row-${ep01}`]: COMPACT, [`row-${ep02}`]: COMPACT })
+    expect(host.querySelectorAll('.floor-row--tall')).toHaveLength(0)
+  })
+
+  it('grows the row a run starts on, and leaves every other row exactly where it was', () => {
+    render(<Harness log={events} />)
+    expect(heights()[`row-${ep01}`]).toBe(COMPACT)
+
+    // Ryan's click, at the far end of it: a run exists on ep01 and has started.
+    const runId = runningOnEp01()
+    act(() => {
+      events.append({ kind: 'run-started', runId, episodeId: ep01, summary: 'the run started' })
+    })
+
+    // The row he acted on grew. That is the one movement this page allows, and it is the
+    // one he is looking at.
+    expect(heights()[`row-${ep01}`]).toBe(TALL)
+    expect(host.querySelector(`#row-${ep01} .live-region`)).not.toBeNull()
+    // And nothing else did. ep02 has moved DOWN the page by exactly ep01's growth, which is
+    // the cost of the click he just made, paid where he made it.
+    expect(heights()[`row-${ep02}`]).toBe(COMPACT)
+  })
+
+  it('leaves the row exactly where it was when the run finishes — the system may not move it', async () => {
+    const runId = runningOnEp01()
+    render(<Harness log={events} />)
+
+    const grown = heights()
+    expect(grown[`row-${ep01}`]).toBe(TALL)
+    // The thing his hand is on, in the row BELOW the one that is about to stop working.
+    const reaching = () => host.querySelector(`#open-${ep02}`)!
+
+    await heldStill(floor(), reaching(), () => {
+      markRunDone(store, runId)
+      act(() => {
+        events.append({ kind: 'run-done', runId, episodeId: ep01, summary: 'the run finished' })
+      })
+    })
+
+    // The live region is gone, because the run is. The geometry is not.
+    expect(host.querySelector(`#row-${ep01} .live-region`)).toBeNull()
+    expect(host.querySelector(`#row-${ep01}`)!.className).toContain('floor-row--tall')
+    expect(heights()).toEqual(grown)
+  })
+
+  it('never changes a row’s height for anything the system does alone', async () => {
+    const runId = runningOnEp01()
+    await openAGateOnEp02()
+    render(<Harness log={events} />)
+
+    const before = heights()
+    const arrive = (kind: EventRecord['kind'], summary: string) =>
+      act(() => {
+        events.append({ kind, runId, episodeId: ep01, summary })
+      })
+
+    // A whole run's worth of transitions, a lock changing hands, a wall going up, prose
+    // streaming — every one of them the system's doing, none of them his.
+    for (const kind of [
+      'step-started',
+      'lock-waiting',
+      'lock-acquired',
+      'step-progress',
+      'step-chunk',
+      'step-done',
+      'lock-released',
+      'run-resumed',
+    ] as const) {
+      arrive(kind, `${kind} on ep01`)
+    }
+    wallEp01()
+    arrive('step-done', 'the checks landed and the wall went up')
+
+    expect(heights()).toEqual(before)
+    // And the world really did move underneath — otherwise this asserts nothing at all.
+    expect(host.querySelectorAll('.need').length).toBeGreaterThan(1)
+  })
+
+  it('holds the ratchet across a run finishing and another starting on the same row', () => {
+    const first = runningOnEp01()
+    render(<Harness log={events} />)
+    const grown = heights()
+
+    markRunDone(store, first)
+    act(() => {
+      events.append({ kind: 'run-done', runId: first, episodeId: ep01, summary: 'finished' })
+    })
+    expect(heights()).toEqual(grown)
+
+    const second = runningOnEp01()
+    act(() => {
+      events.append({ kind: 'run-started', runId: second, episodeId: ep01, summary: 'and again' })
+    })
+    // Up once, and up is where it stays. A second run neither re-grows it nor un-grows it.
+    expect(heights()).toEqual(grown)
+    expect(host.querySelector(`#row-${ep01} .live-region`)).not.toBeNull()
+  })
+})
+
 // ── Trap 4 · the pip's three ruled states, pinned ───────────────────────────────
 
 describe('the lifecycle pip wears the three states Ryan ruled, and says which in words', () => {
@@ -420,6 +556,34 @@ describe('the rows render the states the mockup designed for', () => {
     )
     // An episode with a run in flight is offered nothing: one run per episode (D7).
     expect(host.querySelectorAll(`#row-${ep01} button`)).toHaveLength(0)
+  })
+
+  /**
+   * Found by booting the app and reading the line, which is the only way it was going to be
+   * found: the streamed prose rendered every word TWICE.
+   *
+   * Two sources feed one line — the server's read for a browser that arrived mid-run, and
+   * the stream, which replays the gap before it goes live. The browser had no way to tell a
+   * chunk it already held from one it did not, so it appended both. Every prose line now
+   * carries the `seq` it is as of, and anything at or below that is dropped.
+   */
+  it('does not say a word twice when the stream replays what the read already handed over', () => {
+    const runId = runningOnEp01()
+    // Three chunks land BEFORE the page opens — so the server's read seeds them, and the
+    // replay on connect will deliver the very same rows again.
+    const before = [1, 2, 3].map((n) =>
+      events.append({ kind: 'step-chunk', runId, episodeId: ep01, summary: `chunk ${n} ` }),
+    )
+    render(<Harness log={events} replay={before} />)
+
+    const line = () => host.querySelector(`#live-${ep01} .live-region__stream`)!.textContent
+    expect(line()).toBe('chunk 1 chunk 2 chunk 3 ')
+
+    // And a genuinely new chunk still lands, because the gate is a position and not a wall.
+    act(() => {
+      events.append({ kind: 'step-chunk', runId, episodeId: ep01, summary: 'chunk 4' })
+    })
+    expect(line()).toBe('chunk 1 chunk 2 chunk 3 chunk 4')
   })
 
   it('says what is NOT in flight at the foot, where the mockup draws a pool nothing records', () => {

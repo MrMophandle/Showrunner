@@ -24,17 +24,46 @@
  * the heights above it; when every one of those is a constant, nothing Ryan is looking at
  * can move, and `held-still.ts` is what fails if that stops being true.
  *
- * **What it costs, stated rather than hidden.** Rows are one height, so a row holding only
- * a button is as tall as a row holding a live region — about 142px against the mockup's
- * ~95px for a quiet row. The floor is therefore taller than the drawing at the same episode
- * count. That is the trade: some vertical density, for the guarantee that the thing he is
- * reaching for is still where he left it. It is in #81's summary for his eye.
+ * ── The row ratchet, which is that trade refined ────────────────────────────────
+ *
+ * The first cut made every row one height — the tallest one — so a row holding a button was
+ * as tall as a row holding a live region, and the floor was taller than the drawing at
+ * every episode count. That paid for the guarantee with density Ryan never asked to spend.
+ *
+ * The refinement is that **a row's height only ever goes up, and only ever because he
+ * pushed it**:
+ *
+ *   * **Idle rows are compact** — `.floor-row`, 144px. No live region, so no room reserved
+ *     for one.
+ *   * **A row grows when a run starts on it** — `.floor-row--tall`, 172px, latched by
+ *     `Floor.tsx`. And a run starts on an episode for exactly one reason: Ryan clicked to
+ *     start it, here or in another room. The growth is therefore SELF-CAUSED and arrives at
+ *     the moment he acted, on the row he acted on, which is the one kind of movement a page
+ *     is allowed: he is looking at the thing that moved because he is the one who moved it.
+ *     (A run he queued behind another on the same episode grows nothing — that row is
+ *     already tall, because the run ahead of it is what made it so.)
+ *   * **It never comes back down while the page lives.** A run finishing swaps the region
+ *     out for whatever the row says next — the content changes IN PLACE and the height does
+ *     not — because a run ending is the system's doing, not his, and the system may never
+ *     move the page under him. **Resetting the ratchet is a reload's job**, which is an act
+ *     of his too.
+ *
+ * So the invariant `held-still.ts` protects is narrower than "no row ever changes height"
+ * and stronger than the first cut's flat 160: **nothing the system does alone changes any
+ * row's height, ever.** `floor.test.tsx` pins both halves of that — the storm of events that
+ * moves nothing, and the finished run that leaves its row's geometry exactly where it was.
+ *
+ * **What compact costs, stated rather than hidden.** 144px is not the mockup's ~104px, and
+ * the reason is not the ratchet: an idle row's tallest column is its launch BUTTON, at
+ * 116px, because a writing stage's offer runs to about four hundred characters (see
+ * `.floor-row__status` below). The ratchet is worth 28px today and will be worth more the
+ * day a stage grows a short form — which is a ruling, not something a stylesheet decides.
  *
  * **A card arrives in space the list already has.** The needs-you region is one card-row
  * tall and scrolls inside itself; the count beside the heading says how many there are, and
  * a fourth card shows its own top edge at the bottom of the box. Growing the region instead
  * would shove every episode row down the page at the exact moment Ryan is being told
- * something needs him.
+ * something needs him — and unlike a run starting, a gate opening is not something he did.
  */
 
 /*
@@ -287,12 +316,15 @@
 }
 
 /*
- * One height, whatever the row is holding. See the header: this is the constant that makes
- * every row below this one immovable, and it is a `height` rather than a `min-height` for
- * the same reason `.live-region__log` is.
+ * The compact row: what an idle one actually needs, measured rather than guessed — 106px of
+ * identity, 36px of track, 116px of button, and the button wins. See the header for why it
+ * is 144 and not the mockup's ~104.
+ *
+ * A `height` rather than a `min-height`, for the same reason `.live-region__log` is: a
+ * min-height grows with its content, which is the defect wearing a different property.
  */
 .floor-row {
-  height: 160px;
+  height: 144px;
   background: var(--card);
   border: 1px solid var(--line);
   border-radius: var(--radius-panel);
@@ -302,6 +334,17 @@
   padding: 12px 22px;
   align-items: center;
   overflow: hidden;
+}
+
+/*
+ * The grown row: enough for the live region (80px) and the queued line under it. It must
+ * come after `.floor-row` — the two selectors have the same specificity, so source order is
+ * what decides, and a ratchet that lost to the rule it ratchets would be a silent no-op.
+ *
+ * `Floor.tsx` latches the class on and never off. Nothing takes it away but a reload.
+ */
+.floor-row--tall {
+  height: 172px;
 }
 
 /* Published, or put down. History is drawn quiet — it is not a failure and not an alarm. */
@@ -366,7 +409,7 @@
  * them a scroll, exactly as `.live-region__log` does.
  */
 .floor-row__status {
-  height: 134px;
+  height: 118px;
   overflow-y: auto;
   scrollbar-width: thin;
   scrollbar-color: var(--line-strong) transparent;
@@ -375,6 +418,11 @@
   justify-content: center;
   gap: 5px;
   width: 100%;
+}
+
+/* The status column takes the row's growth, since the live region is what asked for it. */
+.floor-row--tall .floor-row__status {
+  height: 146px;
 }
 
 .floor-row__waiting {
@@ -437,15 +485,20 @@
     grid-template-columns: 1fr;
   }
 
-  /* Stacked, the row needs the room its three columns were sharing. */
-  .floor-row {
+  /*
+   * Stacked, the row needs the room its three columns were sharing — and the ratchet has
+   * nothing left to ratchet, because a one-column row is as tall as its content either way.
+   */
+  .floor-row,
+  .floor-row--tall {
     height: auto;
     grid-template-columns: 1fr;
     gap: 12px;
     padding: 16px 18px;
   }
 
-  .floor-row__status {
+  .floor-row__status,
+  .floor-row--tall .floor-row__status {
     height: auto;
   }
 }
