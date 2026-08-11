@@ -348,6 +348,72 @@ describe('the components are the mockups’ components', () => {
 })
 
 /**
+ * ── The pip's three states, which are a RULING rather than a lift ───────────────
+ *
+ * The two mockups that draw a lifecycle track disagree, and Ryan settled it during E5-0's
+ * review on Aug 11 2026 (recorded on #81):
+ *
+ *   **done / current-AMBER / running-BLUE-PULSING. Amber means your hand, blue means in
+ *   flight — app-wide, forever.**
+ *
+ * `floor.html` draws three states and is the one the ruling follows. `episode-room.html`
+ * draws two, painting `.stage.now` blue-and-pulsing whether or not anything is running —
+ * so a stage sitting waiting for Ryan would look exactly like a stage mid-call. **That
+ * spelling is overruled.** It is asserted here rather than fixed in the mockup, because the
+ * mockups are approved design and a session that edits one has erased the disagreement the
+ * ruling was about; if the episode room is ever redrawn, this fails and the next session
+ * finds the ruling instead of a silent agreement.
+ */
+const PIP: readonly { standing: string; property: string; value: string; means: string }[] = [
+  { standing: 'done', property: 'background', value: 'var(--line-strong)', means: 'reached and passed — history is quiet' },
+  { standing: 'current', property: 'background', value: 'var(--warn)', means: 'your hand: it is where the episode stands and yours to move' },
+  { standing: 'running', property: 'background', value: 'var(--live)', means: 'in flight: a call is turning on it right now' },
+]
+
+describe('the lifecycle pip carries the three states Ryan ruled', () => {
+  it.each(PIP.map((pip) => [`.stage--${pip.standing} .pip — ${pip.means}`, pip] as const))(
+    '%s',
+    (_label, pip) => {
+      const rule = ruleFor(CHROME, `.stage--${pip.standing} .pip`)
+      expect(rule, `chrome.css draws no pip for .stage--${pip.standing}`).toBeDefined()
+      expect(rule!.declarations.get(pip.property)).toBe(pip.value)
+      expect(rule!.declarations.get('border-color')).toBe(pip.value)
+    },
+  )
+
+  it('pulses the running state and nothing else — the animation IS the "in flight"', () => {
+    expect(ruleFor(CHROME, '.stage--running .pip')!.declarations.get('animation')).toBe(
+      'pulse 1.6s ease-in-out infinite',
+    )
+    for (const standing of ['done', 'current']) {
+      expect(ruleFor(CHROME, `.stage--${standing} .pip`)!.declarations.has('animation')).toBe(false)
+    }
+  })
+
+  it('takes the three from floor.html, which is the mockup the ruling followed', () => {
+    const floor = mockupCss.get('floor.html')!
+    expect(ruleFor(floor, '.stage.done .pip')!.declarations.get('background')).toBe('#4e4e49')
+    expect(ruleFor(floor, '.stage.now .pip')!.declarations.get('background')).toBe('var(--warn)')
+    expect(ruleFor(floor, '.stage.now.live .pip')!.declarations.get('background')).toBe('var(--live)')
+    // `--line-strong` is chrome.css's name for the grey the mockup spells as a literal.
+    expect(chromeRoot.get('--line-strong')).toBe('#4e4e49')
+  })
+
+  it('records that the episode room still says otherwise, and is still overruled', () => {
+    const room = ruleFor(mockupCss.get('episode-room.html')!, '.stage.now .pip')!.declarations
+    expect(
+      room.get('background'),
+      'episode-room.html no longer paints a merely-current stage blue — the ruling recorded ' +
+        'in drift.test.ts and LifecycleTrack.tsx is stale, and E5-2 should be told',
+    ).toBe('var(--live)')
+    expect(room.has('animation')).toBe(true)
+    // And it has no third state at all, which is the half of the disagreement that matters:
+    // nothing in that file can tell "waiting on you" from "working".
+    expect(ruleFor(mockupCss.get('episode-room.html')!, '.stage.now.live .pip')).toBeUndefined()
+  })
+})
+
+/**
  * ── The one place a mockup rule was carried onto its sibling ────────────────────
  * The mockups clamp the streamed line to one line and leave the latest-wins line free to
  * wrap. A wrapping line grows the box, and a growing box is the whole defect this epic

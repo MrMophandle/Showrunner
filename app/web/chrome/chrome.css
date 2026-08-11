@@ -475,6 +475,98 @@ footer {
   color: #6b695f;
 }
 
+/*
+ * The link form of the same sentence — a needs-you card's act happens in another room, so
+ * it is an anchor. Only the underline has to go; everything else is `.btn` already.
+ */
+a.btn {
+  text-decoration: none;
+}
+
+/* ── The lifecycle track, and the pip's ruled three states ───────────────────────
+ * Lifted from `floor.html`'s `.track` / `.stage` / `.pip` / `.lbl`, verbatim.
+ *
+ * **The three states are Ryan's ruling of Aug 11 2026** (E5-0's review, on #81): done /
+ * current-amber / running-blue-pulsing. Amber means his hand, blue means in flight, and
+ * that holds app-wide. `episode-room.html` paints `.stage.now` blue-and-pulsing whether or
+ * not anything is running — a stage waiting on him would be indistinguishable from a stage
+ * mid-call — and that spelling is overruled. `drift.test.ts` records the dissent so a later
+ * session finds the ruling rather than the disagreement.
+ */
+.track {
+  display: flex;
+  align-items: flex-start;
+  list-style: none;
+}
+
+.stage {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  position: relative;
+}
+
+.stage::before {
+  content: '';
+  position: absolute;
+  top: 5px;
+  left: -50%;
+  width: 100%;
+  height: 2px;
+  background: var(--line);
+}
+
+.stage:first-child::before {
+  display: none;
+}
+
+.stage--done::before,
+.stage--current::before,
+.stage--running::before {
+  background: var(--line-strong);
+}
+
+.stage .pip {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid var(--line);
+  background: var(--page);
+  z-index: 1;
+}
+
+/* Reached and passed. Grey: it is history, and history is quiet. */
+.stage--done .pip {
+  background: var(--line-strong);
+  border-color: var(--line-strong);
+}
+
+/* Where it stands, and it is his. Amber means your hand — here and everywhere. */
+.stage--current .pip {
+  background: var(--warn);
+  border-color: var(--warn);
+}
+
+/* A call is in flight on it. Blue, and pulsing, and only ever this. */
+.stage--running .pip {
+  background: var(--live);
+  border-color: var(--live);
+  animation: pulse 1.6s ease-in-out infinite;
+}
+
+.stage .lbl {
+  font-size: var(--type-label);
+  color: var(--muted);
+}
+
+.stage--current .lbl,
+.stage--running .lbl {
+  color: var(--ink);
+  font-weight: 600;
+}
+
 /* ── Standing tags ───────────────────────────────────────────────────────────────
  * The uppercase label that says where something stands: ACTIVE, STANDING · RECURRING,
  * PROVISIONAL · RIDES EP05, FLAGGED FOR YOUR EYE, DISMISSED WITH NOTE.

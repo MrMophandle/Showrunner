@@ -168,13 +168,9 @@ const ROOMS: readonly Omit<Destination, 'standing' | 'lead' | 'notYetBecause'>[]
 const NOT_YET: Readonly<
   Record<string, { standing: CockpitStanding; lead: string; because: string }>
 > = {
-  floor: {
-    standing: 'stub',
-    lead: 'Not built yet.',
-    because:
-      'E5-1 (#81) builds this room. Until then everything that runs is on the old ' +
-      'operating page.',
-  },
+  // The floor is not in this table any more: E5-1 (#81) built it, so it stands `built` and
+  // its `notYetBecause` is null. A room leaves this map by being built, which is why the map
+  // is the only place standing is decided.
   'episode-room': {
     standing: 'stub',
     lead: 'Not built yet.',
@@ -245,21 +241,34 @@ const SCAFFOLDING: Destination = {
   reachedFrom: 'the bar, from every room',
 }
 
+/**
+ * The eight rooms with their standing on them, and no store to ask — a room's name, address
+ * and honesty about itself are facts about this build, not about a library.
+ *
+ * Exported because the floor's needs-you cards link INTO these rooms and say what each one
+ * can do today (E5-1, #81). A card composing its own address would be a second copy of the
+ * link graph, and the copy that drifted would be the one sending Ryan to a room the bar
+ * does not have.
+ */
+export function destinationsOf(): Destination[] {
+  return ROOMS.map((room): Destination => {
+    const not = NOT_YET[room.id]
+    return {
+      ...room,
+      standing: not?.standing ?? 'built',
+      lead: not?.lead ?? '',
+      notYetBecause: not?.because ?? null,
+    }
+  })
+}
+
 export function cockpitView(store: Store): CockpitView {
   const standing = shows(store).map(
     (show): CockpitShow => ({ id: show.id, key: show.key, title: show.title }),
   )
 
   return {
-    destinations: ROOMS.map((room): Destination => {
-      const not = NOT_YET[room.id]
-      return {
-        ...room,
-        standing: not?.standing ?? 'built',
-        lead: not?.lead ?? '',
-        notYetBecause: not?.because ?? null,
-      }
-    }),
+    destinations: destinationsOf(),
     scaffolding: SCAFFOLDING,
     shows: standing,
     switcherExplains: switcherSentence(standing),

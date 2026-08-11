@@ -1,4 +1,5 @@
 import type { Offer } from '../../server/operating.ts'
+import { onLinkClick } from './router.ts'
 
 /**
  * The only button in the cockpit (E5-0, #80).
@@ -70,6 +71,51 @@ export function SentenceButton({
       {offer.sentence}
       <small className="cost">{offer.enabled ? offer.cost : offer.blockedBecause}</small>
     </button>
+  )
+}
+
+/**
+ * **The same sentence, when the act happens in another room** (E5-1, #81).
+ *
+ * A needs-you card on the floor says what needs him and then sends him where the ruling is
+ * made — the gate room, the episode room. That is navigation, so it is an anchor: a real
+ * `href`, which a keyboard, a middle click and a screen reader all understand, and which
+ * `router.ts` turns into a push-state move on a plain left click. A `<button>` with an
+ * `onClick` that navigated would be a link wearing a disguise.
+ *
+ * It is the same shape as the button on purpose — verb + object + scope on the first line,
+ * cost on the second — because the rule is about what Ryan reads, not about which element
+ * carries it. **The cost line is still the truth about the CLICK**: going to a room spends
+ * nothing, and `floor.ts` words it as such ("no model call · $0.00 to open it") rather than
+ * quoting the price of a verdict he has not chosen yet.
+ *
+ * There is no disabled form. A card only exists because something needs ruling, and a
+ * precondition on GOING somewhere would be a room Ryan is not allowed to look at.
+ */
+export function SentenceLink({
+  offer,
+  href,
+  dense = false,
+  wide = false,
+  ruling = false,
+  quiet = false,
+  title,
+}: Omit<SentenceButtonProps, 'onClick' | 'busy'> & { href: string; title?: string }) {
+  const classes = [
+    'btn',
+    dense ? 'btn--dense' : '',
+    wide ? 'btn--wide' : '',
+    ruling ? 'btn--rule' : '',
+    quiet ? 'btn--quiet' : '',
+  ]
+    .filter(Boolean)
+    .join(' ')
+
+  return (
+    <a className={classes} href={href} onClick={onLinkClick(href)} title={title}>
+      {offer.sentence}
+      <small className="cost">{offer.cost}</small>
+    </a>
   )
 }
 

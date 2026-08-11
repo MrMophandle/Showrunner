@@ -91,7 +91,14 @@ export function Shell({ screens, scaffolding }: { screens: Screens; scaffolding:
       <a className="skip-link" href="#screen">
         Skip to this screen
       </a>
-      <div className="wrap">
+      {/*
+       * `data-room` is how a screen gets its own page width without a screen knowing about
+       * the shell or the shell knowing about a screen. `drift.test.ts` records that the
+       * mockups genuinely disagree about `--wrap` on purpose — the season map is wider and
+       * the floor narrower, a nine-column grid against a three-card row — and this is the
+       * hook that lets the token be per-screen overridable, as that decision says it is.
+       */}
+      <div className="wrap" data-room={here.id}>
         <Bar cockpit={cockpit} here={here} />
         <main id="screen">
           {here.id === cockpit.scaffolding.id ? (

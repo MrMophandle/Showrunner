@@ -15,9 +15,10 @@ import { Card, CardRow, Section } from './Card.tsx'
 import { EmptyState } from './EmptyState.tsx'
 import { Freshness } from './Freshness.tsx'
 import { heldStill, ReflowError, stillTheSameNode } from './held-still.ts'
+import { LifecycleTrack, type TrackStop } from './LifecycleTrack.tsx'
 import { LiveRegion, type LiveEntry } from './LiveRegion.tsx'
 import { SectionHeader } from './SectionHeader.tsx'
-import { SentenceButton } from './SentenceButton.tsx'
+import { SentenceButton, SentenceLink } from './SentenceButton.tsx'
 import { TwoValues } from './TwoValues.tsx'
 
 /**
@@ -320,16 +321,49 @@ describe('a section header — Ryan’s second criterion, made structural', () =
    * The compiler stops a screen leaving the explanation OUT — `explains` has no default.
    * This is the other half: a screen cannot route around the component by opening a
    * heading tag of its own. `SectionHeader.tsx` is the only file in the cockpit allowed
-   * to write one, and this reads the directory to prove it rather than trusting a rule.
+   * to write one, and this reads the directories to prove it rather than trusting a rule.
+   *
+   * It walks `app/web/screens/` as well as the chrome, because that is where the rule was
+   * always going to be broken first — E5-1's floor is the first screen to live there, and a
+   * `<h2>` inside a room is exactly the bare schema noun this component exists to prevent.
    */
-  it('is the only file in the chrome that opens a heading element', () => {
+  it('is the only file in the chrome or a screen that opens a heading element', () => {
     const here = import.meta.dirname
-    const offenders = readdirSync(here)
-      .filter((name) => name.endsWith('.tsx') && !name.endsWith('.test.tsx'))
-      .filter((name) => name !== 'SectionHeader.tsx')
-      .filter((name) => /<h[23][\s>]/.test(readFileSync(join(here, name), 'utf8')))
+    const screens = join(here, '..', 'screens')
+    const offenders = [
+      ...readdirSync(here).map((name) => ({ dir: here, name, at: `chrome/${name}` })),
+      ...readdirSync(screens).map((name) => ({ dir: screens, name, at: `screens/${name}` })),
+    ]
+      .filter(({ name }) => name.endsWith('.tsx') && !name.endsWith('.test.tsx'))
+      .filter(({ name }) => name !== 'SectionHeader.tsx')
+      .filter(({ dir, name }) => /<h[23][\s>]/.test(readFileSync(join(dir, name), 'utf8')))
+      .map(({ at }) => at)
 
     expect(offenders, 'a heading outside SectionHeader.tsx has no explanation beside it').toEqual([])
+  })
+
+  /**
+   * The count badge the mockups draw beside a heading — "NEEDS YOU ③" — reaches the DOM
+   * without displacing the obligation: the name and the plain words are still both there,
+   * and still in that order.
+   */
+  it('lets a heading carry a badge without letting one stand in for the explanation', () => {
+    render(
+      <SectionHeader name="Needs you" explains="what is holding work still">
+        <span className="section-h__count">3</span>
+      </SectionHeader>,
+    )
+
+    expect(host.querySelector('h2')!.textContent).toBe('Needs you')
+    expect(host.querySelector('.section-h__explains')!.textContent).toBe('what is holding work still')
+    expect(host.querySelector('.section-h__count')!.textContent).toBe('3')
+    expect(() =>
+      render(
+        <SectionHeader name="Needs you" explains="">
+          <span>3</span>
+        </SectionHeader>,
+      ),
+    ).toThrow(/without a plain-words explanation/)
   })
 })
 
@@ -380,6 +414,92 @@ describe('the browser writes none of the words', () => {
   it('a card has no words of its own', () => {
     render(<Card>{null}</Card>)
     expect(nothing()).toBe('')
+  })
+
+  it('the lifecycle track has no words of its own — the stage names are the schema’s', () => {
+    render(<LifecycleTrack stops={[{ stage: '', standing: 'current', sentence: '' }]} label="" />)
+    expect(nothing()).toBe('')
+  })
+
+  it('the link form of the sentence renders what the wire said and nothing else', () => {
+    render(
+      <SentenceLink
+        offer={{ sentence: '', cost: '', enabled: true, blockedBecause: null }}
+        href="/gate/x"
+      />,
+    )
+    expect(nothing()).toBe('')
+  })
+})
+
+// ── The lifecycle pip, and the three states it is allowed to be ─────────────────
+
+/**
+ * The ruling of Aug 11 2026 (E5-0's review, on #81): **done / current-amber /
+ * running-blue-pulsing**, amber meaning his hand and blue meaning in flight, app-wide.
+ *
+ * `drift.test.ts` pins the COLOURS against the stylesheet — jsdom does not resolve a
+ * `var()`, so a computed-style assertion here would be reading `rgba(0,0,0,0)` and calling
+ * it amber. What is pinned here is the component's half: a standing produces exactly one
+ * class, the four are mutually exclusive, and the state is said in words as well as in
+ * colour. **E5-2 inherits this assertion rather than the convention** — an episode room
+ * that paints a merely-current stage blue fails these, in this file, before it ships.
+ */
+describe('the lifecycle track’s three ruled states', () => {
+  const TRACK: TrackStop[] = [
+    { stage: 'premise', standing: 'done', sentence: 'premise — done' },
+    { stage: 'outline', standing: 'current', sentence: 'outline — yours to move' },
+    { stage: 'script', standing: 'ahead', sentence: 'script — not reached yet' },
+  ]
+
+  it('gives each standing exactly one class, and never two at once', () => {
+    render(<LifecycleTrack stops={TRACK} label="ep01 The Long Pier" />)
+
+    expect([...host.querySelectorAll('.stage')].map((stop) => stop.className)).toEqual([
+      'stage stage--done',
+      'stage stage--current',
+      'stage stage--ahead',
+    ])
+    expect(host.querySelectorAll('.stage--running')).toHaveLength(0)
+  })
+
+  it('is `running` and not `current` while a call is in flight on the stage', () => {
+    render(
+      <LifecycleTrack
+        stops={[{ stage: 'assets', standing: 'running', sentence: 'assets — running now' }]}
+        label="ep05"
+      />,
+    )
+
+    // The distinction the ruling exists to make: "waiting on you" and "working" are two
+    // states, and this is the line between them.
+    expect(host.querySelector('.stage')!.className).toBe('stage stage--running')
+    expect(host.querySelectorAll('.stage--current')).toHaveLength(0)
+  })
+
+  it('says which stop is the current one twice — in a class, and to a reader', () => {
+    render(<LifecycleTrack stops={TRACK} label="ep01 The Long Pier" />)
+
+    const marked = host.querySelectorAll('[aria-current="step"]')
+    expect(marked).toHaveLength(1)
+    expect(marked[0]!.className).toBe('stage stage--current')
+    expect(marked[0]!.querySelector('.visually-hidden')!.textContent).toBe(
+      'outline — yours to move',
+    )
+    // A `running` stop is the current one too — it is where the episode is, and a reader
+    // navigating by structure must land on it whether the work is his or the model's.
+    render(
+      <LifecycleTrack
+        stops={[{ stage: 'assets', standing: 'running', sentence: 'assets — running now' }]}
+        label="ep05"
+      />,
+    )
+    expect(host.querySelectorAll('[aria-current="step"]')).toHaveLength(1)
+  })
+
+  it('names the track, so a screen with six of them is six answerable questions', () => {
+    render(<LifecycleTrack stops={TRACK} label="ep01 The Long Pier" />)
+    expect(host.querySelector('ol')!.getAttribute('aria-label')).toBe('ep01 The Long Pier')
   })
 })
 
