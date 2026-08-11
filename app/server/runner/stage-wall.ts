@@ -175,8 +175,13 @@ function numberOf(store: Store, episodeId: string): number {
 /**
  * The first sentence of the concern, which is where every check in this app puts the claim —
  * "Ilse Renn is in two places at one time." The rest argues it, and a button has no room to.
+ *
+ * **Exported for the floor** (E5-1), which needs the same clip for the same reason: a
+ * needs-you card is a summons and says what, why and where in one sentence, while the
+ * argument in full lives in the room the card links to. One helper rather than two, because
+ * two copies of "where does a sentence end" would eventually disagree about an ellipsis.
  */
-function firstSentence(concern: string): string {
+export function firstSentence(concern: string): string {
   const end = /[.!?](\s|$)/.exec(concern)
   return end ? concern.slice(0, end.index + 1) : concern
 }

@@ -1,3 +1,5 @@
+import type { ReactNode } from 'react'
+
 /**
  * A section heading that cannot appear without saying what it means (E5-0, #80).
  *
@@ -61,13 +63,26 @@ export function headingNeedsAnExplanation(name: string): Error {
  * for anyone who navigates by structure rather than by eye. `h1` is the screen's own
  * title, in the shell; sections are `h2`, and a section inside a section is `h3`.
  */
-export function SectionHeader({ name, explains, level = 2 }: Explained & { level?: 2 | 3 }) {
+export function SectionHeader({
+  name,
+  explains,
+  level = 2,
+  children,
+}: Explained & { level?: 2 | 3; children?: ReactNode }) {
   if (explains.trim() === '') throw headingNeedsAnExplanation(name)
   const Heading = level === 3 ? 'h3' : 'h2'
   return (
     <div className="section-h">
       <Heading className="section-h__name">{name}</Heading>
       <p className="section-h__explains">{explains}</p>
+      {/*
+       * The count badge the mockups draw beside a heading — "NEEDS YOU ③" — and anything
+       * else that belongs ON the heading line rather than under it. `.section-h__count` was
+       * already lifted into `chrome.css` by E5-0 for exactly this; E5-1's floor is its
+       * first caller. It sits AFTER the explanation deliberately: the obligation is that a
+       * name arrives with its plain words, and a badge may not come between the two.
+       */}
+      {children}
     </div>
   )
 }

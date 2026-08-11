@@ -63,12 +63,29 @@ describe('the eight rooms', () => {
     expect(paths).not.toContain(view.scaffolding.path)
   })
 
-  it('says which issue builds the six E5 rooms, and which epic builds the other two', () => {
+  /**
+   * **The floor is the first room to leave this list** (E5-1, #81). A room stops being a
+   * stub by being built, and the only thing that says so is its absence from `NOT_YET` —
+   * which is why `standing` and `notYetBecause` are asserted together here: a room claiming
+   * `built` while still naming the issue that builds it would be the honesty this table
+   * exists for, said twice and disagreeing with itself.
+   */
+  it('calls the floor built, because E5-1 built it', () => {
+    const floor = cockpitView(store).destinations.find((room) => room.id === 'floor')!
+
+    expect(floor.standing).toBe('built')
+    expect(floor.notYetBecause).toBeNull()
+    expect(floor.lead).toBe('')
+    // And it is still the home screen, at the address a typo lands on.
+    expect(floor.path).toBe('/')
+    expect(floor.reachedFrom).toBe('')
+  })
+
+  it('says which issue builds the remaining E5 rooms, and which epic builds the other two', () => {
     const view = cockpitView(store)
     const by = new Map(view.destinations.map((room) => [room.id, room]))
 
-    // Six stubs, each naming the issue that fills it — "when" is one click away.
-    expect(by.get('floor')!.notYetBecause).toContain('#81')
+    // Five stubs left, each naming the issue that fills it — "when" is one click away.
     expect(by.get('episode-room')!.notYetBecause).toContain('#82')
     expect(by.get('gate-room')!.notYetBecause).toContain('#83')
     expect(by.get('canon-library')!.notYetBecause).toContain('#84')

@@ -202,6 +202,44 @@ export function transitionsOfRun(store: Store, runId: string): EventRecord[] {
     .map(hydrate)
 }
 
+/** What a step is saying right now, for a screen that arrived in the middle of it. */
+export interface ProseOfRun {
+  /** The newest `progress()` line — latest-wins, so there is only ever one. */
+  latest: string | null
+  /** The `chunk()`s behind it, oldest first, as the producer coalesced them. */
+  stream: string[]
+}
+
+/**
+ * The prose of a run as it stands, for a screen that was not watching when it arrived.
+ *
+ * A live region is fed by SSE while a browser is open; a browser that opens mid-run, or
+ * comes back after a reload, has missed every chunk so far and would otherwise render an
+ * empty box over a run that is talking. This is the same rows the stream sends, read back —
+ * which is what the log is for ("drives the live UI over SSE and is the audit trail").
+ *
+ * Newest-first with a LIMIT and then reversed, rather than reading the whole run: `event` is
+ * the fastest-growing table in the database because it persists every chunk, and the floor
+ * asks this once per running episode on every read. The cap is a rendering choice — the
+ * region clips to one line and scrolls to its right edge — and never a claim that the rest
+ * is not there.
+ */
+export function proseOfRun(store: Store, runId: string, chunks = 60): ProseOfRun {
+  const latest = store.get<{ summary: string | null }>(
+    "SELECT summary FROM event WHERE run_id = ? AND kind = 'step-progress' ORDER BY seq DESC LIMIT 1",
+    runId,
+  )
+  const stream = store.all<{ summary: string | null }>(
+    "SELECT summary FROM event WHERE run_id = ? AND kind = 'step-chunk' ORDER BY seq DESC LIMIT ?",
+    runId,
+    chunks,
+  )
+  return {
+    latest: latest?.summary ?? null,
+    stream: stream.map((row) => row.summary ?? '').reverse(),
+  }
+}
+
 /**
  * Everything after `seq`, across every run. This is what a reconnecting browser is served
  * before it goes live again: it sends the last id it saw, and gets the gap.

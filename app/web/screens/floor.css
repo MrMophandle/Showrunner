@@ -1,0 +1,451 @@
+/**
+ * The floor's own layout (E5-1, #81) — lifted from `mockups/floor.html`.
+ *
+ * `chrome.css` is the design system and it deliberately knows nothing about a floor, a gate
+ * or an arc ("It is not a screen"). This file is the floor: its header, its health strip,
+ * its needs-you region and its episode rows. Every colour, radius and type size below is a
+ * `chrome.css` token, and every geometry is the mockup's own.
+ *
+ * ── The one thing this adds to the mockup, and the whole reason it is worth adding ──
+ *
+ * **Every region above an episode row is a fixed box, and every row is a fixed height.**
+ *
+ * A mockup is a drawing of one moment. It cannot show what happens when a gate opens while
+ * Ryan is reading, or when a run starts under his hand — and what happened, in the E4 drill
+ * he ruled off, is that the page grew under the button he was reaching for: *"a giant wall
+ * of changing text… I find myself literally doing a find on the webpage looking for the
+ * button in question."*
+ *
+ * E5-0 answered that for one region (`.live-region`: four boxes, each a `height`, never a
+ * `max-height`). The floor is where that answer has to hold for a whole screen, because the
+ * floor is the screen where the most changes at once: spend ticks up, a card arrives, a run
+ * starts, a stage lights. So the health strip, the needs-you region and each episode row
+ * each declare a height. An element's distance from the top of the document is the sum of
+ * the heights above it; when every one of those is a constant, nothing Ryan is looking at
+ * can move, and `held-still.ts` is what fails if that stops being true.
+ *
+ * **What it costs, stated rather than hidden.** Rows are one height, so a row holding only
+ * a button is as tall as a row holding a live region — about 142px against the mockup's
+ * ~95px for a quiet row. The floor is therefore taller than the drawing at the same episode
+ * count. That is the trade: some vertical density, for the guarantee that the thing he is
+ * reaching for is still where he left it. It is in #81's summary for his eye.
+ *
+ * **A card arrives in space the list already has.** The needs-you region is one card-row
+ * tall and scrolls inside itself; the count beside the heading says how many there are, and
+ * a fourth card shows its own top edge at the bottom of the box. Growing the region instead
+ * would shove every episode row down the page at the exact moment Ryan is being told
+ * something needs him.
+ */
+
+/*
+ * The floor is the narrow one. `drift.test.ts` records that the mockups disagree about
+ * `--wrap` on purpose — 1180 here for a three-card row, 1320 on the season map for a
+ * nine-column grid — and that the token is per-screen overridable. This is that override,
+ * through the `data-room` the shell stamps on the page frame.
+ */
+.wrap[data-room='floor'] {
+  max-width: 1180px;
+}
+
+/* ── The header ──────────────────────────────────────────────────────────────── */
+
+.floor-head {
+  height: 44px;
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+  flex-wrap: wrap;
+  overflow: hidden;
+}
+
+/* The floor's own h1 weight — 28px, this screen's, overriding `--type-title`. */
+.floor-head h1 {
+  font-size: 28px;
+}
+
+.floor-head .floor-head__where {
+  font-size: var(--type-page);
+  color: var(--muted);
+}
+
+/* ── The health strip ────────────────────────────────────────────────────────── */
+
+.floor-health {
+  height: 168px;
+  overflow: hidden;
+  margin: 20px 0 24px;
+}
+
+.floor-health__tiles {
+  height: 112px;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+}
+
+.tile {
+  height: 112px;
+  overflow: hidden;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.tile__k {
+  font-size: var(--type-label);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.tile__v {
+  font-size: 14.5px;
+  color: var(--ink);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tile__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--good);
+}
+
+/* Something to say about, not something wrong. Amber is his hand, here as everywhere. */
+.tile[data-standing='attention'] .tile__dot {
+  background: var(--warn);
+}
+
+/* The volume would not answer. Grey rather than red: unknown is not an outage. */
+.tile[data-standing='unknown'] .tile__dot {
+  background: var(--line-strong);
+}
+
+/* Nothing built it yet, so there is nothing here to be down. Dashed, the mockups' mark. */
+.tile[data-standing='not-built'] .tile__dot {
+  background: none;
+  border: 1px dashed var(--muted);
+}
+
+/*
+ * A tile's sentence is the server's and is never trimmed to fit — the whole of it is on the
+ * tile's `title`, and what is drawn is as much as the box has room for. `overflow-wrap` is
+ * load-bearing: the volume tile prints an absolute path, and a path has no spaces to break
+ * at, so without it one long library root pushes the tile's own text out of its box.
+ */
+.tile__sub {
+  font-size: var(--type-small);
+  color: var(--muted);
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.tile__meter {
+  height: 5px;
+  border-radius: 3px;
+  background: var(--track);
+  margin-top: 7px;
+  overflow: hidden;
+}
+
+.tile__meter > i {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--ink-2);
+}
+
+/* ── Needs you ───────────────────────────────────────────────────────────────── */
+
+/*
+ * One card-row tall, and it scrolls. A fourth card shows its own top edge at the foot of
+ * the box, and the count beside the heading says how many there are — so a card ARRIVING is
+ * visible without the region growing and shoving every episode row down the page at the
+ * exact moment Ryan is being told something needs him.
+ */
+.floor-needs {
+  height: 326px;
+  margin-bottom: 28px;
+  overflow: hidden;
+}
+
+.floor-needs__cards {
+  height: 286px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-auto-rows: 272px;
+  gap: 12px;
+  align-content: start;
+}
+
+/* The honest empty state fills the region rather than sitting in the first column. */
+.floor-needs__cards > .empty {
+  grid-column: 1 / -1;
+}
+
+.need {
+  background: linear-gradient(180deg, #232013, var(--card));
+  border: 1px solid #4a3d14;
+  border-radius: var(--radius-panel);
+  padding: 16px 18px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  overflow: hidden;
+}
+
+.need__kind {
+  font-size: var(--type-label);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--warn);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.need__kind::before {
+  content: '◆';
+  font-size: 9px;
+}
+
+.need__title {
+  font-size: 15.5px;
+  font-weight: 600;
+  color: var(--ink);
+  line-height: 1.3;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+/*
+ * The summons, and the line on this card that matters most: what, why and where in one
+ * sentence, with the argument in full waiting in the room it links to and on the card's own
+ * `title` for a pointer. Clipping is the safety net rather than the plan — `floor.ts` sends
+ * the opening sentence.
+ *
+ * It is deliberately NOT `flex: 1`. It was, and in a card whose other parts add up to more
+ * than the box, flex gave the growable child the leftover — which was nothing, so the WHY
+ * rendered zero pixels tall. The parts that can be pinned are pinned, and the act is pushed
+ * to the foot of the card instead.
+ */
+.need__why {
+  font-size: var(--type-read);
+  color: var(--ink-2);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+}
+
+.need__since {
+  font-size: var(--type-small);
+  color: var(--muted);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+/* The act sits at the foot of every card, so a row of them reads along one line. */
+.need .btn {
+  margin-top: auto;
+  padding: 7px 12px;
+}
+
+/* Which room this goes to. What that room can do today is on the link, for a pointer. */
+.need__room {
+  font-size: var(--type-label);
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── The episode rows ────────────────────────────────────────────────────────── */
+
+.floor-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  list-style: none;
+}
+
+/*
+ * One height, whatever the row is holding. See the header: this is the constant that makes
+ * every row below this one immovable, and it is a `height` rather than a `min-height` for
+ * the same reason `.live-region__log` is.
+ */
+.floor-row {
+  height: 160px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+  display: grid;
+  grid-template-columns: 240px 1fr 380px;
+  gap: 20px;
+  padding: 12px 22px;
+  align-items: center;
+  overflow: hidden;
+}
+
+/* Published, or put down. History is drawn quiet — it is not a failure and not an alarm. */
+.floor-row--past {
+  opacity: 0.55;
+}
+
+.floor-row__id {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow: hidden;
+}
+
+.floor-row__num {
+  font-size: var(--type-small);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.floor-row__title {
+  font-size: 18px;
+  font-weight: 650;
+  color: var(--ink);
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.floor-row__title:hover {
+  border-bottom: 1px solid var(--line);
+}
+
+.floor-row__note,
+.floor-row__standing {
+  font-size: var(--type-meta);
+  color: var(--muted);
+  overflow: hidden;
+}
+
+.floor-row__standing {
+  font-size: var(--type-small);
+}
+
+/*
+ * The status column, and the second half of the guarantee: whatever it holds — a live
+ * region, a waiting line, a button — it holds it in the same box, so a run starting swaps
+ * content and moves nothing.
+ *
+ * **It scrolls rather than clipping, and that is a decision about the cost line.** A
+ * writing stage's offer is about four hundred characters — "Write the ep01 script from the
+ * writer's desk and present it for your ruling…" plus a cost that covers the panel, the
+ * three-draft loop AND the extraction that lands after the gate (E4-4: one click covers the
+ * whole run, so the sentence has to cover the whole run). Those sentences were written for
+ * the writing room, which has a column for them. On a floor row the choice is to trim them,
+ * to make every row tall enough for the longest one, or to let the box scroll. Trimming a
+ * COST is the one thing this app may not do — "states the cost before the click" is not
+ * satisfied by half of it — and a 240px row would double the height of a screen whose whole
+ * job is being glanceable. So the box keeps its shape and its words, and offers the rest of
+ * them a scroll, exactly as `.live-region__log` does.
+ */
+.floor-row__status {
+  height: 134px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 5px;
+  width: 100%;
+}
+
+.floor-row__waiting {
+  font-size: var(--type-read);
+  color: var(--warn);
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.floor-row__waiting::before {
+  content: '◆';
+  font-size: 9px;
+}
+
+.floor-row__wall,
+.floor-row__queued,
+.floor-row__done {
+  font-size: var(--type-small);
+  color: var(--muted);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.floor-row__queued b {
+  color: var(--ink-2);
+  font-weight: 600;
+}
+
+/* The row's live region drops the log: a floor row is a glance, not a run's whole story. */
+.floor-row__status .live-region {
+  margin-bottom: 0;
+}
+
+/* ── What is not in flight ───────────────────────────────────────────────────── */
+
+.floor-footer {
+  margin-top: 28px;
+}
+
+/* A refusal that arrived after a click — a race, since preconditions come before it. */
+.floor-problem {
+  margin-top: 12px;
+  font-size: var(--type-meta);
+  color: var(--warn);
+}
+
+@media (max-width: 900px) {
+  .floor-health__tiles {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .floor-health {
+    height: 274px;
+  }
+
+  .floor-needs__cards {
+    grid-template-columns: 1fr;
+  }
+
+  /* Stacked, the row needs the room its three columns were sharing. */
+  .floor-row {
+    height: auto;
+    grid-template-columns: 1fr;
+    gap: 12px;
+    padding: 16px 18px;
+  }
+
+  .floor-row__status {
+    height: auto;
+  }
+}

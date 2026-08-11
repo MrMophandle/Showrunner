@@ -29,6 +29,7 @@ import type { LLMAdapter } from './llm/adapter.ts'
 import type { LLMReadiness } from './llm/choose.ts'
 import { checkBenchView } from './check-bench.ts'
 import { editArtifact, editOffer, staleSentence, writtenArtifacts } from './edit.ts'
+import { floorView } from './floor.ts'
 import { findStage, launchBlockedBecause, operatingView, runView, type Offer } from './operating.ts'
 import {
   applyRewrite,
@@ -147,6 +148,18 @@ export function createApp(
 
   /** Everything the operating page renders: shows, episodes, lifecycle, buttons, spend. */
   app.get('/api/operating', (c) => c.json(operatingView(store, paths, operating.readiness())))
+
+  /**
+   * **The floor** (E5-1): what needs Ryan, what is in flight, and what it has cost — one
+   * read over gates, findings, riders, runs, locks and `cost_entry`, composed in sentences
+   * on this side (`floor.ts`).
+   *
+   * A GET, so opening the home screen starts nothing, rules nothing and spends nothing
+   * (invariant 5). The one thing the floor can DO — start the stage an idle episode is at —
+   * goes through `POST /api/run` above, which refuses with the same sentence the disabled
+   * button was already showing.
+   */
+  app.get('/api/floor', (c) => c.json(floorView(store, paths, operating.readiness())))
 
   /**
    * What the cockpit's rooms are called, what each one is for in Ryan's words, and what
