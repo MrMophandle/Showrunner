@@ -1,0 +1,643 @@
+/**
+ * The canon library's own layout (E5-4, #84) — lifted from `mockups/canon-library.html`.
+ *
+ * `chrome.css` is the design system and knows nothing about canon; this file is the room: the
+ * three columns, the browse rail on the left, the sheet in the middle, the graph on the right,
+ * and the point-in-time control across the top. Every colour and radius below is a
+ * `chrome.css` token, and every geometry is the mockup's.
+ *
+ * ── One fixed box per section, and the rows scroll inside it ─────────────────────
+ *
+ * The floor established the rule, the episode room carried it to the screen with the most on
+ * it, and the gate room to the one with the most at stake. This is the screen with the most
+ * that MOVES: a single ruling changes the facts table, the queue, the ledger, the sidebar's
+ * counts and an identity chip, all at once, and it can land from another room entirely.
+ *
+ * So every section is a box with a height, and everything that can arrive arrives INSIDE one.
+ * The number of boxes never changes — an inheritance block, a proposal card and a ledger row
+ * are rows inside a section, never sections of their own — because reserved space only holds
+ * if the thing holding it is still there when nothing is in it.
+ *
+ * There is no `max-height` in this file and `canon-library.test.tsx` asserts it: a box that
+ * grows up to a maximum shoves the page the whole way, just later.
+ */
+
+/* The mockup's own frame. */
+.wrap[data-room='canon-library'] {
+  max-width: 1280px;
+}
+
+/* ── The head: the crumb, the title, and the control the whole page is read through ── */
+
+.lib-head {
+  height: 124px;
+  overflow: hidden;
+  margin-bottom: 18px;
+}
+
+.lib-crumb__back::before {
+  /* The mockup's own arrow. A mark, not a word — the copy is the server's. */
+  content: '← ';
+}
+
+.lib-head__line {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+
+/* The point-in-time control. `.pit` in the mockup, to the pixel. */
+.lib-pit {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  padding: 8px 14px;
+  font-size: var(--type-read);
+}
+
+.lib-pit select,
+.lib-pit input {
+  background: var(--card-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-tag);
+  color: var(--ink);
+  font: inherit;
+  padding: 3px 6px;
+  max-width: 22rem;
+}
+
+.lib-pit__label {
+  color: var(--muted);
+  font-size: var(--type-meta);
+}
+
+.lib-pit__says {
+  flex-basis: 100%;
+  color: var(--muted);
+  font-size: var(--type-meta);
+  /* One line, clipped: the sentence is long and the head is a box that may not grow. */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── The three columns ─────────────────────────────────────────────────────────── */
+
+.lib-cols {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr) 330px;
+  gap: 20px;
+  align-items: start;
+}
+
+@media (max-width: 1150px) {
+  .lib-cols {
+    grid-template-columns: 220px minmax(0, 1fr);
+  }
+  .lib-rail {
+    grid-column: 1 / -1;
+  }
+}
+
+/* ── Left: browse, which is a query ───────────────────────────────────────────── */
+
+.lib-side .section-h {
+  padding: 0 18px;
+}
+
+.lib-side {
+  /*
+   * Sealed. It is the first thing in the document, so anything that changes in it — a count,
+   * a new identity, a candidate becoming canon — would carry both other columns down with it.
+   */
+  height: 640px;
+  overflow-y: auto;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+  padding: 14px 0;
+  font-size: var(--type-action);
+}
+
+.lib-side__queue {
+  /* The mockup's amber-on-dark queue chip, verbatim. */
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 14px 12px;
+  padding: 9px 12px;
+  background: #232013;
+  border: 1px solid #4a3d14;
+  border-radius: var(--radius-control);
+  color: var(--ink);
+  font-size: var(--type-body);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.lib-side__count {
+  margin-left: auto;
+  background: var(--warn);
+  color: var(--on-warn);
+  border-radius: var(--radius-pill);
+  padding: 0 8px;
+  font-size: var(--type-small);
+  font-weight: 700;
+}
+
+.lib-kind {
+  padding: 7px 18px 2px;
+}
+
+.lib-kind__name {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.lib-kind__n {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: var(--type-meta);
+}
+
+.lib-kind__checks,
+.lib-kind__empty {
+  display: block;
+  color: var(--muted);
+  font-size: var(--type-small);
+  line-height: 1.45;
+  margin-top: 2px;
+}
+
+.lib-entity {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  padding: 5px 18px 5px 32px;
+  font-size: var(--type-body);
+  color: var(--ink-2);
+  text-decoration: none;
+}
+
+.lib-entity:hover {
+  color: var(--ink);
+}
+
+.lib-entity[aria-current='page'] {
+  color: var(--ink);
+  font-weight: 600;
+  border-left: 3px solid var(--warn);
+  padding-left: 29px;
+  background: #201d12;
+}
+
+.lib-entity__tag {
+  margin-left: auto;
+  font-size: var(--type-label);
+  letter-spacing: var(--track-tag);
+  text-transform: uppercase;
+  color: var(--live);
+  border: 1px dashed var(--live-edge);
+  border-radius: var(--radius-tag);
+  padding: 0 6px;
+}
+
+.lib-side__gaps {
+  padding: 10px 18px 0;
+  font-size: var(--type-small);
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+/* ── Middle: one sheet ────────────────────────────────────────────────────────── */
+
+.lib-panel {
+  margin-bottom: var(--panel-gap);
+}
+
+.lib-body {
+  overflow-y: auto;
+}
+
+.lib-body--sheet {
+  /* The identity and the prose are one panel, as the mockup draws them. */
+  height: 420px;
+}
+.lib-body--facts {
+  height: 320px;
+}
+.lib-body--other {
+  height: 176px;
+}
+.lib-body--inherited {
+  height: 300px;
+}
+.lib-body--exceptions {
+  height: 120px;
+}
+.lib-body--found {
+  height: 132px;
+}
+.lib-body--queue {
+  height: 420px;
+}
+.lib-body--create {
+  height: 420px;
+}
+.lib-body--ledger {
+  height: 300px;
+}
+.lib-body--rail {
+  height: 220px;
+}
+
+.lib-ident {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+
+.lib-ident__alias {
+  font-size: var(--type-body);
+  color: var(--muted);
+  font-style: italic;
+}
+
+.lib-chip {
+  font-size: var(--type-label);
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-tag);
+  padding: 1px 8px;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+
+/*
+ * The status chip wears what the status MEANS. Green is settled, and a candidate is not
+ * settled — it is an identity nobody has ruled on, which is the same news as a provisional
+ * fact and wears the same blue. The words are the server's; only the colour is decided here,
+ * the way the gate room's verdict dot is (`[data-verdict]`).
+ */
+.lib-chip[data-kind='status'] {
+  color: var(--good);
+  border-color: #1d4d1d;
+}
+
+.lib-chip[data-kind='status'][data-value='candidate'] {
+  color: var(--live);
+  border-color: var(--live-edge);
+  border-style: dashed;
+}
+
+.lib-chip[data-kind='status'][data-value='historical'] {
+  color: var(--muted);
+  border-color: var(--line-strong);
+}
+
+.lib-chip[data-kind='edge'],
+.lib-chip[data-kind='unknown'] {
+  color: var(--live);
+  border-color: var(--live-edge);
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 600;
+  font-size: var(--type-small);
+}
+
+.lib-chip[data-kind='undeclared'] {
+  color: var(--serious);
+  border-color: var(--serious);
+  border-style: dashed;
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 600;
+  font-size: var(--type-small);
+}
+
+.lib-chip a {
+  color: inherit;
+  text-decoration: none;
+  border-bottom: 1px dashed currentcolor;
+}
+
+.lib-sub {
+  display: block;
+  font-size: var(--type-meta);
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.lib-prose {
+  margin-top: 12px;
+}
+
+.lib-prose__h {
+  display: block;
+  font-size: var(--type-small);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 14px 0 4px;
+}
+
+.lib-prose p {
+  font-size: var(--type-action);
+  color: var(--ink-2);
+  margin-bottom: 8px;
+}
+
+/* The facts table — auto layout, so no column can be starved into overlapping another. */
+.lib-facts {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--type-body);
+}
+
+.lib-facts th {
+  text-align: left;
+  font-size: var(--type-label);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 600;
+  padding: 4px var(--row-pad) 8px;
+  border-bottom: 1px solid var(--line);
+  position: sticky;
+  top: 0;
+  background: var(--card);
+}
+
+.lib-facts td {
+  padding: 9px var(--row-pad);
+  border-bottom: 1px solid var(--rule);
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+.lib-facts tr:last-child td {
+  border-bottom: none;
+}
+
+.lib-facts th:first-child,
+.lib-facts td:first-child {
+  width: 42%;
+}
+
+.lib-fact__statement {
+  display: block;
+  color: var(--ink);
+}
+
+.lib-fact__lineage {
+  display: block;
+  color: var(--muted);
+  font-size: var(--type-meta);
+}
+
+.lib-fact__touch {
+  display: block;
+  margin-top: 4px;
+  font-size: var(--type-small);
+  color: var(--warn);
+}
+
+.lib-fact__because {
+  display: block;
+  margin-top: 4px;
+  font-size: var(--type-small);
+  color: var(--muted);
+}
+
+.lib-fact__change {
+  display: block;
+  margin-top: 6px;
+}
+
+.lib-fact__change input {
+  width: 100%;
+  background: var(--card-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-tag);
+  color: var(--ink);
+  font: inherit;
+  padding: 4px 6px;
+  margin-top: 2px;
+}
+
+.lib-inherited {
+  padding-bottom: 12px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.lib-inherited:last-child {
+  border-bottom: none;
+}
+
+.lib-inherited__via {
+  display: block;
+  font-size: var(--type-small);
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+
+.lib-inherited__via a {
+  color: var(--live);
+  text-decoration: none;
+  border-bottom: 1px dashed var(--live-edge);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.lib-note {
+  display: block;
+  font-size: var(--type-meta);
+  color: var(--muted);
+  line-height: 1.5;
+  margin-top: 8px;
+}
+
+.lib-form label {
+  display: block;
+  font-size: var(--type-meta);
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+
+.lib-form input,
+.lib-form select,
+.lib-form textarea {
+  display: block;
+  width: 100%;
+  background: var(--card-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-tag);
+  color: var(--ink);
+  font: inherit;
+  padding: 5px 7px;
+  margin-top: 3px;
+}
+
+/* ── The queue: one card per proposal, three verbs, no fourth ─────────────────── */
+
+.lib-proposal {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--rule);
+}
+
+.lib-proposal:last-child {
+  border-bottom: none;
+}
+
+.lib-proposal__what {
+  display: block;
+  color: var(--ink);
+  font-size: var(--type-body);
+  margin-bottom: 6px;
+}
+
+.lib-proposal__part {
+  display: block;
+  color: var(--muted);
+  font-size: var(--type-meta);
+  line-height: 1.5;
+}
+
+.lib-proposal__verbs {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+/* ── Right: the graph, the record, and the ledger ─────────────────────────────── */
+
+.lib-edge {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  flex-wrap: wrap;
+  padding: 6px 0;
+  font-size: var(--type-body);
+  border-bottom: 1px solid var(--rule);
+}
+
+.lib-edge:last-child {
+  border-bottom: none;
+}
+
+.lib-edge__kind {
+  min-width: 92px;
+  flex: none;
+  font-size: var(--type-small);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+.lib-edge a {
+  color: var(--ink);
+  text-decoration: none;
+  border-bottom: 1px dashed var(--line);
+  white-space: nowrap;
+}
+
+.lib-edge__note {
+  flex-basis: 100%;
+  padding-left: 100px;
+  color: var(--muted);
+  font-size: var(--type-small);
+  line-height: 1.5;
+}
+
+.lib-reference {
+  display: block;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--rule);
+  font-size: var(--type-meta);
+  color: var(--muted);
+}
+
+.lib-reference:last-child {
+  border-bottom: none;
+}
+
+.lib-appearances {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.lib-appearance {
+  font-size: var(--type-small);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-chip);
+  padding: 2px 9px;
+  color: var(--ink-2);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.lib-arc {
+  padding-bottom: 10px;
+}
+
+.lib-way {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.lib-wp {
+  font-size: var(--type-small);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-chip);
+  padding: 2px 9px;
+  color: var(--muted);
+}
+
+.lib-wp[data-here='true'] {
+  color: var(--on-warn);
+  background: var(--warn);
+  border-color: var(--warn);
+  font-weight: 700;
+}
+
+.lib-ledger__row {
+  display: block;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--rule);
+  font-size: var(--type-meta);
+  color: var(--ink-2);
+  line-height: 1.5;
+}
+
+.lib-ledger__row:last-child {
+  border-bottom: none;
+}
+
+.lib-problem {
+  margin-top: 12px;
+  border: 1px solid var(--critical);
+  border-radius: var(--radius-control);
+  padding: 10px 12px;
+  color: var(--ink);
+  font-size: var(--type-body);
+}

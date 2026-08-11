@@ -543,8 +543,14 @@ function inheritanceSources(store: Store, proposal: Proposal): string[] {
 /**
  * The episodes an entity has been written into, by provenance — the one edge that says an
  * artifact touched a canon entity (invariant 2), in story order.
+ *
+ * **Exported for the canon library's appearances panel** (E5-4, `canon-library.ts`), which
+ * asks this exact question of one entity rather than of a proposal's subject. It lives here
+ * rather than beside `provenanceOf` in `domain/artifact.ts` because it walks up to the
+ * episode and the season to order the answer, and `spine.ts` already imports `artifact.ts` —
+ * one walk, one home, and no cycle.
  */
-function episodesTouching(store: Store, entityId: string): Episode[] {
+export function episodesTouching(store: Store, entityId: string): Episode[] {
   return store
     .all<{ id: string }>(
       `SELECT DISTINCT a.episode_id AS id

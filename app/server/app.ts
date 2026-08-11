@@ -13,6 +13,7 @@ import {
   type BenchStanding,
   type SheetDraft,
 } from './canon-bench.ts'
+import { canonLibraryView } from './canon-library.ts'
 import { cockpitView } from './cockpit.ts'
 import type { Store } from './db/store.ts'
 import { artifactFreshness, findArtifact, type Artifact } from './domain/artifact.ts'
@@ -597,6 +598,24 @@ export function createApp(
   /** Entities, one sheet, the queue, the ledger, and the point-in-time control. */
   app.get('/api/canon/:showId', (c) => {
     const view = canonBenchView(store, c.req.param('showId'), standingOf(c))
+    if (!view) return c.json({ error: `No such show: ${c.req.param('showId')}` }, 404)
+    return c.json(view)
+  })
+
+  /**
+   * **The canon library** (E5-4, #84; 5.4, D9): the bench above with the four things a
+   * browsable bible needs stitched onto it — the sidebar as a query over the kinds of canon
+   * this show declares, inheritance with the edge it travelled on it, edges navigable from
+   * both ends, and appearances computed from provenance (`canon-library.ts`).
+   *
+   * A GET carrying the same two controls the bench's own routes take, `?entity=` and
+   * `?ruling=`/`?date=` — so the room is addressable at a point in time and a hard refresh
+   * lands on the same page. It rules nothing and spends nothing: **the acts on this screen are
+   * the seven canon routes above**, unchanged, and the page re-reads afterwards the way every
+   * other bench in this app does.
+   */
+  app.get('/api/canon-library/:showId', (c) => {
+    const view = canonLibraryView(store, c.req.param('showId'), standingOf(c))
     if (!view) return c.json({ error: `No such show: ${c.req.param('showId')}` }, 404)
     return c.json(view)
   })

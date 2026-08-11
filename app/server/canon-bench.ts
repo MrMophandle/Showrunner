@@ -556,8 +556,15 @@ function onTheSheet(store: Store, fact: Fact): FactOnTheBench {
   }
 }
 
-/** Where a fact came from and what put it there — kept forever, and readable (3.1, D9). */
-function lineageOf(store: Store, fact: Fact): string {
+/**
+ * Where a fact came from and what put it there — kept forever, and readable (3.1, D9).
+ *
+ * **Exported because the canon library is its second reader** (E5-4, `canon-library.ts`). The
+ * facts an entity INHERITS are another entity's rows and reach that screen without passing
+ * through `inFull`, and a lineage line composed a second time over there is the drift every
+ * other sentence on that screen is quoted to avoid.
+ */
+export function lineageOf(store: Store, fact: Fact): string {
   const parts: string[] = []
   const episode = fact.establishedIn === null ? null : findEpisode(store, fact.establishedIn)
   parts.push(
