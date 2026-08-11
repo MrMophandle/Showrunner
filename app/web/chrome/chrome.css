@@ -744,6 +744,13 @@ a.btn {
   margin-bottom: var(--row-pad);
 }
 
+/*
+ * Clipped, for the same reason the latest-wins line below it is: a heading that wraps onto a
+ * second line grows a box whose whole promise is that it cannot. The floor's headings are
+ * short ("write-the-outline · holds the gpu lock"); the episode room's idle one is not
+ * ("write-the-premise on ep02 — waiting on your ruling"), and it wrapped straight over the
+ * line under it the first time the room was booted and looked at (#82).
+ */
 .live-region__heading {
   height: 1.5em;
   line-height: 1.5;
@@ -754,7 +761,11 @@ a.btn {
   color: var(--live);
   display: flex;
   align-items: center;
+  flex-wrap: nowrap;
   gap: 7px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .live-region__heading::before {

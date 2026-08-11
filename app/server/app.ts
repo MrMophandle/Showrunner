@@ -28,7 +28,8 @@ import type { LibraryPaths } from './library.ts'
 import type { LLMAdapter } from './llm/adapter.ts'
 import type { LLMReadiness } from './llm/choose.ts'
 import { checkBenchView } from './check-bench.ts'
-import { editArtifact, editOffer, staleSentence, writtenArtifacts } from './edit.ts'
+import { editArtifact, editOffer, editScene, staleSentence, writtenArtifacts } from './edit.ts'
+import { episodeRoomView } from './episode-room.ts'
 import { floorView } from './floor.ts'
 import { findStage, launchBlockedBecause, operatingView, runView, type Offer } from './operating.ts'
 import {
@@ -168,6 +169,21 @@ export function createApp(
    * E4-7's rule: no name, no explanation and no "not built yet" is authored in `app/web/`.
    */
   app.get('/api/cockpit', (c) => c.json(cockpitView(store)))
+
+  /**
+   * **The episode room** (E5-2): one episode whole — its scene grid, what has been written,
+   * what the checks said, what rides it, where it stands on its arcs, and what it has cost.
+   *
+   * A GET, and it starts nothing. The room is a composition of three reads that were already
+   * GETs (`/api/writing`, `/api/checks`, `/api/sweep`) plus the stitching a screen needs
+   * (`episode-room.ts`), so opening it spends nothing and rules nothing — invariant 5 at
+   * page-load scale, and the same promise the floor and the writing room already keep.
+   */
+  app.get('/api/episode/:episodeId', (c) => {
+    const view = episodeRoomView(store, paths, c.req.param('episodeId'), operating.readiness())
+    if (!view) return c.json({ error: `No such episode: ${c.req.param('episodeId')}` }, 404)
+    return c.json(view)
+  })
 
   /** One run in full — its steps, its events, its spend, and the gate it is parked on. */
   app.get('/api/run/:id', (c) => {
@@ -456,6 +472,12 @@ export function createApp(
    * A `text` that is absent is a request with nothing in it; one that is EMPTY is a deletion
    * he typed, and the two are different — the `''`-is-a-value rule this schema keeps
    * everywhere. The empty one is refused by `editArtifact`, in words, with the reason.
+   *
+   * **`sceneId` narrows what the text IS, never how it lands** (D14, E5-2). With it, the body
+   * is one scene's span and `editScene` splices it into the whole draft; without it, the body
+   * is the whole draft. Both go through the one motion (`edit.ts` → `landNewVersion`), and
+   * that is deliberately why there is one route rather than two: a second door that wrote
+   * artifact bytes would be a second write path, which is the thing E3-5's ledger forbids.
    */
   app.post('/api/artifact/:id/edit', async (c) => {
     const artifact = findArtifact(store, c.req.param('id'))
@@ -472,8 +494,13 @@ export function createApp(
         400,
       )
     }
+    const sceneId = text(body['sceneId'])
     try {
-      return c.json(editArtifact(store, paths, { artifactId: artifact.id, text: body['text'] }))
+      return c.json(
+        sceneId === ''
+          ? editArtifact(store, paths, { artifactId: artifact.id, text: body['text'] })
+          : editScene(store, paths, { artifactId: artifact.id, sceneId, text: body['text'] }),
+      )
     } catch (error) {
       return c.json({ error: messageOf(error) }, 409)
     }

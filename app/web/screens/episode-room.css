@@ -1,0 +1,682 @@
+/**
+ * The episode room's own layout (E5-2, #82) — lifted from `mockups/episode-room.html`.
+ *
+ * `chrome.css` is the design system and knows nothing about an episode; `floor.css` is the
+ * floor. This file is the room: its header, its two columns, its scene grid, its artifact
+ * rows, its finding cards, its stage rail, its arc chains and its ledger. Every colour,
+ * radius and type size below is a `chrome.css` token, and every geometry is the mockup's.
+ *
+ * ── The one thing this adds to the mockup, at room scale ─────────────────────────
+ *
+ * **Every region that can change is a fixed box that scrolls inside itself.**
+ *
+ * The floor established the rule (`floor.css`) and the reason: an element's distance from the
+ * top of the document is the sum of the heights above it, so if every one of those is a
+ * constant, nothing Ryan is reading can move. This room is where that has to hold for the
+ * screen with the most on it — a run talking, a finding landing, a gate opening, a board
+ * rebuilding, a ledger ticking, all at once.
+ *
+ * What it costs and why it is worth it: a panel that scrolls shows less at a glance than a
+ * panel that grows. But a panel that grows shoves everything below it down the page at a
+ * moment Ryan had no part in, and that is the defect he ruled the E4 drill off for — *"a
+ * giant wall of changing text… I find myself literally doing a find on the webpage looking
+ * for the button in question."* Scrolling inside a box is a thing he chooses; the page moving
+ * under his hand is not.
+ *
+ * ── Where reserved space is impossible, the ratchet's invariant applies verbatim ──
+ *
+ * **Nothing the system does alone changes any row's height, ever.** Two places in this room
+ * cannot reserve their space, and both are governed by that sentence rather than by a number:
+ *
+ *   * **An open edit box.** Typing over a scene or a draft opens a textarea inside the grid
+ *     or the artifacts panel. It opens because Ryan clicked, and it lives inside a box that
+ *     is already the height it will stay — so the growth is his and it moves nothing outside.
+ *   * **A button's own sentence.** A stage's offer runs to hundreds of characters and its
+ *     cost may not be trimmed ("states the cost before the click" is not satisfied by half of
+ *     it). So each offer sits in a box of its own fixed height and scrolls, exactly as
+ *     `.floor-row__status` does and for the identical reason.
+ *
+ * There is no `max-height` anywhere in this file, and `episode-room.test.tsx` asserts it: a
+ * box that grows from nothing up to its maximum shoves everything under it the whole way.
+ */
+
+/* The mockup's own frame — 1240px, wider than the floor's 1180 because of the rail. */
+.wrap[data-room='episode-room'] {
+  max-width: 1240px;
+}
+
+/* ── The header ─────────────────────────────────────────────────────────────────
+ * Fixed, because everything in it changes: the lifecycle pip moves between its three ruled
+ * states, and the standing line is recomposed off the arc pins on every read. A header that
+ * grew by a line would carry the whole screen down with it.
+ */
+.room-head {
+  height: 148px;
+  overflow: hidden;
+  display: grid;
+  grid-template-columns: 1fr 460px;
+  gap: 26px;
+  align-items: center;
+  margin-bottom: 22px;
+}
+
+.room-crumb__back::before {
+  /* The mockup's own arrow. A mark, not a word — the copy is the server's. */
+  content: '← ';
+}
+
+.room-head__num {
+  font-size: var(--type-small);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.room-head h1 {
+  font-size: 26px;
+}
+
+.room-head__standing {
+  display: block;
+  font-size: var(--type-meta);
+  color: var(--muted);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+/* ── The two columns ────────────────────────────────────────────────────────── */
+
+/*
+ * `minmax(0, 1fr)`, not `1fr`. A grid track's automatic minimum is its CONTENT's, so the
+ * scene grid's `min-width` propagates out through the column and pushes the rail off the
+ * right-hand edge of the page — the wide artifact dragging the page sideways, which is the
+ * one thing `chrome.css`'s responsive baseline says a screen may never do. Zeroing the
+ * minimum is what lets `.scrolls-sideways` do its job inside its own box.
+ */
+.room-cols {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--rail);
+  gap: 20px;
+  align-items: start;
+}
+
+/*
+ * A panel's BODY is what carries the fixed height, not the panel: the heading above it is
+ * static copy, so panel height = heading + body, which is a constant either way — and sealing
+ * the body is what `held-still.ts` actually needs (a fixed box that does not contain the
+ * element being read).
+ */
+.room-body {
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+
+.room-body--grid {
+  height: 560px;
+}
+
+.room-body--artifacts {
+  height: 300px;
+}
+
+.room-body--findings {
+  height: 360px;
+}
+
+.room-body--desk {
+  height: 320px;
+}
+
+.room-body--wolf {
+  height: 190px;
+}
+
+.room-body--live {
+  height: 248px;
+}
+
+.room-body--rail {
+  height: 300px;
+}
+
+.room-body--gates {
+  height: 210px;
+}
+
+.room-body--riders {
+  height: 330px;
+}
+
+.room-body--arcs {
+  height: 300px;
+}
+
+.room-body--ledger {
+  height: 240px;
+}
+
+/* ── The scene grid: the continuity board as UI (3.2b) ───────────────────────── */
+
+/*
+ * The grid's own header — the deterministic verdicts, where the rows came from, and the
+ * board's freshness. Every one of them is recomposed on every read, so it is a fixed box:
+ * a verdict landing must not carry the scene rows down the page under a reading eye.
+ */
+.room-grid__head {
+  height: 132px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+  margin-bottom: 10px;
+}
+
+.room-grid__health {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.room-verdict {
+  font-size: var(--type-small);
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-chip);
+  padding: 2px 9px;
+}
+
+/* Clean and read. The green is the palette's, and it is earned by a recorded pass. */
+.room-verdict[data-verdict='clean'] {
+  color: var(--good);
+  border-color: #1d4d1d;
+}
+
+/*
+ * Read something, and not this. `stale`, `partial` and `unread` are three different pieces of
+ * news with three different answers — the words say which, and the colour only says "not an
+ * answer about the draft in front of you" (invariant 4: never a green tick over a weak check).
+ */
+.room-verdict[data-verdict='stale'],
+.room-verdict[data-verdict='partial'],
+.room-verdict[data-verdict='gapped'] {
+  color: var(--warn);
+  border-color: #5c4c16;
+}
+
+.room-verdict[data-verdict='unread'] {
+  border-style: dashed;
+}
+
+.room-verdict[data-verdict='found'] {
+  color: var(--serious);
+  border-color: #5c3a20;
+}
+
+.room-grid__built {
+  font-size: var(--type-meta);
+  color: var(--muted);
+  margin-bottom: 12px;
+}
+
+/*
+ * A minimum width, and the wrapper scrolls sideways rather than the page (`chrome.css`'s
+ * `.scrolls-sideways`). Eight columns crushed into a 1fr column wraps every cell onto three
+ * lines and turns the room's face into a wall of stacked words — which is the same complaint
+ * about the same screen, arriving from the horizontal direction.
+ */
+table.room-scenes {
+  width: 100%;
+  min-width: 620px;
+  border-collapse: collapse;
+  font-size: var(--type-body);
+}
+
+table.room-scenes td.room-scenes__who,
+table.room-scenes td:nth-child(2) {
+  min-width: 120px;
+}
+
+/* What the rules say: a say is a full sentence, so the column it lands in is the wide one. */
+/*
+ * The door column, which is two short words and a number: it never wraps and never moves.
+ * Scoped to a SCENE row on purpose — a verdict row's one cell is also a `:last-child`, and
+ * `nowrap` on a full sentence stretches the table until every other column is crushed.
+ */
+table.room-scenes tr:not([id^='scene-says-']) td:last-child {
+  white-space: nowrap;
+  text-align: right;
+}
+
+table.room-scenes th {
+  text-align: left;
+  font-size: var(--type-label);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 600;
+  padding: 6px 12px 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+table.room-scenes td {
+  padding: 11px 12px;
+  border-bottom: 1px solid var(--rule);
+  vertical-align: top;
+  color: var(--ink-2);
+}
+
+table.room-scenes tr:last-child td {
+  border-bottom: none;
+}
+
+.room-scenes__num {
+  color: var(--ink);
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.room-scenes__who {
+  color: var(--ink);
+}
+
+.room-env {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--type-meta);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-chip);
+  padding: 1px 8px;
+  white-space: nowrap;
+}
+
+/* The void is on this side of the hull. The one place this grid raises its voice. */
+.room-env--exposed {
+  border-color: #5c3a20;
+  color: var(--serious);
+}
+
+/*
+ * What a rule said where it meets this scene, in a row of its own beneath it. Never recomputed
+ * here — the bench's own say. The rule that fired is what the left edge marks; the words are
+ * the check's, and D12's sentence rides on the `title`.
+ */
+.room-scenes__say {
+  display: block;
+  font-size: var(--type-small);
+  color: var(--serious);
+  padding-left: 12px;
+  border-left: 2px solid #5c3a20;
+  margin-bottom: 6px;
+}
+
+.room-scenes__say[data-blocking='true'] {
+  color: #f2a0a0;
+  border-left-color: #5c2020;
+}
+
+.room-scenes__say[data-blocking='false'] {
+  color: var(--good);
+  border-left-color: #1d4d1d;
+}
+
+/* The verdict row sits under its scene, not beside it — no top border between the two. */
+tr[id^='scene-says-'] td {
+  border-top: none;
+  padding-top: 0;
+}
+
+/* The open edit box. It exists because he clicked, and it lives inside a box that cannot grow. */
+.room-editbox {
+  margin-top: 8px;
+}
+
+.room-editbox textarea {
+  width: 100%;
+  font: var(--type-meta) / 1.5 var(--font-script);
+  color: var(--ink);
+  background: var(--page);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-chip);
+  padding: 8px 10px;
+}
+
+/* ── Artifacts ──────────────────────────────────────────────────────────────── */
+
+.room-art {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--rule);
+}
+
+.room-art:last-child {
+  border-bottom: none;
+}
+
+.room-art__name {
+  color: var(--ink);
+  font-weight: 600;
+  min-width: 170px;
+}
+
+.room-art__because {
+  font-size: var(--type-read);
+  color: var(--muted);
+  flex: 1 1 260px;
+}
+
+.room-art__doors {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  width: 100%;
+}
+
+.room-art__doors .btn {
+  flex: 1 1 240px;
+}
+
+/* ── Findings ───────────────────────────────────────────────────────────────── */
+
+.room-finding {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--rule);
+}
+
+.room-finding:last-child {
+  border-bottom: none;
+}
+
+.room-finding__top {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+
+.room-finding__where {
+  font-size: var(--type-small);
+  color: var(--muted);
+}
+
+.room-finding__concern {
+  font-size: var(--type-body);
+  color: var(--ink-2);
+}
+
+.room-finding__quote {
+  font-size: var(--type-meta);
+  color: var(--muted);
+  font-family: var(--font-script);
+  display: block;
+  margin: 4px 0;
+}
+
+.room-finding__acts {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.room-finding label {
+  display: block;
+  font-size: var(--type-small);
+  color: var(--muted);
+  margin-top: 8px;
+}
+
+.room-finding textarea,
+.room-finding input {
+  width: 100%;
+  font: var(--type-meta) / 1.5 var(--font);
+  color: var(--ink);
+  background: var(--page);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-chip);
+  padding: 6px 9px;
+  margin-top: 3px;
+}
+
+/* ── The rail ───────────────────────────────────────────────────────────────── */
+
+/*
+ * One offer, one box. A stage's sentence and its cost may not be trimmed, and they run long —
+ * so the box keeps its shape and offers the rest of the words a scroll, which is exactly what
+ * `.floor-row__status` does and for the identical reason.
+ */
+.room-offer {
+  height: 104px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+  margin-bottom: 8px;
+}
+
+.room-offer .btn {
+  width: 100%;
+  display: block;
+}
+
+.room-door {
+  height: 104px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+  margin-bottom: 10px;
+}
+
+.room-door .btn {
+  width: 100%;
+  display: block;
+}
+
+/*
+ * D12's wall and D7's queue, in a box that is there whether or not either is. A wall going up
+ * is the system's doing — a check landed — so it may not move the buttons under it; reserving
+ * the space is what makes it arrive in place (the ratchet's invariant, and `LiveRegion`'s).
+ */
+.room-rail__news {
+  height: 58px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+  margin-bottom: 10px;
+}
+
+.room-door__standing,
+.room-rail__wall,
+.room-rail__queued,
+.room-rail__later {
+  display: block;
+  font-size: var(--type-small);
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+
+.room-rail__wall {
+  color: var(--warn);
+}
+
+.room-work {
+  font-size: var(--type-label);
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  color: var(--muted);
+  display: block;
+  margin: 4px 0 6px;
+}
+
+/* ── Riders ─────────────────────────────────────────────────────────────────── */
+
+.room-rider {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--rule);
+}
+
+.room-rider:last-child {
+  border-bottom: none;
+}
+
+.room-rider__what {
+  font-size: var(--type-read);
+  color: var(--ink);
+}
+
+.room-rider__part {
+  display: block;
+  font-size: var(--type-small);
+  color: var(--muted);
+  margin-top: 4px;
+}
+
+.room-rider label {
+  display: block;
+  font-size: var(--type-small);
+  color: var(--muted);
+  margin-top: 6px;
+}
+
+.room-rider textarea {
+  width: 100%;
+  font: var(--type-meta) / 1.5 var(--font);
+  color: var(--ink);
+  background: var(--page);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-chip);
+  padding: 6px 9px;
+  margin-top: 3px;
+}
+
+/* ── Arcs ───────────────────────────────────────────────────────────────────── */
+
+.room-arc {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--rule);
+}
+
+.room-arc:last-child {
+  border-bottom: none;
+}
+
+.room-desk .editlink {
+  display: block;
+  text-align: left;
+}
+
+.room-arc__name {
+  color: var(--ink);
+  font-weight: 600;
+  font-size: var(--type-action);
+  text-decoration: none;
+}
+
+.room-arc__kind {
+  color: var(--muted);
+  font-size: var(--type-small);
+  font-weight: 400;
+}
+
+.room-way {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin: 6px 0;
+}
+
+.room-wp {
+  font-size: var(--type-small);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-chip);
+  padding: 2px 9px;
+  color: var(--muted);
+}
+
+/*
+ * The pin. Amber-filled rather than outlined — the mockups' one filled tag, because a position
+ * is where something IS rather than how it stands. It is a pin and not a landing, and the note
+ * under the chain says so in the server's own words.
+ */
+.room-wp[data-standing='here'] {
+  color: var(--on-warn);
+  background: var(--warn);
+  border-color: var(--warn);
+  font-weight: 700;
+}
+
+.room-way__sep {
+  color: var(--line-strong);
+}
+
+.room-arc__note {
+  font-size: var(--type-small);
+  color: var(--muted);
+  display: block;
+}
+
+/* ── The ledger ─────────────────────────────────────────────────────────────── */
+
+table.room-ledger {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--type-body);
+}
+
+table.room-ledger td {
+  padding: 5px 0;
+  vertical-align: top;
+}
+
+table.room-ledger td:last-child {
+  text-align: right;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.room-ledger__detail,
+.room-ledger__projected {
+  display: block;
+  font-size: var(--type-small);
+  color: var(--muted);
+}
+
+table.room-ledger tr.room-ledger__total td {
+  border-top: 1px solid var(--line);
+  padding-top: 9px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.room-ledger__projection {
+  display: block;
+  font-size: var(--type-small);
+  color: var(--muted);
+  margin-top: 10px;
+}
+
+/* A refusal that arrived after a click — a race, since preconditions come before it. */
+.room-problem {
+  margin-top: 12px;
+  font-size: var(--type-meta);
+  color: var(--warn);
+}
+
+@media (max-width: 900px) {
+  .room-head {
+    height: auto;
+    grid-template-columns: 1fr;
+  }
+
+  .room-cols {
+    grid-template-columns: 1fr;
+  }
+}

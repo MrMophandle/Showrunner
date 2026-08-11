@@ -536,7 +536,10 @@ describe('declaring a position, and the landing the extraction raises for it', (
     const view = canonBenchView(store, harbor.show.id, { episodeId: ep02 })!
     expect(view.positions!.label).toBe('ep02')
     expect(view.positions!.standing).toContain('ep02 declares no position on any arc')
-    expect(view.positions!.standing).toContain('**vanilla**')
+    // Plain text, not markdown: every surface renders a sentence as-is, so an asterisk here
+    // would reach Ryan as an asterisk (found by booting E5-2's episode room, #82).
+    expect(view.positions!.standing).toContain('it is vanilla')
+    expect(view.positions!.standing).not.toContain('*')
 
     const second = view.positions!.waypoints.find((one) => one.ordinal === 2)!
     expect(second.declare.enabled).toBe(true)

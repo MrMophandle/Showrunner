@@ -81,12 +81,23 @@ describe('the eight rooms', () => {
     expect(floor.reachedFrom).toBe('')
   })
 
+  /** The second room to leave the list, and it leaves it the same way (E5-2, #82). */
+  it('calls the episode room built, because E5-2 built it', () => {
+    const room = cockpitView(store).destinations.find((one) => one.id === 'episode-room')!
+
+    expect(room.standing).toBe('built')
+    expect(room.notYetBecause).toBeNull()
+    expect(room.lead).toBe('')
+    // A room about one thing still answers at its bare address, so the bar's link is real.
+    expect(room.path).toBe('/episode')
+    expect(room.reachedFrom).toBe('an episode on the floor')
+  })
+
   it('says which issue builds the remaining E5 rooms, and which epic builds the other two', () => {
     const view = cockpitView(store)
     const by = new Map(view.destinations.map((room) => [room.id, room]))
 
-    // Five stubs left, each naming the issue that fills it — "when" is one click away.
-    expect(by.get('episode-room')!.notYetBecause).toContain('#82')
+    // Four stubs left, each naming the issue that fills it — "when" is one click away.
     expect(by.get('gate-room')!.notYetBecause).toContain('#83')
     expect(by.get('canon-library')!.notYetBecause).toContain('#84')
     expect(by.get('season-map')!.notYetBecause).toContain('#85')

@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import { App } from './App.tsx'
 import './chrome/chrome.css'
 import { Shell, type Screens } from './chrome/Shell.tsx'
+import { EpisodeRoom } from './screens/EpisodeRoom.tsx'
 import { Floor } from './screens/Floor.tsx'
 
 /**
@@ -19,6 +20,7 @@ import { Floor } from './screens/Floor.tsx'
  */
 const SCREENS: Screens = {
   floor: (props) => <Floor {...props} />,
+  'episode-room': (props) => <EpisodeRoom {...props} />,
 }
 
 createRoot(document.getElementById('root')!).render(
