@@ -250,6 +250,24 @@ export function costsOfRun(store: Store, runId: string): CostEntry[] {
     .map(hydrateEntry)
 }
 
+/**
+ * Every cost row of an EPISODE, oldest first — the same read one scope out, for the episode
+ * room's itemised ledger (E5-2, 5.2).
+ *
+ * It is here rather than in the room because this module is the only one that may know what
+ * is in `cost_entry` (see the header), and because the room's ledger is a rendering of these
+ * rows rather than a second arithmetic over them: `costOfEpisode` above still answers the
+ * total, and a line in the room is these rows grouped by the run that spent them. **A row
+ * with no run is not an omission** — a pre-drafted rewrite and a scene re-check are clicks
+ * outside a run (`remediation.ts`), and they belong in an episode's ledger exactly as much as
+ * a step's call does.
+ */
+export function costsOfEpisode(store: Store, episodeId: string): CostEntry[] {
+  return store
+    .all<CostRow>('SELECT * FROM cost_entry WHERE episode_id = ? ORDER BY seq', episodeId)
+    .map(hydrateEntry)
+}
+
 // ── Rollups ─────────────────────────────────────────────────────────────────────
 
 export interface CostTotals {

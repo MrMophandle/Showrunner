@@ -905,8 +905,11 @@ function positionStanding(episode: Episode, standing: ArcPosition[], arcs: Arc[]
   const label = episodeLabel(episode.number)
   if (arcs.length === 0) return `This show declares no arcs, so ${label} has nothing to stand on.`
   if (standing.length === 0) {
+    // Plain, not markdown. Every surface in this app renders a sentence as TEXT — the
+    // scaffolding did, the cockpit does — so an asterisk here reaches Ryan as an asterisk.
+    // Found by booting E5-2's episode room and reading the line (#82).
     return (
-      `${label} declares no position on any arc — it is **vanilla**, which is legal, tracked ` +
+      `${label} declares no position on any arc — it is vanilla, which is legal, tracked ` +
       'and never a failure state (1.1). Declaring one is a choice, not a repair.'
     )
   }

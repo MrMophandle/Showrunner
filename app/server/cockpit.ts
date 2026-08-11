@@ -170,14 +170,7 @@ const NOT_YET: Readonly<
 > = {
   // The floor is not in this table any more: E5-1 (#81) built it, so it stands `built` and
   // its `notYetBecause` is null. A room leaves this map by being built, which is why the map
-  // is the only place standing is decided.
-  'episode-room': {
-    standing: 'stub',
-    lead: 'Not built yet.',
-    because:
-      'E5-2 (#82) builds this room. Until then everything that runs is on the old ' +
-      'operating page.',
-  },
+  // is the only place standing is decided. E5-2 (#82) took the episode room out the same way.
   'gate-room': {
     standing: 'stub',
     lead: 'Not built yet.',

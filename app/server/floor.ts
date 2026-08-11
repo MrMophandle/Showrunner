@@ -726,7 +726,7 @@ function episodeOnTheFloor(
     past,
     track: lifecycleStops(episode.lifecycle, inFlight?.status === 'running'),
     waiting: gate ? waitingSentence(store, label, gate) : null,
-    live: inFlight && inFlight.status === 'running' ? liveOf(store, holders, inFlight) : null,
+    live: inFlight && inFlight.status === 'running' ? liveOfRun(store, holders, inFlight) : null,
     launch:
       gate || inFlight || past
         ? null
@@ -775,8 +775,12 @@ function waitingSentence(store: Store, label: string, open: OpenGate): string {
  * The heading is composed off the step rows and the lock rows — never off a remembered
  * string — so "holds the gpu lock" and "waiting on the gpu lock (held by ep05)" are the
  * same read answered twice. The prose is the event log's, which is what the log is for.
+ *
+ * **Exported for the episode room** (E5-2), which renders the same run one scope in. A second
+ * composer would be the one that quietly disagreed about which lock is held — and the whole
+ * point of "waiting on GPU (held by ep05)" is that the floor and the room say it identically.
  */
-function liveOf(
+export function liveOfRun(
   store: Store,
   holders: ReturnType<typeof lockHolders>,
   run: Run,
@@ -809,8 +813,10 @@ function liveOf(
  * (That second case is the one this missed until it was booted and looked at: the queued run
  * WAS the in-flight one, so a guard meant to avoid naming a run behind itself dropped the
  * only sentence there was to say.)
+ *
+ * **Exported for the episode room** (E5-2). D7 is one rule and it is said once.
  */
-function queuedSentence(store: Store, runs: readonly Run[]): string | null {
+export function queuedSentence(store: Store, runs: readonly Run[]): string | null {
   const queued = runs.find((run) => run.status === 'queued')
   if (!queued) return null
   const ahead = queuedBehind(store, queued.id)

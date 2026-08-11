@@ -26,7 +26,7 @@ import { greyHarborFounded, type FoundedFixture } from './fixture/founded.ts'
 import { theLongPierExtraction } from './fixture/long-pier-board.ts'
 import { initLibrary, openLibraryStore, type LibraryPaths } from './library.ts'
 import { createFakeLLM, type FakeLLM } from './llm/fake.ts'
-import { editArtifact, editOffer, writtenArtifacts } from './edit.ts'
+import { editArtifact, editOffer, editScene, scenesToEdit, writtenArtifacts } from './edit.ts'
 import { createRunner, type Runner } from './runner/runner.ts'
 import { stageBlockedBecause } from './runner/stage-wall.ts'
 import { stageCatalogue } from './runner/stages.ts'
@@ -171,6 +171,150 @@ describe('an edit lands verbatim as a new version, already read', () => {
       'stale-exception',
       'retired-reappearance',
     ])
+  })
+})
+
+// ── D14's scene door: the same motion, aimed at a span (E5-2) ───────────────────
+
+/**
+ * **Editing one scene is composition, not a second write path.**
+ *
+ * `editScene` resolves the span through `sceneSpans` — the resolver `panel.ts` anchors a
+ * finding with — splices Ryan's words into the whole draft, and hands the whole draft to
+ * `editArtifact`. So every promise the door above keeps is kept here by construction:
+ * verbatim text, re-delineation, the free tier's receipt at the new version, freshness off
+ * the edges, no model call. What it adds is the touched SCENE, which is the one thing a
+ * whole-artifact edit deliberately does not claim to know.
+ */
+describe('a scene edit is the one motion aimed at a span', () => {
+  it('lands his words inside the draft, files the receipt, and names the scene he touched', () => {
+    const script = artifact('script')
+    const before = textOf(script)
+    const scenes = scenesToEdit(store, paths, script.id)
+    const three = scenes[2]!
+
+    // The block is the scene's own LINES: it opens on the markdown heading that carries its
+    // name and stops where the next scene's heading line begins (see `blockOf`).
+    expect(three.ordinal).toBe(3)
+    expect(three.text).toContain(three.heading)
+    expect(three.text.trimStart().startsWith('## ')).toBe(true)
+    expect(three.text).not.toContain(scenes[3]!.heading)
+    expect(three.edit.enabled).toBe(true)
+    expect(three.edit.cost).toBe('No model call · $0.00')
+
+    const typed = `${three.text.trimEnd()}\n\nHe counts the seconds out loud, and gets one wrong.\n\n`
+    const edited = editScene(store, paths, {
+      artifactId: script.id,
+      sceneId: three.sceneId,
+      text: typed,
+    })
+
+    // Verbatim, and INSIDE the draft: the scenes around it are untouched, character for
+    // character, which is what a splice means and what a whole-artifact edit cannot promise.
+    const landed = readFileSync(join(paths.artifactDir, edited.filePath), 'utf8')
+    expect(landed).toBe(before.replace(three.text, typed))
+    expect(landed).toContain('He counts the seconds out loud, and gets one wrong.')
+    expect(landed).toContain(scenes[1]!.text)
+    expect(landed).toContain(scenes[3]!.text)
+
+    // The receipt: a `check_pass` at the new version existed before this call returned.
+    expect(edited.version).toBe(2)
+    expect(edited.read.map((pass) => pass.checkKey)).toEqual([
+      'stale-exception',
+      'retired-reappearance',
+    ])
+    expect(passesAt(artifact('script'), 2)).toEqual(['stale-exception', 'retired-reappearance'])
+
+    // The touched scene, named — on the record and in the sentence.
+    expect(edited.touchedScene).toEqual({
+      id: three.sceneId,
+      ordinal: 3,
+      heading: three.heading,
+    })
+    expect(edited.sentence).toContain('You typed over scene 3')
+    expect(edited.sentence).toContain(three.heading)
+    // Re-delineated from what he typed, and the headings are unchanged, so are the rows.
+    expect(edited.scenes).toHaveLength(6)
+    // And it spent nothing. "No model call · $0.00" on the button is the whole truth.
+    expect(llm.calls).toEqual([])
+  })
+
+  /**
+   * The point of naming the scene: staleness lands where the edit did. A board consumes the
+   * script one edge per scene (`domain/board.ts`), so a scene-3 revision moves the scene-3
+   * edge and a scene-3 edge only — which is `applyRewrite`'s rule reached by the other door.
+   */
+  it('names the scene on the revision, so what was built on THAT scene is what goes stale', () => {
+    buildTheBoard()
+    const script = artifact('script')
+    const three = scenesToEdit(store, paths, script.id)[2]!
+
+    editScene(store, paths, {
+      artifactId: script.id,
+      sceneId: three.sceneId,
+      text: `${three.text}\nOne more line, in scene three only.\n`,
+    })
+
+    const stale = staleArtifacts(store, ep01)
+    expect(stale.map((one) => one.artifact.kind)).toContain('continuity-board')
+    const because = stale.find((one) => one.artifact.kind === 'continuity-board')!
+    const moved = because.reasons.find((reason) => reason.kind === 'input-moved-on')!
+    // The revision that moved it says which scene it was, in the words the screen renders.
+    expect(moved.revisions.map((revision) => revision.summary)).toEqual([
+      'you edited scene 3 by hand',
+    ])
+    expect(moved.sceneId).toBe(three.sceneId)
+  })
+
+  it('refuses a scene it cannot locate in the draft, rather than replacing the whole script', () => {
+    const script = artifact('script')
+    const scenes = scenesOf(store, ep01)
+    // A heading the draft no longer carries — the state a hand edit can leave behind. Left
+    // to `sceneSpans`, this resolves to the WHOLE artifact, and a splice would eat the script.
+    store.run('UPDATE scene SET heading = ? WHERE id = ?', 'INT. NOWHERE', scenes[2]!.id)
+
+    const three = scenesToEdit(store, paths, script.id)[2]!
+    expect(three.text).toBe('')
+    expect(three.edit.enabled).toBe(false)
+    expect(three.edit.blockedBecause).toContain('that heading is not in the script')
+
+    expect(() =>
+      editScene(store, paths, { artifactId: script.id, sceneId: three.sceneId, text: 'x' }),
+    ).toThrow(/heading is not in the script/)
+    // Nothing landed: the draft is still at v1 and no second file is on the volume.
+    expect(artifact('script').version).toBe(1)
+    expect(existsSync(join(paths.artifactDir, 'greyharbor/s01e01/script-v2.md'))).toBe(false)
+  })
+
+  it('refuses a kind that has no scenes, and a scene that belongs to another episode', () => {
+    const outline = artifact('outline')
+    const three = scenesOf(store, ep01)[2]!
+
+    expect(() =>
+      editScene(store, paths, { artifactId: outline.id, sceneId: three.id, text: 'x' }),
+    ).toThrow(/Only a script breaks into scenes/)
+    expect(() =>
+      editScene(store, paths, { artifactId: artifact('script').id, sceneId: 'scene_nope', text: 'x' }),
+    ).toThrow(/does not belong to this episode/)
+  })
+
+  /** Every precondition on the artifact stands on its scenes too, quoted rather than restated. */
+  it('inherits D7’s refusal while a run holds the episode, in the same words', async () => {
+    const script = artifact('script')
+    const three = scenesToEdit(store, paths, script.id)[2]!
+    expect(three.edit.enabled).toBe(true)
+
+    llm.reply('A premise, and nothing more.')
+    for (let n = 0; n < 8; n += 1) llm.reply('{"findings": []}')
+    const run = runner.enqueueRun({ episodeId: ep01, stage: 'script-gate' })
+    await runner.settled(run.id)
+
+    const held = scenesToEdit(store, paths, script.id)[2]!
+    expect(held.edit.enabled).toBe(false)
+    expect(held.edit.blockedBecause).toContain('One run per episode (D7)')
+    expect(() =>
+      editScene(store, paths, { artifactId: script.id, sceneId: three.sceneId, text: 'x' }),
+    ).toThrow(/One run per episode \(D7\)/)
   })
 })
 
