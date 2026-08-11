@@ -131,10 +131,10 @@ export function extractTheCanonClaims(
       if (putsTheWorkDown(outcome.verdict)) {
         context.progress(
           outcome.verdict === 'close'
-            ? 'Nothing to read for canon claims — you put the draft down, so no draft was ' +
+            ? 'Nothing to read for canon claims — you closed the gate, so no draft was ' +
               'approved into this episode and none of it is claiming anything of canon yet.'
             : 'Nothing to read for canon claims — the draft was rejected and the notes were ' +
-              'routed elsewhere, so no draft was approved into this episode (D21).',
+              'routed elsewhere, so no draft was approved into this episode.',
         )
         return null
       }

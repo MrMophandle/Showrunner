@@ -117,7 +117,7 @@ export const CHECK_REFUSALS = {
   changeNeedsStatement: BENCH_REFUSALS.changeNeedsStatement,
   rewriteNeedsReplacement:
     'Pre-draft a replacement, or write one yourself — an apply lands what is in the box word ' +
-    'for word (D20), and an empty box is not a deletion you meant.',
+    'for word, and an empty box is not a deletion you meant.',
 } as const
 
 export type CheckRefusals = typeof CHECK_REFUSALS
@@ -434,7 +434,7 @@ export function clustersOn(
                   `You put this exact concern down at v${inherited.version} — “${inherited.note}”. ` +
                   'This is a later firing of it, raised by a check re-reading rows nobody ' +
                   'touched. It is open, and it counts in the cried-wolf record below; what it ' +
-                  'does not do is put the wall back up, because your ruling reaches it (E3-6).',
+                  'does not do is refuse the next stage again, because your ruling reaches it.',
               },
         remediations: remediationsFor(store, library, say.findingId, at.llm),
       }

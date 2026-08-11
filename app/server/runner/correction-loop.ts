@@ -563,7 +563,7 @@ function sentenceFor(state: {
   if (!latest || state.unchecked) {
     return (
       `Nothing checks the ${state.subject}: no check was called over it at all. That is a ` +
-      'vanilla artifact, legal and tracked and never a failure state; it is also not a clean ' +
+      'kind of artifact no check reads, which is not a failure. It is also not a clean ' +
       'reading, because nothing read it. Waiting on your ruling.'
     )
   }

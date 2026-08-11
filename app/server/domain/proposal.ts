@@ -615,7 +615,7 @@ function radiusSentence(
  */
 export const REJECTION_NEEDS_A_NOTE =
   'Rejecting a proposal needs the reason — "reject with note" is the verb, and the note is ' +
-  'what the next writer run reads (3.3).'
+  'what the next writing run reads.'
 
 /**
  * The ruling API: three verbs, and the only thing in this app that writes canon.

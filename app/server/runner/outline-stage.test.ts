@@ -416,7 +416,7 @@ describe('a deterministic finding on the brief refuses the outline', () => {
     expect(offer.blockedBecause).toContain('the ep02 premise-brief')
     expect(offer.blockedBecause).toContain('The old wet dock is declared retired')
     // And the way out, in his words, because a refusal with no way out is a dead end.
-    expect(offer.blockedBecause).toContain('D12')
+    expect(offer.blockedBecause).toContain('refuse the next stage and never your gate')
     expect(launchBlockedBecause(store, READY, ep02, outlineStage())).toBe(offer.blockedBecause)
   })
 

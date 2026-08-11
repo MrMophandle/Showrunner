@@ -635,7 +635,7 @@ describe('the check bench — a standing dismissal, and the twin it reaches', ()
     expect(twin.inherited).not.toBeNull()
     expect(twin.inherited!.note).toBe('scene 6 is a flash-forward; leave it')
     expect(twin.inherited!.sentence).toContain('You put this exact concern down at v1')
-    expect(twin.inherited!.sentence).toContain('does not do is put the wall back up')
+    expect(twin.inherited!.sentence).toContain('does not do is refuse the next stage again')
 
     // Which is the point: the wall Ryan brought down stays down, with nothing written to
     // unblock anything.

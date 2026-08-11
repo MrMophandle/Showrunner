@@ -295,7 +295,7 @@ export function presentForYourRuling(step: WriteStep): Step<Presentation> {
         const sentence =
           `Rejected at round ${standing!.round}, and every note was routed elsewhere — the ` +
           `${label} ${kind} is exactly as you ruled on it, and nothing regenerates until you ` +
-          'ask for it (D21).'
+          'ask for it.'
         context.progress(sentence)
         return {
           artifactId: artifact.id,

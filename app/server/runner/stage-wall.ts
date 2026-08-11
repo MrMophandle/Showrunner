@@ -156,8 +156,8 @@ export function stageBlockedBecause(store: Store, episodeId: string): string | n
   return (
     `${episodeLabel(numberOf(store, episodeId))} is blocked — the ${first.finding.checkKey} ` +
     `finding at ${where} stands unresolved: “${firstSentence(first.finding.concern)}”.${others} ` +
-    'Deterministic findings block the next stage and never your gate (D12): rule on it at the ' +
-    'gate as a recorded override, put it down with a note, or fix it and re-run the checks — ' +
+    'Deterministic findings refuse the next stage and never your gate. Rule on it at the ' +
+    'gate as a recorded override, dismiss it with a note, or fix it and re-run the checks — ' +
     'the deterministic ones cost nothing.'
   )
 }

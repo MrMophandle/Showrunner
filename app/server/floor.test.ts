@@ -217,7 +217,7 @@ describe('a needs-you card is computed from a record that holds work still, or s
     expect(card!.title).toContain('vacuum-without-protection')
     // The opening sentence, which is the claim; the whole refusal rides on `detail`.
     expect(card!.why).toContain('ep01 is blocked')
-    expect(card!.detail).toContain('D12')
+    expect(card!.detail).toContain('refuse the next stage and never your gate')
     expect(card!.href).toBe(`/episode/${ep01}`)
   })
 
@@ -251,7 +251,7 @@ describe('a needs-you card is computed from a record that holds work still, or s
     // the next stage and cannot stop the ruling in front of him.
     expect(gate!.why).toContain('refuse the next stage')
     expect(gate!.why).toContain('None of them can stop you ruling')
-    expect(gate!.why).not.toContain('D12')
+    expect(gate!.why).not.toContain('refuse the next stage and never your gate')
     expect(gate!.detail).toContain('vacuum-without-protection')
   })
 
