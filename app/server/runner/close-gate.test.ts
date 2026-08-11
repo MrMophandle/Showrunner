@@ -163,7 +163,7 @@ describe('the gap the E4 ledger named — a presenting gate with one exit', () =
     // And every stage on ep01 is refused while it stands — including the one that would
     // rewrite the thing his note is about. That is the deadlock, in one assertion.
     const refused = launchBlockedBecause(store, READY, ep01, stageCatalogue(paths)[SCRIPT_STAGE]!)
-    expect(refused).toContain('One run per episode (D7)')
+    expect(refused).toContain('One run per episode')
     expect(refused).toContain('waiting on your ruling')
   })
 
@@ -188,7 +188,7 @@ describe('the gap the E4 ledger named — a presenting gate with one exit', () =
   it('frees the episode — every stage is offerable again the moment it lands', async () => {
     const runId = await presentTheEp01Script()
     expect(launchBlockedBecause(store, READY, ep01, stageCatalogue(paths)[SCRIPT_STAGE]!)).toContain(
-      'One run per episode (D7)',
+      'One run per episode',
     )
 
     rulings.close(openGates(store)[0]!.gate.id, { notes: [{ note: PUT_DOWN }] })
@@ -235,7 +235,7 @@ describe('the gap the E4 ledger named — a presenting gate with one exit', () =
     expect(outcome.lifecycle.moved).toBe(false)
     expect(outcome.sentence).toContain('Put down at round 1')
     expect(outcome.sentence).toContain('ep01 is free')
-    expect(outcome.sentence).toContain('Nothing regenerates until you ask for it (D21)')
+    expect(outcome.sentence).toContain('Nothing regenerates until you ask for it')
   })
 })
 
@@ -408,7 +408,7 @@ describe('nothing about the findings forces or forbids it', () => {
 
     const quiet = gateOnThePage(store, paths, openGates(store)[0]!.gate.id, stageCatalogue(paths))!
     expect(quiet.close.enabled).toBe(true)
-    expect(quiet.close.sentence).toContain('Put the ep01 outline down with your note')
+    expect(quiet.close.sentence).toContain('Close the ep01 outline with your note')
     expect(quiet.close.sentence).toContain('ep01 is free the moment you click')
   })
 
@@ -423,7 +423,7 @@ describe('nothing about the findings forces or forbids it', () => {
     const rendered = gateOnThePage(store, paths, gateId, stageCatalogue(paths))!
     expect(rendered.closeNeedsNote).toBe(closingNeedsANote('the ep01 script'))
     expect(rendered.closeNeedsNote).not.toBe(rendered.rejectNeedsNote)
-    expect(rendered.closeNeedsNote).toContain('a parking says why')
+    expect(rendered.closeNeedsNote).toContain('closing says why')
     // And the verdict was not recorded: a refused verb writes nothing.
     expect(store.get<{ n: number }>('SELECT COUNT(*) AS n FROM gate_ruling')!.n).toBe(0)
   })

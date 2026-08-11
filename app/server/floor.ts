@@ -343,7 +343,7 @@ export function floorView(
         ? {
             lead: 'Nothing is in flight, because this library has no shows in it yet.',
             sentence:
-              'Run `npm run fixture:load` to seed Grey Harbor — it spends nothing, ' +
+              'Run `npm run fixture:load` to seed Grey Harbor. It spends nothing, ' +
               'generates nothing, and is safe to run twice.',
           }
         : null,
@@ -354,21 +354,23 @@ export function floorView(
 const HEALTH_HEADING: FloorHeading = {
   name: 'Health',
   explains:
-    'what this process can reach, what the volume holds, and what this show has spent — ' +
-    'no weekly cap is set anywhere in this build, so spend-to-date is the whole of it (#88)',
+    'What this app can reach, what the volume holds, and what this show has spent. ' +
+    'Nothing in this build sets a weekly cap, so the spend below is the whole of it. ' +
+    'Setting one is filed as #88.',
 }
 
 const NEEDS_YOU_HEADING: FloorHeading = {
   name: 'Needs you',
   explains:
-    'what is holding work still or standing owed — a run parked on your ruling, a stage ' +
-    'refused, a pass an episode owes. Everything else is rulable at your leisure',
+    'Work that has stopped until you rule: a run parked at a gate, a stage a finding is ' +
+    'refusing, a sweep an episode owes. Everything else can wait until you want it.',
 }
 
 const IN_FLIGHT_HEADING: FloorHeading = {
   name: 'In flight',
   explains:
-    'one row per episode: where it stands, what it is thinking, and what it has cost so far',
+    'One row per episode: the stage it is at, what the model is doing on it now, and what ' +
+    'it has cost so far.',
 }
 
 // ── The health strip ────────────────────────────────────────────────────────────
@@ -411,11 +413,11 @@ function gpuWorkerTile(): HealthTile {
     id: 'gpu-worker',
     label: 'GPU worker',
     value: 'Not built yet',
-    sub: 'E6 builds the native Mac GPU worker (D5). Nothing in this build calls one.',
+    sub: 'E6 builds the native Mac GPU worker. Nothing in this build calls one.',
     detail:
-      'E6 builds the native Mac GPU worker (D5) and the local image and TTS backends that ' +
-      'run on it. Nothing in this build calls one, so there is no worker here to be down — ' +
-      'the `gpu` lock exists and has never been held.',
+      'E6 builds the native Mac GPU worker, and the local image and speech backends that ' +
+      'run on it. Nothing in this build calls one, so there is no worker here to be down. ' +
+      'The `gpu` lock exists and has never been held.',
     standing: 'not-built',
     meter: null,
   }
@@ -464,8 +466,8 @@ function volumeTile(store: Store, library: LibraryPaths): HealthTile {
     value: `${bytes(free)} free`,
     sub: `${held} · ${library.root}`,
     detail:
-      `${bytes(free)} free on the volume ${library.root} is mounted from — which is the ` +
-      `whole filesystem, not this library's share of it. ${held} in this library.`,
+      `${bytes(free)} free on the volume ${library.root} is mounted from. That is the whole ` +
+      `filesystem, not this library's share of it. ${held} in this library.`,
     standing: 'good',
     meter: null,
   }
@@ -499,9 +501,9 @@ function spendTile(store: Store, showId: string): HealthTile {
       `${spentSentence(all)} on this show all told` +
       (capped
         ? '.'
-        : '. Nothing in this build sets a weekly cap — the ledger and the reader are ' +
-          'there and no surface writes one, so this tile shows what was spent rather ' +
-          'than a bar against a number nobody chose (#88).'),
+        : '. Nothing in this build sets a weekly cap. The ledger and the reader for one ' +
+          'are built, and no screen writes a budget row yet, so this tile shows what has ' +
+          'been spent and draws no bar against it. Setting a cap is filed as #88.'),
     standing: capped && (week.remainingDollars ?? 0) < 0 ? 'attention' : 'good',
     meter: capped
       ? {
@@ -578,13 +580,14 @@ function gateCard(
 
   const why =
     standing.length === 0
-      ? `No check has raised anything against it. The run is parked on this gate and your ` +
-        `ruling is the only thing that moves it.`
-      : `${count(standing.length, 'finding')} stand on it` +
+      ? `No check raised anything against this ${kind}. The run is parked at this gate, and ` +
+        `your ruling is the only thing that moves it.`
+      : `${count(standing.length, 'finding')} stand on this ${kind}. ` +
         (blocking.length === 0
-          ? ' — every one of them argues, and none of them can stop you ruling (invariant 3).'
-          : `, ${blocking.length} of them deterministic: those refuse the next stage until they ` +
-            'are resolved, and never this gate (D12).')
+          ? 'Every one of them argues; none of them can stop you ruling.'
+          : `${blocking.length} of them are deterministic — counted by code rather than read ` +
+            'by a model — and those refuse the next stage until you settle them. None of ' +
+            'them can stop you ruling here.')
 
   return {
     id: open.gate.id,
@@ -628,12 +631,14 @@ function wallCard(
     title: `${episode.label} “${episode.title}” — the ${first?.finding.checkKey ?? 'check'} finding stands`,
     why: firstSentence(wall),
     detail: wall,
-    since: `no gate is open on ${episode.label}, so nothing else is going to mention it`,
+    since: `no gate is open on ${episode.label}, so nothing else on this floor mentions it`,
     href: `${room.path}/${episode.id}`,
     room: room.name,
     roomNotYet: room.notYetBecause,
     act: {
-      sentence: `Take down the wall on ${episode.label} — dismiss it, fix it, or rule over it at a gate`,
+      sentence:
+        `Settle the finding refusing ${episode.label}’s next stage — dismiss it, fix it, ` +
+        'or rule over it at a gate',
       cost: `${FREE} to look · the deterministic checks cost nothing to re-run`,
       enabled: true,
       blockedBecause: null,
@@ -657,7 +662,7 @@ function sweepCard(
     title: `${episode.label} “${episode.title}” — ${count(riders, 'proposal')} riding`,
     why: firstSentence(sentence),
     detail: sentence,
-    since: 'owed since its script was approved — approving it was not a ruling on any of them',
+    since: 'owed since you approved its script, which ruled on none of these proposals',
     href: `${room.path}/${episode.id}`,
     room: room.name,
     roomNotYet: room.notYetBecause,
@@ -679,14 +684,15 @@ function nothingNeedsYou(episodes: readonly EpisodeOnTheFloor[]): { lead: string
       lead: 'Nothing needs you.',
       sentence:
         `${count(running, 'episode')} ${running === 1 ? 'is' : 'are'} working, and none of ` +
-        'them is waiting on a ruling. What arrives will land here.',
+        'them is waiting on a ruling. Anything that starts waiting on you appears here.',
     }
   }
   return {
     lead: 'Nothing needs you.',
     sentence:
-      'No gate is open, no stage is refused, and no episode owes canon a pass. Every ' +
-      'ruling in the queue is yours to make whenever you like, in the canon library.',
+      'No gate is open, no finding is refusing a stage, and no episode owes a sweep. Any ' +
+      'proposals still waiting on you are in the canon library, and none of them is ' +
+      'holding work up.',
   }
 }
 
@@ -753,7 +759,11 @@ export function lifecycleStops(lifecycle: EpisodeLifecycle, running: boolean): F
     if (index > at) return { stage, standing: 'ahead', sentence: `${stage} — not reached yet` }
     return running
       ? { stage, standing: 'running', sentence: `${stage} — running now` }
-      : { stage, standing: 'current', sentence: `${stage} — where it stands, and it is yours to move` }
+      : {
+          stage,
+          standing: 'current',
+          sentence: `${stage} — the stage this episode is at, and yours to move`,
+        }
   })
 }
 
@@ -823,10 +833,10 @@ export function queuedSentence(store: Store, runs: readonly Run[]): string | nul
   if (!ahead) return null
 
   return ahead.status === 'paused'
-    ? `Queued behind your ruling: the ${queued.stage} stage — it starts when your ruling lets ` +
-        `the ${ahead.stage} run finish (one run per episode, D7)`
-    : `Queued behind it: the ${queued.stage} stage — it waits for the ${ahead.stage} run to ` +
-        'finish (one run per episode, D7)'
+    ? `Queued behind your ruling: the ${queued.stage} stage. It starts when your ruling lets ` +
+        `the ${ahead.stage} run finish — one run per episode.`
+    : `Queued behind the ${ahead.stage} run: the ${queued.stage} stage. It waits for that ` +
+        'run to finish — one run per episode.'
 }
 
 /**
@@ -845,22 +855,33 @@ function standingOf(
   runs: number,
 ): string {
   if (episode.abandonedAt !== null) {
-    return `Put down on ${episode.abandonedAt.slice(0, 10)} — it keeps the stage it reached.`
+    return `Abandoned on ${episode.abandonedAt.slice(0, 10)}. It keeps the stage it reached.`
   }
   if (artifacts === 0 && runs === 0 && episode.lifecycle === EPISODE_LIFECYCLE[0]) {
     return `Not started — nothing has been written for ${label} yet.`
   }
   const positions = positionsOf(store, episode.id)
   if (isVanilla(store, episode.id) || positions.length === 0) {
-    return 'Vanilla — it touches no arc, which is legal, tracked, and never a failure.'
+    return (
+      'Vanilla — it declares no arc position. Not every episode advances an arc, and the ' +
+      'season map tracks which ones do.'
+    )
   }
-  return `Lands ${positions.map((position) => `${position.arc.name} @ ${position.waypoint.name}`).join(', ')}.`
+  // `positionsOf` reads DECLARED positions, which are pins. The arc has not moved until the
+  // landing proposal is ratified, so this says "pins" and the sentence after it says why.
+  const pins = positions
+    .map((position) => `${position.arc.name} @ ${position.waypoint.name}`)
+    .join(', ')
+  return `Pins ${pins}. A pin is not a landing until you ratify it.`
 }
 
 /** What a finished episode's row says instead of an offer. History, never a failure. */
 function pastSentence(store: Store, episode: Episode, label: string, spend: CostTotals): string {
   if (episode.abandonedAt !== null) {
-    return `${label} was put down. Its claims were parked and its ratified facts each got a revert proposal of their own (3.3).`
+    return (
+      `${label} was abandoned. The proposals riding it were parked, and each fact it had ` +
+      'established came back to you as its own revert proposal.'
+    )
   }
   const ruled = sweepEpisode(store, episode.id).ruled.length
   return (
@@ -890,9 +911,9 @@ function footerOf(
     lead: 'Nothing else in flight.',
     sentence:
       `${count(episodes.length, 'episode')} across ${count(seasons.length, 'season')}, and ` +
-      `${working} of them still ${working === 1 ? 'has' : 'have'} work to do — every one is ` +
-      'above. A season’s idea pool (greenlit, parked, spiked) is not in this build; ' +
-      'nothing records one yet, so there is no count here to be wrong.',
+      `${working} of them still ${working === 1 ? 'has' : 'have'} work to do. Every one of ` +
+      'those is listed above. A season’s idea pool — its greenlit, parked and spiked ' +
+      'premises — is not in this build, because nothing records one yet. It is filed as #92.',
   }
 }
 

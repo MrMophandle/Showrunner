@@ -154,8 +154,10 @@ describe('a needs-you card is computed from a record that holds work still, or s
     expect(card!.title).toBe('ep02 “Dry Stores” — premise-brief gate')
     expect(card!.kindLabel).toBe('Gate open')
 
-    // It says WHY: the run is parked and his ruling is the only thing that moves it.
-    expect(card!.why).toContain('parked on this gate')
+    // It says WHY: the run is parked and his ruling is the only thing that moves it — and
+    // it names the artifact rather than gesturing at it (#99).
+    expect(card!.why).toContain('parked at this gate')
+    expect(card!.why).toContain('premise-brief')
     expect(card!.since).toContain('just now')
 
     // And WHERE — the gate room's real address, with the gate's real id on it, so the link
@@ -215,7 +217,7 @@ describe('a needs-you card is computed from a record that holds work still, or s
     expect(card!.title).toContain('vacuum-without-protection')
     // The opening sentence, which is the claim; the whole refusal rides on `detail`.
     expect(card!.why).toContain('ep01 is blocked')
-    expect(card!.detail).toContain('D12')
+    expect(card!.detail).toContain('refuse the next stage and never your gate')
     expect(card!.href).toBe(`/episode/${ep01}`)
   })
 
@@ -245,7 +247,11 @@ describe('a needs-you card is computed from a record that holds work still, or s
     expect(cardsOfKind(show, 'wall')).toEqual([])
     const [gate] = cardsOfKind(show, 'gate')
     expect(gate!.why).toContain('deterministic')
-    expect(gate!.why).toContain('D12')
+    // What D12 MEANS, said in words rather than cited at him (#99): those findings refuse
+    // the next stage and cannot stop the ruling in front of him.
+    expect(gate!.why).toContain('refuse the next stage')
+    expect(gate!.why).toContain('None of them can stop you ruling')
+    expect(gate!.why).not.toContain('refuse the next stage and never your gate')
     expect(gate!.detail).toContain('vacuum-without-protection')
   })
 
@@ -283,7 +289,7 @@ describe('the lifecycle track carries the three states Ryan ruled', () => {
     ])
     // Said in words as well as in colour — the whole point of the amber/blue ruling is that
     // two states are never told apart by hue alone.
-    expect(track[2]!.sentence).toBe('script — where it stands, and it is yours to move')
+    expect(track[2]!.sentence).toBe('script — the stage this episode is at, and yours to move')
     expect(track[0]!.sentence).toBe('premise — done')
     expect(track[3]!.sentence).toBe('assets — not reached yet')
   })
@@ -381,8 +387,9 @@ describe('the health strip says what is true, including about what is not built'
   })
 
   it('argues the budget in the section header, where a reader meets it first', () => {
-    expect(floor().healthHeading.explains).toContain('no weekly cap is set anywhere in this build')
-    expect(floor().healthHeading.explains).toContain('#88')
+    expect(floor().healthHeading.explains).toContain('Nothing in this build sets a weekly cap')
+    // The issue reference stays a real one — it is a door, not a footnote (#99, pattern A).
+    expect(floor().healthHeading.explains).toContain('filed as #88')
   })
 })
 
@@ -402,18 +409,26 @@ describe('not started, vanilla and finished are states the floor says out loud',
   })
 
   it('says a vanilla episode is vanilla, and never that it has failed', () => {
-    // ep02 declares no arc position. That is legal, tracked, and the fixture's own point.
+    // ep02 declares no arc position, which is the fixture's own point.
     expect(episode(floor(), 'ep02').standing).toContain('Not started')
-    // ep01 lands one, and says which.
-    expect(episode(floor(), 'ep01').standing).toContain('Lands ')
+    /**
+     * ep01 DECLARES one, and #99 made the sentence say which act that was. `positionsOf`
+     * reads declared positions — pins — and the arc has not moved until the landing
+     * proposal is ratified, so "Lands" was claiming a ruling nobody had made.
+     */
+    expect(episode(floor(), 'ep01').standing).toContain('Pins ')
     expect(episode(floor(), 'ep01').standing).toContain('@')
+    expect(episode(floor(), 'ep01').standing).toContain('A pin is not a landing')
   })
 
   it('names the arc a vanilla-but-started episode does not touch', async () => {
     await openAGateOnEp02()
     const ep = episode(floor(), 'ep02')
+    // The ruled rewrite of the "legal, tracked, never a failure state" sentence (#99,
+    // pattern B): the fact stays, the quoted ruling goes, and it says where to look.
     expect(ep.standing).toBe(
-      'Vanilla — it touches no arc, which is legal, tracked, and never a failure.',
+      'Vanilla — it declares no arc position. Not every episode advances an arc, and the ' +
+        'season map tracks which ones do.',
     )
   })
 
@@ -497,8 +512,10 @@ describe('an episode row states its next act, its cost, and its refusal before t
     expect(ep.waiting).toContain('Waiting on you')
     expect(ep.queued).toContain('Queued behind your ruling')
     expect(ep.queued).toContain(SCRIPT_GATE_STAGE)
-    expect(ep.queued).toContain('it starts when your ruling lets')
-    expect(ep.queued).toContain('one run per episode, D7')
+    expect(ep.queued).toContain('It starts when your ruling lets')
+    // The catchphrase #99 ruled a KEEP — it explains itself — with its citation stripped.
+    expect(ep.queued).toContain('one run per episode')
+    expect(ep.queued).not.toContain('D7')
     expect(second.status).toBe('queued')
   })
 

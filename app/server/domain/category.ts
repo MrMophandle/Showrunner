@@ -158,7 +158,7 @@ export function declareRelationType(
       throw new Error(
         `The ${category.key} category declares \`${declaration.name}\` pointing at a ` +
           `\`${declaration.targetCategory}\` category, and this show has no \`${declaration.targetCategory}\` ` +
-          'category. A relation type is data (D23) — declare the target category first.',
+          'category. A relation type is a row rather than code — declare the target category first.',
       )
     }
     if (category.relationTypes.some((type) => type.name === declaration.name)) {
@@ -174,7 +174,7 @@ export function declareRelationType(
       throw new Error(
         `\`${declaration.inverse}\` is already navigable from the ${target.key} category — ` +
           `it is the inverse of \`${clash.name}\`. An inverse names one kind of edge from ` +
-          'the far end, so two declarations cannot share one (D23).',
+          'the far end, so two declarations cannot share one.',
       )
     }
     if (target.relationTypes.some((type) => type.name === declaration.inverse)) {

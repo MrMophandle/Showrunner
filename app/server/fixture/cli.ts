@@ -76,7 +76,7 @@ function render(report: LoadReport, root: string): string {
   lines.push(
     '',
     'Nothing here was ratified and nothing generated. The sheets are on the queue as',
-    'promotion proposals; canon moves when Ryan rules them, and by no other route (D25).',
+    'promotion proposals; canon moves when you rule them, and by no other route.',
     '',
   )
   return lines.join('\n')

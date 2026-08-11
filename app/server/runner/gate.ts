@@ -313,7 +313,7 @@ export interface Rulings {
 export const rejectionNeedsANote = (subject: string): string =>
   `Rejecting ${subject} needs at least one note — “reject with notes” is the verb, and the ` +
   'notes are what the step reopens with. A rejection that said nothing would reopen the ' +
-  'round with nothing to write against, and later runs read your notes back off the desk (4.4).'
+  'round with nothing to write against, and later runs read your notes back off the desk.'
 
 /**
  * **Why putting a draft down with no note is refused** — the same rule as above, said about
@@ -331,10 +331,10 @@ export const rejectionNeedsANote = (subject: string): string =>
  * refuses with it, and the disabled button in the gate room shows it BEFORE the click.
  */
 export const closingNeedsANote = (subject: string): string =>
-  `Putting ${subject} down needs at least one note — a parking says why, the same as a ` +
-  'rejection does (4.7). Nothing reopens on this verb, so the note is the whole record: it ' +
+  `Closing ${subject} needs at least one note — closing says why, the same as a ` +
+  'rejection does. Nothing reopens on this verb, so the note is the whole record: it ' +
   'stands against the artifact, it is what makes the stage that writes it offerable again, ' +
-  'and the next run reads it back off the desk (4.4).'
+  'and the next run reads it back off the desk.'
 
 export function createRulings(store: Store, events: EventLog, runner: Runner): Rulings {
   function rule(

@@ -19,7 +19,9 @@ import { LifecycleTrack, type TrackStop } from './LifecycleTrack.tsx'
 import { LiveRegion, type LiveEntry } from './LiveRegion.tsx'
 import { SectionHeader } from './SectionHeader.tsx'
 import { SentenceButton, SentenceLink } from './SentenceButton.tsx'
+import { Glossed, GlossaryProvider, Term } from './Term.tsx'
 import { TwoValues } from './TwoValues.tsx'
+import { glossary } from '../../server/glossary.ts'
 
 /**
  * The chrome, in a real DOM (E5-0, #80).
@@ -429,6 +431,134 @@ describe('the browser writes none of the words', () => {
       />,
     )
     expect(nothing()).toBe('')
+  })
+
+  it('the term mark writes no word and no definition of its own', () => {
+    // Both halves are the server's: the word came out of its sentence, the definition out
+    // of `server/glossary.ts`. Handed neither, there is nothing for this file to render.
+    render(
+      <Term term="" definition="">
+        {''}
+      </Term>,
+    )
+    expect(nothing()).toBe('')
+
+    // And with no glossary in the context, a sentence comes out exactly as it went in.
+    render(<Glossed text="" />)
+    expect(nothing()).toBe('')
+  })
+})
+
+// ── A word with its meaning one hover or one Tab away ───────────────────────────
+
+/**
+ * #99 ruled that the domain nouns stay on screen and gain a definition Ryan can reach
+ * without leaving the page. These are the two halves of keeping that: the marks land on
+ * the right words, and the definition is reachable by keyboard and not only by mouse.
+ */
+describe('the glossary mark — a term Ryan can ask about (#99)', () => {
+  const GLOSSARY = glossary()
+
+  const gloss = (text: string) =>
+    render(
+      <GlossaryProvider glossary={GLOSSARY}>
+        <p>
+          <Glossed text={text} />
+        </p>
+      </GlossaryProvider>,
+    )
+
+  /**
+   * The definition rides in the DOM beside its word rather than being mounted on hover, so
+   * `aria-describedby` always has a node to point at. `chrome.css` hides it with
+   * `visibility: hidden`, which takes it out of the accessibility tree as well as off the
+   * screen — so what a reader gets, sighted or not, is the sentence the server wrote until
+   * they ask for more. That is what this reads: the line without the closed definitions in it.
+   */
+  const asRead = (): string => {
+    const line = host.querySelector('p')!.cloneNode(true) as HTMLElement
+    for (const closed of line.querySelectorAll('.term__def')) closed.remove()
+    return line.textContent ?? ''
+  }
+
+  it('renders the sentence whole, with the marked word still in its place', () => {
+    gloss('Every proposal riding this episode reaches you here.')
+
+    expect(asRead()).toBe('Every proposal riding this episode reaches you here.')
+    expect([...host.querySelectorAll('.term__word')].map((word) => word.textContent)).toEqual([
+      'proposal',
+      'riding',
+    ])
+    // Closed, so it is off the screen and out of the accessibility tree both.
+    for (const definition of host.querySelectorAll('.term__def')) {
+      expect(getComputedStyle(definition).visibility).toBe('hidden')
+    }
+  })
+
+  it('marks nothing in a sentence that names nothing from the glossary', () => {
+    gloss('Eight of nine shots are on disk, and the ninth is still generating.')
+    expect(host.querySelectorAll('.term')).toHaveLength(0)
+  })
+
+  it('carries the server’s definition, and ties it to the word for a screen reader', () => {
+    gloss('One finding, quoted.')
+
+    const word = host.querySelector('.term__word')!
+    const definition = host.querySelector('.term__def')!
+    expect(word.getAttribute('aria-describedby')).toBe(definition.id)
+    expect(definition.id).not.toBe('')
+    expect(definition.textContent).toBe(
+      GLOSSARY.find((entry) => entry.term === 'finding')!.definition,
+    )
+    expect(definition.getAttribute('role')).toBe('tooltip')
+  })
+
+  /**
+   * The half a `title` attribute cannot do. E5-0's baseline is that every screen inherits a
+   * keyboard path, and a definition that opens for a pointer and not for a Tab key is a
+   * definition half the people it was written for cannot read.
+   */
+  it('is reachable by keyboard, and opens on focus as well as on hover', () => {
+    gloss('One gate, open.')
+
+    const word = host.querySelector('.term__word') as HTMLElement
+    expect(word.tabIndex).toBe(0)
+    // Not a button: pressing it does nothing, and saying "button" would promise an act.
+    expect(word.getAttribute('role')).toBeNull()
+
+    const definition = host.querySelector('.term__def')!
+    expect(getComputedStyle(definition).visibility).toBe('hidden')
+
+    // jsdom applies `:focus` but not `:focus-visible`, so the rule is read off the
+    // stylesheet that ships. Both openers are asserted, because the mouse one alone is
+    // the failure this component exists to avoid.
+    expect(CHROME).toContain('.term:hover .term__def')
+    expect(CHROME).toContain('.term__word:focus-visible ~ .term__def')
+    expect(CHROME).toMatch(/\.term:hover \.term__def,\s*\.term__word:focus-visible ~ \.term__def \{\s*visibility: visible;/)
+
+    word.focus()
+    expect(document.activeElement).toBe(word)
+  })
+
+  it('does not shove the line when a definition opens — it is out of flow', () => {
+    gloss('One gate, open.')
+    const definition = host.querySelector('.term__def')!
+    expect(getComputedStyle(definition).position).toBe('absolute')
+  })
+
+  it('reaches every screen through the one line every section must carry', () => {
+    render(
+      <GlossaryProvider glossary={GLOSSARY}>
+        <SectionHeader name="Artifacts" explains="what each one was built from" />
+      </GlossaryProvider>,
+    )
+
+    // The heading's own name is untouched — the mark is on the explanation beside it.
+    expect(host.querySelector('h2')!.textContent).toBe('Artifacts')
+    expect(host.querySelector('.section-h__explains')!.textContent).toBe(
+      'what each one was built from',
+    )
+    expect(host.querySelector('.section-h__name .term')).toBeNull()
   })
 })
 

@@ -117,7 +117,7 @@ export const CHECK_REFUSALS = {
   changeNeedsStatement: BENCH_REFUSALS.changeNeedsStatement,
   rewriteNeedsReplacement:
     'Pre-draft a replacement, or write one yourself — an apply lands what is in the box word ' +
-    'for word (D20), and an empty box is not a deletion you meant.',
+    'for word, and an empty box is not a deletion you meant.',
 } as const
 
 export type CheckRefusals = typeof CHECK_REFUSALS
@@ -326,8 +326,8 @@ export function checkBenchView(
       tune: [],
       emptyBecause:
         `${label} has no ${BENCH_KIND} to check. Checks fire at artifact boundaries ` +
-        'and never continuously (4.1) — there is no boundary here yet, so there is nothing ' +
-        'on this bench and nothing it could cost you to find that out.',
+        'rather than continuously, and there is no boundary here yet. Nothing is ' +
+        'on this bench, and finding that out cost you nothing.',
     }
   }
 
@@ -361,8 +361,8 @@ export function checkBenchView(
     emptyBecause:
       board.rows.length === 0
         ? `Nothing has read the ${label} ${BENCH_KIND} v${artifact.version} yet, and no ` +
-          'reviewer is convened over it. Run the checks above — the deterministic ones cost ' +
-          'nothing, and a clean run is a measurement rather than an absence.'
+          'check has been called over it. Run the checks above: the deterministic ones cost ' +
+          'nothing, and a clean reading is a measurement rather than an absence.'
         : null,
   }
 }
@@ -434,7 +434,7 @@ export function clustersOn(
                   `You put this exact concern down at v${inherited.version} — “${inherited.note}”. ` +
                   'This is a later firing of it, raised by a check re-reading rows nobody ' +
                   'touched. It is open, and it counts in the cried-wolf record below; what it ' +
-                  'does not do is put the wall back up, because your ruling reaches it (E3-6).',
+                  'does not do is refuse the next stage again, because your ruling reaches it.',
               },
         remediations: remediationsFor(store, library, say.findingId, at.llm),
       }
@@ -458,7 +458,7 @@ function fixFor(row: BoardRow): string | null {
   if (row.verdict === 'unread') {
     return row.tier === 'deterministic'
       ? 'Re-run the deterministic rules — they read the rows an extraction wrote and cost nothing.'
-      : 'Convene the panel over this draft. It is a reading, so it costs a call per reviewer.'
+      : 'Call the panel over this draft. It is a reading, so it costs one model call per check.'
   }
   if (row.verdict === 'stale') {
     // The version this row was computed FROM is on `row.what` already, put there by the one
@@ -474,9 +474,9 @@ function fixFor(row: BoardRow): string | null {
   }
   if (row.verdict === 'partial') {
     return (
-      'This reviewer read only the scene that was rewritten (D14) and found nothing there. ' +
-      'The rest of this draft it has not read — convene the panel to have it read the whole ' +
-      'thing, which is a call.'
+      'This check read only the scene that was rewritten and found nothing there. ' +
+      'It has not read the rest of this draft. Call the panel to have it read the whole ' +
+      'draft, which is one model call.'
     )
   }
   if (row.verdict === 'gapped') {

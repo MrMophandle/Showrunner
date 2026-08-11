@@ -462,7 +462,7 @@ describe('the lifecycle pip wears the three states Ryan ruled, and says which in
 
     expect(current.getAttribute('aria-current')).toBe('step')
     expect(current.querySelector('.visually-hidden')!.textContent).toBe(
-      'script — where it stands, and it is yours to move',
+      'script — the stage this episode is at, and yours to move',
     )
     expect(host.querySelector(`#row-${ep01} .stage--done .visually-hidden`)!.textContent).toBe(
       'premise — done',
@@ -500,7 +500,7 @@ describe('a needs-you card reaches the screen as something to click', () => {
     // And the WHY is on the card, with pixels. It was `flex: 1` in a box whose other parts
     // already filled it, which rendered the one line Ryan most needs zero high.
     const why = card.querySelector('.need__why')!
-    expect(why.textContent).toContain('parked on this gate')
+    expect(why.textContent).toContain('parked at this gate')
     expect(getComputedStyle(why).flex).not.toBe('1')
   })
 

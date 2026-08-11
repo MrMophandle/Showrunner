@@ -100,7 +100,7 @@ describe('a deterministic finding refuses the next stage', () => {
     expect(blocked).toContain('Tobin Wick is outside the pressure hull in scene 4')
     expect(blocked).toContain('1 more deterministic finding stands with it')
     // And what to do about it, because a refusal with no way out is a dead end.
-    expect(blocked).toContain('D12')
+    expect(blocked).toContain('refuse the next stage and never your gate')
   })
 
   it('stands every deterministic finding up, in document order, and nothing else', () => {

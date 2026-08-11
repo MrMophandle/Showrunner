@@ -1,5 +1,6 @@
 import type { Store } from './db/store.ts'
 import { shows } from './domain/spine.ts'
+import { glossary, type GlossaryEntry } from './glossary.ts'
 
 /**
  * What the cockpit calls its own rooms (E5-0, #80).
@@ -100,6 +101,13 @@ export interface CockpitView {
    * (5.x) — so with one show it says so rather than pretending to be a chooser.
    */
   switcherExplains: string
+  /**
+   * The words this cockpit uses, each with what it means (#99). It travels with the room
+   * names for the same reason they are here at all: it is copy, so nothing in `app/web/`
+   * authors it. Every screen gets it, because `SectionHeader` marks its explanation line
+   * on every screen and the shell is the one fetch they all share.
+   */
+  glossary: GlossaryEntry[]
 }
 
 /**
@@ -241,6 +249,7 @@ export function cockpitView(store: Store): CockpitView {
     destinations: destinationsOf(),
     shows: standing,
     switcherExplains: switcherSentence(standing),
+    glossary: glossary(),
   }
 }
 

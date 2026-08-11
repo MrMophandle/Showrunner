@@ -217,7 +217,7 @@ describe('the writing room — the desk inspector', () => {
     // Honest confidence: what it cannot know before the click is named, not papered over.
     expect(desk.promptCaveat).toContain('round 1')
     expect(desk.promptCaveat).toContain('CHECKS’ notes')
-    expect(desk.promptCaveat).toContain('floor on what the ep02 writer will be handed')
+    expect(desk.promptCaveat).toContain('floor on what the model writing ep02 will be handed')
   })
 
   /**
@@ -249,7 +249,7 @@ describe('the writing room — the desk inspector', () => {
 
     expect(desk.vanilla).toBe(true)
     expect(desk.arcs.length).toBeGreaterThan(0)
-    expect(desk.arcs[0]!.sentence).toContain('vanilla, which is legal and tracked')
+    expect(desk.arcs[0]!.sentence).toContain('vanilla, and not every episode advances one')
   })
 })
 
@@ -299,7 +299,7 @@ describe('the writing room — the three note origins', () => {
       'Your own rejection of this draft, at its gate',
     )
     expect(byOrigin.get('routed-rejection')!.originSentence).toContain(
-      'given while you were standing at a later one (D21)',
+      'given while you were standing at a later one',
     )
     expect(byOrigin.get('finding-dismissal')!.originSentence).toContain(
       'your ruling on a CHECK, which is a different act from rejecting a draft',
@@ -395,7 +395,7 @@ describe('the writing room — the gates', () => {
 
     const rendered = room(ep01).gates[0]!
     const blocking = rendered.clusters.flatMap((cluster) => cluster.says).find((say) => say.blocking)!
-    expect(blocking.blockingSentence).toContain('never this gate (D12)')
+    expect(blocking.blockingSentence).toContain('never this gate')
     expect(room(ep01).wall).toContain('ep01 is blocked')
     // And the gate's own verbs are untouched by it: checks argue, they never veto.
     expect(rendered.approve.enabled).toBe(true)
@@ -696,7 +696,7 @@ describe('the writing room — an episode holding an artifact no writing gate sa
     const view = room()
     expect(view.line[0]!.offer.enabled).toBe(false)
     expect(view.line[0]!.offer.blockedBecause).toBe(
-      'ep02 already has a premise-brief, in slot “demo” — rule on it at its gate, or edit it directly (E4-5).',
+      'ep02 already has a premise-brief, in slot “demo” — rule on it at its gate, or edit it directly.',
     )
     // The refusal names a gate, and the gate is real — E4-5 widened the presenting stage's
     // question to the one the refusal asks, slot and all.
@@ -776,7 +776,7 @@ describe('the writing room — an episode holding an artifact no writing gate sa
       const reopened = room().line[0]!.offer
       expect(reopened.sentence).toContain('Write the ep02 premise-brief again')
       expect(reopened.sentence).toContain('Too tidy. Say what it costs her.')
-      expect(reopened.blockedBecause).toContain('One run per episode (D7)')
+      expect(reopened.blockedBecause).toContain('One run per episode')
 
       // And ruling again at that gate moves the episode — the other half.
       rulings.approve(openGates(store)[0]!.gate.id, {})

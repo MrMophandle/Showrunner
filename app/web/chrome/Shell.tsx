@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react'
 import type { CockpitView, Destination } from '../../server/cockpit.ts'
 import { EmptyState } from './EmptyState.tsx'
 import { locate, onLinkClick, useLocation, type Located } from './router.ts'
+import { GlossaryProvider } from './Term.tsx'
 
 /**
  * The shell: eight rooms and one bar (E5-0, #80; retired down to eight by E5-6, #86).
@@ -85,7 +86,7 @@ export function Shell({ screens }: { screens: Screens }) {
   }
 
   return (
-    <>
+    <GlossaryProvider glossary={cockpit.glossary}>
       <a className="skip-link" href="#screen">
         Skip to this screen
       </a>
@@ -102,7 +103,7 @@ export function Shell({ screens }: { screens: Screens }) {
           <Room here={here} id={location.rest} screens={screens} cockpit={cockpit} />
         </main>
       </div>
-    </>
+    </GlossaryProvider>
   )
 }
 

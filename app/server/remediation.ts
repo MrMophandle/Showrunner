@@ -256,15 +256,15 @@ export function remediationsFor(
     },
     dismiss: {
       sentence:
-        `Put the ${at.finding.checkKey} finding down with your note — the note is read back ` +
-        'by later runs (4.4) and counted against the check that raised it (D11)',
+        `Dismiss the ${at.finding.checkKey} finding with your note — the note is read back ` +
+        'by later writing runs, and counted against the check that raised it',
       cost: FREE,
       enabled: at.finding.disposition === null,
       blockedBecause:
         at.finding.disposition === null
           ? null
           : `That finding was already ${at.finding.disposition.kind} — ` +
-            `“${at.finding.disposition.note}”. A disposition is kept forever (4.4).`,
+            `“${at.finding.disposition.note}”. Every disposition is kept for good.`,
     },
   }
 }
@@ -363,9 +363,9 @@ export async function predraftRewrite(
       if (attempt === MAX_PREDRAFT_ATTEMPTS) {
         throw new Error(
           `The pre-draft did not come back as a rewrite in ${MAX_PREDRAFT_ATTEMPTS} attempts ` +
-            `(invariant 5), and every one of them is on the ledger. The last said: ` +
-            `${messageOf(error)} Write the replacement yourself and apply it — a hand-made one ` +
-            'always wins (D20).',
+            'and every one of them is on the ledger. The last said: ' +
+            `${messageOf(error)} Write the replacement yourself and apply it: a hand-made one ` +
+            'always wins.',
         )
       }
     }
@@ -843,7 +843,7 @@ export async function recheckScene(
   if (!scene) {
     throw new Error(
       `Scene ${request.sceneId} does not belong to this episode. Scenes are derived from the ` +
-        'written episode (D3), and a re-check narrows an artifact to one of its own.',
+        'written episode, and a re-check narrows an artifact to one of its own scenes.',
     )
   }
 
@@ -924,7 +924,7 @@ export function recheckProjection(
   return {
     reviewers,
     cost,
-    sentence: `${reviewers} reviewer${reviewers === 1 ? '' : 's'} · ${cost.sentence}`,
+    sentence: `${reviewers} check${reviewers === 1 ? '' : 's'} · ${cost.sentence}`,
   }
 }
 
@@ -990,8 +990,8 @@ function recheckOffer(
       cost: FREE,
       enabled: false,
       blockedBecause:
-        'That rewrite was not in a scene — the finding is about the whole artifact, so there ' +
-        'is no scene to narrow a re-check to (D14). Convene the panel over the new draft.',
+        'That rewrite was not in a scene. The finding is about the whole artifact, so there ' +
+        'is no scene to narrow a re-check to. Call the panel over the new draft instead.',
     }
   }
 
@@ -1001,7 +1001,7 @@ function recheckOffer(
   return {
     sentence:
       `Re-read scene ${scene.ordinal} of the ${artifact.kind} with the ` +
-      `${projection.reviewers} reviewer${projection.reviewers === 1 ? '' : 's'} that argued ` +
+      `${projection.reviewers} check${projection.reviewers === 1 ? '' : 's'} that argued ` +
       `with it — ${projection.sentence}`,
     cost: `${projection.cost.sentence} · your money, spent when you click`,
     enabled: blocked === null,
@@ -1057,9 +1057,9 @@ function recheckBlockedBecause(
   if (outstanding.subjects.length === 0) {
     return (
       `The ${outstanding.gone.join(', ')} check no longer convenes over this ${artifact.kind} ` +
-      '— its category’s declaration has changed, or the entities it was about are no longer in ' +
-      'provenance (4.1). There is nobody left to re-read scene ' +
-      `${scene.ordinal} for those findings; put them down with a note, or rule at the gate.`
+      'any more. Its category’s declaration has changed, or the entities it was about are no ' +
+      'longer in its provenance. No check is left to re-read scene ' +
+      `${scene.ordinal} for those findings, so dismiss them with a note or rule at the gate.`
     )
   }
   return null
@@ -1077,15 +1077,15 @@ function recheckSentence(
   const subject = `the ${subjectOf(store, artifact)}`
   if (raised === 0) {
     return (
-      `${passes.length} reviewer(s) re-read scene ${scene.ordinal} of ${subject} v` +
+      `${passes.length} check(s) re-read scene ${scene.ordinal} of ${subject} v` +
       `${artifact.version} and found nothing there — ${who}. The ${answered} finding(s) they ` +
-      'raised against the draft you replaced no longer stand, and nothing was written to them: ' +
-      'a finding is what a check said at a version (0010). The rest of this draft they have ' +
-      'not read.'
+      'raised against the draft you replaced no longer stand, and nothing was written to them. ' +
+      'A finding is what a check said at one version. They have not read the rest of this ' +
+      'draft.'
     )
   }
   return (
-    `${passes.length} reviewer(s) re-read scene ${scene.ordinal} of ${subject} v` +
+    `${passes.length} check(s) re-read scene ${scene.ordinal} of ${subject} v` +
     `${artifact.version} and raised ${raised} against the rewrite — ${who}. The ${answered} ` +
     'finding(s) from the draft you replaced no longer stand; these are new, about the new words.'
   )
@@ -1144,7 +1144,7 @@ export function canonChangePrefill(
  */
 const CHANGE_ALTERNATIVES = [
   'reject it — the script is what is wrong here, not the world, and the rewrite button is the ' +
-    'answer; the note says so and rides the next writer run (3.3)',
+    'answer. Your note says so and rides the next writing run',
   'defer it — leave canon standing and let the episode go on arguing with it until something ' +
     'forces the question',
 ]
@@ -1194,7 +1194,7 @@ function proposeBlockedBecause(store: Store, at: Standing): string | null {
   if (at.finding.disposition) {
     return (
       `That finding was already ${at.finding.disposition.kind} — “${at.finding.disposition.note}”. ` +
-      'A disposition is kept forever (4.4); raise the change from the canon bench instead.'
+      'Every disposition is kept for good; raise the change from the canon bench instead.'
     )
   }
   const fact = at.finding.facts[0]
@@ -1248,7 +1248,7 @@ function usageContextFor(at: Standing): string {
   if (at.finding.anchor.quote === '') {
     return (
       `${opening}. ${argued} with it: ${concern} It lands on no particular span — it is about ` +
-      `what this ${at.artifact.kind} declares it touches rather than about a sentence in it (4.3).`
+      `what this ${at.artifact.kind} declares it touches rather than about a sentence in it.`
     )
   }
 
@@ -1392,15 +1392,15 @@ function rewriteBlockedBecause(at: Standing): string | null {
   if (at.finding.disposition) {
     return (
       `That finding was already ${at.finding.disposition.kind} — “${at.finding.disposition.note}”. ` +
-      'A disposition is kept forever (4.4), and a rewrite answering one you put down would be ' +
+      'Every disposition is kept for good, and a rewrite answering one you dismissed would be ' +
       'the app arguing with your ruling.'
     )
   }
   if (at.finding.anchor.quote === '') {
     return (
       `The ${at.finding.checkKey} finding lands on no span — it is about what this ` +
-      `${at.artifact.kind} declares it touches rather than about a sentence in it (4.3). ` +
-      'There is nothing here to rewrite: propose the canon change, or put it down with a note.'
+      `${at.artifact.kind} declares it touches rather than about a sentence in it. ` +
+      'There is nothing here to rewrite: propose the canon change, or dismiss it with a note.'
     )
   }
   if (at.finding.anchor.version !== at.artifact.version) {
@@ -1415,7 +1415,7 @@ function rewriteBlockedBecause(at: Standing): string | null {
     return (
       `The span “${at.finding.anchor.quote.slice(0, 60)}” is not in ` +
       `${at.scene ? `scene ${at.scene.ordinal} of ` : ''}${at.subject} on the volume any more. ` +
-      'An anchor is searched for by quote (4.3), and this one lands nowhere — the file has ' +
+      'An anchor is searched for by its quote, and this one lands nowhere. The file has ' +
       'been edited by hand since the check read it.'
     )
   }
@@ -1436,7 +1436,7 @@ export function targetTakenBecause(library: LibraryPaths, artifact: Artifact): s
   const filePath = versionedPath(artifact.filePath!, artifact.version + 1)
   if (!existsSync(join(library.artifactDir, filePath))) return null
   return (
-    `${filePath} is already on the volume and nothing is ever written over it (D20). The ` +
+    `${filePath} is already on the volume, and nothing here is ever written over. The ` +
     `${artifact.kind} is still at v${artifact.version}, so that file is either one you ` +
     'wrote by hand — in which case it is the draft and there is nothing here to apply — or ' +
     'one a rewrite left behind when its transaction rolled back. Read it, then keep it or ' +

@@ -556,12 +556,12 @@ function offerFor(store: Store, episode: Episode, step: WriteStep): StageOffer {
         ? `Write the ${label} ${kind} again from the writer’s desk — ` +
           `${routedNoteSentence(routed, `the ${label} ${kind}`)}`
         : `Write the ${label} ${kind} from the writer’s desk and present it for your ruling — ` +
-          `“${episode.title}”, one call, then up to ${reviewers} reviewer${
+          `“${episode.title}”, one call, then up to ${reviewers} check${
             reviewers === 1 ? '' : 's'
           } read it`,
     cost:
       `${write.sentence} + up to ${panel.sentence} to check it, per draft — and the loop ` +
-      `stops at ${MAX_CORRECTION_ROUNDS} drafts (invariant 5)` +
+      `stops at ${MAX_CORRECTION_ROUNDS} drafts` +
       // The spend that lands on the far side of the gate, said before the click that buys it
       // (E4-4). One click covers the whole run, so the sentence has to cover the whole run:
       // a cost that arrives after a ruling is still a cost Ryan agreed to, and a button that
@@ -608,7 +608,7 @@ export function writtenOfKind(
 const alreadyWrittenBecause = (label: string, standing: Artifact): string =>
   `${label} already has ${article(standing.kind)} ${standing.kind}${
     standing.slot === '' ? '' : `, in slot “${standing.slot}”`
-  } — rule on it at its gate, or edit it directly (E4-5).`
+  } — rule on it at its gate, or edit it directly.`
 
 /**
  * "a premise-brief", "an outline" — the article an artifact kind takes.
@@ -944,8 +944,8 @@ function arcLines(arcs: ArcInContext[], vanilla: boolean, label: string): string
   if (vanilla) {
     lines.push(
       '',
-      `${label} declares no position on any arc. That is **vanilla** — legal, tracked, and ` +
-        'never a failure state. Do not invent a landing to have one.',
+      `${label} declares no position on any arc, so it is **vanilla**. Not every episode ` +
+        'advances an arc. Do not invent a landing to have one.',
     )
   }
   return lines

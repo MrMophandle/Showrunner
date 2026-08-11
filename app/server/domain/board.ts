@@ -525,7 +525,7 @@ function resolveScenes(scenes: Scene[], extraction: BoardExtraction): Map<number
     if (!byOrdinal.has(scene.scene)) {
       throw new Error(
         `The extraction read a scene ${scene.scene}, and this episode has ` +
-          `${scenes.length}. Scenes are derived from the script (D3) — the board reads the ` +
+          `${scenes.length}. Scenes are read out of the script, so the board reads the ` +
           'ones that are there.',
       )
     }
@@ -556,7 +556,7 @@ function requireEntity(index: Map<string, CanonEntity>, name: string): CanonEnti
   if (!entity) {
     throw new Error(
       `The extraction named “${name}”, and this show has no entity by that name or alias. ` +
-        'The prompt hands over the entities in scope (invariant 2) — an invented one is a ' +
+        'The prompt hands over the entities in scope, so an invented one is a ' +
         'broken read, not a nuance.',
     )
   }

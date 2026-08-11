@@ -222,8 +222,8 @@ describe('the check bench — the buttons that read', () => {
     // The roster in the words 4.5 convenes it with: five categories, the arc position ep01
     // declares (D8), and the four craft reviewers (D13).
     expect(panel.sentence).toContain('Check the ep01 script v1')
-    expect(panel.sentence).toContain('5 category checks, 1 arc position and 4 craft reviewers')
-    expect(panel.sentence).toMatch(/10 reviewers · 10 Opus calls, ~\$\d+\.\d\d/)
+    expect(panel.sentence).toContain('5 category checks, 1 arc position and 4 craft checks')
+    expect(panel.sentence).toMatch(/10 checks · 10 Opus calls, ~\$\d+\.\d\d/)
     // Whose money, and when — E3-4's projection with E3-7's tail on it.
     expect(panel.cost).toMatch(/^10 Opus calls, ~\$\d+\.\d\d · your money, spent when you click$/)
     expect(panel.enabled).toBe(true)
@@ -393,7 +393,7 @@ describe('the check bench — the wall, and what it marks', () => {
       'vacuum-without-protection',
     ])
     expect(says.find((say) => say.checkKey === 'dual-presence')!.blockingSentence).toContain(
-      'Blocks the next stage until it is resolved, and never this gate (D12)',
+      'Refuses the next stage until you settle it, and never this gate',
     )
     // A text finding argues and never vetoes (invariant 3) — no mark, no sentence.
     const world = says.find((say) => say.checkKey === 'world-rules')!
@@ -486,7 +486,7 @@ describe('the check bench — the silences, told apart', () => {
     const unread = view.rows.filter((one) => one.row.verdict === 'unread')
     expect(unread).toHaveLength(10)
     expect(unread[0]!.row.what).toBe('has not read this draft')
-    expect(unread[0]!.fix).toContain('Convene the panel over this draft')
+    expect(unread[0]!.fix).toContain('Call the panel over this draft')
     expect(unread[0]!.scope).toEqual([])
   })
 })
@@ -524,7 +524,7 @@ describe('the check bench — partial and stale, each with its fix named', () =>
     // That narrowing is the whole of D14, and the button states it before the click.
     expect(owed.map((one) => one.scene)).toEqual([4])
     expect(owed[0]!.offer.sentence).toContain(
-      'Re-read scene 4 of the script with the 2 reviewers that argued with it',
+      'Re-read scene 4 of the script with the 2 checks that argued with it',
     )
     expect(owed[0]!.offer.cost).toContain('your money, spent when you click')
 
@@ -535,7 +535,7 @@ describe('the check bench — partial and stale, each with its fix named', () =>
     const partial = bench().rows.find((one) => one.row.checkKey === 'world-rules')!
     expect(partial.row.verdict).toBe('partial')
     expect(partial.row.what).toContain('read scene 4 of this draft and found nothing there')
-    expect(partial.fix).toContain('The rest of this draft it has not read')
+    expect(partial.fix).toContain('It has not read the rest of this draft')
     // And the board says it above the rows, so a clean panel and a narrowed one never look alike.
     expect(bench().board.sentence).toContain('read only the scene that was rewritten')
   })
@@ -635,7 +635,7 @@ describe('the check bench — a standing dismissal, and the twin it reaches', ()
     expect(twin.inherited).not.toBeNull()
     expect(twin.inherited!.note).toBe('scene 6 is a flash-forward; leave it')
     expect(twin.inherited!.sentence).toContain('You put this exact concern down at v1')
-    expect(twin.inherited!.sentence).toContain('does not do is put the wall back up')
+    expect(twin.inherited!.sentence).toContain('does not do is refuse the next stage again')
 
     // Which is the point: the wall Ryan brought down stays down, with nothing written to
     // unblock anything.
@@ -692,7 +692,7 @@ describe('the check bench — a standing dismissal, and the twin it reaches', ()
 
     const view = bench()
     expect(view.tune).toHaveLength(1)
-    expect(view.tune[0]).toContain('world-rules — you have put down 3 of its last 3 ruled concerns')
+    expect(view.tune[0]).toContain('world-rules — you have dismissed 3 of its last 3 ruled concerns')
     expect(view.tune[0]).toContain('3 dismissed with a note, against 0 confirmed by a rewrite')
     expect(view.tune[0]).toContain('Tune this check?')
 

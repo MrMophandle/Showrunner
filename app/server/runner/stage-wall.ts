@@ -81,8 +81,8 @@ import { overriddenThrough } from './gate.ts'
  * — which is the single thing D12 exists to deny.
  */
 export const BLOCKS_THE_NEXT_STAGE =
-  'Blocks the next stage until it is resolved, and never this gate (D12): approving over it ' +
-  'at the gate is recorded as your override, putting it down with a note is your answer, and ' +
+  'Refuses the next stage until you settle it, and never this gate. Approving over it ' +
+  'at the gate is recorded as your override, dismissing it with a note is your answer, and ' +
   'a rewrite that re-reads clean is the third way.'
 
 /** One finding standing in the way, with what a sentence needs to name it. */
@@ -156,8 +156,8 @@ export function stageBlockedBecause(store: Store, episodeId: string): string | n
   return (
     `${episodeLabel(numberOf(store, episodeId))} is blocked — the ${first.finding.checkKey} ` +
     `finding at ${where} stands unresolved: “${firstSentence(first.finding.concern)}”.${others} ` +
-    'Deterministic findings block the next stage and never your gate (D12): rule on it at the ' +
-    'gate as a recorded override, put it down with a note, or fix it and re-run the checks — ' +
+    'Deterministic findings refuse the next stage and never your gate. Rule on it at the ' +
+    'gate as a recorded override, dismiss it with a note, or fix it and re-run the checks — ' +
     'the deterministic ones cost nothing.'
   )
 }

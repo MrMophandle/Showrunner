@@ -255,7 +255,7 @@ export function notYetReachedBecause(
   return (
     `${label} is at ${episode.lifecycle} and has not reached ${stage} yet — you have not ` +
     `approved its ${previous}. Lifecycle names the stage an episode is AT rather than one it ` +
-    `has finished (1.1), and an approval at the ${previous} gate is the only thing that moves ` +
+    `has finished, and an approval at the ${previous} gate is the only thing that moves ` +
     `it on. Rule on the ${label} ${previous} first, and this becomes offerable.`
   )
 }

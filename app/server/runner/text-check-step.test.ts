@@ -280,7 +280,7 @@ describe('what the button says before Ryan clicks it', () => {
 
     expect(projection).toMatchObject({ reviewers: 10, calls: 10, free: 0 })
     expect(projection.cost.priced).toEqual('rate-card')
-    expect(projection.sentence).toMatch(/^10 reviewers · 10 Opus calls, ~\$\d/)
+    expect(projection.sentence).toMatch(/^10 checks · 10 Opus calls, ~\$\d/)
   })
 
   it('says the deterministic rules on the board are free rather than counting them as spend', () => {

@@ -165,7 +165,7 @@ describe('the scene grid renders the board’s own rows and the board’s own ve
     expect(four.verdicts[0]!.blocking).toBe(true)
     // The wall's own sentence, quoted — so a red mark here can never read as a veto at a gate.
     expect(four.verdicts[0]!.blockingSentence).toContain(
-      'Blocks the next stage until it is resolved, and never this gate (D12)',
+      'Refuses the next stage until you settle it, and never this gate',
     )
     expect(grid.rows[5]!.verdicts.map((say) => say.checkKey)).toEqual(['dual-presence'])
     // A scene nothing argued with says nothing. Silence here is an absence of findings, and
@@ -203,7 +203,7 @@ describe('the scene grid renders the board’s own rows and the board’s own ve
     const grid = room().grid
     expect(grid.rows).toEqual([])
     expect(grid.notYet!.lead).toBe('No continuity board yet.')
-    expect(grid.notYet!.sentence).toContain('an empty grid is not a clean one')
+    expect(grid.notYet!.sentence).toContain('An empty grid is not a clean one')
     expect(grid.notYet!.stage).toBe('continuity-board')
     expect(grid.notYet!.build.enabled).toBe(true)
     expect(grid.notYet!.build.cost).toContain('your money, spent when you click')
@@ -407,7 +407,7 @@ describe('the ledger renders what a button projected against what the rows recor
     // new cost computation this room may not invent.
     expect(ledger.projection).toContain('continuity-board — 1 Opus call')
     expect(ledger.projection).toContain('text-checks — 10 Opus calls')
-    expect(ledger.projection).toContain('nothing in this build produces assets')
+    expect(ledger.projection).toContain('this build neither produces assets nor assembles')
   })
 })
 
@@ -427,7 +427,7 @@ describe('the lifecycle track wears the states Ryan ruled, not the ones this moc
     ])
     // Amber means his hand and blue means in flight; a merely-current stage is never running.
     expect(view.track.filter((stop) => stop.standing === 'running')).toEqual([])
-    expect(view.track[2]!.sentence).toBe('script — where it stands, and it is yours to move')
+    expect(view.track[2]!.sentence).toBe('script — the stage this episode is at, and yours to move')
   })
 
   it('says the track is of THIS episode, because the component refuses a label-less track', () => {
@@ -474,7 +474,7 @@ describe('the room hands down the three reads whole', () => {
     // A derived kind gets the edit door DISABLED with its reason, rather than no door at all.
     const board = view.artifacts.find((one) => one.kind === 'continuity-board')!
     expect(board.edit.enabled).toBe(false)
-    expect(board.edit.blockedBecause).toContain('is not written by hand')
+    expect(board.edit.blockedBecause).toContain('rather than written by hand')
     expect(board.present).toBeNull()
   })
 

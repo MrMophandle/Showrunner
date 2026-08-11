@@ -309,9 +309,9 @@ export function seasonMapView(store: Store, seasonId: string | null): SeasonMapV
         : {
             lead: 'No arc runs through this season.',
             sentence:
-              'Every episode in it is vanilla, which is legal, tracked and never a failure ' +
-              'state (1.1) — a season can tell a season of self-contained stories. An arc is ' +
-              'authored from its sheet and loaded with the show; nothing here creates one.',
+              'Every episode in it is vanilla. Not every episode advances an arc, and a ' +
+              'season can tell a season of self-contained stories. An arc is ' +
+              'authored on its own sheet and loaded with the show; nothing here creates one.',
           },
     vanillaNote: vanillaNote(vanilla),
     touchedLabel: 'Arcs touched',
@@ -367,8 +367,8 @@ function arcRow(store: Store, arc: Arc, episodes: readonly Episode[], room: Dest
         name: waypoint.name,
         sentence:
           `Waypoint ${waypoint.ordinal} “${waypoint.name}” — no episode in this season ` +
-          'declares it. Nothing earmarks a waypoint to an episode in this build, so it sits ' +
-          'ahead of every column rather than being drawn into one.',
+          'declares it. Nothing in this build assigns a waypoint to an episode in advance, ' +
+          'so it sits ahead of every column rather than inside one.',
       })),
     aheadNone:
       waypoints.length > 0 && waypoints.every((waypoint) => held.has(waypoint.id))
@@ -409,7 +409,8 @@ function plot(touch: ArcTouch | undefined, landings: readonly ArcLanding[]): Plo
       ink: 'landed',
       sentence:
         `${label} landed waypoint ${touch.waypoint.ordinal} “${touch.waypoint.name}”. ` +
-        'You ratified it, so it is canon with lineage and answerable as of that ruling (D8, D9).',
+        'You ratified it, so it is canon, it carries the episode that established it, and ' +
+        'the season is answerable as of that ruling.',
       lineage: `ratified at ruling ${ruling.seq} · ${ruling.at.slice(0, 10)}`,
     }
   }
@@ -420,8 +421,8 @@ function plot(touch: ArcTouch | undefined, landings: readonly ArcLanding[]): Plo
       ink: 'riding',
       sentence:
         `${label} declares waypoint ${touch.waypoint.ordinal} “${touch.waypoint.name}”, and ` +
-        'its landing proposal rides the episode — a claim, visible to checks, invisible to ' +
-        'canon until you rule it (D8). A pin is not a landing.',
+        'its landing proposal is riding that episode. The checks can see the claim and ' +
+        'canon cannot, until you rule on it. A pin is not a landing.',
       lineage: null,
     }
   }
@@ -430,11 +431,11 @@ function plot(touch: ArcTouch | undefined, landings: readonly ArcLanding[]): Plo
     ...base,
     ink: 'pinned',
     sentence:
-      `${label} declares waypoint ${touch.waypoint.ordinal} “${touch.waypoint.name}” — a pin, ` +
-      'which is a plan and not canon. ' +
+      `${label} declares waypoint ${touch.waypoint.ordinal} “${touch.waypoint.name}”, ` +
+      'which is a pin: a plan, and not canon. ' +
       (ruled === undefined
         ? 'No landing proposal stands behind it: the landing is raised when the script is ' +
-          'read, with the subject entity only the writer can answer for (D8, E4-4).'
+          'read, because only the model writing it can say which entity it is about.'
         : `Its landing proposal was ${ruled.proposal.status}${
             ruled.proposal.disposition!.note === ''
               ? ''
@@ -559,14 +560,14 @@ function threadRows(
         sentence:
           rows.length === 0
             ? 'No arc runs through this season, so there is no thread to leave hanging. An ' +
-              'episode that touches no arc is vanilla, which is legal and tracked (1.1).'
+              'episode that touches no arc is vanilla, and not every episode advances one.'
             : `No arc has gone ${count(COLD_AFTER, 'episode')} without an episode declaring a ` +
               `position on it. ${count(rows.length, 'arc')} across ` +
               `${count(episodes.length, 'episode')}, and every one of them was touched more ` +
               'recently than that.',
         why:
-          'computed off the pins and the episode order — there is no thread table and no cold ' +
-          'flag anywhere in this schema',
+          'Counted off the pins and the episode order every time you open this page. ' +
+          'Nothing in this app remembers that an arc has gone quiet.',
         href: null,
         cold: false,
       },
@@ -592,8 +593,8 @@ function threadRows(
               : `${episodeLabel(holder.number)} “${holder.title}” declares it and stands at ` +
                 `${holder.lifecycle}. Until that lands, the silence keeps running.`),
       why:
-        `the longest run of episodes declaring no position on it, measured in the season's own ` +
-        `order — ${count(COLD_AFTER, 'episode')} of silence is where this goes loud`,
+        `The longest run of episodes declaring no position on it, counted in this season’s ` +
+        `own order. ${count(COLD_AFTER, 'episode')} of silence is where this goes loud.`,
       href: row.href,
       cold: true,
     }
@@ -639,7 +640,7 @@ function episodeColumn(
  * down.
  */
 function standingOf(episode: Episode, atAGate: boolean): string {
-  if (episode.abandonedAt !== null) return `put down at ${episode.lifecycle}`
+  if (episode.abandonedAt !== null) return `abandoned at ${episode.lifecycle}`
   if (atAGate) return `${episode.lifecycle} · at its gate`
   return episode.lifecycle
 }
@@ -656,10 +657,10 @@ function vanillaNote(vanilla: readonly EpisodeColumn[]): string | null {
   if (vanilla.length === 0) return null
   const named = vanilla.map((column) => `${column.label} “${column.title}”`).join(', ')
   return (
-    `${named} ${vanilla.length === 1 ? 'is' : 'are'} vanilla — ` +
-    `${vanilla.length === 1 ? 'it touches' : 'they touch'} no arc. Legal, tracked, never a ` +
-    `failure state; ${vanilla.length === 1 ? 'it tells its' : 'they tell their'} own story ` +
-    'between the episodes that carry one.'
+    `${named} ${vanilla.length === 1 ? 'is' : 'are'} vanilla, and ` +
+    `${vanilla.length === 1 ? 'touches' : 'touch'} no arc. Not every episode advances an ` +
+    `arc: ${vanilla.length === 1 ? 'it tells its' : 'they tell their'} own story between ` +
+    'the episodes that carry one.'
   )
 }
 
@@ -691,16 +692,13 @@ function metaLine(columns: readonly EpisodeColumn[], rows: readonly ArcRow[]): s
 const IDEA_POOL: MechanismGap = {
   heading: {
     name: 'The idea pool',
-    explains: 'premises before they are episodes — greenlit, parked, spiked',
+    explains: 'Premises before they are episodes: greenlit, parked or spiked.',
   },
   lead: 'There is no idea pool in this build.',
   sentence:
-    'A season carries one in the ruled design (1.1) — premises greenlit, parked or spiked, ' +
-    'each with the reason beside it — and nothing records one yet: no table, no route, no ' +
-    'count. What would fill it is a premise you have had and not written, held where the ' +
-    'season can see it. The mechanism is filed rather than invented here, because a screen ' +
-    'that created a domain table to have something to draw is the failure this cockpit ' +
-    'must not normalize.',
+    'A season is designed to carry one: premises greenlit, parked or spiked, each with the ' +
+    'reason beside it. Nothing records one yet — no table, no route, no count. What would ' +
+    'fill it is a premise you have had and not written, held where the season can see it.',
   filed: 'The mechanism is filed as #92 — what the table would hold, and the line it must not cross.',
   issueHref: 'https://github.com/MrMophandle/Showrunner/issues/92',
 }
@@ -720,16 +718,16 @@ const IDEA_POOL: MechanismGap = {
 const PITCH: MechanismGap = {
   heading: {
     name: 'Pitch a premise against canon',
-    explains: 'running the check panel over an idea before it is an episode',
+    explains: 'Running the check panel over an idea before it is an episode.',
   },
   lead: 'There is no pre-episode check in this build.',
   sentence:
     'The design has one: an idea read against canon before anybody writes it, so a premise ' +
-    'that contradicts four ratified facts is spiked while it is still cheap. The checker ' +
-    'and the panel exist and the proposal flow already allows a change riding no episode — ' +
-    'what is missing is a run with no episode to hang it on, because `run.episode_id` is ' +
-    'NOT NULL. There is no button here rather than a disabled one: a blocked button says the ' +
-    'act exists, and this one does not yet.',
+    'that contradicts four ratified facts is spiked while it is still cheap. The checker and ' +
+    'the panel are built, and a proposal may already ride no episode. What is missing is a ' +
+    'run with no episode to hang it on, because `run.episode_id` is NOT NULL. There is no ' +
+    'button here rather than a disabled one, because a disabled button would say the act ' +
+    'exists and it does not yet.',
   filed: 'The mechanism is filed as #93 — the migration it needs, and the decision it forces.',
   issueHref: 'https://github.com/MrMophandle/Showrunner/issues/93',
 }
@@ -740,18 +738,21 @@ const HEADINGS: SeasonMapView['headings'] = {
   grid: {
     name: 'Arcs across the season',
     explains:
-      'waypoints plotted where episodes put them · a solid chip is canon you ratified, ' +
-      'amber is a landing waiting on you, dashed is a pin — a plan, not a landing',
+      'Waypoints plotted where the episodes put them. A solid chip is canon you ' +
+      'ratified, amber is a landing waiting on your ruling, and a dashed one is a pin: ' +
+      'a plan, not a landing.',
   },
   ahead: {
     name: 'Ahead',
-    explains: 'waypoints no episode holds yet — nothing in this build earmarks one to an episode',
+    explains:
+      'Waypoints no episode has declared. Nothing in this build assigns one to an ' +
+      'episode in advance.',
   },
   threads: {
     name: 'Hanging threads',
     explains:
-      'computed — the longest run of episodes that declared no position, against where the ' +
-      'next waypoint sits',
+      'The longest run of episodes that declared no position on an arc, counted against ' +
+      'where that arc’s next waypoint sits.',
   },
 }
 

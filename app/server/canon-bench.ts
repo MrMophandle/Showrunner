@@ -110,7 +110,7 @@ import type { Offer } from './operating.ts'
 export const BENCH_REFUSALS = {
   rejectNeedsNote: REJECTION_NEEDS_A_NOTE,
   entityNeedsName:
-    'Type the name first — a promotion carries a sheet (1.2), and a sheet with no name on ' +
+    'Type the name first. A promotion carries a whole sheet, and a sheet with no name on ' +
     'it is not a sheet about anybody.',
   changeNeedsStatement:
     'Write the new statement first — a fact delta is a before AND an after, and the after ' +
@@ -402,7 +402,8 @@ function asOfSentence(store: Store, at: AsOf): string {
     }
     return (
       `Canon as of ruling ${ruling.seq} (${ruling.kind}, ${ruling.at}) — a fact ratified AT ` +
-      `${ruling.seq} is in, and one closed at ${ruling.seq} is out. The range is half-open (D9).`
+      `${ruling.seq} is in, and one closed at ${ruling.seq} is out. A fact's range includes `
+      + 'the ruling it opened at and stops before the one that closed it.'
     )
   }
   const ruling = rulingAsOfDate(store, at.date)
@@ -509,7 +510,7 @@ function inFull(
             ? UNKNOWN_TARGET
             : (findEntityById(store, relation.toEntityId)?.name ?? relation.toEntityId)
         } · ${relation.type.cardinality}${relation.type.required ? ', required' : ''}` +
-        `${relation.type.inheritsFacts ? ' · facts travel it (D22)' : ''}`,
+        `${relation.type.inheritsFacts ? ' · facts travel it' : ''}`,
     })),
     required: category ? requiredOf(store, category, entity.showId) : [],
     addFact: addFactOffer(entity),
@@ -574,7 +575,7 @@ export function lineageOf(store: Store, fact: Fact): string {
   )
 
   if (fact.ratifiedBy === null) {
-    parts.push('provisional — riding its episode, visible to checks and not to canon (3.3)')
+    parts.push('provisional — riding its episode, visible to checks and not to canon')
   } else {
     const ruling = findRuling(store, fact.ratifiedBy)
     parts.push(`ratified at ruling ${fact.ratifiedBy}${ruling ? ` · ${ruling.at}` : ''}`)
@@ -824,7 +825,8 @@ function createForm(
     blockedBecause:
       categories.length === 0
         ? `${show.title} declares no canon categories, so there is no kind of thing to create. ` +
-          'A category is data (3.2) — `npm run fixture:load` declares Grey Harbor’s, and ' +
+          'A category is a row rather than code, so declaring one is an edit. ' +
+          '`npm run fixture:load` declares Grey Harbor’s, and ' +
           'E2-5’s schema document is what an empty show is founded from.'
         : null,
   }
@@ -853,7 +855,7 @@ function requiredOf(
       unknown: UNKNOWN_TARGET,
       sentence:
         `${type.name} → ${type.targetCategory} · ${type.cardinality}, required` +
-        `${type.inheritsFacts ? ' · its facts load with this entity into every check (D22)' : ''}` +
+        `${type.inheritsFacts ? ' · its facts load with this entity into every check' : ''}` +
         ` · \`${UNKNOWN_TARGET}\` is a real answer and satisfies it; blank does not`,
     }))
 }
@@ -916,8 +918,8 @@ function positionStanding(episode: Episode, standing: ArcPosition[], arcs: Arc[]
     // scaffolding did, the cockpit does — so an asterisk here reaches Ryan as an asterisk.
     // Found by booting E5-2's episode room and reading the line (#82).
     return (
-      `${label} declares no position on any arc — it is vanilla, which is legal, tracked ` +
-      'and never a failure state (1.1). Declaring one is a choice, not a repair.'
+      `${label} declares no position on any arc, so it is vanilla. Not every episode ` +
+      'advances an arc, and declaring one is a choice rather than a repair.'
     )
   }
   return (
@@ -929,8 +931,8 @@ function positionStanding(episode: Episode, standing: ArcPosition[], arcs: Arc[]
           `“${position.arc.name}”`,
       )
       .join(', ') +
-    '. A pin is not a fact: the landing proposal is raised when the script is read, with the ' +
-    'subject the writer answers (D8).'
+    '. A pin is not a fact: the landing proposal is raised when the script is read, and ' +
+    'only the model writing it can say which entity it reads on.'
   )
 }
 
@@ -965,7 +967,7 @@ function declareOffer(
       enabled: false,
       blockedBecause:
         `${label} was abandoned on ${episode.abandonedAt} — it keeps the stage it reached and ` +
-        'declares nothing new. What it established is reverted one ruling at a time (3.3), and ' +
+        'declares nothing new. What it established comes back to you one revert at a time, and ' +
         'a new pin on a dead episode would be a claim nobody can land.',
     }
   }
@@ -1039,7 +1041,7 @@ export function registerAndPropose(
     if (!category) {
       throw new Error(
         `${show.title} declares no \`${identity.categoryKey}\` category, so there is no kind ` +
-          'of thing to register. A category is data (3.2) — declare it first.',
+          'of thing to register. A category is a row rather than code — declare it first.',
       )
     }
     const clash = findEntity(store, { showId: show.id, categoryKey: category.key, name })

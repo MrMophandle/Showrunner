@@ -308,7 +308,7 @@ function readAgainSince(store: Store, passId: string): boolean {
 // ── The sentence ────────────────────────────────────────────────────────────────
 
 /**
- * "world-rules — you have put down 3 of its last 4 ruled concerns … Tune this check?"
+ * "world-rules — you have dismissed 3 of its last 4 ruled concerns … Tune this check?"
  *
  * Every number in it is reconstructible from rows Ryan can click through: the put-down count
  * and the confirmed count come from the concerns on the record, each of which names the
@@ -334,7 +334,7 @@ function tuneSentence(record: Omit<CheckRecord, 'tune'>): string | null {
     record.gaps > 0 ? `, and could not look ${record.gaps} time${plural(record.gaps)}` : ''
 
   return (
-    `${record.checkKey} — you have put down ${putDown} of its last ${record.ruled} ruled ` +
+    `${record.checkKey} — you have dismissed ${putDown} of its last ${record.ruled} ruled ` +
     `concern${plural(record.ruled)}: ${parts.join(', ')}, against ${record.confirmed} ` +
     `confirmed by a rewrite. It fired ${record.firings} time${plural(record.firings)} over ` +
     `${record.concerns.length} concern${plural(record.concerns.length)} in ${record.readings} ` +

@@ -1,0 +1,6 @@
+Showrunner — scaffold artifact (E1-1)
+
+If you are reading this on the host, the library volume is mounted correctly:
+the SQLite file and every artifact live out here, not inside the container.
+
+This file is not canon. Only ratification writes canon.

@@ -283,7 +283,7 @@ export function correctionLoop(produce: Producer, check: Step): Step<CorrectionO
         const report = reportOf(store, standing.gate.artifactId)
         context.progress(
           `Put down at round ${standing.round} — nothing is rewritten, this episode is free, ` +
-            'and your note stands against the draft until something answers it (D21)',
+            'and your note stands against the draft until something answers it',
         )
         return {
           ...report,
@@ -311,7 +311,7 @@ export function correctionLoop(produce: Producer, check: Step): Step<CorrectionO
         const report = reportOf(store, standing!.gate.artifactId)
         context.progress(
           `Rejected at round ${standing!.round}, and every note was routed elsewhere — nothing ` +
-            'here is rewritten, and nothing regenerates until you ask for it (D21)',
+            'here is rewritten, and nothing regenerates until you ask for it',
         )
         return {
           ...report,
@@ -562,15 +562,15 @@ function sentenceFor(state: {
   const latest = state.rounds.at(-1)
   if (!latest || state.unchecked) {
     return (
-      `Nothing checks the ${state.subject} — no check convened for it at all (4.1). That is a ` +
-      'vanilla artifact, legal and tracked and never a failure state; it is also not a clean ' +
+      `Nothing checks the ${state.subject}: no check was called over it at all. That is a ` +
+      'kind of artifact no check reads, which is not a failure. It is also not a clean ' +
       'reading, because nothing read it. Waiting on your ruling.'
     )
   }
   if (!state.converged) {
     return (
       `The ${state.subject} still has ${latest.findings.length} finding(s) after ` +
-      `${latest.round} drafts — the correction budget is spent (invariant 5), and this is ` +
+      `${latest.round} drafts, so the correction budget is spent. This is ` +
       'where the machine stops arguing with itself. Every round is under it. Waiting on your ' +
       'ruling.'
     )

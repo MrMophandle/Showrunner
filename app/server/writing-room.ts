@@ -454,8 +454,8 @@ function promptCaveat(desk: WriteContext, round: number): string {
   return (
     `This is the prompt for round ${round}, composed by the step’s own function rather than ` +
     `rebuilt here. ${notes} What it cannot carry before the click is the CHECKS’ notes: a ` +
-    'round after a panel is this, plus what the reviewers said about the draft before it ' +
-    `(4.4). So it is a floor on what the ${label} writer will be handed, never a ceiling.`
+    'round after a panel is this, plus what the checks said about the draft before it. ' +
+    `So it is a floor on what the model writing ${label} will be handed, never a ceiling.`
   )
 }
 
@@ -475,10 +475,11 @@ const arcOnTheDesk = (held: ArcInContext): ArcOnTheDesk => ({
   sentence:
     held.position === null
       ? `This episode declares no position on “${held.arc.name}”. Nothing is owed here — an ` +
-        'episode touching no arc is vanilla, which is legal and tracked (1.1).'
+        'episode that touches no arc is vanilla, and not every episode advances one.'
       : `This episode is declared at waypoint ${held.position.waypoint.ordinal} — ` +
         `“${held.position.waypoint.name}”. A pin is not a landing: the landing proposal is ` +
-        'raised when the script is read, with the subject the writer answers (D8).',
+        'raised when the script is read, and only the model writing it can say which entity ' +
+        'it reads on.',
 })
 
 /**
@@ -512,7 +513,7 @@ function originSentence(origin: NoteOrigin): string {
       return (
         `Your note from the ${origin.fromKind} gate at round ${origin.round}, routed here at ` +
         `${origin.depth} depth — your opinion of THIS artifact, given while you were standing ` +
-        `at a later one (D21). It landed when this stood at v${origin.routedAtVersion}, and ` +
+        `at a later one. It landed when this stood at v${origin.routedAtVersion}, and ` +
         `${
           origin.addressed
             ? 'a newer version has landed since — computed, never a flag anybody set'
@@ -521,7 +522,7 @@ function originSentence(origin: NoteOrigin): string {
       )
     case 'finding-dismissal':
       return (
-        `A ${origin.checkKey} finding you put down — your ruling on a CHECK, which is a ` +
+        `A ${origin.checkKey} finding you dismissed — your ruling on a CHECK, which is a ` +
         `different act from rejecting a draft. It quoted: “${origin.quote}”.`
       )
   }

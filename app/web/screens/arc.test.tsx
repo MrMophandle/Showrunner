@@ -134,7 +134,7 @@ describe('the page teaches the check with the check’s own words', () => {
     const empties = [...host.querySelectorAll('.empty')].map((one) => one.textContent ?? '')
     expect(empties.some((one) => one.includes('Nothing convenes it on this arc yet'))).toBe(true)
     // The prose about how the mechanism works is still on the page — it is true either way.
-    expect(host.querySelector('.arc-rule')!.textContent).toContain('argued, never vetoed')
+    expect(host.querySelector('.arc-rule')!.textContent).toContain('A finding argues and never decides')
   })
 })
 

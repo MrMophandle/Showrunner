@@ -206,7 +206,7 @@ export function arcIndexView(store: Store): ArcIndexView {
   return {
     heading: {
       name: 'Arcs',
-      explains: `every arc in this library — reached from ${room.reachedFrom}`,
+      explains: `Every arc in this library. You reach this page from ${room.reachedFrom}.`,
     },
     arcs,
     empty:
@@ -216,8 +216,8 @@ export function arcIndexView(store: Store): ArcIndexView {
             lead: 'No arc in this library.',
             sentence:
               'An arc is authored on its own sheet and loaded with the show; nothing here ' +
-              'creates one. A season with no arc is legal — every episode in it is vanilla, ' +
-              `which is never a failure state (1.1). ${map.name} shows the season either way.`,
+              'creates one. A season may run with no arc at all, and every episode in it is ' +
+              `then vanilla. Either way, ${map.name} shows the season.`,
           },
   }
 }
@@ -272,9 +272,9 @@ export function arcPageView(store: Store, arcId: string): ArcPageView | undefine
         ? {
             lead: 'This arc has no statement.',
             sentence:
-              'The statement is what you re-read when you have forgotten what the arc was ' +
-              '(D24) — what it is about, and the question it asks. It is authored on the ' +
-              'arc’s sheet and loaded with the show; this one’s is empty.',
+              'The statement is what you re-read when you have forgotten what the arc was: ' +
+              'what it is about, and the question it asks. It is authored on the ' +
+              'arc’s sheet and loaded with the show, and this one’s is empty.',
           }
         : null,
     waypoints: spine,
@@ -288,7 +288,7 @@ export function arcPageView(store: Store, arcId: string): ArcPageView | undefine
             sentence:
               'An arc carries no entity link, on purpose: an arc is a shape a season makes, ' +
               'and which character or place a landing is a claim about is a writing judgement ' +
-              'answered per landing (E2-3). The names here are the subjects of the landings ' +
+              'answered one landing at a time. The names here are the subjects of the landings ' +
               'you have ratified, so they arrive as you rule them.',
           },
     episodes: touches.map((touch) => onTheArc(touch, landings, episodeRoom)),
@@ -298,8 +298,8 @@ export function arcPageView(store: Store, arcId: string): ArcPageView | undefine
         : {
             lead: 'No episode declares a position on this arc.',
             sentence:
-              'Nothing is owed here — an episode that touches no arc is vanilla, which is ' +
-              'legal, tracked and never a failure state (1.1). A position is declared from ' +
+              'Nothing is owed here. An episode that touches no arc is vanilla, and not ' +
+              'every episode advances an arc. A position is declared from ' +
               'the episode’s own writing room, where the draft it is about is.',
           },
     untouchedNote: untouchedNote(store, arc, touches),
@@ -356,7 +356,7 @@ function onTheSpine(
   }
   for (const landing of riding) {
     tags.push(
-      'a landing proposal rides it — it becomes canon when you ratify it, and not before (D8)',
+      'a landing proposal is riding it — it becomes canon when you ratify it, and not before',
     )
   }
   for (const landing of ruled) {
@@ -399,7 +399,9 @@ function standingChip(spine: readonly WaypointOnTheSpine[]): string {
   const landed = [...spine].reverse().find((one) => one.standing === 'landed')
   if (landed) return `landed to waypoint ${landed.ordinal} of ${spine.length}`
   const held = [...spine].reverse().find((one) => one.standing !== 'ahead')
-  if (held) return `declared to waypoint ${held.ordinal} of ${spine.length} — nothing landed yet`
+  if (held) {
+    return `declared to waypoint ${held.ordinal} of ${spine.length}, and nothing has landed yet`
+  }
   return `untouched — waypoint 1 of ${spine.length} is still ahead`
 }
 
@@ -441,8 +443,8 @@ function onTheArc(
         : riding
           ? `declares waypoint ${touch.waypoint.ordinal} “${touch.waypoint.name}” · its ` +
             'landing proposal is riding and waits on you'
-          : `declares waypoint ${touch.waypoint.ordinal} “${touch.waypoint.name}” — a pin, ` +
-            'which is a plan and not canon',
+          : `declares waypoint ${touch.waypoint.ordinal} “${touch.waypoint.name}”, ` +
+            'which is a pin: a plan, and not canon',
     standing: ratified !== undefined ? 'landed' : riding ? 'riding' : 'pinned',
     href: `${room.path}/${touch.episode.id}`,
   }
@@ -459,7 +461,8 @@ function untouchedNote(store: Store, arc: Arc, touches: readonly ArcTouch[]): st
 
   return (
     `${untouched.map((episode) => `${episodeLabel(episode.number)} “${episode.title}”`).join(', ')} ` +
-    `${untouched.length === 1 ? 'does' : 'do'} not touch it. That is not a gap in this arc — ` +
+    `${untouched.length === 1 ? 'does' : 'do'} not touch it. That is not a gap in this ` +
+    'arc: ' +
     'an episode may carry another arc or none at all, and one that carries none is vanilla.'
   )
 }
@@ -504,7 +507,7 @@ function glanceOf(
       key: 'Entities',
       value:
         subjects.length === 0
-          ? 'none yet — an arc carries no entity link; a landing names the one it reads on'
+          ? 'none yet — an arc carries no entity link, and a landing names the one it reads on'
           : subjects.map((one) => one.name).join(' · '),
     },
     { key: 'Health', value: healthOf(store, arc, spine, touches, landings) },
@@ -571,10 +574,10 @@ function howItIsChecked(store: Store, arc: Arc, touches: readonly ArcTouch[]): H
   const sentence =
     'An episode declares its position on this arc, and the waypoint-drift check reads the ' +
     'draft against that waypoint and the ones on either side of it. Behaviour ahead of the ' +
-    'declared position is a finding, and so is behaviour behind it — argued, never vetoed ' +
-    '(invariant 3). Landing a waypoint is a proposal you ratify; nothing here writes canon ' +
-    'on its own (D8). Below is what the check actually carries — the same text it sends, not ' +
-    'a description of it.'
+    'declared position is a finding, and so is behaviour behind it. A finding argues and ' +
+    'never decides. Landing a waypoint is a proposal you ratify, and nothing here writes ' +
+    'canon on its own. Below is what the check actually carries: the same text it sends, ' +
+    'not a description of it.'
 
   const latest = [...touches].sort((a, b) => a.episode.number - b.episode.number).at(-1)
   if (latest === undefined) {
@@ -589,8 +592,8 @@ function howItIsChecked(store: Store, arc: Arc, touches: readonly ArcTouch[]): H
         lead: 'Nothing convenes it on this arc yet.',
         sentence:
           'The waypoint-drift check fires once per declared position, so an arc no episode ' +
-          'has declared a position on convenes nothing at all — an empty list rather than a ' +
-          'check that says so. Declare a position from an episode’s writing room and the ' +
+          'has declared a position on calls nothing at all. That is an empty list rather than ' +
+          'a check that says so. Declare a position from an episode’s writing room and the ' +
           'worked example composes itself here.',
       },
     }
@@ -650,8 +653,8 @@ function historyOf(
     lines.push({
       what: `waypoint ${touch.waypoint.ordinal} “${touch.waypoint.name}” declared`,
       when:
-        `${episodeLabel(touch.episode.number)} · ${touch.declaredAt.slice(0, 10)} — a pin; ` +
-        'a landing is a separate ruling',
+        `${episodeLabel(touch.episode.number)} · ${touch.declaredAt.slice(0, 10)} — a pin, ` +
+        'and a landing is a separate ruling',
       note: null,
       at: touch.declaredAt,
     })
@@ -681,27 +684,33 @@ const HEADINGS: ArcPageView['headings'] = {
   statement: {
     name: 'What this arc is',
     explains:
-      'your own words — what the arc is about and the question it asks, and the thing you ' +
-      're-read when you have forgotten what it was (D24)',
+      'Your own words: what the arc is about and the question it asks. It is the thing ' +
+      'you re-read when you have forgotten what it was.',
   },
   waypoints: {
     name: 'Waypoints',
     explains:
-      'ordered · an episode declares its position, and behaviour off that position is a ' +
-      'finding (D8) · landing one is a proposal you rule',
+      'The waypoints in order. An episode declares its position, behaviour off that ' +
+      'position is a finding, and landing one is a proposal you rule.',
   },
-  glance: { name: 'This arc at a glance', explains: 'its scope, its kind, and whether it has gone quiet' },
+  glance: {
+    name: 'This arc at a glance',
+    explains: 'Its scope, its kind, and whether it has gone quiet.',
+  },
   episodes: {
     name: 'Episodes touching it',
-    explains: 'every episode that declares a position on this arc, and what it claimed',
+    explains: 'Every episode that declares a position on this arc, and what it claimed.',
   },
   checked: {
     name: 'How this arc is checked',
-    explains: 'D8, with the drift check’s own composed instructions as the worked example',
+    explains:
+      'How a position on this arc turns into a finding, with the text the drift check ' +
+      'actually sends as the worked example.',
   },
   history: {
     name: 'History',
-    explains: 'the arc’s edits with your notes, the positions declared on it, and the rulings',
+    explains:
+      'The arc’s edits with your notes, the positions declared on it, and the rulings.',
   },
 }
 

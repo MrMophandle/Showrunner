@@ -428,7 +428,7 @@ describe('the lifecycle pip is the floor’s component, and wears the states Rya
 
     expect(current.getAttribute('aria-current')).toBe('step')
     expect(current.querySelector('.visually-hidden')!.textContent).toBe(
-      'script — where it stands, and it is yours to move',
+      'script — the stage this episode is at, and yours to move',
     )
     expect(host.querySelectorAll('.room-head [aria-current]')).toHaveLength(1)
   })
@@ -461,7 +461,7 @@ describe('the scene grid is the room’s face, and it renders the board’s own 
     expect(say.textContent).toContain('vacuum-without-protection')
     expect(say.textContent).toContain('severity high · confidence certain')
     expect(say.getAttribute('data-blocking')).toBe('true')
-    expect(say.getAttribute('title')).toContain('never this gate (D12)')
+    expect(say.getAttribute('title')).toContain('never this gate')
   })
 
   it('renders the grid’s health as panel.ts’s own verdicts and sentences', () => {
@@ -609,7 +609,7 @@ describe('the ledger renders what a button projected against what the rows recor
     still()
     const projection = host.querySelector('.room-ledger__projection')!
     expect(projection.textContent).toContain('continuity-board — 1 Opus call')
-    expect(projection.textContent).toContain('nothing in this build produces assets')
+    expect(projection.textContent).toContain('this build neither produces assets nor assembles')
     // No meter, no cap, no budget anywhere on this screen (#88 owns that door).
     expect(host.querySelector('.tile__meter')).toBeNull()
   })

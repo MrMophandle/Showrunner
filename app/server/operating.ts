@@ -401,7 +401,7 @@ export function stageOffer(
  * question:
  *
  *   1. **An unfinished run** — the one state that is true whatever the stage and whatever the
- *      adapter is doing. One run per episode (D7).
+ *      adapter is doing. One run per episode.
  *   2. **The stage's own precondition**, off its declaration: an episode with no script to
  *      check, a board that has never been built. It comes before the wall because a stage with
  *      nothing to do has nothing to be blocked from doing.
@@ -435,7 +435,10 @@ export function launchBlockedBecause(
       busy.status === 'paused'
         ? `is waiting on your ruling — ${busy.pauseReason ?? 'a gate is open'}`
         : `is ${busy.status}`
-    return `${label} already has a ${busy.stage} run, and it ${doing}. One run per episode (D7): rule on it, or let it finish.`
+    return (
+      `${label} already has a ${busy.stage} run, and it ${doing}. One run per episode: ` +
+      'rule on it, or let it finish.'
+    )
   }
 
   const declared = stage.offerOn(store, episode)
@@ -673,13 +676,13 @@ export function gateOnThePage(
             'notes are recorded against the round and nothing is rewritten'
           : stage.work === 'reads'
             ? 'and presents it again with them recorded against it; there is no writer behind ' +
-              'this gate to route them to yet, so the notes land and ride (D21)'
+              'this gate to route them to yet, so the notes land and ride'
             : 'and writes it again against them') +
         // The other half of D21, on the same button (E4-5): a note that names another written
         // artifact is not this producer's to answer, so nothing here is rewritten at all and
         // the work turns up as an offer where it belongs (`domain/routing.ts`).
         '. But a note you route to another artifact lands there instead — nothing here is ' +
-        'rewritten, and the stage that writes it becomes offerable with your note on it (D21)',
+        'rewritten, and the stage that writes it becomes startable with your note on it',
       cost: again === null || !again.callsModel ? FREE : `${again.cost} · your money, spent when you click`,
       enabled: standing.isOpen,
       blockedBecause: ruled,
@@ -690,7 +693,7 @@ export function gateOnThePage(
       // the generic verb the UI rules forbid, and because what Ryan needs to know before he
       // presses it is that nothing regenerates and nothing is lost.
       sentence:
-        `Put ${standing.subject} down with your note — ${stepName} ends here, ` +
+        `Close ${standing.subject} with your note — ${stepName} ends here, ` +
         `${episode ? episodeLabel(episode.number) : 'this episode'} is free the moment you ` +
         'click, and your note stands against the draft until something answers it',
       // Nothing is re-run and nothing is re-read, whatever the stage behind this gate does. A
