@@ -491,10 +491,11 @@ describe('a needs-you card reaches the screen as something to click', () => {
     expect(link.getAttribute('href')).toBe(`/gate/${gateId}`)
     expect(link.textContent).toContain('Rule on the ep02 premise-brief')
     expect(link.querySelector('.cost')!.textContent).toContain('$0.00 to open it')
-    // It is honest about the room before it is clicked, not after.
+    // It is honest about the room before it is clicked, not after — and E5-3 (#83) built the
+    // gate room, so there is nothing left to warn him about and neither carries a title.
     expect(card.querySelector('.need__room')!.textContent).toBe('the gate room')
-    expect(card.querySelector('.need__room')!.getAttribute('title')).toContain('#83')
-    expect(link.getAttribute('title')).toContain('#83')
+    expect(card.querySelector('.need__room')!.getAttribute('title')).toBeNull()
+    expect(link.getAttribute('title')).toBeNull()
 
     // And the WHY is on the card, with pixels. It was `flex: 1` in a box whose other parts
     // already filled it, which rendered the one line Ryan most needs zero high.

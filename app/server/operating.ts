@@ -36,6 +36,7 @@ import {
 import type { LibraryPaths } from './library.ts'
 import type { LLMReadiness } from './llm/choose.ts'
 import {
+  closingNeedsANote,
   gateOfRun,
   gateStanding,
   NOTE_DEPTH,
@@ -513,6 +514,15 @@ export interface GateOnThePage {
    */
   override: Offer
   reject: Offer
+  /**
+   * **Put the draft down** (E5-3, #83) — the run ends, the note stands, the episode is free.
+   *
+   * A fourth button rather than a checkbox on the rejection, for `override`'s own reason one
+   * paragraph up: "he rejected it and the step reopens" and "he stopped, and nothing is going
+   * to happen until he asks" are two rulings and two rows, and a season later the difference
+   * is the whole record (0015).
+   */
+  close: Offer
   /** How deep a rejection note may route the work back (D21). Empty is the legal default. */
   noteDepths: readonly NoteDepth[]
   /**
@@ -525,6 +535,13 @@ export interface GateOnThePage {
    * bench to prevent (`CHECK_REFUSALS`, `BENCH_REFUSALS`).
    */
   rejectNeedsNote: string
+  /**
+   * The same rule for the fourth verb, in ITS own words (E5-3, `runner/gate.ts`). A close
+   * reopens nothing, so its note is not "what the step writes against" but the whole record
+   * of why he stopped — a different reason, and therefore a different sentence rather than
+   * the rejection's with a word swapped.
+   */
+  closeNeedsNote: string
 }
 
 export interface RunView {
@@ -566,9 +583,9 @@ export function runView(store: Store, library: LibraryPaths, runId: string): Run
 }
 
 /**
- * The gate, whole: what is under review, the three verdicts, and their costs.
+ * The gate, whole: what is under review, the four verdicts, and their costs.
  *
- * **None of the three takes a precondition on the artifact's account.** The only thing that
+ * **None of the four takes a precondition on the artifact's account.** The only thing that
  * closes them is a round already ruled — checks argue and never veto (invariant 3), and D12
  * lets a deterministic finding block the next stage and never this. What the standing findings
  * DO reach is the override's sentence, which names what he would be ruling over: a verb that
@@ -663,8 +680,24 @@ export function gateOnThePage(
       enabled: standing.isOpen,
       blockedBecause: ruled,
     },
+    close: {
+      // **The verb the E4 ledger asked for, said as a consequence** (E5-3, #83). It names what
+      // ends, what is free afterwards, and what the note does — because "close" on its own is
+      // the generic verb the UI rules forbid, and because what Ryan needs to know before he
+      // presses it is that nothing regenerates and nothing is lost.
+      sentence:
+        `Put ${standing.subject} down with your note — ${stepName} ends here, ` +
+        `${episode ? episodeLabel(episode.number) : 'this episode'} is free the moment you ` +
+        'click, and your note stands against the draft until something answers it',
+      // Nothing is re-run and nothing is re-read, whatever the stage behind this gate does. A
+      // close is the one verdict whose price is the same at every gate in the app.
+      cost: FREE,
+      enabled: standing.isOpen,
+      blockedBecause: ruled,
+    },
     noteDepths: NOTE_DEPTH,
     rejectNeedsNote: rejectionNeedsANote(standing.subject),
+    closeNeedsNote: closingNeedsANote(standing.subject),
   }
 }
 

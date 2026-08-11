@@ -12,6 +12,7 @@ import { episodeLabel } from '../domain/spine.ts'
 import { writeIfAbsent, type LibraryPaths } from '../library.ts'
 import type { LLMEffort } from '../llm/adapter.ts'
 import type { CorrectionOutcome } from './correction-loop.ts'
+import { putsTheWorkDown } from './gate.ts'
 import type { Step, StepContext } from './step.ts'
 
 /**
@@ -123,10 +124,17 @@ export function extractTheCanonClaims(
       // spending a paid reading on a draft he sent back would be money on prose he has already
       // said is wrong. Nothing downstream reads this step's output, so `null` is the honest
       // answer rather than an empty extraction pretending a reading happened.
-      if (outcome.verdict === 'reject') {
+      //
+      // **A close is the same answer for the same reason** (E5-3, 0015): he put the draft
+      // down, so nothing was approved into this episode and a paid reading of it would be
+      // money spent on prose he has stopped on. `putsTheWorkDown` is the two verbs said once.
+      if (putsTheWorkDown(outcome.verdict)) {
         context.progress(
-          'Nothing to read for canon claims — the draft was rejected and the notes were routed ' +
-            'elsewhere, so no draft was approved into this episode (D21).',
+          outcome.verdict === 'close'
+            ? 'Nothing to read for canon claims — you put the draft down, so no draft was ' +
+              'approved into this episode and none of it is claiming anything of canon yet.'
+            : 'Nothing to read for canon claims — the draft was rejected and the notes were ' +
+              'routed elsewhere, so no draft was approved into this episode (D21).',
         )
         return null
       }

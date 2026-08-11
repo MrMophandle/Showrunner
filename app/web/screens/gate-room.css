@@ -1,0 +1,654 @@
+/**
+ * The gate room's own layout (E5-3, #83) — lifted from `mockups/gate-room.html`.
+ *
+ * `chrome.css` is the design system and knows nothing about a gate; this file is the room: the
+ * draft rendered as a document, the marks and the cards folded into it, the right rail, and the
+ * decision dock pinned to the bottom. Every colour, radius and type size below is a
+ * `chrome.css` token, and every geometry is the mockup's.
+ *
+ * ── The dock is out of flow, and that is not a shortcut ──────────────────────────
+ *
+ * `position: fixed`. It is what the mockup draws, and it happens to be the strongest possible
+ * answer to the rule this epic is built on: an element out of flow cannot move anything in
+ * flow, ever, whatever arrives inside it (`held-still.ts` treats `position: fixed` as sealed
+ * for exactly this reason). So the composer may expand in place — upward, over the page — and
+ * the draft Ryan is reading does not shift by a pixel while it does.
+ *
+ * The page reserves the dock's own height at the bottom instead of being covered by it
+ * (`--dock`), because a decision bar sitting on top of the last paragraph of a script is the
+ * same failure as a page that moves: he cannot read the thing he is ruling on.
+ *
+ * ── Everything else is a fixed box that scrolls inside itself ────────────────────
+ *
+ * The floor established the rule and the episode room carried it to the screen with the most
+ * on it. This is the screen with the most at STAKE — a ruling is being made on it — so the
+ * same rule holds with one addition: **the draft's own box is the tallest thing here and it
+ * scrolls itself.** A script is long, and a page that grew to fit one would put the dock's
+ * buttons a thousand pixels below the thing they are about.
+ *
+ * There is no `max-height` anywhere in this file, and `gate-room.test.tsx` asserts it.
+ */
+
+/* The mockup's own frame — 1240px, the same as the episode room's, and for the same rail. */
+.wrap[data-room='gate-room'] {
+  max-width: 1240px;
+}
+
+.gate {
+  /* Room for the dock, which is out of flow and would otherwise sit on the last line. */
+  padding-bottom: var(--dock);
+}
+
+:root {
+  /*
+   * The dock's reserved height, and the height of one verb inside it. Two numbers that have
+   * to agree, so they are declared together: the page's bottom padding is the first, and a
+   * verb's own box is the second.
+   *
+   * A verb's sentence runs long — `operating.ts` composes the whole consequence onto the
+   * rejection ("…and the stage that writes it becomes offerable with your note on it (D21)")
+   * and none of it may be trimmed, because "states the cost before the click" is not
+   * satisfied by half of it. So the box keeps its shape and offers the rest a scroll, exactly
+   * as `.room-offer` does in the episode room and for the identical reason. Booting it is
+   * what showed this: four full sentences at their natural height made a dock 280px tall,
+   * sitting over the bottom third of the script it is about.
+   */
+  --verb: 106px;
+  --dock: 138px;
+}
+
+/* ── The header ─────────────────────────────────────────────────────────────────
+ * Fixed, because the chip counts minutes and the standing line is recomposed on every read.
+ */
+.gate-head {
+  height: 122px;
+  overflow: hidden;
+  margin-bottom: 20px;
+}
+
+.gate-crumb__back::before {
+  /* The mockup's own arrow. A mark, not a word — the copy is the server's. */
+  content: '← ';
+}
+
+.gate-head__line {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.gate-head h1 {
+  font-size: 24px;
+}
+
+/*
+ * The mockup's amber chip. Amber means "your attention" everywhere in this cockpit, so an
+ * OPEN round wears it and a ruled one does not — the words say which either way.
+ */
+.gate-chip {
+  font-size: var(--type-label);
+  font-weight: 700;
+  letter-spacing: var(--track-tag);
+  text-transform: uppercase;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-tag);
+  padding: 2px 10px;
+  white-space: nowrap;
+}
+
+.gate-chip[data-open='true'] {
+  color: var(--warn);
+  border-color: #5c4c16;
+}
+
+.gate-head__standing {
+  display: block;
+  font-size: var(--type-meta);
+  color: var(--muted);
+  margin-top: 8px;
+}
+
+/* ── The two columns ────────────────────────────────────────────────────────── */
+
+/* `minmax(0, 1fr)`, for the episode room's reason: a wide document may not drag the page. */
+.gate-cols {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--rail);
+  gap: 20px;
+  align-items: start;
+}
+
+.gate-body {
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+
+.gate-body--board {
+  height: 280px;
+}
+
+.gate-body--loop {
+  height: 210px;
+}
+
+.gate-body--rounds {
+  height: 280px;
+}
+
+.gate-body--riders {
+  height: 260px;
+}
+
+.gate-body--live {
+  height: 248px;
+}
+
+/* ── The draft, rendered as a document ──────────────────────────────────────── */
+
+/*
+ * The tallest box on the page, and the only one that is about reading rather than about
+ * knowing. It scrolls itself, and it is TALL — the dock is out of flow and pinned, so the
+ * buttons are on screen at every scroll position and there is nothing to keep the reading
+ * column short for. Sized against the rail beside it so the two end together rather than the
+ * script stopping halfway up a column of panels.
+ */
+.gate-fold {
+  height: 900px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+  padding: 6px 2px 0;
+}
+
+.gate-fold__head {
+  font-family: var(--font-script);
+  color: var(--muted);
+  font-size: var(--type-small);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  margin-bottom: 18px;
+}
+
+.gate-fold__note {
+  display: block;
+  font-size: var(--type-small);
+  color: var(--muted);
+  margin-bottom: 14px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--rule);
+}
+
+/*
+ * A script, as a script looks. `pre-wrap` so the writer's own line breaks survive — a gate
+ * renders its artifact, and re-flowing a screenplay is not rendering it.
+ */
+.gate-doc {
+  font-family: var(--font-script);
+  font-size: var(--type-body);
+  line-height: 1.75;
+  color: var(--ink-2);
+  white-space: pre-wrap;
+}
+
+/* The quoted span, marked where it is. The colour is a second reading of a stated fact. */
+.gate-doc mark {
+  background: #2c250e;
+  color: #e8d49a;
+  padding: 1px 3px;
+  border-radius: var(--radius-chip);
+  border-bottom: 2px solid var(--warn);
+}
+
+.gate-doc mark[data-blocking='true'] {
+  background: #3a1414;
+  color: #f2b6b6;
+  border-bottom-color: var(--critical);
+}
+
+/* ── A finding card, folded in at its anchor ────────────────────────────────── */
+
+.gate-card {
+  /* Out of the document's typeface and out of its whitespace: a card is not the script. */
+  font-family: var(--font);
+  white-space: normal;
+  background: var(--page);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--warn);
+  border-radius: 0 var(--radius-panel) var(--radius-panel) 0;
+  padding: 14px 18px;
+  margin: 14px 0 20px;
+}
+
+.gate-card[data-blocking='true'] {
+  border-left-color: var(--critical);
+}
+
+.gate-card__where {
+  display: block;
+  font-size: var(--type-small);
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+
+.gate-say {
+  padding: 8px 0;
+  border-top: 1px solid var(--rule);
+}
+
+.gate-say:first-of-type {
+  border-top: none;
+  padding-top: 0;
+}
+
+.gate-say__line {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+
+.gate-say__concern {
+  font-size: var(--type-read);
+  color: var(--ink-2);
+}
+
+.gate-say__meta {
+  display: block;
+  font-size: var(--type-small);
+  color: var(--muted);
+  margin-top: 3px;
+}
+
+.gate-say label {
+  display: block;
+  font-size: var(--type-small);
+  color: var(--muted);
+  margin-top: 8px;
+}
+
+.gate-say textarea,
+.gate-say input {
+  width: 100%;
+  font: var(--type-meta) / 1.5 var(--font);
+  color: var(--ink);
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-chip);
+  padding: 6px 9px;
+  margin-top: 3px;
+}
+
+.gate-say__acts {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+  margin-top: 8px;
+}
+
+/* ── The rail ───────────────────────────────────────────────────────────────── */
+
+.gate-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--rule);
+  font-size: var(--type-body);
+}
+
+.gate-row:last-child {
+  border-bottom: none;
+}
+
+.gate-row__who {
+  color: var(--ink);
+  font-weight: 600;
+  min-width: 124px;
+}
+
+.gate-row__what {
+  color: var(--muted);
+  font-size: var(--type-meta);
+  flex: 1;
+}
+
+/* The board's dot — a second reading of the verdict word beside it, never the only one. */
+.gate-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: var(--radius-pill);
+  flex: none;
+  position: relative;
+  top: -1px;
+  background: var(--line-strong);
+}
+
+.gate-dot[data-verdict='clean'] {
+  background: var(--good);
+}
+
+.gate-dot[data-verdict='found'] {
+  background: var(--critical);
+}
+
+.gate-dot[data-verdict='stale'],
+.gate-dot[data-verdict='partial'],
+.gate-dot[data-verdict='gapped'] {
+  background: var(--warn);
+}
+
+.gate-note {
+  display: block;
+  font-size: var(--type-small);
+  color: var(--muted);
+  margin-top: 4px;
+}
+
+.gate-note--warn {
+  color: var(--warn);
+}
+
+/* ── The round history ──────────────────────────────────────────────────────── */
+
+.gate-round {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--rule);
+}
+
+.gate-round:last-child {
+  border-bottom: none;
+}
+
+.gate-round__name {
+  font-size: var(--type-body);
+  color: var(--ink);
+  font-weight: 650;
+}
+
+/*
+ * "stale — from before your last rejection". A tag, and the whole sentence is inside it: the
+ * words are the server's, computed off the two rounds' versions, and there is no flag anywhere.
+ */
+.gate-round__stale {
+  display: block;
+  font-size: var(--type-small);
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-tag);
+  padding: 3px 8px;
+  margin-top: 5px;
+}
+
+.gate-round__quote {
+  display: block;
+  font-size: var(--type-small);
+  color: var(--ink-2);
+  font-style: italic;
+  margin-top: 5px;
+}
+
+/* ── The riders ─────────────────────────────────────────────────────────────── */
+
+.gate-rider {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--rule);
+}
+
+.gate-rider:last-child {
+  border-bottom: none;
+}
+
+.gate-rider__what {
+  font-size: var(--type-read);
+  color: var(--ink);
+}
+
+.gate-rider__part {
+  display: block;
+  font-size: var(--type-small);
+  color: var(--muted);
+  margin-top: 4px;
+}
+
+.gate-rider label {
+  display: block;
+  font-size: var(--type-small);
+  color: var(--muted);
+  margin-top: 6px;
+}
+
+.gate-rider textarea {
+  width: 100%;
+  font: var(--type-meta) / 1.5 var(--font);
+  color: var(--ink);
+  background: var(--page);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-chip);
+  padding: 6px 9px;
+  margin-top: 3px;
+}
+
+.gate-offer {
+  height: 96px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+  margin-bottom: 8px;
+}
+
+.gate-offer .btn {
+  width: 100%;
+  display: block;
+}
+
+/* ── The decision dock ──────────────────────────────────────────────────────── */
+
+/*
+ * Pinned, always visible, and OUT OF FLOW — see the header. It grows upward when the composer
+ * opens, and because nothing in flow is above it, nothing on the page moves when it does.
+ */
+.gate-dock {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(13, 13, 13, 0.94);
+  backdrop-filter: blur(8px);
+  border-top: 1px solid var(--line);
+  padding: 14px var(--page-pad-x);
+  z-index: 20;
+  /*
+   * **The draft stays on screen.** That is the whole of why the composer expands in place
+   * rather than opening a dialog (`mockups/README.md`), and a dock that grew to 82vh honoured
+   * the letter of it and broke the point — booting it is what showed that: seven depth cards
+   * and a note box covered everything but the title. So the dock is capped at a little over
+   * half the viewport and scrolls inside itself, which leaves the top of the artifact visible
+   * behind it at every height it can reach.
+   */
+  max-height: 62vh;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+
+.gate-dock__inner {
+  max-width: 1240px;
+  margin: 0 auto;
+}
+
+.gate-dock__verbs {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) repeat(4, minmax(0, 210px));
+  gap: 10px;
+  align-items: stretch;
+}
+
+.gate-dock__headline {
+  font-size: var(--type-meta);
+  color: var(--muted);
+  align-self: center;
+}
+
+.gate-dock__verbs .btn {
+  width: 100%;
+  display: block;
+  height: var(--verb);
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+
+/* ── The composer, expanded in place ────────────────────────────────────────── */
+
+/*
+ * The ruled pattern (`mockups/README.md`, and the review desk's live one): pressing a verb
+ * that takes notes expands the dock — it is NEVER a popup, because the draft has to stay on
+ * screen while he says what is wrong with it.
+ */
+.gate-composer {
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 14px;
+  margin-bottom: 13px;
+}
+
+.gate-composer__h {
+  font-size: var(--type-action);
+  color: var(--ink-2);
+  margin-bottom: 10px;
+}
+
+.gate-composer__note {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  padding: 10px 12px;
+  margin-bottom: 10px;
+}
+
+.gate-composer__note textarea {
+  width: 100%;
+  font: var(--type-body) / 1.5 var(--font);
+  color: var(--ink);
+  background: var(--page);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-chip);
+  padding: 7px 10px;
+}
+
+.gate-composer__note input {
+  font: var(--type-meta) / 1.5 var(--font);
+  color: var(--ink);
+  background: var(--page);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-chip);
+  padding: 5px 8px;
+  margin-top: 6px;
+  width: 220px;
+}
+
+/*
+ * The depth picker, per note. Cards rather than a `<select>`, so each one says what it would
+ * do BEFORE it is picked — including the two that reach nothing in this build, which are
+ * offered anyway because a route that lands nowhere is still a verdict Ryan gave
+ * (`domain/routing.ts`). Seven of them, so they are dense.
+ */
+.gate-depths {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(178px, 1fr));
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.gate-depth {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-chip);
+  padding: 6px 9px;
+  font-size: var(--type-label);
+  line-height: 1.45;
+  color: var(--muted);
+  cursor: pointer;
+  display: block;
+}
+
+.gate-depth input {
+  margin-right: 6px;
+}
+
+.gate-depth b {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.gate-depth[data-picked='true'] {
+  border-color: var(--warn);
+  background: #221b06;
+}
+
+.gate-composer__foot {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.gate-composer__foot .btn {
+  flex: 1 1 320px;
+}
+
+.gate-composer__hint {
+  font-size: var(--type-small);
+  color: var(--muted);
+  flex: 1 1 260px;
+}
+
+.gate-kbd {
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-tag);
+  padding: 1px 5px;
+  margin-right: 5px;
+  color: var(--ink-2);
+}
+
+/* ── The index ──────────────────────────────────────────────────────────────── */
+
+.gate-index__row {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--rule);
+}
+
+.gate-index__row:last-child {
+  border-bottom: none;
+}
+
+.gate-index__sentence {
+  display: block;
+  font-size: var(--type-body);
+  color: var(--ink-2);
+  margin-bottom: 8px;
+}
+
+/* A refusal that arrived after a click — a race, since preconditions come before it. */
+.gate-problem {
+  margin-top: 12px;
+  font-size: var(--type-meta);
+  color: var(--warn);
+}
+
+@media (max-width: 900px) {
+  .gate-head {
+    height: auto;
+  }
+
+  .gate-cols {
+    grid-template-columns: 1fr;
+  }
+
+  .gate-dock__verbs {
+    grid-template-columns: 1fr;
+  }
+}

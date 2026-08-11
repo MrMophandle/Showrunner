@@ -37,18 +37,60 @@ import type { Runner } from './runner.ts'
  * reason artifact freshness is (1.3).
  *
  * ── Nothing may block a ruling ──────────────────────────────────────────────────
- * The three verbs below take no preconditions. There is no state in which they refuse a
+ * The verbs below take no preconditions. There is no state in which they refuse a
  * verdict, no validation of the artifact, and no findings check — D12 lets deterministic
  * findings block the NEXT STAGE, never Ryan's gate, and checks argue but never veto
  * (invariant 3). The only two errors are "no such gate" and "that round is already ruled",
  * and neither declines a verdict: the first has nothing to rule on and the second has
  * nothing left open. Rounds are NOT capped. `MAX_ATTEMPTS_PER_STEP` bounds a step that is
  * FAILING; a rejection is not a failure, and Ryan may reject as many rounds as he likes.
+ *
+ * ── The fourth verb, and why it does not un-say the sentence above (E5-3, #83) ───
+ * This module said "three verbs" for four epics, and the count was never the ruling — the
+ * ruling is the paragraph above it, that **nothing about the artifact may stand between Ryan
+ * and a verdict.** `close` keeps that letter for letter: no findings check, no validation, no
+ * state of the run, and no question about which stage opened the gate. Its one refusal is its
+ * own NOTE, which is the verb's object rather than a condition on the world — the same shape
+ * `reject`'s refusal has, and for the same reason (`rejectionNeedsANote` below).
+ *
+ * What it exists for is the gap the E4 ledger names: *"A presenting gate has one exit, and it
+ * is approve."* A presenting stage produces nothing, so a rejection whose note is about the
+ * draft in front of him re-presents the same bytes as round 2 — and D7 holds the episode while
+ * that gate is open, so the rewrite the note asked for cannot happen until he approves the
+ * draft he just rejected. `close` is the exit: the run ends, the note stands against the
+ * artifact, and the episode is free.
+ *
+ * **It is a fourth verdict rather than a fourth meaning for `reject`**, and 0015 carries that
+ * argument in full: one word may not mean *do it again* at one gate and *I am putting this
+ * down* at another, told apart only by a catalogue that can lose an entry. 0004 ruled this
+ * once already, over `override`.
+ *
+ * **And it is offered at every gate, not only a presenting one.** Nothing below reads a stage,
+ * a work kind or a step name — a gate says where Ryan stood, never whether he may rule. What
+ * each STEP does when a close sends the run back into it is the step's own business
+ * (`correction-loop.ts`, `present-step.ts`), and both do the same thing: end, and change
+ * nothing.
  */
 
-/** The three verbs, and the only ways a round closes. */
-export const RULING_VERDICT = ['approve', 'reject', 'override'] as const
+/** The four verbs, and the only ways a round closes. */
+export const RULING_VERDICT = ['approve', 'reject', 'override', 'close'] as const
 export type RulingVerdict = (typeof RULING_VERDICT)[number]
+
+/**
+ * **The two verdicts that end a step without approving it**, and the one predicate that says
+ * so — read by both steps that own a gate, so "what ends a run" is one answer in one place.
+ *
+ * They arrive at that shared end by two different roads and stay two words in the ledger
+ * forever: a `reject` ends the run only when every note was routed to ANOTHER artifact (D21,
+ * E4-5), and a `close` ends it whatever the notes say, because putting a draft down is what it
+ * IS. Nothing may collapse them — `verdict` is carried through every outcome type unchanged.
+ */
+export const putsTheWorkDown = (verdict: RulingVerdict): boolean =>
+  verdict === 'reject' || verdict === 'close'
+
+/** Approved, or approved over something. The only two verdicts that carry a run onward. */
+export const carriesTheRunOn = (verdict: RulingVerdict): boolean =>
+  verdict === 'approve' || verdict === 'override'
 
 /**
  * How deep a rejection note sends the work back (4.7, D21).
@@ -101,7 +143,7 @@ export interface Ruling {
   verdict: RulingVerdict
   /** Ryan's optional words on an approval or an override. */
   comment: string | null
-  /** Non-empty on a rejection, empty otherwise. */
+  /** Non-empty on a rejection and on a close, empty otherwise. */
   notes: GateNote[]
   ruledAt: string
 }
@@ -229,7 +271,7 @@ export function presentForRuling(store: Store, where: GateWhere, draft: GateDraf
 // ── Ruling ──────────────────────────────────────────────────────────────────────
 
 /**
- * The ruling API: three verbs, and the only thing that resumes a paused run.
+ * The ruling API: four verbs, and the only thing that resumes a paused run.
  *
  * It is a factory for the same reason `createRunner` is — a ruling writes the ledger,
  * appends to the log, and sends the run back into its step, and those three are one act.
@@ -243,6 +285,15 @@ export interface Rulings {
   reject(gateId: string, ruling: { notes: readonly NoteDraft[] }): GateStanding
   /** Approve OVER something — recorded distinctly, forever (invariant 3). */
   override(gateId: string, ruling?: { comment?: string }): GateStanding
+  /**
+   * **Put the draft down** (E5-3, #83): the run ends, the note stands against the artifact,
+   * the episode is free, and nothing regenerates until Ryan asks for it.
+   *
+   * At least one note, and it is required for the reason a rejection's is — a parking says
+   * why, because 4.4 reads it back. Depths are legal on it and mean what they always mean: a
+   * closing note routed to the outline is a note against the outline, put down at this gate.
+   */
+  close(gateId: string, ruling: { notes: readonly NoteDraft[] }): GateStanding
 }
 
 /**
@@ -264,6 +315,27 @@ export const rejectionNeedsANote = (subject: string): string =>
   'notes are what the step reopens with. A rejection that said nothing would reopen the ' +
   'round with nothing to write against, and later runs read your notes back off the desk (4.4).'
 
+/**
+ * **Why putting a draft down with no note is refused** — the same rule as above, said about
+ * the verb that does not reopen anything (E5-3).
+ *
+ * It has its own sentence rather than sharing the rejection's because the reason is not the
+ * same reason. A rejection needs a note because the step REOPENS with it. A close reopens
+ * nothing at all: the run ends. Its note is what the artifact carries afterwards — the thing
+ * `notesOwedBy` reads to make the writing stage offerable again, and the thing the next
+ * writer run is handed off the desk. A close with no note would end the run, free the
+ * episode, and leave no trace anywhere of why he stopped, which is the one outcome 4.7's
+ * *"a rejection says why"* exists to prevent.
+ *
+ * Three readers, identically, exactly as the rejection's has: the ruling throws it, the API
+ * refuses with it, and the disabled button in the gate room shows it BEFORE the click.
+ */
+export const closingNeedsANote = (subject: string): string =>
+  `Putting ${subject} down needs at least one note — a parking says why, the same as a ` +
+  'rejection does (4.7). Nothing reopens on this verb, so the note is the whole record: it ' +
+  'stands against the artifact, it is what makes the stage that writes it offerable again, ' +
+  'and the next run reads it back off the desk (4.4).'
+
 export function createRulings(store: Store, events: EventLog, runner: Runner): Rulings {
   function rule(
     gateId: string,
@@ -281,8 +353,13 @@ export function createRulings(store: Store, events: EventLog, runner: Runner): R
     }
     const round = before.round
     const notes = given.notes ?? []
+    // The only precondition either verb has, and it is on the verb's own OBJECT rather than
+    // on the artifact, the findings or the run. Two sentences because they are two reasons.
     if (verdict === 'reject' && notes.length === 0) {
       throw new Error(rejectionNeedsANote(before.subject))
+    }
+    if (verdict === 'close' && notes.length === 0) {
+      throw new Error(closingNeedsANote(before.subject))
     }
 
     store.transaction(() => {
@@ -317,12 +394,7 @@ export function createRulings(store: Store, events: EventLog, runner: Runner): R
     // Appended after the transaction commits, never inside it: `append` notifies its
     // subscribers as it writes, and a rollback cannot un-tell a browser.
     events.append({
-      kind:
-        verdict === 'approve'
-          ? 'gate-approved'
-          : verdict === 'reject'
-            ? 'gate-rejected'
-            : 'gate-overridden',
+      kind: GATE_EVENT[verdict],
       runId: gate.runId,
       stepId: gate.stepId,
       episodeId: gate.episodeId,
@@ -351,7 +423,20 @@ export function createRulings(store: Store, events: EventLog, runner: Runner): R
     approve: (gateId, ruling) => rule(gateId, 'approve', { comment: ruling?.comment }),
     reject: (gateId, ruling) => rule(gateId, 'reject', { notes: ruling.notes }),
     override: (gateId, ruling) => rule(gateId, 'override', { comment: ruling?.comment }),
+    close: (gateId, ruling) => rule(gateId, 'close', { notes: ruling.notes }),
   }
+}
+
+/**
+ * One event kind per verdict — a map rather than a chain of ternaries, so a fifth verb is a
+ * type error here rather than a verdict that quietly logs itself as an override (0004's four
+ * kinds, and 0015's fifth).
+ */
+const GATE_EVENT: Record<RulingVerdict, 'gate-approved' | 'gate-rejected' | 'gate-overridden' | 'gate-closed'> = {
+  approve: 'gate-approved',
+  reject: 'gate-rejected',
+  override: 'gate-overridden',
+  close: 'gate-closed',
 }
 
 /** The machine-written sentence for a ruling — the floor and the episode room render these. */
@@ -369,9 +454,16 @@ function sentenceFor(
     'SELECT name FROM step WHERE id = ?',
     standing.gate.stepId,
   )!.name
-  return `rejected ${standing.subject} with ${noteCount} ${
-    noteCount === 1 ? 'note' : 'notes'
-  } — ${stepName} reopens as round ${standing.round + 1}`
+  const notes = `${noteCount} ${noteCount === 1 ? 'note' : 'notes'}`
+  // The two sentences are as different as the two acts: one says what reopens, and the other
+  // says that nothing does. Neither is ever the other's wording with a word swapped.
+  if (verdict === 'close') {
+    return (
+      `put ${standing.subject} down with ${notes} — ${stepName} ends, nothing is rewritten, ` +
+      'and your note stands against it'
+    )
+  }
+  return `rejected ${standing.subject} with ${notes} — ${stepName} reopens as round ${standing.round + 1}`
 }
 
 /** "the ep06 script gate is open — round 2". Composed where it is true, like the lock waits. */
@@ -541,10 +633,13 @@ export function roundsOf(store: Store, gateId: string): GateRound[] {
  * **Every version of this artifact Ryan approved as an explicit override**, ascending.
  *
  * A version and not a boolean: an override is his opinion of the draft that was in front of
- * him, and it must not license the next one. `approve` deliberately does not count. The two
- * verbs are kept apart in the ledger precisely so that "he approved" and "he approved over
- * something" stay different sentences forever (invariant 3), and folding them here would undo
- * that at the two places it is load-bearing.
+ * him, and it must not license the next one. `approve` deliberately does not count, and
+ * neither does `close`: **putting a draft down is not a ruling over anything standing on it**,
+ * so D12's wall (`stage-wall.ts`) and D11's ratio (`cried-wolf.ts`) are the two readers this
+ * verb is invisible to, and they are invisible to it by this filter and nothing else. The
+ * verbs are kept apart in the ledger precisely so that "he approved", "he approved over
+ * something" and "he stopped" stay different sentences forever (invariant 3), and folding any
+ * of them here would undo that at the two places it is load-bearing.
  *
  * The two readers ask different questions of this one list, and the difference matters:
  *

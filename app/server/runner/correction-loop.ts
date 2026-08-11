@@ -13,7 +13,7 @@ import {
 import { verdictBoard, type VerdictBoard } from '../domain/panel.ts'
 import { landsOn, notesOwedBy } from '../domain/routing.ts'
 import { episodeLabel, findEpisode, scenesOf } from '../domain/spine.ts'
-import type { GateNote, GateRound } from './gate.ts'
+import { carriesTheRunOn, type GateNote, type GateRound } from './gate.ts'
 import { stageBlockingFindings } from './stage-wall.ts'
 import type { Step, StepContext } from './step.ts'
 
@@ -187,10 +187,17 @@ export interface CorrectionReport extends DraftsUnderReview {
  * what the loop has always done.
  */
 export interface CorrectionOutcome extends CorrectionReport {
-  /** How the round that closed it was ruled. `reject`: routed away, and nothing was rewritten. */
-  verdict: 'approve' | 'override' | 'reject'
+  /**
+   * How the round that closed it was ruled.
+   *
+   * `reject`: routed away, and nothing was rewritten. `close`: **he put the draft down**
+   * (E5-3, 0015) — the notes may name anything at all, this loop rewrites nothing either way,
+   * and the two words stay two because "you sent it elsewhere" and "you stopped" are two
+   * things for every reader downstream.
+   */
+  verdict: 'approve' | 'override' | 'reject' | 'close'
   gateRound: number
-  /** The notes that were routed elsewhere, when that is why this returned. */
+  /** The notes that were routed elsewhere, or the ones he put it down with. */
   routed: readonly GateNote[]
 }
 
@@ -251,13 +258,39 @@ export function correctionLoop(produce: Producer, check: Step): Step<CorrectionO
       // ── Back in on a ruling ──────────────────────────────────────────────────
       // Approved, or approved over the findings still standing. The work is done and on the
       // volume: nothing is re-produced, nothing re-checked, nothing re-spent.
-      if (standing && ruled && ruled.verdict !== 'reject') {
+      //
+      // **Asked as "did it carry the run on", never as "was it not a rejection"** (E5-3). The
+      // negative form was correct while there were three verbs and is a bug the moment there
+      // are four: a close would fall through it and be treated as an approval, which would
+      // advance the lifecycle on a draft Ryan had just put down. `carriesTheRunOn` names the
+      // two that do, so a fifth verb has to declare itself rather than inherit an approval.
+      if (standing && ruled && carriesTheRunOn(ruled.verdict)) {
         const report = reportOf(store, standing.gate.artifactId)
         context.progress(
           `${ruled.verdict === 'override' ? 'Overridden' : 'Approved'} at round ${standing.round}` +
             ' — nothing rewritten, nothing re-checked, nothing re-spent',
         )
         return { ...report, verdict: ruled.verdict, gateRound: standing.round, routed: [] }
+      }
+
+      // ── Back in on a close: he put the draft down (E5-3, #83) ────────────────
+      // The one verdict that needs no question asked about its notes. A rejection is read for
+      // where it was routed, because a note that lands here is work for this producer; a close
+      // says the work stops, whatever it names. So nothing is written, nothing is re-checked,
+      // nothing is re-spent, the run ends, and his note stands against the artifact — which is
+      // what makes the stage that writes it offerable again (`domain/routing.ts`).
+      if (standing && ruled?.verdict === 'close') {
+        const report = reportOf(store, standing.gate.artifactId)
+        context.progress(
+          `Put down at round ${standing.round} — nothing is rewritten, this episode is free, ` +
+            'and your note stands against the draft until something answers it (D21)',
+        )
+        return {
+          ...report,
+          verdict: 'close',
+          gateRound: standing.round,
+          routed: ruled.notes,
+        }
       }
 
       // ── Back in on a rejection that was routed elsewhere (E4-5, D21) ─────────

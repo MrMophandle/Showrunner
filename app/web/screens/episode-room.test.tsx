@@ -542,8 +542,9 @@ describe('a decision made in another room is a link into that room', () => {
     expect(link.getAttribute('href')).toBe(`/gate/${gateId}`)
     expect(link.textContent).toContain('Rule on the ep02 premise-brief')
     expect(link.querySelector('.cost')!.textContent).toContain('$0.00 to open it')
-    // Honest about the room BEFORE the click, not after.
-    expect(link.getAttribute('title')).toContain('#83')
+    // Honest about the room BEFORE the click, not after — and E5-3 (#83) built it, so there
+    // is nothing left to warn him about and the link carries no title at all.
+    expect(link.getAttribute('title')).toBeNull()
     expect(door.querySelector('.room-door__standing')!.textContent).toContain(
       'Open at round 1, waiting on you',
     )

@@ -377,8 +377,15 @@ export function checkBenchView(
  * current version, which is what makes a rewrite clear a card with nothing written to the
  * finding behind it (0010). What answers them is the scene-scoped re-check, and its button is
  * the one `applyRewrite` hands back.
+ *
+ * **Exported for the gate room** (E5-3, #83), which is its second reader and folds these cards
+ * into the artifact at their anchors. It is exported rather than copied for the reason
+ * `ClusterSay.sentence` moved down to `panel.ts` in the first place: two composers of one card
+ * would drift, and the copy that drifted would be the one telling Ryan what a check said at
+ * the moment he rules on it. This bench is script-only (`BENCH_KIND`) and a gate is over any
+ * written kind, so what the gate room needs is this FUNCTION rather than this view.
  */
-function clustersOn(
+export function clustersOn(
   store: Store,
   library: LibraryPaths,
   artifact: Artifact,

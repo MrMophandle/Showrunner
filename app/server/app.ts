@@ -40,7 +40,14 @@ import {
   recheckScene,
   remediationsFor,
 } from './remediation.ts'
-import { gateStanding, rejectionNeedsANote, type NoteDraft, type Rulings } from './runner/gate.ts'
+import { gateIndexView, gateRoomView } from './gate-room.ts'
+import {
+  closingNeedsANote,
+  gateStanding,
+  rejectionNeedsANote,
+  type NoteDraft,
+  type Rulings,
+} from './runner/gate.ts'
 import type { Runner } from './runner/runner.ts'
 import { stageCatalogue } from './runner/stages.ts'
 import { notOnAnEpisodeSweepBecause, sweepView } from './sweep.ts'
@@ -230,10 +237,11 @@ export function createApp(
   })
 
   /**
-   * The three verdicts this page offers. None takes a precondition and none may be
-   * refused on the artifact's account — checks argue, they never veto (invariant 3) — so
-   * the only errors any of them can return are "no such gate" and "that round is already
-   * ruled", both of which come straight out of `createRulings`.
+   * The four verdicts (E5-3). None takes a precondition and none may be refused on the
+   * artifact's account — checks argue, they never veto (invariant 3) — so the only errors any
+   * of them can return are "no such gate", "that round is already ruled", and, for the two
+   * verbs whose object is a note, the missing note. All of them come straight out of
+   * `createRulings`, and the last two are the sentences the disabled button was showing.
    */
   app.post('/api/gate/:id/approve', async (c) => {
     const body = await json(c.req.raw)
@@ -277,6 +285,45 @@ export function createApp(
       return c.json({ error: rejectionNeedsANote(standing.subject) }, 400)
     }
     return rule(c, () => operating.rulings.reject(c.req.param('id'), { notes }))
+  })
+
+  /**
+   * **Put the draft down** (E5-3, #83) — the fourth verdict, and the exit a presenting gate
+   * did not have.
+   *
+   * It is a sibling of `reject` in every respect that matters here: the notes come off the
+   * same shape, the missing-note refusal is the sentence the disabled button was already
+   * showing (`closingNeedsANote`), and the ruling resumes the run through the same seam. What
+   * differs is what the step does on the way back in, and that is the step's business, not
+   * this route's — this file is the wire (`runner/present-step.ts`, `runner/correction-loop.ts`).
+   */
+  app.post('/api/gate/:id/close', async (c) => {
+    const body = await json(c.req.raw)
+    const notes = notesFrom(body['notes'])
+    if (notes.length === 0) {
+      const standing = gateStanding(store, c.req.param('id'))
+      if (!standing) return c.json({ error: `No such gate: ${c.req.param('id')}` }, 404)
+      return c.json({ error: closingNeedsANote(standing.subject) }, 400)
+    }
+    return rule(c, () => operating.rulings.close(c.req.param('id'), { notes }))
+  })
+
+  /**
+   * **The gate room** (E5-3, #83; 5.3, D15): the draft under review rendered full-height with
+   * the findings folded in at their anchors, the verdict board, the riders, the round history,
+   * and the four verbs in a dock.
+   *
+   * A GET, and it rules nothing. `/api/gate` is the thin index of what is open — the same
+   * question the floor asks, answered as a list of sentences that link — and `/api/gate/:id`
+   * is one gate whole. Neither starts anything: opening the room where the ruling is MADE may
+   * not itself be a ruling (invariant 5).
+   */
+  app.get('/api/gate', (c) => c.json(gateIndexView(store, paths)))
+
+  app.get('/api/gate/:gateId', (c) => {
+    const view = gateRoomView(store, paths, c.req.param('gateId'), operating.readiness())
+    if (!view) return c.json({ error: `No such gate: ${c.req.param('gateId')}` }, 404)
+    return c.json(view)
   })
 
   /**

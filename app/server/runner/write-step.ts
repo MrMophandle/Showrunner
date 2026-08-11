@@ -51,6 +51,7 @@ import {
   type Producer,
   type ProducerBrief,
 } from './correction-loop.ts'
+import { putsTheWorkDown } from './gate.ts'
 import type { Stage, StageCatalogue, StageOffer, Step, StepContext } from './step.ts'
 import { checkTextAgainstCanon, TEXT_CHECK_CALL } from './text-check-step.ts'
 
@@ -259,9 +260,10 @@ export interface WriteClose {
   artifactId: string
   /**
    * How the round that closed the gate was ruled. `reject` is E4-5's: every note was routed
-   * away from this draft, so nothing was rewritten and nothing moved (D21).
+   * away from this draft, so nothing was rewritten and nothing moved (D21). `close` is E5-3's:
+   * he put the draft down, which moves nothing either and is a different word forever (0015).
    */
-  verdict: 'approve' | 'override' | 'reject'
+  verdict: 'approve' | 'override' | 'reject' | 'close'
   gateRound: number
   /** Where the approval left the episode on the lifecycle, and why (domain/lifecycle.ts). */
   lifecycle: LifecycleMove
@@ -787,25 +789,32 @@ function advancePastTheGate(step: WriteStep, producerName: string): Step<WriteCl
       // episode stayed rather than passing a rejection through the function that advances on
       // approvals (`domain/lifecycle.ts`).
       const where = episodeInShow(context.store, context.episodeId)
-      const lifecycle =
-        outcome.verdict === 'reject'
-          ? stayedAt(
-              context.store,
-              context.episodeId,
-              `${where ? episodeLabel(where.episode.number) : 'The episode'} stays at ${step} — ` +
-                `you rejected it and routed ${
-                  outcome.routed.length === 1 ? 'the note' : 'every note'
-                } elsewhere, and a rejection is not an approval.`,
-            )
-          : advanceOnApproval(context.store, context.episodeId, step)
+      const label = where ? episodeLabel(where.episode.number) : 'The episode'
+      // Two verbs end a stage without approving it, and each says its own why (0015). A close
+      // is not "routed away" — the notes may name this very draft — so it may not borrow the
+      // rejection's sentence, and `putsTheWorkDown` is what keeps the branch honest rather
+      // than a chain of negations that a fifth verb would fall through.
+      const stopped =
+        outcome.verdict === 'close'
+          ? `${label} stays at ${step} — you put the draft down with ${
+              outcome.routed.length === 1 ? 'a note' : `${outcome.routed.length} notes`
+            }, and putting something down is not an approval.`
+          : `${label} stays at ${step} — you rejected it and routed ${
+              outcome.routed.length === 1 ? 'the note' : 'every note'
+            } elsewhere, and a rejection is not an approval.`
+      const lifecycle = putsTheWorkDown(outcome.verdict)
+        ? stayedAt(context.store, context.episodeId, stopped)
+        : advanceOnApproval(context.store, context.episodeId, step)
       const spend = costOfRun(context.store, context.runId)
       const sentence =
         `${
           outcome.verdict === 'override'
             ? 'Overridden'
-            : outcome.verdict === 'reject'
-              ? 'Rejected and routed away'
-              : 'Approved'
+            : outcome.verdict === 'close'
+              ? 'Put down'
+              : outcome.verdict === 'reject'
+                ? 'Rejected and routed away'
+                : 'Approved'
         } at round ` + `${outcome.gateRound} · ${lifecycle.sentence} · ${spentSentence(spend)}`
 
       context.progress(sentence)

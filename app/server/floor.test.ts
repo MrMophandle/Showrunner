@@ -159,11 +159,12 @@ describe('a needs-you card is computed from a record that holds work still, or s
     expect(card!.since).toContain('just now')
 
     // And WHERE — the gate room's real address, with the gate's real id on it, so the link
-    // is the act rather than a search. The room says what it can do today rather than
-    // pretending: E5-3 (#83) builds it, and the card carries that sentence.
+    // is the act rather than a search. E5-3 (#83) built that room, so there is nothing left
+    // for the card to be honest about: `roomNotYet` is null exactly while the room can do
+    // what the card is sending him there to do.
     expect(card!.href).toBe(`/gate/${open.gate.id}`)
     expect(card!.room).toBe('the gate room')
-    expect(card!.roomNotYet).toContain('#83')
+    expect(card!.roomNotYet).toBeNull()
 
     // Verb + object + scope + cost, and the cost is the truth about the CLICK.
     expect(card!.act.sentence).toBe('Rule on the ep02 premise-brief — round 1, at its gate')

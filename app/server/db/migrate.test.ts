@@ -207,6 +207,32 @@ function applyThrough(upTo: number): void {
   }
 }
 
+/**
+ * Everything from `after` on, whatever has been added since — the numbers a `migrate()` call
+ * from that point is expected to return.
+ *
+ * Derived rather than written out, and every assertion below uses it. The first blocks in this
+ * file already did; the later ones hardcoded their lists, so every new migration broke four
+ * tests that were not about it. What each of those tests is actually asserting is "0011 ran
+ * against a library with rows in it and altered nothing" — the migrations that happen to
+ * follow it are not the subject, and pinning them makes this file a tax on the next epic.
+ */
+/**
+ * The two tables a migration is ALLOWED to write to without being accused of altering data.
+ *
+ * `schema_migration` is its own ledger. `event_kind` is the lookup table 0004 built precisely
+ * so that a new kind costs one INSERT at any table size ("after this, E2's proposal kinds,
+ * E3's finding kinds and E6's media kinds each cost one INSERT") — 0015's `gate-closed` is the
+ * first one added since, and an assertion that forbade it would be forbidding the thing 0004's
+ * rebuild was FOR. Everything else in the file still has to come out byte for byte.
+ */
+const UNTOUCHED_BY = ['schema_migration', 'event_kind']
+
+const fromHere = (after: number): number[] =>
+  migrationsOnDisk()
+    .map((migration) => migration.number)
+    .filter((number) => number > after)
+
 describe('0004 · rebuilding the event log', () => {
   function writeThreeEvents(): void {
     store.run("INSERT INTO show (id, key, title) VALUES ('show1', 'greyharbor', 'Grey Harbor')")
@@ -607,7 +633,7 @@ describe('0010 · findings, added beside a populated library', () => {
     // and grows nothing, which is what it means for a check, a board and a check's own scope
     // to be new records rather than new state on something that already exists.
     for (const [name, rows] of Object.entries(before)) {
-      if (name === 'schema_migration') continue
+      if (UNTOUCHED_BY.includes(name)) continue
       expect({ [name]: store.all<unknown>(`SELECT * FROM ${name}`) }).toEqual({ [name]: rows })
     }
     expect(tableNames(store).filter((name) => !(name in before))).toEqual(
@@ -741,7 +767,7 @@ describe('0011 · the continuity board, added beside a populated library', () =>
     )
 
     for (const [name, rows] of Object.entries(before)) {
-      if (name === 'schema_migration') continue
+      if (UNTOUCHED_BY.includes(name)) continue
       expect({ [name]: store.all<unknown>(`SELECT * FROM ${name}`) }).toEqual({ [name]: rows })
     }
     expect(tableNames(store).filter((name) => !(name in before))).toEqual(
@@ -867,10 +893,10 @@ describe('0012 · what a check was handed, and what it could not reach', () => {
       tableNames(store).map((name) => [name, store.all<unknown>(`SELECT * FROM ${name}`)]),
     )
 
-    expect(migrate(store).map((m) => m.number)).toEqual([12, 13, 14])
+    expect(migrate(store).map((m) => m.number)).toEqual(fromHere(11))
 
     for (const [name, rows] of Object.entries(before)) {
-      if (name === 'schema_migration') continue
+      if (UNTOUCHED_BY.includes(name)) continue
       expect({ [name]: store.all<unknown>(`SELECT * FROM ${name}`) }).toEqual({ [name]: rows })
     }
     expect(tableNames(store).filter((name) => !(name in before))).toEqual(SCOPE_TABLE)
@@ -1019,10 +1045,10 @@ describe('0013 · a scene may stop existing', () => {
       tableNames(store).map((name) => [name, store.all<unknown>(`SELECT * FROM ${name}`)]),
     )
 
-    expect(migrate(store).map((m) => m.number)).toEqual([13, 14])
+    expect(migrate(store).map((m) => m.number)).toEqual(fromHere(12))
 
     for (const [name, rows] of Object.entries(before)) {
-      if (name === 'schema_migration') continue
+      if (UNTOUCHED_BY.includes(name)) continue
       expect({ [name]: store.all<unknown>(`SELECT * FROM ${name}`) }).toEqual({ [name]: rows })
     }
     // It adds no table at all: a ruling that was already made, made reachable.
@@ -1168,7 +1194,7 @@ describe('0014 · a routed note names its target and the version it stood at', (
     aRejectionWithANote()
     const before = store.all<unknown>('SELECT * FROM gate_note')
 
-    expect(migrate(store).map((m) => m.number)).toEqual([14])
+    expect(migrate(store).map((m) => m.number)).toEqual(fromHere(13))
 
     expect(store.all<unknown>('SELECT seq, gate_id, round, note, depth, target FROM gate_note')).toEqual(
       before,
@@ -1215,12 +1241,126 @@ describe('0014 · a routed note names its target and the version it stood at', (
       tableNames(store).map((name) => [name, store.all<unknown>(`SELECT * FROM ${name}`)]),
     )
 
-    expect(migrate(store).map((m) => m.number)).toEqual([14])
+    expect(migrate(store).map((m) => m.number)).toEqual(fromHere(13))
 
     for (const [name, rows] of Object.entries(before)) {
-      if (name === 'schema_migration' || name === 'gate_note') continue
+      if (UNTOUCHED_BY.includes(name) || name === 'gate_note') continue
       expect({ [name]: store.all<unknown>(`SELECT * FROM ${name}`) }).toEqual({ [name]: rows })
     }
+    expect(tableNames(store).filter((name) => !(name in before))).toEqual([])
+    expect(store.get('PRAGMA integrity_check')).toEqual({ integrity_check: 'ok' })
+    expect(store.all('PRAGMA foreign_key_check')).toEqual([])
+    expect(migrate(store)).toEqual([])
+  })
+})
+
+/**
+ * **0015 · the fourth verdict, and the cascade it had to step around** (E5-3, #83).
+ *
+ * `gate_ruling` is the first table in this schema rebuilt while something POINTS AT IT.
+ * `gate_note` carries a foreign key into it with ON DELETE CASCADE, foreign keys are on in
+ * this process, and `PRAGMA foreign_keys` is a no-op inside the transaction every migration
+ * runs in — so a naive `DROP TABLE gate_ruling` performs an implicit row removal that fires
+ * the cascade and takes **every note Ryan has ever written** with it. 0004's rebuild of
+ * `event` was safe because nothing references `event` and it says so; this one is not, and
+ * the first test below is what a regression in that dance looks like.
+ */
+describe('0015 · a draft you put down', () => {
+  /** A gate over the ep02 script, rejected, with two notes on it — rows the rebuild must keep. */
+  function aRejectionWithTwoNotes(): void {
+    store.run("INSERT INTO show (id, key, title) VALUES ('show1', 'greyharbor', 'Grey Harbor')")
+    store.run("INSERT INTO season (id, show_id, number) VALUES ('season1', 'show1', 1)")
+    store.run("INSERT INTO episode (id, season_id, number, title) VALUES ('ep2', 'season1', 2, 'Dry Stores')")
+    store.run("INSERT INTO artifact (id, episode_id, kind, file_path) VALUES ('art1', 'ep2', 'script', 'ep02/script.md')")
+    store.run("INSERT INTO run (id, episode_id, stage) VALUES ('run1', 'ep2', 'write-the-script')")
+    store.run("INSERT INTO step (id, run_id, ordinal, name) VALUES ('step1', 'run1', 1, 'write-the-script')")
+    store.run(
+      `INSERT INTO gate (id, run_id, step_id, episode_id, artifact_id)
+            VALUES ('gate1', 'run1', 'step1', 'ep2', 'art1')`,
+    )
+    store.run("INSERT INTO gate_round (gate_id, round, artifact_version) VALUES ('gate1', 1, 1)")
+    store.run("INSERT INTO gate_ruling (gate_id, round, verdict) VALUES ('gate1', 1, 'reject')")
+    store.run(
+      `INSERT INTO gate_note (gate_id, round, note, depth, target, target_version)
+            VALUES ('gate1', 1, 'the middle movement does not turn', 'outline', 'art2', 3)`,
+    )
+    store.run("INSERT INTO gate_note (gate_id, round, note) VALUES ('gate1', 1, 'and scene 1 opens late')")
+  }
+
+  it('carries every note across the parent’s rebuild — the cascade takes nothing', () => {
+    applyThrough(14)
+    aRejectionWithTwoNotes()
+    const notes = store.all<unknown>('SELECT * FROM gate_note ORDER BY seq')
+    const rulings = store.all<unknown>('SELECT * FROM gate_ruling')
+    expect(notes).toHaveLength(2)
+
+    expect(migrate(store).map((m) => m.number)).toEqual(fromHere(14))
+
+    // Byte for byte, `seq` and routing included. A single missing row here is the cascade.
+    expect(store.all<unknown>('SELECT * FROM gate_note ORDER BY seq')).toEqual(notes)
+    expect(store.all<unknown>('SELECT * FROM gate_ruling')).toEqual(rulings)
+    // The counter goes on above the highest seq it copied rather than back to 1 — the same
+    // thing 0014's rebuild had to keep, for the same reason.
+    store.run("INSERT INTO gate_note (gate_id, round, note) VALUES ('gate1', 1, 'a third')")
+    expect(store.get<{ seq: number }>('SELECT MAX(seq) AS seq FROM gate_note')!.seq).toBe(3)
+    // And the key is still a key: a note on a round nobody ruled has nothing to hang off.
+    expect(() =>
+      store.run("INSERT INTO gate_note (gate_id, round, note) VALUES ('gate1', 9, 'nowhere')"),
+    ).toThrow(/FOREIGN KEY constraint failed/)
+  })
+
+  it('accepts `close` as a verdict, and still refuses a word nobody ruled', () => {
+    migrate(store)
+    aRejectionWithTwoNotes()
+    store.run("INSERT INTO gate_round (gate_id, round, artifact_version) VALUES ('gate1', 2, 1)")
+
+    store.run("INSERT INTO gate_ruling (gate_id, round, verdict) VALUES ('gate1', 2, 'close')")
+    expect(store.get("SELECT verdict FROM gate_ruling WHERE round = 2")).toEqual({ verdict: 'close' })
+
+    // 0004's three are all still legal, and a fifth word is not — the set is closed again.
+    store.run("INSERT INTO gate_round (gate_id, round, artifact_version) VALUES ('gate1', 3, 1)")
+    for (const verdict of ['approve', 'reject', 'override']) {
+      store.run('DELETE FROM gate_ruling WHERE round = 3')
+      store.run('INSERT INTO gate_ruling (gate_id, round, verdict) VALUES (?, 3, ?)', 'gate1', verdict)
+    }
+    store.run('DELETE FROM gate_ruling WHERE round = 3')
+    expect(() =>
+      store.run("INSERT INTO gate_ruling (gate_id, round, verdict) VALUES ('gate1', 3, 'park')"),
+    ).toThrow(/CHECK constraint failed/)
+  })
+
+  it('keeps the ruling insert-only — the primary key and the trigger survive the rebuild', () => {
+    migrate(store)
+    aRejectionWithTwoNotes()
+
+    // 0004's trigger went with the old table when it dropped, and is recreated against the new
+    // one. A ruling is history; a later opinion is a later round, never an edit.
+    expect(() =>
+      store.run("UPDATE gate_ruling SET verdict = 'close' WHERE round = 1"),
+    ).toThrow(/a ruling is history/)
+    expect(() =>
+      store.run("INSERT INTO gate_ruling (gate_id, round, verdict) VALUES ('gate1', 1, 'close')"),
+    ).toThrow(/UNIQUE constraint failed/)
+  })
+
+  it('adds one event kind and alters nothing else, and leaves the file sound', () => {
+    applyThrough(14)
+    aRejectionWithTwoNotes()
+    const before = Object.fromEntries(
+      tableNames(store).map((name) => [name, store.all<unknown>(`SELECT * FROM ${name}`)]),
+    )
+
+    expect(migrate(store).map((m) => m.number)).toEqual(fromHere(14))
+
+    for (const [name, rows] of Object.entries(before)) {
+      if (UNTOUCHED_BY.includes(name)) continue
+      expect({ [name]: store.all<unknown>(`SELECT * FROM ${name}`) }).toEqual({ [name]: rows })
+    }
+    // One INSERT, which is what 0004 bought when it made the kinds a lookup table.
+    expect(store.all<{ kind: string }>('SELECT kind FROM event_kind').map((row) => row.kind)).toEqual([
+      ...(before['event_kind'] as { kind: string }[]).map((row) => row.kind),
+      'gate-closed',
+    ])
     expect(tableNames(store).filter((name) => !(name in before))).toEqual([])
     expect(store.get('PRAGMA integrity_check')).toEqual({ integrity_check: 'ok' })
     expect(store.all('PRAGMA foreign_key_check')).toEqual([])
