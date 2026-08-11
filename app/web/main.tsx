@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import { App } from './App.tsx'
 import './chrome/chrome.css'
 import { Shell, type Screens } from './chrome/Shell.tsx'
+import { CanonLibrary } from './screens/CanonLibrary.tsx'
 import { EpisodeRoom } from './screens/EpisodeRoom.tsx'
 import { Floor } from './screens/Floor.tsx'
 import { GateRoom } from './screens/GateRoom.tsx'
@@ -25,6 +26,9 @@ const SCREENS: Screens = {
   // `/gate` is the thin index of what is open and `/gate/<id>` is one gate whole — a room
   // about one thing answering at its bare address too, which is `router.ts`'s own rule.
   'gate-room': (props) => <GateRoom {...props} />,
+  // `/canon` is the whole bible and `/canon/<entity>` is one sheet open in it, so every name
+  // on every other screen has an address to link to.
+  'canon-library': (props) => <CanonLibrary {...props} />,
 }
 
 createRoot(document.getElementById('root')!).render(

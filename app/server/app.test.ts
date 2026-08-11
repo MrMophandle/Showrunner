@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { createApp } from './app.ts'
 import type { CanonBenchView } from './canon-bench.ts'
+import type { CanonLibraryView } from './canon-library.ts'
 import type { CheckBenchView } from './check-bench.ts'
 import type { Store } from './db/store.ts'
 import { artifactsOf } from './domain/artifact.ts'
@@ -696,6 +697,41 @@ describe('the app process — the canon bench', () => {
     )
     expect(refused.status).toBe(409)
     expect(refused.body.error).toContain('does not belong to arc')
+  })
+})
+
+// ── The canon library, over the wire (E5-4) ───────────────────────────────────
+
+describe('the app process — the canon library', () => {
+  it('answers with the bench whole, the sidebar and the controls, and rules nothing', async () => {
+    const view = await get<CanonLibraryView>(`/api/canon-library/${showId}`)
+
+    // The bench, quoted — the same object `/api/canon/:showId` answers with.
+    expect(view.bench).toEqual(await get<CanonBenchView>(`/api/canon/${showId}`))
+    expect(view.sidebar.length).toBeGreaterThan(0)
+    expect(view.entity).toBeNull()
+    // A GET, and it starts nothing and spends nothing (invariant 5).
+    expect(llm.calls).toHaveLength(0)
+
+    const missing = await app.request('/api/canon-library/show_nope')
+    expect(missing.status).toBe(404)
+  })
+
+  it('opens one sheet and reads it at the point in time the query names (D9)', async () => {
+    await post<CanonBenchView>(`/api/canon/${showId}/found`, {})
+    const bench = await get<CanonBenchView>(`/api/canon/${showId}`)
+    const tobin = bench.entities.find((entity) => entity.name === 'Tobin Wick')!
+
+    const now = await get<CanonLibraryView>(`/api/canon-library/${showId}?entity=${tobin.id}`)
+    expect(now.entity!.name).toBe('Tobin Wick')
+    expect(now.entity!.facts.length).toBeGreaterThan(0)
+
+    // Read as of the first ruling of the founding, before his sheet was ratified.
+    const first = await get<CanonLibraryView>(
+      `/api/canon-library/${showId}?entity=${tobin.id}&ruling=1`,
+    )
+    expect(first.entity!.facts.length).toBeLessThan(now.entity!.facts.length)
+    expect(first.bench.asOf.sentence).toContain('ruling 1')
   })
 })
 

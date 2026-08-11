@@ -172,14 +172,8 @@ const NOT_YET: Readonly<
   // its `notYetBecause` is null. A room leaves this map by being built, which is why the map
   // is the only place standing is decided. E5-2 (#82) took the episode room out the same way,
   // and E5-3 (#83) took the gate room — which also ruled the fourth verb its entry named
-  // (`runner/gate.ts`, migration 0015).
-  'canon-library': {
-    standing: 'stub',
-    lead: 'Not built yet.',
-    because:
-      'E5-4 (#84) builds this room. Until then the canon bench on the old operating page ' +
-      'is where canon is read and ruled.',
-  },
+  // (`runner/gate.ts`, migration 0015). E5-4 (#84) took the canon library, which is built on
+  // the same bench the old page still carries until #86 retires it.
   'review-desk': {
     standing: 'later-epic',
     lead: 'Not built yet, and not E5’s.',
