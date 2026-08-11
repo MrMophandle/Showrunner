@@ -591,7 +591,7 @@ describe('the index is a list of sentences that link', () => {
   it('says so honestly when nothing is waiting', () => {
     render(<GateIndexScreen view={gateIndexView(store, paths, NOW)} />)
 
-    expect(host.querySelector('.empty')!.textContent).toContain('Nothing is waiting on your word')
+    expect(host.querySelector('.empty')!.textContent).toContain('Nothing is waiting on your ruling')
     expect(host.querySelector('.gate-index__row')).toBeNull()
   })
 })

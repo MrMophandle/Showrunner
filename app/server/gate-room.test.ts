@@ -12,7 +12,7 @@ import { episodesOf, seasonsOf } from './domain/spine.ts'
 import { createEventLog, type EventLog } from './events.ts'
 import { greyHarborFounded } from './fixture/founded.ts'
 import { theLongPierExtraction } from './fixture/long-pier-board.ts'
-import { gateIndexView, gateRoomView } from './gate-room.ts'
+import { boardSentence, gateIndexView, gateRoomView } from './gate-room.ts'
 import { initLibrary, openLibraryStore, type LibraryPaths } from './library.ts'
 import { describeLLMBackend, type LLMReadiness } from './llm/choose.ts'
 import { createFakeLLM, type FakeLLM } from './llm/fake.ts'
@@ -158,13 +158,71 @@ describe('the draft comes back whole, with the cards folded in where they land',
       expect(say.sentence).toContain('severity')
       expect(say.sentence).toContain('confidence')
       // And D12's sentence, from `stage-wall.ts`, so a red mark never reads as a veto here.
-      expect(say.blockingSentence).toContain('never this gate (D12)')
+      expect(say.blockingSentence).toContain('never this gate')
       // 4.3's three remediations ride each say, with their own costs and refusals.
       expect(say.remediations.predraft.sentence).toContain('Pre-draft a rewrite')
       expect(say.remediations.dismiss.sentence).toContain('with your note')
     }
     // The card says where it is in words rather than as a schema noun.
     expect(cards.map((card) => card.where).join(' ')).toContain('of the ep01 script')
+  })
+
+  /**
+   * **Ryan's third and fourth examples on #99, as assertions.**
+   *
+   * Both headings used to be constants that gestured at what the page was already holding —
+   * "what you are ruling on" over an artifact whose kind and version were right there, and
+   * "one row per reviewer" over rows that each say what kind of reviewer they are. They are
+   * composed now, so what is asserted is that they SPEND that knowledge: the artifact heading
+   * names the episode, the kind and the version, and the board heading counts its own rows and
+   * says who paid for each.
+   */
+  it('names the draft it is rendering, with its version, rather than gesturing at it', async () => {
+    await presentTheEp01Script()
+    const heading = room().headings.artifact
+
+    expect(heading.name).toBe('The draft')
+    expect(heading.explains).toBe(
+      'The ep01 script, version 1, shown in full. Findings appear beside the lines they ' +
+        'refer to.',
+    )
+    // The deictic Ryan pulled it up on, gone — and no citation behind it either.
+    expect(heading.explains).not.toContain('what you are ruling on')
+    expect(heading.explains).not.toMatch(/\((?:D\d+|\d+\.\d+|invariant \d+)\)/)
+  })
+
+  it('says who read the draft and what each of them cost, instead of "one row per reviewer"', async () => {
+    theBoard()
+    await presentTheEp01Script()
+    const heading = room().headings.board
+
+    expect(heading.name).toBe('Verdict board')
+    // Every group the rows actually hold, counted off the rows themselves.
+    expect(heading.explains).toContain('One row per check that read this draft')
+    expect(heading.explains).toContain('deterministic rule')
+    expect(heading.explains).toContain('cost nothing')
+    // The line Ryan asked for: agency is explicit, and none of them is the decider.
+    expect(heading.explains).toContain('None of them decides anything; deciding is yours, below.')
+    expect(heading.explains).not.toContain('reviewer')
+    expect(heading.explains).not.toContain('convened')
+  })
+
+  it('says a board nobody has read is unread, rather than counting to zero three times', () => {
+    // "0 canon checks and 0 craft checks" reads like a clean panel, and an unread board is
+    // the opposite of a clean one (invariant 4). It says so in words instead.
+    const unread = boardSentence({
+      artifactId: 'a',
+      version: 0,
+      rows: [],
+      convened: 0,
+      read: 0,
+      standing: 0,
+      gaps: 0,
+      sentence: '',
+    })
+    expect(unread).toContain('No check has read this draft')
+    expect(unread).toContain('deciding is yours')
+    expect(unread).not.toContain('0 ')
   })
 
   it('says what the fold IS, and names the doc rather than a path', async () => {
@@ -174,8 +232,8 @@ describe('the draft comes back whole, with the cards folded in where they land',
 
     expect(view.fold.docHeader).toBe('ep01 script v1 · 6 scenes')
     expect(view.fold.note).toBeNull()
-    expect(view.fold.sentence).toContain('folded in where')
-    expect(view.fold.sentence).toContain('4.6')
+    expect(view.fold.sentence).toContain('each one beside the lines it refers to')
+    expect(view.fold.sentence).toContain('never have to go and find a quoted span')
   })
 
   it('says a draft with nothing anchored in it is not a draft nothing read', async () => {
@@ -187,7 +245,7 @@ describe('the draft comes back whole, with the cards folded in where they land',
     // invariant 4, said about a fold rather than about a check.
     expect(view.fold.pieces.every((piece) => piece.kind === 'prose')).toBe(true)
     expect(view.fold.sentence).toContain('Nothing is anchored in this draft')
-    expect(view.fold.sentence).toContain('not the same news as a draft nothing read')
+    expect(view.fold.sentence).toContain('not the same as a draft nothing read')
   })
 
   it('says which of the two nothings it is when there is no draft to render', async () => {
@@ -202,7 +260,7 @@ describe('the draft comes back whole, with the cards folded in where they land',
     // mounted" it is, because they are very different pieces of news.
     expect(view.fold.note).toContain('could not be read')
     expect(view.fold.note).toContain('no such file or directory')
-    expect(view.fold.sentence).toContain('never a filename')
+    expect(view.fold.sentence).toContain('renders the draft itself rather than a filename')
   })
 })
 
@@ -226,7 +284,7 @@ describe('it hands over the reads that already exist and re-words none of them',
     // it — which is not the same news as a clean reading, and the empty state says so.
     expect(view.loop.drafts).toEqual([])
     expect(view.loop.none!.lead).toBe('No check has read the ep01 script.')
-    expect(view.loop.none!.sentence).toContain('not the same as a clean reading')
+    expect(view.loop.none!.sentence).toContain('That is not a clean reading')
     // The gate's own payload sentence, quoted — the one thing only this door knows.
     expect(view.loop.sentence).toContain('Presenting the ep01 script v1 for your ruling')
   })
@@ -305,12 +363,12 @@ describe('the round history keeps every round and says what stale means', () => 
     expect(view.isOpen).toBe(false)
     expect(view.rounds).toHaveLength(1)
     expect(view.rounds[0]!.ruling!.verdict).toBe('close')
-    expect(view.rounds[0]!.ruling!.sentence).toContain('the run ended, nothing was rewritten')
+    expect(view.rounds[0]!.ruling!.sentence).toContain('The run ended, nothing was rewritten')
     expect(view.rounds[0]!.standing).toBe('close · 1 note on script v1')
     // A ruled gate is still readable — it is the record of a decision (D15, `gate.ts`).
     expect(view.chip).toContain('ruled')
     expect(view.standing).toContain('kept as the record of what you decided')
-    expect(view.dock.headline).toContain('A later opinion is a later round')
+    expect(view.dock.headline).toContain('This round is closed; to change your mind')
   })
 
   it('says where each note went, in words rather than in an id', async () => {
@@ -327,12 +385,12 @@ describe('the round history keeps every round and says what stale means', () => 
     const notes = room(store.get<{ id: string }>('SELECT id FROM gate')!.id).rounds[0]!.ruling!.notes
     expect(notes[0]!.routing).toContain('routed at outline depth')
     expect(notes[0]!.routing).toContain('a newer version is the only thing that answers it')
-    expect(notes[1]!.routing).toContain('a part of this draft, so it stays on it')
+    expect(notes[1]!.routing).toContain('a part of this draft, so it stays on this draft')
     // A depth that reaches nothing in this build is recorded and says so — never refused. It
     // carries a target exactly as the scene note above does, and the two are still told apart,
     // because what decides is the DEPTH rather than whether a box was filled in.
-    expect(notes[2]!.routing).toContain('E6’s depth, so it reaches nothing on this episode yet')
-    expect(notes[2]!.routing).toContain('Recorded rather than refused')
+    expect(notes[2]!.routing).toContain('which E6 builds, so it reaches nothing on this episode yet')
+    expect(notes[2]!.routing).toContain('recorded rather than refused')
     expect(notes[2]!.routing).not.toContain('part of this draft')
     // No artifact id anywhere: an id on a screen is the archaeology 4.6 forbids.
     for (const note of notes) expect(note.routing).not.toMatch(/art_|artifact_[0-9a-f]/)
@@ -357,7 +415,7 @@ describe('the dock offers four verbs, and a finding disables none of them', () =
     // The headline says what stands and says that it does not stand in his way.
     expect(dock.headline).toContain('Your ruling closes round 1')
     expect(dock.headline).toContain('2 deterministic findings')
-    expect(dock.headline).toContain('never this gate (D12)')
+    expect(dock.headline).toContain('refuse the next stage and never this gate')
   })
 
   it('names what the override would be standing over, and what the close would free', async () => {
@@ -394,7 +452,7 @@ describe('the dock offers four verbs, and a finding disables none of them', () =
       expect(choice.label).not.toBe('')
       expect(choice.because).not.toBe('')
     }
-    expect(dock.depths[0]!.because).toContain('The legal default (D21)')
+    expect(dock.depths[0]!.because).toContain('The default.')
     // A depth that reaches nothing is offered anyway, and says so before the click — because
     // nothing may block a ruling, and a route that lands nowhere is still a verdict he gave.
     const shot = dock.depths.find((one) => one.depth === 'shot')!
@@ -485,7 +543,7 @@ describe('the index is a thin list of sentences that link', () => {
     const index = gateIndexView(store, paths, NOW)
 
     expect(index.gates).toEqual([])
-    expect(index.empty!.lead).toBe('Nothing is waiting on your word.')
+    expect(index.empty!.lead).toBe('Nothing is waiting on your ruling.')
     expect(index.empty!.sentence).toContain('a ruled gate is the record of a decision')
     expect(index.heading.explains).toContain('opening one spends nothing')
   })

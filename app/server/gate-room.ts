@@ -401,49 +401,99 @@ export function gateRoomView(
     sweep,
     dock: theDock(store, rendered, under, label, where.episode.id),
     live: gateLive(store, gate.runId, run?.status ?? 'done'),
-    headings: HEADINGS,
+    headings: headingsFor(rendered, under?.board ?? emptyBoard(gate.artifactId), label),
     refusals: CHECK_REFUSALS,
     stream: { kinds: EVENT_KIND, prose: PROSE_KIND, since },
   }
 }
 
-const HEADINGS: GateHeadings = {
-  artifact: {
-    name: 'The draft',
-    explains:
-      'what you are ruling on, read as it is written — every finding folded in where it lands, ' +
-      'so nothing on this page asks you to go and look something up',
-  },
-  board: {
-    name: 'Verdict board',
-    explains:
-      'one row per reviewer convened over this draft — severity and confidence side by side, ' +
-      'and a check that read nothing says so rather than showing a tick',
-  },
-  loop: {
-    name: 'The drafts under this',
-    explains:
-      'every version a check has read, in order, with what the writer said it changed — the ' +
-      'machine argued with itself this many times before it asked you',
-  },
-  rounds: {
-    name: 'Round history',
-    explains:
-      'every time this gate has been put in front of you, kept exactly as you ruled it — a ' +
-      'later opinion is a later round, and it never overwrites the one before',
-  },
-  riders: {
-    name: 'Riding this episode',
-    explains:
-      'what its writing claimed of canon and nobody has ruled yet — one at a time, and ruling ' +
-      'on this draft is not a ruling on any of them',
-  },
-  live: {
-    name: 'The run behind this gate',
-    explains:
-      'what it was doing when it stopped to ask you, and what it does the moment you rule — ' +
-      'nothing here moves until you press something (invariant 5)',
-  },
+/**
+ * The six section headings, two of them composed rather than declared (#99).
+ *
+ * Ryan's third and fourth examples on that issue are both here, and both are about the same
+ * failure: **this page knows exactly what it is rendering and used to gesture at it anyway.**
+ * The draft's heading said "what you are ruling on" while the payload was holding the
+ * artifact's kind, slot and version. The board's heading said "one row per reviewer" while
+ * the rows were holding what each reviewer IS. So the two that can spend what the page knows
+ * are functions of it now, and the four that genuinely describe a section are constants.
+ *
+ * The board's three groups come off the rows themselves: a `deterministic` row is a rule that
+ * code runs for nothing, and a text row was handed facts (`scope`) if it is a canon check and
+ * none at all if it is a craft reviewer (D13). Nothing is counted here that the board does
+ * not already say.
+ */
+function headingsFor(
+  rendered: GateOnThePage,
+  board: VerdictBoard,
+  label: string,
+): GateHeadings {
+  const artifact = rendered.artifact
+  const kind = `${artifact.kind}${artifact.slot ? ` ${artifact.slot}` : ''}`
+
+  return {
+    artifact: {
+      name: 'The draft',
+      explains:
+        `The ${label} ${kind}, version ${artifact.version}, shown in full. Findings appear ` +
+        'beside the lines they refer to.',
+    },
+    board: { name: 'Verdict board', explains: boardSentence(board) },
+    loop: {
+      name: 'The drafts under this',
+      explains:
+        'Every version a check has read, in order, with what the model said it changed. The ' +
+        'model and the checks went round this many times before the gate opened.',
+    },
+    rounds: {
+      name: 'Round history',
+      explains:
+        'Every time this gate has come to you, kept exactly as you ruled it. A round you ' +
+        'have ruled never changes; rejecting opens the next one under it.',
+    },
+    riders: {
+      name: 'Riding this episode',
+      explains:
+        'What the writing claimed about canon and you have not ruled on yet. You rule on ' +
+        'them one at a time, and ruling on this draft rules on none of them.',
+    },
+    live: {
+      name: 'The run behind this gate',
+      explains:
+        'What the run was doing when it stopped to ask you, and what it does the moment you ' +
+        'rule. Nothing here moves until you press something.',
+    },
+  }
+}
+
+/**
+ * The verdict board's own heading, in Ryan's words on #99: who read the draft, what each of
+ * them cost, and that not one of them decides anything.
+ *
+ * The counts are the rows'. A board nobody has read yet says so instead of counting to zero
+ * three times, which is the same honesty the rows themselves keep (invariant 4).
+ */
+export function boardSentence(board: VerdictBoard): string {
+  const text = board.rows.filter((row) => row.tier !== 'deterministic')
+  const canon = text.filter((row) => row.scope > 0).length
+  const craft = text.length - canon
+  const rules = board.rows.length - text.length
+
+  if (board.rows.length === 0) {
+    return 'No check has read this draft, so there is no row here yet. Nothing a check says decides anything; deciding is yours, below.'
+  }
+
+  const paid = [
+    canon === 0 ? '' : `${count(canon, 'canon check')}`,
+    craft === 0 ? '' : `${count(craft, 'craft check')}`,
+  ].filter(Boolean)
+
+  const who =
+    paid.length === 0
+      ? `${count(rules, 'deterministic rule')}, which cost nothing to run`
+      : `${paid.join(' and ')}, each one model call` +
+        (rules === 0 ? '' : `, plus ${count(rules, 'deterministic rule')} that cost nothing`)
+
+  return `One row per check that read this draft — ${who}. None of them decides anything; deciding is yours, below.`
 }
 
 /** When the round under review opened — what the chip counts from. */
@@ -515,8 +565,8 @@ function fold(
       pieces: [],
       note: rendered.artifact.note,
       sentence:
-        'A gate renders its artifact and never a filename (D15, 4.6) — there is nothing on ' +
-        'the volume to render here, and the line above says which of the two reasons it is.',
+        'This gate renders the draft itself rather than a filename, and there is nothing on ' +
+        'the volume to render. The line above says which of the two reasons that is.',
     }
   }
 
@@ -558,8 +608,8 @@ function fold(
         says: cluster.says.map((say): SayAtTheGate => ({
           ...say,
           open:
-            `What you may do about the ${say.checkKey} finding — rewrite the span, propose the ` +
-            'canon change, or put it down with a note. None of the three rules on it (4.3).',
+            `What you may do about the ${say.checkKey} finding: rewrite the span, propose the ` +
+            'canon change, or dismiss it with a note. None of those three is a ruling on it.',
         })),
       },
     })
@@ -573,11 +623,11 @@ function fold(
     note: null,
     sentence:
       cards === 0
-        ? `Nothing is anchored in this draft, so it is here whole. A draft with no findings ` +
-          'on it is not the same news as a draft nothing read — the board above says which.'
-        : `${count(cards, 'card')}, folded in where ${cards === 1 ? 'it lands' : 'they land'}. ` +
-          'A findings list beside the draft would make you hold a quoted span in your head and ' +
-          'go looking for it (4.6), so the cards are in the text instead.',
+        ? `Nothing is anchored in this draft, so it is here whole. A draft no check raised ` +
+          'anything against is not the same as a draft nothing read; the board above says which.'
+        : `${count(cards, 'card')}, each one beside the lines it refers to. The cards are in ` +
+          'the text rather than in a list beside it, so you never have to go and find a ' +
+          'quoted span.',
   }
 }
 
@@ -625,9 +675,9 @@ function theLoop(
         : {
             lead: `No check has read the ${label} ${rendered.artifact.kind}.`,
             sentence:
-              'A round is a version a check has answered about, and there are none — which is ' +
-              'not the same as a clean reading, because nothing read it (invariant 4). The ' +
-              'board above says which reviewers were convened and what each of them did.',
+              'A round here is a version some check answered about, and there are none. That ' +
+              'is not a clean reading: nothing read it. The board above says which checks were ' +
+              'called and what each of them did.',
           },
     converged: under?.converged ?? false,
     clean: under?.clean ?? false,
@@ -647,7 +697,7 @@ function draftSentence(round: CorrectionRound): string {
     round.findings.length === 0
       ? 'nothing standing'
       : `${count(round.findings.length, 'finding')} standing`,
-    round.gaps.length === 0 ? '' : `${count(round.gaps.length, 'thing')} they could not look at`,
+    round.gaps.length === 0 ? '' : `${count(round.gaps.length, 'thing')} they could not read`,
     round.summary === '' ? '' : round.summary,
   ]
     .filter((part) => part !== '')
@@ -707,12 +757,12 @@ function roundsAtTheGate(rounds: readonly GateRound[], rendered: GateOnThePage):
 const VERDICT_SENTENCE: Record<RulingVerdict, string> = {
   approve: 'approved — the step carried the run on',
   override:
-    'approved as an explicit override, recorded forever (invariant 3) — and the next stage ' +
-    'stopped being refused on what you ruled over (D12)',
+    'approved over the findings, and the override is on the record for good. The next stage ' +
+    'stopped being refused on what you ruled over.',
   reject: 'rejected with notes — the step reopened as the next round',
   close:
-    'put down with a note — the run ended, nothing was rewritten, and the note stands against ' +
-    'the draft until something answers it (E5-3)',
+    'closed with a note. The run ended, nothing was rewritten, and your note stands against ' +
+    'the draft until something answers it.',
 }
 
 function standingOfRound(round: GateRound, kind: string): string {
@@ -740,7 +790,7 @@ function routingOf(
   target: string | null,
   targetVersion: number | null,
 ): string {
-  if (depth === null) return 'unrouted, which lands on this draft — the legal default (D21)'
+  if (depth === null) return 'unrouted, so it lands on this draft — that is the default'
   // It named another written artifact, and the version it stood at is what "answered" is
   // computed against — the only thing 0014 put on the row, said in words.
   if (targetVersion !== null) {
@@ -752,18 +802,16 @@ function routingOf(
   const named = target === null ? '' : `, at “${target}”`
   const SAID: Record<NoteDepth, string> = {
     artifact: 'the draft in front of you, named rather than left to the default',
-    scene: 'a part of this draft, so it stays on it',
-    outline: 'the outline — which this episode has not written yet, so it addressed nothing',
-    premise: 'the premise — which this episode has not written yet, so it addressed nothing',
-    shot: 'E6’s depth, so it reaches nothing on this episode yet',
-    take: 'E6’s depth, so it reaches nothing on this episode yet',
+    scene: 'a part of this draft, so it stays on this draft',
+    outline: 'the outline, which this episode has not written yet, so it reached nothing',
+    premise: 'the premise, which this episode has not written yet, so it reached nothing',
+    shot: 'a shot, which E6 builds, so it reaches nothing on this episode yet',
+    take: 'a take, which E6 builds, so it reaches nothing on this episode yet',
   }
   const reaches = depth === 'artifact' || depth === 'scene'
   return (
     `routed at ${depth} depth${named} — ${SAID[depth]}` +
-    (reaches
-      ? ''
-      : '. Recorded rather than refused, because nothing may block a ruling (`domain/routing.ts`)')
+    (reaches ? '' : '. It was recorded rather than refused, because nothing may block a ruling')
   )
 }
 
@@ -785,29 +833,29 @@ function theDock(
       ? `Your ruling closes round ${rendered.round}. ` +
         [
           blocking === 0
-            ? 'Nothing deterministic stands on it'
-            : `${count(blocking, 'deterministic finding')} — ${
-                blocking === 1 ? 'it blocks' : 'they block'
-              } the next stage and never this gate (D12)`,
+            ? 'nothing deterministic stands on it'
+            : `${count(blocking, 'deterministic finding')}, which ${
+                blocking === 1 ? 'refuses' : 'refuse'
+              } the next stage and never this gate`,
           `${count(standing, 'argued note')} on the draft`,
           riders === 0
             ? 'nothing rides this episode'
             : `${count(riders, 'proposal')} awaiting a ruling of ${riders === 1 ? 'its' : 'their'} own`,
         ].join(' · ') + '.'
-      : `Round ${rendered.round} is ruled and is kept as the record of what you decided. A ` +
-        'later opinion is a later round, and this one does not move.',
+      : `Round ${rendered.round} is ruled, and it is kept as the record of what you decided. ` +
+        'This round is closed; to change your mind, open a new one.',
     approve: rendered.approve,
     override: rendered.override,
     reject: rendered.reject,
     close: rendered.close,
     depths: depthChoices(label, rendered.artifact.kind),
     rejectComposer: `Reject ${rendered.subject} — where does the work go back to?`,
-    closeComposer: `Put ${rendered.subject} down — say why, because later runs read it back (4.4).`,
+    closeComposer: `Close ${rendered.subject} — say why. Later writing runs read your note back.`,
     rejectNeedsNote: rendered.rejectNeedsNote,
     closeNeedsNote: rendered.closeNeedsNote,
     escape:
-      'Esc closes this and files nothing. What you have typed stays until you leave the page — ' +
-      'a ruling lands when you press the button, and never before.',
+      'Esc closes this and files nothing. What you have typed stays until you leave the page. ' +
+      'A ruling lands when you press the button, and never before.',
   }
 }
 
@@ -825,44 +873,44 @@ function depthChoices(label: string, kind: string): DepthChoice[] {
     artifact: {
       label: 'this draft',
       because:
-        `The ${label} ${kind} in front of you. A writing gate writes it again against the note; ` +
-        'a presenting gate has no writer behind it, which is what putting it down is for.',
+        `The ${label} ${kind} in front of you. A writing gate writes it again against your ` +
+        'note. A presenting gate has no writer behind it, so close that one instead.',
       needsTarget: false,
     },
     scene: {
       label: 'a scene of it',
       because:
-        'A part of this draft, named — it stays on this artifact, and the note travels with ' +
-        'the scene you name.',
+        'One named part of this draft. The note stays on this artifact and travels with the ' +
+        'scene you name.',
       needsTarget: true,
     },
     outline: {
       label: 'the outline',
       because:
-        `Sends the work back to the ${label} outline. Nothing regenerates: the outline stage ` +
-        'becomes offerable again with your note quoted on its button, and you click or you do ' +
-        'not (D21).',
+        `Sends the work back to the ${label} outline. Nothing regenerates on its own: the ` +
+        'outline stage becomes startable again with your note quoted on its button, and you ' +
+        'click it or you do not.',
       needsTarget: false,
     },
     premise: {
       label: 'the premise',
       because:
-        `Sends the work back to the ${label} premise-brief, the same way — the stage that ` +
+        `Sends the work back to the ${label} premise-brief the same way. The stage that ` +
         'writes it reopens with your note on it, and nothing runs until you ask.',
       needsTarget: false,
     },
     shot: {
       label: 'a shot',
       because:
-        'E6’s depth. Nothing in this build produces a shot, so the note is recorded with no ' +
-        'address rather than refused — a route that lands nowhere is still a verdict you gave.',
+        'E6 builds shots. Nothing in this build produces one, so your note is recorded with ' +
+        'no address rather than refused: a route that lands nowhere is still a verdict.',
       needsTarget: true,
     },
     take: {
       label: 'a take',
       because:
-        'E6’s depth, the same as a shot: recorded, addressed to nothing, and waiting for the ' +
-        'epic that produces one.',
+        'E6 builds takes, the same as shots. Your note is recorded, addressed to nothing, and ' +
+        'waiting for the epic that produces one.',
       needsTarget: true,
     },
   }
@@ -872,8 +920,8 @@ function depthChoices(label: string, kind: string): DepthChoice[] {
       depth: '',
       label: 'unrouted',
       because:
-        'The legal default (D21). The note lands on the draft in front of you, exactly as a ' +
-        'note routed at “this draft” depth does, and it says nothing about where the work goes.',
+        'The default. Your note lands on the draft in front of you, exactly as a note routed ' +
+        'at “this draft” depth does, and it says nothing about where the work goes back to.',
       needsTarget: false,
     },
     ...NOTE_DEPTH.map((depth): DepthChoice => ({ depth, ...said[depth] })),
@@ -929,8 +977,8 @@ const emptyBoard = (artifactId: string): VerdictBoard => ({
   standing: 0,
   gaps: 0,
   sentence:
-    'No reviewer is convened over this, because there is nothing on the volume for one to ' +
-    'read. That is an absence, not a clean reading (invariant 4).',
+    'No check has been called over this, because there is nothing on the volume for one to ' +
+    'read. That is an absence, not a clean reading.',
 })
 
 // ── The index ───────────────────────────────────────────────────────────────────
@@ -956,8 +1004,8 @@ export function gateIndexView(
     heading: {
       name: 'Open gates',
       explains:
-        'every draft waiting on your word right now, oldest first — one decision per room, and ' +
-        'opening one spends nothing',
+        'Every draft waiting on your ruling right now, oldest first. You rule on one at a ' +
+        'time, and opening one spends nothing.',
     },
     gates: open.map((gate): GateOnTheIndex => {
       const label = episodeLabel(gate.episodeNumber)
@@ -984,11 +1032,11 @@ export function gateIndexView(
       open.length > 0
         ? null
         : {
-            lead: 'Nothing is waiting on your word.',
+            lead: 'Nothing is waiting on your ruling.',
             sentence:
-              'A gate opens when a stage puts a draft in front of you, and every one that has ' +
-              'ever opened is readable from its episode’s room — a ruled gate is the record ' +
-              'of a decision, and it is kept forever.',
+              'A gate opens when a stage puts a draft in front of you. Every gate that has ' +
+              'ever opened is still readable from its episode’s room, because a ruled gate ' +
+              'is the record of a decision and it is kept for good.',
           },
     stream: { kinds: EVENT_KIND, prose: PROSE_KIND, since },
   }
