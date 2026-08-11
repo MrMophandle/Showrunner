@@ -693,7 +693,7 @@ export function gateOnThePage(
       // the generic verb the UI rules forbid, and because what Ryan needs to know before he
       // presses it is that nothing regenerates and nothing is lost.
       sentence:
-        `Put ${standing.subject} down with your note — ${stepName} ends here, ` +
+        `Close ${standing.subject} with your note — ${stepName} ends here, ` +
         `${episode ? episodeLabel(episode.number) : 'this episode'} is free the moment you ` +
         'click, and your note stands against the draft until something answers it',
       // Nothing is re-run and nothing is re-read, whatever the stage behind this gate does. A

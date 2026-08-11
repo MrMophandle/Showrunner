@@ -424,7 +424,7 @@ describe('the dock offers four verbs, and a finding disables none of them', () =
     const dock = room().dock
 
     expect(dock.override.sentence).toContain('OVER the vacuum-without-protection finding')
-    expect(dock.close.sentence).toContain('Put the ep01 script down with your note')
+    expect(dock.close.sentence).toContain('Close the ep01 script with your note')
     expect(dock.close.sentence).toContain('ep01 is free the moment you click')
     expect(dock.close.sentence).toContain('your note stands against the draft')
     expect(dock.close.cost).toBe('No model call · $0.00')

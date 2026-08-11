@@ -36,7 +36,7 @@ import { scaffoldStage } from './stage-fixture.ts'
 
 /**
  * The correction loop (4.4): **a stage composes produce → check, and a failed check re-runs
- * the producer with the findings as notes.** Bounded at three drafts (invariant 5), every
+ * the producer with the findings as notes.** Bounded at three drafts, every
  * one of them kept, and whatever it ends on goes to Ryan with the whole history under it.
  *
  * ## Two loops, and this file is where they are proved apart
@@ -479,7 +479,7 @@ describe('an artifact nothing checks', () => {
 
     const { report } = await write()
 
-    // No category convenes and no arc is declared, and three reviewers read it anyway.
+    // No category convenes and no arc is declared, and three checks read it anyway.
     expect(report.board.rows.map((row) => row.checkKey)).toEqual([
       'story-craft',
       'pacing',

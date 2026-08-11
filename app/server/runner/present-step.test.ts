@@ -360,7 +360,7 @@ describe('one artifact, one ruling — and two doors onto it', () => {
     const write = stageOffer(store, ready, ep02, stageCatalogue(paths)[PREMISE_STAGE]!)
     expect(write.blockedBecause).toBe(
       'ep02 already has a premise-brief, in slot “demo” — rule on it at its gate, or edit it ' +
-        'directly (E4-5).',
+        'directly.',
     )
     // …and the gate it names opens over that very artifact, free and refused by nothing.
     const present = stageOffer(store, ready, ep02, stageCatalogue(paths)[PREMISE_GATE_STAGE]!)

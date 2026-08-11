@@ -331,7 +331,7 @@ export const rejectionNeedsANote = (subject: string): string =>
  * refuses with it, and the disabled button in the gate room shows it BEFORE the click.
  */
 export const closingNeedsANote = (subject: string): string =>
-  `Putting ${subject} down needs at least one note — a parking says why, the same as a ` +
+  `Closing ${subject} needs at least one note — closing says why, the same as a ` +
   'rejection does. Nothing reopens on this verb, so the note is the whole record: it ' +
   'stands against the artifact, it is what makes the stage that writes it offerable again, ' +
   'and the next run reads it back off the desk.'

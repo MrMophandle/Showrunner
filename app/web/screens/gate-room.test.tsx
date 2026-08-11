@@ -294,7 +294,7 @@ describe('the decision dock', () => {
     expect(said[0]).toContain('Approve the ep01 script')
     expect(said[1]).toContain('OVER')
     expect(said[2]).toContain('Reject the ep01 script with notes')
-    expect(said[3]).toContain('Put the ep01 script down with your note')
+    expect(said[3]).toContain('Close the ep01 script with your note')
     // No generic verbs anywhere: every one names its object, and none is "Launch" or "Go".
     for (const button of verbs) {
       expect(button.querySelector('.cost')!.textContent).not.toBe('')
@@ -315,7 +315,7 @@ describe('the decision dock', () => {
     expect(host.querySelector('.gate-dock')!.contains(composer)).toBe(true)
     expect(host.querySelector('[role="dialog"]')).toBeNull()
     expect(host.querySelector('.gate-doc')).not.toBeNull()
-    expect(composer.textContent).toContain('Put the ep01 script down')
+    expect(composer.textContent).toContain('Close the ep01 script')
   })
 
   it('offers a depth picker per note, and adding one adds a picker of its own', async () => {

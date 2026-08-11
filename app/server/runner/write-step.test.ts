@@ -488,7 +488,7 @@ describe('an episode that already has a premise-brief', () => {
     const offer = stageOffer(store, READY, ep01, premiseStage())
     expect(offer.enabled).toBe(false)
     expect(offer.blockedBecause).toContain('ep01 already has a premise-brief')
-    expect(offer.blockedBecause).toContain('rule on it at its gate, or edit it directly (E4-5)')
+    expect(offer.blockedBecause).toContain('rule on it at its gate, or edit it directly')
     // The cost is still stated: what it would have cost is not a secret because it is blocked.
     expect(offer.cost).toContain('Opus call')
 

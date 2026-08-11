@@ -473,7 +473,7 @@ describe('ep01’s hand-written script', () => {
 
     expect(offer.enabled).toBe(false)
     expect(offer.blockedBecause).toBe(
-      'ep01 already has a script — rule on it at its gate, or edit it directly (E4-5).',
+      'ep01 already has a script — rule on it at its gate, or edit it directly.',
     )
     // And the API refuses with the same string the disabled button is showing (D15).
     expect(launchBlockedBecause(store, READY, ep01, scriptStage())).toBe(offer.blockedBecause)
@@ -528,7 +528,7 @@ describe('the script is offered only once the outline has been ruled', () => {
     expect(offer.enabled).toBe(true)
     expect(offer.sentence).toBe(
       'Write the ep02 script from the writer’s desk and present it for your ruling — ' +
-        '“Dry Stores”, one call, then up to 9 reviewers read it',
+        '“Dry Stores”, one call, then up to 9 checks read it',
     )
     expect(offer.sentence).not.toMatch(/^(Launch|Run|Go|Do|Start)\b/)
     expect(offer.cost).toMatch(/^1 Opus call, ~\$\d+\.\d\d \+ up to 9 Opus calls, ~\$\d+\.\d\d/)

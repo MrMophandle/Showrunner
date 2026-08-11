@@ -408,7 +408,7 @@ describe('nothing about the findings forces or forbids it', () => {
 
     const quiet = gateOnThePage(store, paths, openGates(store)[0]!.gate.id, stageCatalogue(paths))!
     expect(quiet.close.enabled).toBe(true)
-    expect(quiet.close.sentence).toContain('Put the ep01 outline down with your note')
+    expect(quiet.close.sentence).toContain('Close the ep01 outline with your note')
     expect(quiet.close.sentence).toContain('ep01 is free the moment you click')
   })
 
@@ -423,7 +423,7 @@ describe('nothing about the findings forces or forbids it', () => {
     const rendered = gateOnThePage(store, paths, gateId, stageCatalogue(paths))!
     expect(rendered.closeNeedsNote).toBe(closingNeedsANote('the ep01 script'))
     expect(rendered.closeNeedsNote).not.toBe(rendered.rejectNeedsNote)
-    expect(rendered.closeNeedsNote).toContain('a parking says why')
+    expect(rendered.closeNeedsNote).toContain('closing says why')
     // And the verdict was not recorded: a refused verb writes nothing.
     expect(store.get<{ n: number }>('SELECT COUNT(*) AS n FROM gate_ruling')!.n).toBe(0)
   })

@@ -48,7 +48,7 @@ docker compose up                     # the app on http://localhost:4455
 
 `.env` is gitignored and read automatically by `docker compose up`, `npm start`, and
 `npm run dev` — there is nothing to export, in this shell or any other. Leave
-`ANTHROPIC_API_KEY` empty in it to use D6's other backend, the `claude` CLI, which works
+`ANTHROPIC_API_KEY` empty in it to use the other backend, the `claude` CLI, which works
 outside the container where you are signed in.
 
 > **A running container serves the past.** It keeps the image it was *born* from and the
@@ -61,7 +61,7 @@ outside the container where you are signed in.
 > page — were this, and every drill assumes a fresh container.
 
 Everything durable lands in `./library` on the host — `showrunner.db` plus artifacts
-as plain files (D2). The directory is gitignored; compose creates it on first run.
+as plain files. The directory is gitignored, and compose creates it on first run.
 
 Working on it without the container:
 
@@ -76,9 +76,9 @@ npm test && npm run typecheck   # CI — run both before claiming done
 
 Node 24+ is required: the server runs its TypeScript directly, and SQLite comes from
 `node:sqlite` rather than a native module. GPU steps will run on a native Mac worker
-outside the container (D5) — nothing GPU-related belongs in compose.
+outside the container, so nothing GPU-related belongs in compose.
 
-**Which backend it will use** (D6): `SHOWRUNNER_LLM_BACKEND` decides when it is set;
+**Which backend it will use**: `SHOWRUNNER_LLM_BACKEND` decides when it is set;
 unset, an `ANTHROPIC_API_KEY` means the API and no key means the `claude` CLI. Both are
 read from `.env` (or the environment, which wins). Whichever it picks, it checks that the thing is actually there and says so
 at boot and on `/api/health` — a container with neither is a legitimate state that
@@ -88,7 +88,7 @@ reports itself, not a crash and not a surprise on the first model call.
 
 `npm run fixture:load` does exactly half the job on purpose: it registers the fixture's
 entity sheets and raises a promotion proposal per sheet, and **writes no canon at all**
-(**loading raises; only founding rules** — D25). On a fresh `./library`, open
+(**loading raises; only founding rules**). On a fresh `./library`, open
 <http://localhost:4455/canon> — **the canon library**, from the bar of any room — and press
 the one button under **Founding**:
 
@@ -96,14 +96,14 @@ the one button under **Founding**:
 > *No model call · $0.00*
 
 One click, six rulings on the ledger, entities `active`, the queue empty and the sidebar's
-counts moved. Checks read *ratified* canon (invariant 2), so anything that reads canon — the
+counts moved. Checks read *ratified* canon, so anything that reads canon — the
 drill below included — needs this first. Ruling the seventh sheet, Sefa Doule the deliberate
 `candidate`, stays yours to do or not, on her own page.
 
 ## The drill — writing an episode from the cockpit, and ruling what it claims
 
 **The exit for E4 and E5 together.** It takes about forty minutes and the buttons project
-**about $3.71** of real money — three writing calls and their reviewers are $3.60 of it, and the
+**about $3.71** of real money — three writing calls and their checks are $3.60 of it, and the
 reading past your last gate is the other $0.11. Every button states its cost before you press
 it and says whose money it is; the ledger in step 9 is what was really spent.
 
@@ -162,7 +162,7 @@ back here.
 
 **Found Grey Harbor first if you have not already** — the canon library's own button, per
 **Founding Grey Harbor** above. It costs nothing and it takes one click. A writer is handed
-*ratified* canon and nothing else (invariant 2); on a show whose sheets are still in the queue,
+*ratified* canon and nothing else; on a show whose sheets are still in the queue,
 the desk in step 2 says so honestly — *0 canon entities in scope*, and every one of them left out
 with the rule that kept it out — and every draft below would be written against an empty world.
 
@@ -172,7 +172,7 @@ with the rule that kept it out — and every draft below would be written agains
 Stores** row. Its button is disabled, and it says why:
 
 > ep02 already has a premise-brief, in slot “demo” — rule on it at its gate, or edit it
-> directly (E4-5).
+> directly.
 
 That brief was written by E1's `demo` stage, which E4-1 retired, and approved at a gate that
 predates the lifecycle seam. **A sentence in this app may not name a door you cannot open**, so
@@ -193,9 +193,9 @@ anchors rather than listed beside it. At the bottom, pinned and out of the page'
 **decision dock**: four verbs, each a full sentence with its cost. Read all four before you
 press one.
 
-**Now put it down.** Press:
+**Now close it.** Press:
 
-> Put the ep02 premise-brief down with your note — present-the-premise-brief-for-your-ruling ends
+> Close the ep02 premise-brief with your note — present-the-premise-brief-for-your-ruling ends
 > here, ep02 is free the moment you click, and your note stands against the draft until something
 > answers it
 > *No model call · $0.00*
@@ -204,8 +204,8 @@ The composer expands **in place**, inside the dock — not a modal, and the docu
 does not move. Try confirming with the box empty first. The button is disabled, with the reason
 in words:
 
-> Putting the ep02 premise-brief down needs at least one note — a parking says why, the same as
-> a rejection does (4.7). Nothing reopens on this verb, so the note is the whole record…
+> Closing the ep02 premise-brief needs at least one note — closing says why, the same as
+> a rejection does. Nothing reopens on this verb, so the note is the whole record…
 
 That is the same string the API refuses with, byte for byte. Press **Esc**: the composer
 collapses, nothing is filed, and what you typed is still there when you open it again.
@@ -226,11 +226,11 @@ and nothing was replayed.
 Back in the episode room, on the **Stage rail**. It has changed, and your own words are on it:
 
 > Write the ep02 premise-brief again from the writer’s desk — the ep02 premise-brief has the note
-> you put it down with at the premise-brief gate standing against it — rewriting reads it: “…”
+> you closed it with at the premise-brief gate standing against it — rewriting reads it: “…”
 
 And it is **pressable now**, immediately, because the run ended when you put the draft down.
 Look at **Artifacts** too: your note is on the brief itself, standing against it. **A note
-standing against an artifact reopens the stage that could answer it** (D21) — and a note is
+standing against an artifact reopens the stage that could answer it** — and a note is
 answered by a new version and by nothing else.
 
 ### 2 · The desk, before you spend a cent ($0.00)
@@ -246,8 +246,8 @@ Read three things:
   nobody has ruled is on nobody's desk. This is the half you cannot infer from a list of what
   was included, and it is the half that tells you why a draft came out the way it did.
 - **What you have already said.** Your note from step 1, verbatim, with where you said it:
-  *the note you put the ep02 premise-brief down with at round 1* — and the sentence names the
-  verb, because a parking and a rejection are the same authority doing two different things.
+    *the note you closed the ep02 premise-brief with at round 1* — and the sentence names the
+    verb, because closing and rejecting are the same authority doing two different things.
 
 Then read **the prompt this would send**. Your words are in the call itself, under
 `── WHAT THE SHOWRUNNER HAS ALREADY SAID ──`. **That is "a re-run provably reads the notes
@@ -259,7 +259,7 @@ function the writing step calls — not a reconstruction of it.
 Press the reopened button. Its cost line is exact and it is the thing to read before you click:
 
 > *1 Opus call, ~$0.07 + up to 7 Opus calls, ~$0.84 to check it, per draft — and the loop stops
-> at 3 drafts (invariant 5) · your money, spent when you click*
+> at 3 drafts · your money, spent when you click*
 
 Watch the **live region** in the rail. It is a box with a height, and it had that height before
 anything arrived. The first line is the desk describing itself:
@@ -274,7 +274,7 @@ Then the draft streams into the line under it, and the transitions land in the l
 reading. Nothing below the region moves.
 
 When it parks, go to the gate room and **read the brief against your note.** It should have
-answered it. If it has not, put it down again with a sharper one — that is what the loop is for,
+answered it. If it has not, close it again with a sharper one — that is what the loop is for,
 and it stops at three drafts whatever happens.
 
 **Approve it.** Then watch two things:
@@ -290,8 +290,8 @@ and it stops at three drafts whatever happens.
 
 In the episode room, the line under the title reads:
 
-> ep02 declares no position on any arc — it is **vanilla**, which is legal, tracked and never a
-> failure state (1.1). Declaring one is a choice, not a repair.
+> ep02 declares no position on any arc, so it is **vanilla**. Not every episode advances an
+> arc, and declaring one is a choice rather than a repair.
 
 and **Arc positions** carries the arc anyway, with its own version of the same news: *nothing is
 owed here*. Every waypoint on it has a door. Press the second:
@@ -306,7 +306,7 @@ needs a subject entity, and that is a writing judgement only the writer can make
 written episode. Step 7 is where it arrives.
 
 Do it now rather than later, and watch what it costs you: every writing button below gains one
-reviewer, because an arc position is a check. The outline goes from *up to 8 reviewers* to
+check, because an arc position is one. The outline goes from *up to 8 checks* to
 *up to 9*, and the cost line under it from *~$0.96* to *~$1.08*.
 
 ### 5 · The outline, and then your own hands on it (~$1.19, then $0.00)
@@ -314,9 +314,9 @@ reviewer, because an arc position is a check. The outline goes from *up to 8 rev
 Press:
 
 > Write the ep02 outline from the writer’s desk and present it for your ruling — “Dry Stores”,
-> one call, then up to 9 reviewers read it
+> one call, then up to 9 checks read it
 > *1 Opus call, ~$0.11 + up to 9 Opus calls, ~$1.08 to check it, per draft — and the loop stops
-> at 3 drafts (invariant 5) · your money, spent when you click*
+> at 3 drafts · your money, spent when you click*
 
 What comes back is **prose about the movement of the story** — what turns, in what order, and
 what the audience knows after each turn. Check the one thing this artifact exists to not be:
@@ -343,7 +343,7 @@ Now watch three regions, each of which should do exactly one thing:
   **you edited it by hand.** Nothing it was built from has moved since.*
 - **Nothing went stale, and that is the staleness rule answering rather than sleeping.** There
   is no script yet, so there is nothing built on the outline to go stale — and the room says
-  that instead of a flag, because staleness is **computed, never remembered** (there is no
+    that instead of a flag, because every version is compared each time you look (there is no
   `is_stale` column to have got this wrong). Edit the outline again after step 6 and the script
   goes stale on the spot, from the same query.
 - **The scene grid does not move at all.** Scenes are derived from the *script*, and there
@@ -359,9 +359,9 @@ you spend anything on it.
 Press:
 
 > Write the ep02 script from the writer’s desk and present it for your ruling — “Dry Stores”,
-> one call, then up to 10 reviewers read it
+> one call, then up to 10 checks read it
 > *1 Opus call, ~$0.30 + up to 10 Opus calls, ~$1.20 to check it, per draft — and the loop stops
-> at 3 drafts (invariant 5), **then 1 Opus call, ~$0.11 after you approve it**, to read what the
+> at 3 drafts, **then 1 Opus call, ~$0.11 after you approve it**, to read what the
 > script claims of canon into proposals for your ruling · your money, spent when you click*
 
 Read that last clause before you click it. **One click buys the whole run**, including the step
@@ -373,7 +373,7 @@ In the live region, after the draft streams:
 > The ep02 script draft breaks into **N** scenes — derived from the draft, never asked for
 
 **`N` is an output.** Nothing upstream chose it: the outline carries no grid on purpose, the ask
-tells the writer the count is theirs and refuses the pairing-off in as many words, and nothing
+tells the model the count is its own and refuses the pairing-off in as many words, and nothing
 in this app reads the outline's headings. If `N` happens to equal the number of movements in
 your outline, that is a coincidence and not a mechanism.
 
@@ -390,8 +390,8 @@ past your ruling, and it reads the draft you approved rather than a round the lo
 
 In the episode room, **Riding this episode** has filled:
 
-> ep02 carries N proposals to rule — … They ride ep02 until you rule them, one at a time —
-> approving the script was not a ruling on any of them.
+> ep02 carries N proposals to rule — … They ride ep02 until you rule them, one at a time.
+> Approving the script was not a ruling on any of them.
 
 **Approving the script was not a ruling on any of them.** It never is: only ratification writes
 canon, and it is one proposal, one ruling, one row on the ledger. Each rider carries its five
@@ -402,13 +402,13 @@ alternatives — and three verbs.
 Do all three of these, on three different riders:
 
 1. **Ratify one fact delta.** Something the episode established that you want to be true.
-2. **Reject one with a note.** Something the writer invented that you do not want in the bible.
+2. **Reject one with a note.** Something the model invented that you do not want in the bible.
    The note is required, in the same sentence the API refuses with, and it is read back by later
-   writer runs — the rejection is not a delete, it is a record.
+     writing runs — the rejection is not a delete, it is a record.
 3. **Rule the landing on its merits.** It is the card that says *waypoint landing · “Ilse
-   Renn” — raised by a writer run, riding ep02*, and the fact under it reads *“What the harbor
-   is for” reached waypoint 2 “The harbor is worth spending on” in ep02.* **The subject is the
-   writer's answer**, not a lookup: a landing is a claim about somebody, and which somebody is a
+      Renn” — raised by a writing run, riding ep02*, and the fact under it reads *“What the harbor
+      is for” reached waypoint 2 “The harbor is worth spending on” in ep02.* **The subject is the
+      model's answer**, not a lookup: a landing is a claim about somebody, and which somebody is a
    writing judgement made out of the written episode. Read the quote it cites against waypoint
    2's own **landing criteria** — on the waypoint in the arcs panel, and in full on the arc
    page. *Somebody identifiable is worse off, and neither she nor they say so
@@ -443,7 +443,7 @@ counts it for you: *declared to waypoint 2 of 3*, and what has landed.
 
 **How this arc is checked** is the section worth the trip. It carries the `waypoint-drift`
 check's real instructions and its worked example, byte for byte as the sheet wrote them, and it
-says which episode's declaration the text was composed for. **That is what the ninth reviewer
+says which episode's declaration the text was composed for. **That is what the ninth check
 was reading in steps 5 and 6** — you can now see exactly what it was told, rather than inferring
 it from what it said.
 
@@ -451,17 +451,17 @@ it from what it said.
 
 Back in the episode room, two panels at the bottom.
 
-**Reviewing the reviewers** — D11's cried-wolf record, one sentence per check rather than a row
+**Reviewing the reviewers** — how each check has behaved lately, one sentence per check rather than a row
 of unlabelled numbers. It is a *question*, and nothing in this app acts on it: there is no button
-in that panel. A check that keeps raising findings you keep putting down has earned a look at its
-instructions; one that has never been cited has earned a look at whether it should convene.
+in that panel. A check that keeps raising findings you keep dismissing has earned a look at its
+instructions; one that has never been cited has earned a look at whether it should run at all.
 
 **Cost ledger** — what each button projected, against what the rows recorded. Compare it with
 the **$3.71** the buttons promised.
 
 It will be lower, and the difference is the projections deliberately over-stating in three
-places, all of them named on the buttons: the reviewer counts are **upper bounds** (how many
-categories *declare* this artifact kind, not how many convene — a category with no entity in
+places, all of them named on the buttons: the check counts are **upper bounds** (how many
+categories *declare* this artifact kind, not how many run — a category with no entity in
 provenance correctly stays home), the prompt-token figures are generous against what is really
 sent, and the loop is priced at three drafts when it usually stops at one. A failed call is a
 line on it too, because a call that came back wrong still spent.
@@ -489,10 +489,10 @@ nothing in this app is ever written over.)
 
 **It does not check ep02 deterministically.** The text panel ran inside every correction loop
 and its findings are folded into the drafts at the gate room, but the continuity board's free
-rules, the D12 wall and both doors down from it are E3's drill, and they read ep01's planted
+rules, the findings that refuse a stage and both doors down from them are E3's drill, and they read ep01's planted
 contradictions. The episode room's scene grid shows you where they would appear.
 
-**It does not abandon anything.** `abandoned_at` is a column beside the lifecycle enum and
+**It does not abandon anything.** An episode can be abandoned at any stage and keeps the one it reached, and
 abandoning raises a revert per ratified fact, one ruling at a time — none of it is built, and
 none of it is here.
 

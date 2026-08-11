@@ -696,7 +696,7 @@ describe('the writing room — an episode holding an artifact no writing gate sa
     const view = room()
     expect(view.line[0]!.offer.enabled).toBe(false)
     expect(view.line[0]!.offer.blockedBecause).toBe(
-      'ep02 already has a premise-brief, in slot “demo” — rule on it at its gate, or edit it directly (E4-5).',
+      'ep02 already has a premise-brief, in slot “demo” — rule on it at its gate, or edit it directly.',
     )
     // The refusal names a gate, and the gate is real — E4-5 widened the presenting stage's
     // question to the one the refusal asks, slot and all.

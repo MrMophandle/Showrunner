@@ -162,7 +162,7 @@ describe('the operating page — the launch button', () => {
     // Verb + object + scope, and never a generic verb.
     expect(launch.sentence).toBe(
       'Write the ep02 premise-brief from the writer’s desk and present it for your ruling — ' +
-        '“Dry Stores”, one call, then up to 7 reviewers read it',
+        '“Dry Stores”, one call, then up to 7 checks read it',
     )
     expect(launch.sentence).not.toMatch(/\b(Launch|Run|Go|Do|Start)\b/)
     // Cost, in the same arithmetic the ledger will use afterwards — the writing call, the
@@ -182,7 +182,7 @@ describe('the operating page — the launch button', () => {
 
     expect(launch.enabled).toBe(false)
     expect(launch.blockedBecause).toBe(
-      'ep01 already has a script — rule on it at its gate, or edit it directly (E4-5).',
+      'ep01 already has a script — rule on it at its gate, or edit it directly.',
     )
     // Stated even when it is blocked: what it would have cost is not a secret.
     expect(launch.cost).toContain('Opus call')
