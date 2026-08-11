@@ -218,19 +218,14 @@ footer {
 }
 
 /*
- * A room that is not built yet, and the old page. Dashed, because dashed is the mockups'
- * one mark for a thing that is not real yet — and `--muted` rather than `--faint`, which
- * is 2.85:1 on this page and belongs to the footer alone. Navigation a reader has to lean
- * into is navigation that fails the third criterion before it has been used once.
+ * A room that is not built yet. Dashed, because dashed is the mockups' one mark for a
+ * thing that is not real yet — and `--muted` rather than `--faint`, which is 2.85:1 on
+ * this page and belongs to the footer alone. Navigation a reader has to lean into is
+ * navigation that fails the third criterion before it has been used once.
  */
 .shell-door[data-standing] {
   color: var(--muted);
   border-bottom: 1px dashed var(--line);
-}
-
-/* The old operating page is a door, not a shortcut: last in the row, and named. */
-.shell-door[data-standing='scaffolding'] {
-  margin-left: auto;
 }
 
 /*
@@ -264,40 +259,6 @@ footer {
   color: var(--ink-2);
   border-style: dashed;
   opacity: 1;
-}
-
-/*
- * The old operating page, left alone.
- *
- * `chrome.css` styles the document, and the scaffolding is not part of the design system
- * it describes — "unstyled HTML is the point" is that page's own header, and it is still
- * the page Ryan operates on until #86. So it is handed back the browser's own surface
- * and its own controls: the shell adds a bar above it and changes nothing below.
- *
- * `Canvas` and `CanvasText` are the system's default page colours, so this restores
- * exactly what the page had before the cockpit existed rather than guessing at white.
- */
-.scaffolding {
-  color-scheme: light;
-  background: Canvas;
-  color: CanvasText;
-  border-radius: var(--radius-panel);
-  margin-bottom: var(--panel-gap);
-}
-
-/*
- * And the elements inside it get the browser back too. Without this, the reset above
- * flattens its margins and the cockpit's `h1` paints its title `--ink` — white on the
- * white surface it was just handed, which is a page that has lost its heading rather than
- * a page that has been left alone.
- */
-.scaffolding :where(h1, h2, h3, h4, p, ul, ol, li, pre, small) {
-  margin: revert;
-  padding: revert;
-  font-size: revert;
-  font-weight: revert;
-  letter-spacing: revert;
-  color: revert;
 }
 
 /* ── The card, and the section that has to explain itself ────────────────────────
@@ -943,10 +904,6 @@ html {
 
   .shell-bar {
     gap: 10px;
-  }
-
-  .shell-door[data-standing='scaffolding'] {
-    margin-left: 0;
   }
 
   /* Anything the screens lay out in columns comes back to one. */

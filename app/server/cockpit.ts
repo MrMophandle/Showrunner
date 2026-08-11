@@ -30,11 +30,20 @@ import { shows } from './domain/spine.ts'
  * chrome is around it, and the issue that fills it is named. `later-epic` means the same,
  * and the epic is named instead. At no point does an address 404 and at no point does a
  * room claim to be something it is not — the whole point of shipping the shell before
- * the screens is that every door exists from the first commit, including the old one.
+ * the screens is that every door exists from the first commit.
+ *
+ * ── The fourth standing is gone, and that is what #86 WAS ───────────────────────
+ * This list carried `scaffolding` for one epic, and one destination wore it: the bare-bones
+ * operating page at `/operating`, kept in the cockpit's own list rather than in a comment so
+ * that the shell could draw a door to it while the six rooms were built beside it. E5-6 (#86)
+ * retired it — every door it held was enumerated, given a home on a screen, and asserted
+ * there BEFORE a line of it came down. There is nothing left for the word to describe, so it
+ * is not a member of this union any more: a standing nothing can be is a standing that
+ * eventually gets used for something it does not mean.
  */
 
 /** A const array and a union, never a TS `enum` — the server runs under type stripping. */
-export const COCKPIT_STANDING = ['built', 'stub', 'later-epic', 'scaffolding'] as const
+export const COCKPIT_STANDING = ['built', 'stub', 'later-epic'] as const
 export type CockpitStanding = (typeof COCKPIT_STANDING)[number]
 
 export interface Destination {
@@ -77,16 +86,14 @@ export interface CockpitShow {
 }
 
 export interface CockpitView {
-  /** The eight rooms (D24), in the order the floor sends you to them. */
-  destinations: Destination[]
   /**
-   * The bare-bones operating page, still serving (E1-8 → E4-7). It is not one of the
-   * eight and it is not a room; it is every mechanism four epics built, on one unstyled
-   * page, and it stays reachable until #86 retires it. **No mechanism in this app is
-   * reachable only through a page that is gone** — that is the whole reason it is in
-   * this list rather than in a comment.
+   * The eight rooms (D24), in the order the floor sends you to them — **and all of them**.
+   * There was a ninth address here until E5-6 (#86): the operating page, which was not a
+   * room and said so. It is gone, and so is the field that carried it, because a screen
+   * that had to remember the cockpit might hand it a tenth thing would be carrying #86's
+   * demolition around forever.
    */
-  scaffolding: Destination
+  destinations: Destination[]
   shows: CockpitShow[]
   /**
    * What the show switcher says about itself. A menu, and it stays a menu until show #2
@@ -173,8 +180,8 @@ const NOT_YET: Readonly<
   // is the only place standing is decided. E5-2 (#82) took the episode room out the same way,
   // and E5-3 (#83) took the gate room — which also ruled the fourth verb its entry named
   // (`runner/gate.ts`, migration 0015). E5-4 (#84) took the canon library, which is built on
-  // the same bench the old page still carries until #86 retires it. E5-5 (#85) took the last
-  // two together — the season map and the arc page, two screens sharing every query.
+  // the same bench the old page carried until #86 retired it. E5-5 (#85) took the last two
+  // together — the season map and the arc page, two screens sharing every query.
   //
   // **What is left is not E5's**, and that is a different sentence: these two name an EPIC
   // rather than an issue, because "when" is not one click away and a number here would be one
@@ -182,6 +189,12 @@ const NOT_YET: Readonly<
   // neither is a room — the idea pool has no table (#92) and pitching a premise against canon
   // has no run to hang on (#93). Both say so on the season map itself, where they are drawn,
   // rather than being hidden behind a standing in here.
+  //
+  // Neither of them points anywhere else any more, and that changed with #86: while the
+  // operating page stood, an unbuilt room's honest thing to do was hand Ryan the page where
+  // its mechanism still worked. Nothing generates an image or assembles a cut on ANY page in
+  // this build, so there is no such door to offer — and offering one would be the invention
+  // this table exists to avoid.
   'review-desk': {
     standing: 'later-epic',
     lead: 'Not built yet, and not E5’s.',
@@ -196,25 +209,6 @@ const NOT_YET: Readonly<
       'E6 builds the screening room, when there is an assembled episode to watch — nothing ' +
       'assembles one yet, so there is nothing here to be missing.',
   },
-}
-
-/**
- * The old operating page. It keeps its own address for as long as it is the only place
- * some of these mechanisms can be reached from, which is until #86 — and the sentence
- * says so, because a door with no expiry date is a door nobody ever closes.
- */
-const SCAFFOLDING: Destination = {
-  id: 'operating',
-  path: '/operating',
-  name: 'the old operating page',
-  explains: 'everything E1–E4 built, unstyled and on one page — still the only place most of it works',
-  standing: 'scaffolding',
-  lead: 'Still serving.',
-  notYetBecause:
-    'This is the page the cockpit replaces. It keeps working, at this address, until ' +
-    'E5-6 (#86) retires it — no mechanism in this app is reachable only through a page ' +
-    'that is gone.',
-  reachedFrom: 'the bar, from every room',
 }
 
 /**
@@ -245,7 +239,6 @@ export function cockpitView(store: Store): CockpitView {
 
   return {
     destinations: destinationsOf(),
-    scaffolding: SCAFFOLDING,
     shows: standing,
     switcherExplains: switcherSentence(standing),
   }

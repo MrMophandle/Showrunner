@@ -1,6 +1,5 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
-import { App } from './App.tsx'
 import './chrome/chrome.css'
 import { Shell, type Screens } from './chrome/Shell.tsx'
 import { ArcPage } from './screens/ArcPage.tsx'
@@ -11,7 +10,7 @@ import { GateRoom } from './screens/GateRoom.tsx'
 import { SeasonMap } from './screens/SeasonMap.tsx'
 
 /**
- * The cockpit boots into the shell, and the shell keeps the old page (E5-0, #80).
+ * The cockpit boots into the shell, and the shell is now the whole app (E5-0, #80).
  *
  * `screens` is where a room stops being a stub. E5-1 (#81) registered the first one — the
  * floor, which is the home screen and answers at `/` — and E5-2..5 added theirs here, one
@@ -23,9 +22,12 @@ import { SeasonMap } from './screens/SeasonMap.tsx'
  * because nothing generates an image or assembles a cut yet. They say so at their addresses
  * rather than 404ing, which is what `Shell.tsx`'s `Room` is for.
  *
- * `scaffolding` is the bare-bones operating page E1-8 built and four epics grew, mounted at
- * its own address so that nothing E1–E4 made stops being reachable while the cockpit is
- * built beside it. #86 is where it retires, and `server/cockpit.ts` says so on the door.
+ * **The `scaffolding` prop is gone with E5-6 (#86).** The bare-bones operating page E1-8
+ * built and four epics grew was mounted here, at `/operating`, so that nothing E1–E4 made
+ * stopped being reachable while the cockpit was built beside it. Every door it held now
+ * stands on one of the six screens above, asserted there before the page came down. The
+ * reads it composed are untouched and so is `GET /api/operating` — what retired is the
+ * render, not the record.
  */
 const SCREENS: Screens = {
   floor: (props) => <Floor {...props} />,
@@ -47,6 +49,6 @@ const SCREENS: Screens = {
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <Shell screens={SCREENS} scaffolding={<App />} />
+    <Shell screens={SCREENS} />
   </StrictMode>,
 )

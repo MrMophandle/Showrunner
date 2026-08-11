@@ -4,7 +4,7 @@ import { EmptyState } from './EmptyState.tsx'
 import { locate, onLinkClick, useLocation, type Located } from './router.ts'
 
 /**
- * The shell: eight rooms, one bar, and the door back to the old page (E5-0, #80).
+ * The shell: eight rooms and one bar (E5-0, #80; retired down to eight by E5-6, #86).
  *
  * ── What the mockups gave, and what they did not ────────────────────────────────
  * They gave the breadcrumb, identically in all seven screens that have one: "← the floor
@@ -20,18 +20,16 @@ import { locate, onLinkClick, useLocation, type Located } from './router.ts'
  * amber because amber means "your attention" everywhere else in this cockpit. Nothing
  * visual is invented; the arrangement is new because it had to be.
  *
- * ── Every door stays open until #86 ─────────────────────────────────────────────
- * The bar carries nine addresses: the eight rooms and the old operating page, which keeps
- * working and says when it retires. Six rooms are E5's own stubs and two are E6's, and
- * every one of them says so in a sentence the server wrote. **At no commit in this epic
- * is a mechanism reachable only through a page that is gone** — which is why the stub for
- * a room that is not built points at the page where its mechanism still works.
+ * ── Every door stayed open until #86, and then one closed ───────────────────────
+ * The bar carried nine addresses for one epic: the eight rooms and the old operating page,
+ * which kept working and said when it retired. It retired. **At no commit in this epic was
+ * a mechanism reachable only through a page that is gone** — every door the scaffolding
+ * held was enumerated, given a home on a screen and asserted there before a line of it came
+ * down (#86), which is what made the ninth address safe to remove rather than merely due.
  *
- * One address moved, and it is the only thing this issue took away from anybody: the
- * scaffolding page answered at `/` because the SPA had no routing at all and rendered the
- * same component at every path. It now has an address of its own, `/operating`, named in
- * the bar of every room. `/` is the floor, because the floor is the home screen
- * (`mockups/README.md`) and because #86 would have had to move it anyway.
+ * The bar carries eight now, and `whereWeAre` still answers for `/operating`: it is a path
+ * nobody claims, so it lands on the floor like any other typo. A retired address may stop
+ * being a door; it may not become a dead end.
  *
  * ── It holds no copy ────────────────────────────────────────────────────────────
  * Every room name, every explanation and every "not built yet" comes from
@@ -50,7 +48,7 @@ export interface ScreenProps {
 /** What a built screen registers under. E5-1..5 fill this in, one room at a time. */
 export type Screens = Readonly<Record<string, (props: ScreenProps) => ReactNode>>
 
-export function Shell({ screens, scaffolding }: { screens: Screens; scaffolding: ReactNode }) {
+export function Shell({ screens }: { screens: Screens }) {
   const [cockpit, setCockpit] = useState<CockpitView | null>(null)
   const [problem, setProblem] = useState<string | null>(null)
   const location = useLocation()
@@ -101,13 +99,7 @@ export function Shell({ screens, scaffolding }: { screens: Screens; scaffolding:
       <div className="wrap" data-room={here.id}>
         <Bar cockpit={cockpit} here={here} />
         <main id="screen">
-          {here.id === cockpit.scaffolding.id ? (
-            // Handed back the browser's own surface (`.scaffolding` in chrome.css). The
-            // shell adds a bar above the old page and changes nothing below it.
-            <div className="scaffolding">{scaffolding}</div>
-          ) : (
-            <Room here={here} cockpit={cockpit} id={location.rest} screens={screens} />
-          )}
+          <Room here={here} id={location.rest} screens={screens} cockpit={cockpit} />
         </main>
       </div>
     </>
@@ -119,9 +111,8 @@ export function Shell({ screens, scaffolding }: { screens: Screens; scaffolding:
  * screen, and a typo should land somewhere real rather than on a page saying nothing.
  */
 export function whereWeAre(cockpit: CockpitView, location: Located): Destination {
-  const all = [...cockpit.destinations, cockpit.scaffolding]
   const head = location.head === '' ? '' : `/${location.head}`
-  return all.find((room) => room.path === head) ?? cockpit.destinations[0]!
+  return cockpit.destinations.find((room) => room.path === head) ?? cockpit.destinations[0]!
 }
 
 /**
@@ -139,9 +130,6 @@ function Bar({ cockpit, here }: { cockpit: CockpitView; here: Destination }) {
             <Door room={room} here={here} />
           </li>
         ))}
-        <li>
-          <Door room={cockpit.scaffolding} here={here} />
-        </li>
       </ul>
     </nav>
   )
@@ -190,10 +178,15 @@ function Switcher({ cockpit }: { cockpit: CockpitView }) {
 /**
  * The room itself — the screen if one is built, and the honest empty state if not.
  *
- * The stub is not a placeholder. It is the most honest empty state in the cockpit right
- * now: it says the room is not built, it names the issue that builds it, and it points at
- * the page where the mechanism still works today. A blank page with a spinner would be
- * three lies in one.
+ * The empty state is not a placeholder. It says the room is not built, it names the epic
+ * that builds it, and it says how you would have got here so the address is not a
+ * cul-de-sac. A blank page with a spinner would be three lies in one.
+ *
+ * **It used to offer the old operating page**, because while that page stood, a room with no
+ * screen still had somewhere its mechanism worked. #86 retired the page and the two rooms
+ * left here are E6's: nothing in this build generates an image or assembles a cut, so there
+ * is no door to hand over. Saying so is the honest version, and inventing one would be
+ * exactly the promise `cockpit.ts`'s table refuses to make.
  */
 function Room({
   here,
@@ -214,16 +207,6 @@ function Room({
       <h1>{here.name}</h1>
       <p className="crumb">{here.explains}</p>
       <EmptyState lead={here.lead} sentence={here.notYetBecause ?? here.explains}>
-        <p>
-          <a
-            className="shell-door"
-            href={cockpit.scaffolding.path}
-            onClick={onLinkClick(cockpit.scaffolding.path)}
-          >
-            {cockpit.scaffolding.name}
-          </a>{' '}
-          — {cockpit.scaffolding.explains}
-        </p>
         {here.reachedFrom !== '' && <p className="crumb">Reached from {here.reachedFrom}.</p>}
       </EmptyState>
     </>
