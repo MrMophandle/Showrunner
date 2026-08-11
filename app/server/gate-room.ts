@@ -7,6 +7,7 @@ import {
 import { destinationsOf, type Destination } from './cockpit.ts'
 import type { Store } from './db/store.ts'
 import { findArtifact } from './domain/artifact.ts'
+import { CRAFT_REVIEWER } from './domain/craft.ts'
 import { findingsIn } from './domain/finding.ts'
 import type { VerdictBoard } from './domain/panel.ts'
 import { episodeInShow, episodeLabel, scenesOf } from './domain/spine.ts'
@@ -473,9 +474,14 @@ function headingsFor(
  * three times, which is the same honesty the rows themselves keep (invariant 4).
  */
 export function boardSentence(board: VerdictBoard): string {
+  // Which reviewer a row IS comes off the roster, never off what it has read. `row.scope` is
+  // the fact count on its PASS, so an unread canon check has a scope of zero and would count
+  // itself as craft — the sentence would then tell Ryan ten craft reviewers were convened over
+  // a script that had five canon checks waiting on it. Found by booting it (#99).
+  const craftKeys = new Set<string>(CRAFT_REVIEWER.map((reviewer) => reviewer.key))
   const text = board.rows.filter((row) => row.tier !== 'deterministic')
-  const canon = text.filter((row) => row.scope > 0).length
-  const craft = text.length - canon
+  const craft = text.filter((row) => craftKeys.has(row.checkKey)).length
+  const canon = text.length - craft
   const rules = board.rows.length - text.length
 
   if (board.rows.length === 0) {

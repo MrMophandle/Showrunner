@@ -207,6 +207,30 @@ describe('the draft comes back whole, with the cards folded in where they land',
     expect(heading.explains).not.toContain('convened')
   })
 
+  /**
+   * **Which reviewer a row IS comes off the roster, never off what it has read.**
+   *
+   * `row.scope` is the fact count on a check's PASS, so every UNREAD canon check has a scope of
+   * zero — and a heading that split canon from craft on that number called all five canon checks
+   * craft ones the moment the panel had not run yet, which is exactly the state a gate opens in.
+   * Found by booting the room and reading the line (#99). The split is `CRAFT_REVIEWER`'s now.
+   */
+  it('counts a canon check as canon before it has read anything', async () => {
+    await presentTheEp01Script()
+    const view = room()
+
+    // The state this catches: rows convened, none of them read yet.
+    expect(view.board.rows.every((row) => row.verdict === 'unread')).toBe(true)
+    expect(view.board.rows.every((row) => row.scope === 0)).toBe(true)
+
+    const canon = view.board.rows.filter(
+      (row) => !['story-craft', 'pacing', 'dialogue', 'hook'].includes(row.checkKey),
+    ).length
+    expect(canon).toBeGreaterThan(0)
+    expect(view.headings.board.explains).toContain(`${canon} canon checks`)
+    expect(view.headings.board.explains).toContain('4 craft checks')
+  })
+
   it('says a board nobody has read is unread, rather than counting to zero three times', () => {
     // "0 canon checks and 0 craft checks" reads like a clean panel, and an unread board is
     // the opposite of a clean one (invariant 4). It says so in words instead.
