@@ -426,7 +426,7 @@ describe('every door the bench opens is on this screen, priced and in words', ()
     expect(arc.querySelector('.lib-wp[data-here="true"]')!.textContent).toContain(
       view.entity!.arcs[0]!.waypoints.find((one) => one.here)!.name,
     )
-    expect(arc.textContent).toContain('never a landing')
+    expect(arc.textContent).toContain('not a landing')
     // Appearances link into the room where an episode's own decisions are made.
     expect(host.querySelector('.lib-appearance')!.getAttribute('href')).toContain('/episode/')
   })

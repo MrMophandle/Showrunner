@@ -399,9 +399,9 @@ export function canonLibraryView(
     nothingOpen: {
       lead: 'No sheet is open.',
       sentence:
-        'Pick a name on the left and its whole sheet opens here — what is true about it, who ' +
-        'established each of those, and when each became true. The queue below is what is ' +
-        'waiting on your ruling either way.',
+        'Pick a name on the left and its whole sheet opens here: what is true about it, who ' +
+        'established each of those, and when each became true. The queue below is waiting on ' +
+        'your ruling either way.',
     },
     gaps,
     gapsNone: gaps.length > 0 ? null : nothingUnknown(show.title),
@@ -421,8 +421,9 @@ export function canonLibraryView(
         : {
             lead: 'No ruling has moved this show’s canon yet.',
             sentence:
-              'The ledger is the clock canon is read by — every range above is measured in ' +
-              'these numbers — so until the first ruling lands there is nothing to read as of.',
+              'The ledger is the clock canon is read by, and every range above is measured ' +
+              'in its numbers. Until the first ruling lands there is no point in time to read ' +
+              'this show as of.',
           },
     headings: HEADINGS,
     forms: FORMS,
@@ -475,7 +476,7 @@ function sidebarOf(bench: CanonBenchView, kinds: CanonCategory[]): KindInTheLibr
         (type) =>
           `${type.name} → ${type.targetCategory} · ${type.cardinality}` +
           `${type.required ? ', required' : ''} · inverse: ${type.inverse}` +
-          `${type.inheritsFacts ? ' · facts travel it (D22)' : ''}`,
+          `${type.inheritsFacts ? ' · facts travel it' : ''}`,
       ),
       entities,
       emptyBecause:
@@ -498,7 +499,7 @@ function sidebarOf(bench: CanonBenchView, kinds: CanonCategory[]): KindInTheLibr
         sentence: heldSentence(entities),
         checks: `nothing reads these — this show declares no \`${key}\``,
         instructions:
-          'They were registered before the declaration existed (0006), so nothing traverses ' +
+          'They were registered before the declaration existed, so nothing traverses ' +
           'their edges and nothing inherits through them. Declaring it links them.',
         fields: [],
         edges: [],
@@ -572,9 +573,9 @@ function entityInFull(
     kindName: kind?.name ?? sheet.categoryKey,
     subline:
       `${kind?.blurb === undefined || kind.blurb === '' ? sheet.categoryKey : kind.blurb} · ` +
-      'standing is declared intent; the appearances beside this are computed from provenance ' +
-      '(3.1), and every fact below carries the episode that established it and the ruling ' +
-      'that made it canon',
+      'Standing is what you declared, not a count. The appearances beside it are computed ' +
+      'from the provenance artifacts declare, and every fact below carries the episode that ' +
+      'established it and the ruling that made it canon.',
     chips: chipsOf(store, sheet, entity),
     prose: proseOf(plain(sheet.body)),
     proseNone:
@@ -582,8 +583,8 @@ function entityInFull(
         ? {
             lead: 'No prose on this sheet.',
             sentence:
-              'The body is what makes drafts good (3.1) — it is written by promoting a sheet ' +
-              'with one, and a sheet without one still checks against its facts.',
+              'The body is the prose the model writes drafts from. You write it by promoting a sheet ' +
+              'that has one, and a sheet without one still checks against its facts.',
           }
         : null,
     facts: sheet.facts.map((fact) => inTheLibrary(store, fact, 'standing', unruled)),
@@ -595,17 +596,17 @@ function entityInFull(
         : {
             lead: 'Nothing else is on this sheet.',
             sentence:
-              'Every row it carries is standing at this setting — nothing riding an episode, ' +
-              'nothing superseded or reverted, and nothing ratified after the point you are ' +
-              'reading at. A fact is never deleted, so this fills in as canon moves.',
+              'Every row it carries is standing at this setting. Nothing is riding an ' +
+              'episode, nothing is superseded or reverted, and nothing was ratified after the ' +
+              'point you are reading at. A fact is never deleted, so this fills in as canon moves.',
           },
     inherited: inheritedOf(store, scope, at),
     exceptions: exceptionsOf(store, scope),
     relations: declaredEdges(store, sheet),
     incoming: incomingEdges(store, sheet.id),
     relationsNote:
-      'An edge whose type nobody declared cannot be written at all — a checker cannot ' +
-      'traverse what it cannot interpret (D23). Types are declared by the kind of canon this ' +
+      'An edge whose type nobody declared cannot be written at all, because a check cannot ' +
+      'follow a link it cannot read. Types are declared by the kind of canon this sheet ' +
       'is, with a target, a cardinality and the name the edge is navigable back by.',
     references: referencesOf(store, sheet.id).map((reference) => ({
       id: reference.id,
@@ -616,7 +617,7 @@ function entityInFull(
       sentence:
         `${reference.label === '' ? reference.kind : reference.label} · ${reference.stance} — ` +
         (reference.stance === 'locked'
-          ? 'what a generation of this has to match (D20)'
+          ? 'what a generated image of this has to match'
           : 'what somebody hopes for, gathered and not binding'),
     })),
     referencesNone:
@@ -637,9 +638,9 @@ function entityInFull(
           : {
               lead: `Nothing has been written against ${sheet.name} yet.`,
               sentence:
-                'Appearances are computed from provenance — the edge an artifact declares when ' +
-                'it was written against this (invariant 2) — so this fills in as episodes are ' +
-                'written, and never from the standing on the sheet.',
+                'Appearances are computed from provenance: the link an artifact declares when ' +
+                'it is written against this sheet. This fills in as episodes are ' +
+                'written, and it never reads the standing on the sheet.',
             },
     },
     arcs,
@@ -649,8 +650,8 @@ function entityInFull(
         : {
             lead: `No episode that reads on ${sheet.name} stands on an arc.`,
             sentence:
-              'An episode touching no arc is vanilla — legal, tracked, and never a failure ' +
-              'state (1.1). A pin is declared in the episode’s own room.',
+              'An episode that touches no arc is vanilla. Not every episode advances an arc, ' +
+              'and the season map tracks which ones do. A pin is declared in the episode’s own room.',
           },
     open,
   }
@@ -662,15 +663,15 @@ function factsNone(sheet: EntityInFull): Absence {
     ? {
         lead: `${sheet.name} is a candidate, so nothing here is canon.`,
         sentence:
-          'A candidate’s facts ride its promotion and are ruled with the rest of the sheet — ' +
-          'rule that promotion and they land here with the ruling that made each one true.',
+          'A candidate’s facts ride its promotion and are ruled with the rest of the sheet. ' +
+          'Rule that promotion and they land here, each with the ruling that made it true.',
       }
     : {
         lead: 'No fact stands here at this setting.',
         sentence:
           'Either nothing was ratified onto this sheet, or every ruling that did came after ' +
-          'the point you are reading at. Use the form on this page to add one — it is a fact ' +
-          'delta with no before, and it waits in the queue for your ruling.',
+          'the point you are reading at. Use the form on this page to add one: it is a change ' +
+          'with nothing before it, and it waits in the queue for your ruling.',
       }
 }
 
@@ -710,7 +711,7 @@ function aheadBecause(store: Store, fact: FactOnTheBench): string {
   const ruling = findFact(store, fact.id)?.ratifiedBy
   return (
     `Ratified at ruling ${ruling ?? '—'}, which is after the point you are reading at. It is ` +
-    'not absent from canon; it is ahead of you on the clock (D9).'
+    'not missing from canon; it is ahead of where you are reading.'
   )
 }
 
@@ -726,8 +727,8 @@ function chipsOf(store: Store, sheet: EntityInFull, entity: CanonEntity): Identi
       href: null,
       because:
         sheet.standing === null
-          ? 'Nobody has declared one, which is not the same as declaring one-shot (3.1).'
-          : 'Declared intent, not a count — the appearances beside this are the record (3.1).',
+          ? 'Nobody has declared one, which is not the same as declaring it one-shot.'
+          : 'This is what you declared, not a count. The appearances beside it are the record.',
     },
   ]
 
@@ -741,8 +742,8 @@ function chipsOf(store: Store, sheet: EntityInFull, entity: CanonEntity): Identi
         kind: 'undeclared',
         href: null,
         because:
-          `Nothing declares a \`${required.type}\` here — a hole in the sheet, and a different ` +
-          `thing from a declared \`${required.unknown}\`. ${required.sentence}`,
+          `Nothing declares a \`${required.type}\` here. That is a hole in the sheet, and a ` +
+          `different thing from a declared \`${required.unknown}\`. ${required.sentence}`,
       })
       continue
     }
@@ -754,8 +755,8 @@ function chipsOf(store: Store, sheet: EntityInFull, entity: CanonEntity): Identi
       href: target === null ? null : entityHref(target.id),
       because:
         target === null
-          ? `Declared \`${required.unknown}\`: somebody looked and the world has not decided ` +
-            `(D22). It is a real answer. ${required.sentence}`
+          ? `Declared \`${required.unknown}\` on purpose: an answer, not an unfinished ` +
+            `sheet. ${required.sentence}`
           : required.sentence,
     })
   }
@@ -836,9 +837,9 @@ function inheritedOf(
       note:
         source === null
           ? `Nothing loads into a check across \`${edge.type.name}\` for ${scope.entity.name}.`
-          : `These are “${source.name}”’s facts, not ${scope.entity.name}’s — they load with ` +
-            `${scope.entity.name} into every check that reads it (D22). Editing one edits ` +
-            `“${source.name}”, and everything else that declares it inherits the change; an ` +
+          : `These are “${source.name}”’s facts rather than ${scope.entity.name}’s. They ` +
+            `load with ${scope.entity.name} into every check that reads it. Editing one edits ` +
+            `“${source.name}”, and everything else that declares it inherits the change. An ` +
             `individual exception is a fact on ${scope.entity.name} naming what it overrides.`,
     }
   })
@@ -852,7 +853,7 @@ function inheritanceSentence(
   many: number,
 ): string {
   if (which === 'inherited') {
-    return `${count(many, 'fact')} load with this across \`${type}\` from “${source}” (D22).`
+    return `${count(many, 'fact')} load with this across \`${type}\` from “${source}”.`
   }
   if (which === 'source-has-no-facts') {
     return (
@@ -862,14 +863,15 @@ function inheritanceSentence(
   }
   if (which === 'declared-unknown') {
     return (
-      `\`${type}\` is declared \`unknown\` — somebody looked and the world has not decided ` +
-      '(D22). It is a real answer and it satisfies the requirement at ratification; nothing ' +
-      'travels it, because there is nothing to travel from.'
+      `\`${type}\` is declared \`unknown\` on purpose: an answer, not an unfinished sheet. ` +
+      'It satisfies the requirement at ratification, and nothing travels it, because there ' +
+      'is nothing at the far end to travel from.'
     )
   }
   return (
-    `Nothing declares a \`${type}\` here at all — no edge, which is a sheet nobody finished ` +
-    'rather than an answer. It is the hole, not the unknown, and the two are different news.'
+    `Nothing declares a \`${type}\` here at all. There is no edge, which is a sheet nobody ` +
+    'finished rather than an answer. That is the hole, not the unknown, and the two are ' +
+    'different news.'
   )
 }
 
@@ -884,12 +886,12 @@ function exceptionsOf(
       statement: override.by.statement,
       stale: override.stale,
       sentence: override.stale
-        ? `Displaces “${override.overridden.statement}” from “${source?.name ?? 'elsewhere'}” — ` +
-          'and what it was written against has been superseded since, so it is worth ' +
-          're-reading. The exception is still canon; the ground under it moved (D22).'
-        : `Displaces “${override.overridden.statement}” from “${source?.name ?? 'elsewhere'}” — ` +
-          'an individual exception, which is how one member differs without editing what it ' +
-          'inherits from (D22).',
+        ? `Displaces “${override.overridden.statement}” from “${source?.name ?? 'elsewhere'}”. ` +
+          'What it was written against has been superseded since, so it is worth re-reading. ' +
+          'The exception is still canon; what it displaces has moved underneath it.'
+        : `Displaces “${override.overridden.statement}” from “${source?.name ?? 'elsewhere'}”. ` +
+          'It is an individual exception, which is how one member differs without editing ' +
+          'what it inherits from.',
     }
   })
 }
@@ -908,7 +910,7 @@ function declaredEdges(store: Store, sheet: EntityInFull): EdgeInTheLibrary[] {
       toName: target?.name ?? null,
       href: target === null ? null : entityHref(target.id),
       sentence: sheet.relations.find((one) => one.id === edge.id)?.sentence ?? '',
-      inverse: `inverse: ${edge.type.inverse} — the name this is navigable by from the far end (D23)`,
+      inverse: `inverse: ${edge.type.inverse} — the name this is navigable by from the far end`,
     }
   })
 }
@@ -931,7 +933,7 @@ function incomingEdges(store: Store, entityId: string): EdgeInTheLibrary[] {
       sentence:
         `${edge.type.inverse} → “${from.name}” — the far end of the \`${edge.type.name}\` it ` +
         `declares. Nothing here declares \`${edge.type.inverse}\`; it is navigable because ` +
-        'the other end named it (D23).',
+        'the other end named it.',
       inverse: `declared as \`${edge.type.name}\` by “${from.name}”`,
     }
   })
@@ -949,7 +951,7 @@ function onScreen(episode: Episode): AppearanceInTheLibrary {
     chip: episode.lifecycle === 'published' ? label : `${label} · ${episode.lifecycle}`,
     sentence:
       `${label} “${episode.title}” — ${episode.lifecycle}` +
-      `${episode.abandonedAt === null ? '' : `, put down on ${episode.abandonedAt}`}`,
+      `${episode.abandonedAt === null ? '' : `, abandoned on ${episode.abandonedAt}`}`,
   }
 }
 
@@ -1009,9 +1011,9 @@ function arcsOf(store: Store, touching: readonly Episode[]): ArcInTheLibrary[] {
       )
       .join(' · '),
     note:
-      'A pin is a production decision, never a landing: "this episode is written to land it". ' +
-      'Which waypoints a ratified landing fact has actually reached is read on the arc itself ' +
-      '(D8), and the pin is moved in the episode’s own room.',
+      'A pin is a production decision and not a landing: this episode is written to reach it. ' +
+      'Which waypoints a ratified landing has actually reached is read on the arc page itself, ' +
+      'and the pin is moved in the episode’s own room.',
   }))
 }
 
@@ -1024,9 +1026,9 @@ function gapsOf(store: Store, showId: string): GapInTheLibrary[] {
     type: gap.type.name,
     href: entityHref(gap.entity.id),
     sentence:
-      `“${gap.entity.name}” declares \`${gap.type.name}\` unknown — somebody looked and the ` +
-      'world has not decided (D22). It is legal, it is tracked, it satisfies the requirement ' +
-      'at ratification, and resolving it is a proposal with a before.',
+      `“${gap.entity.name}” declares \`${gap.type.name}\` unknown on purpose: an answer, not ` +
+      'an unfinished sheet. It is tracked, it satisfies the requirement at ratification, and ' +
+      'resolving it is a proposal with a before.',
   }))
 }
 
@@ -1034,7 +1036,7 @@ const nothingUnknown = (title: string): Absence => ({
   lead: 'Nothing in this show is declared unknown.',
   sentence:
     `Every required edge ${title} has ratified points at something. A declared unknown is a ` +
-    'row with nothing at the far end — an answer somebody gave, kept apart from a sheet ' +
+    'row with nothing at the far end: an answer you gave, kept apart from a sheet ' +
     'nobody finished, which has no row at all.',
 })
 
@@ -1043,75 +1045,95 @@ const nothingUnknown = (title: string): Absence => ({
 const HEADINGS: LibraryHeadings = {
   asOf: {
     name: 'Canon as of',
-    explains: 'any ruling, any date — every fact carries the range it was true over',
+    explains:
+      'Read this show at any ruling or any date. Every fact carries the range it was true ' +
+      'over, so a date is answerable.',
   },
   sidebar: {
     name: 'Browse',
-    explains: 'every kind of canon this show declares, and what it holds',
+    explains: 'Every kind of canon this show declares, and what each one holds.',
   },
   founding: {
     name: 'Founding',
-    explains: 'loading raises a proposal per sheet; only your ruling makes any of it canon',
+    explains:
+      'Loading raises a proposal per sheet; only your ruling makes any of it canon.',
   },
   create: {
     name: 'Register something new',
-    explains: 'creating is proposing — it stays a candidate until you rule its promotion',
+    explains:
+      'Creating is proposing. What you register stays a candidate until you rule its ' +
+      'promotion.',
   },
   queue: {
     name: 'Proposal queue',
-    explains: 'what is waiting on your ruling, one at a time, with what each would write',
+    explains:
+      'What is waiting on your ruling, with what each one would write. You rule on them one ' +
+      'at a time.',
   },
   ledger: {
     name: 'The ledger',
-    explains: 'every ruling this canon has moved by, newest first, kept forever',
+    explains: 'Every ruling this show’s canon has moved by, newest first, and kept for good.',
   },
   gaps: {
     name: 'Declared unknown',
-    explains: 'somebody looked and the world has not decided — legal, tracked, never blank',
+    explains:
+      'Edges declared unknown on purpose. Each one is an answer, not an unfinished sheet, ' +
+      'and it is never blank.',
   },
   facts: {
     name: 'Facts',
-    explains: 'atomic and checkable, each with the episode and the ruling behind it',
+    explains:
+      'One checkable statement apiece, each carrying the episode that established it and ' +
+      'the ruling that made it true.',
   },
   otherRows: {
     name: 'Not standing here',
-    explains: 'every other row this sheet carries, and which of the three it is',
+    explains:
+      'Every other row this sheet carries, and which of the three it is: riding an episode, ' +
+      'superseded, or ratified after the point you are reading at.',
   },
   inherited: {
     name: 'Inherited',
-    explains: 'not its facts — they load with it, and every check reads them too',
+    explains:
+      'Facts this sheet does not own. They load with it, and every check that reads it ' +
+      'reads them too.',
   },
   exceptions: {
     name: 'Exceptions',
-    explains: 'a fact here that displaces one it would otherwise inherit',
+    explains: 'A fact on this sheet that displaces one it would otherwise inherit.',
   },
   references: {
     name: 'References',
-    explains: 'a face to match, a voice to match, a board to shoot toward',
+    explains: 'A face to match, a voice to match, a board to shoot toward.',
   },
   relations: {
     name: 'Relations',
-    explains: 'typed edges — every one names the kind it points at and its inverse',
+    explains:
+      'The typed links this sheet declares. Each type names the kind of canon it points at ' +
+      'and the name it is navigable back by.',
   },
   appearances: {
     name: 'Appearances',
-    explains: 'computed from provenance, never from what the sheet claims about itself',
+    explains:
+      'Computed from the provenance each artifact declares, never from what the sheet says ' +
+      'about itself.',
   },
   arcs: {
     name: 'Arcs',
-    explains: 'where the episodes that read on this have pinned themselves',
+    explains: 'Where the episodes that read on this sheet have pinned themselves.',
   },
   promote: {
     name: 'Promote',
-    explains: 'put the whole sheet to a ruling — the only way a candidate becomes canon',
+    explains: 'Put the whole sheet to a ruling. That is the only way a candidate becomes canon.',
   },
   addFact: {
     name: 'Add a fact',
-    explains: 'the same delta with no before — it waits in the queue like everything else',
+    explains:
+      'The same change with nothing before it. It waits in the queue like everything else.',
   },
   open: {
     name: 'Waiting on you',
-    explains: 'the unruled proposals about this one, in the queue below',
+    explains: 'The proposals about this sheet you have not ruled on, listed in the queue below.',
   },
 }
 
@@ -1125,13 +1147,13 @@ const FORMS: LibraryForms = {
   standingNotDeclared: 'not declared — which is not the same as one-shot',
   aliases: 'Aliases, comma separated — what else the scripts call it',
   sheetFacts: 'Facts — one atomic, checkable statement per line',
-  body: 'Body — the prose that makes drafts good',
+  body: 'Body — the prose the model writes drafts from',
   usageContext: 'Why now — what made this necessary (optional)',
   changeContext: 'Why now — the usage context on whichever change you raise (optional)',
   statement: 'What canon would say instead',
   field: 'Field (optional)',
   addition: 'What canon would say — one atomic, checkable statement',
-  note: 'Your note — kept forever, and read back by later writer runs',
+  note: 'Your note — kept forever, and read back by later writing runs',
   columnStatement: 'Statement and lineage',
   columnField: 'Field',
   columnStatus: 'Status',
