@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { cockpitView, switcherSentence, type CockpitShow } from './cockpit.ts'
+import {
+  COCKPIT_STANDING,
+  cockpitView,
+  switcherSentence,
+  type CockpitShow,
+} from './cockpit.ts'
 import { migrate } from './db/migrate.ts'
 import { openStore, type Store } from './db/store.ts'
 import { createShow } from './domain/spine.ts'
@@ -58,9 +63,11 @@ describe('the eight rooms', () => {
       '/season',
       '/arc',
     ])
-    // No two rooms answer at the same address, and none of them is the old page's.
+    // No two rooms answer at the same address, and the retired page's is nobody's now:
+    // `/operating` is claimed by no room, which is what makes the shell land it on the
+    // floor like any other address nobody claims (E5-6, #86).
     expect(new Set(paths).size).toBe(paths.length)
-    expect(paths).not.toContain(view.scaffolding.path)
+    expect(paths).not.toContain('/operating')
   })
 
   /**
@@ -164,7 +171,7 @@ describe('the eight rooms', () => {
   it('opens with its standing rather than by repeating the room’s own name', () => {
     const view = cockpitView(store)
 
-    for (const room of [...view.destinations, view.scaffolding]) {
+    for (const room of view.destinations) {
       if (room.notYetBecause === null) continue
       expect(room.lead.trim(), `${room.id} leads with nothing`).not.toBe('')
       // The screen's title already says which room this is; the bold first line is the
@@ -172,38 +179,45 @@ describe('the eight rooms', () => {
       expect(room.lead).not.toContain(room.name)
     }
   })
-
-  it('points every unbuilt room at somewhere its mechanism still works', () => {
-    const view = cockpitView(store)
-
-    for (const room of view.destinations) {
-      if (room.standing !== 'stub') continue
-      expect(
-        room.notYetBecause,
-        `${room.id} says it is not built and does not say where to go instead`,
-      ).toContain('old operating page')
-    }
-  })
 })
 
-describe('the old operating page', () => {
-  it('keeps an address of its own, and says when it retires', () => {
+/**
+ * **The ninth address, and the day it stopped being one** (E5-6, #86).
+ *
+ * `/operating` was in this list for one epic — a destination that was not a room and said
+ * so, kept here rather than in a comment so the shell could draw a door to it while the six
+ * screens were built beside it. What retired it was not a deadline: every door it held was
+ * enumerated, given a home on a screen and asserted there first.
+ *
+ * These are the assertions that the retirement is complete rather than merely intended. They
+ * are worth keeping after the fact because the failure they catch is a quiet one — a room
+ * that starts pointing at the page again, or a standing that comes back with nothing to be.
+ */
+describe('the old operating page has retired, and left nothing behind pointing at it', () => {
+  it('is not an address this cockpit hands over any more', () => {
     const view = cockpitView(store)
 
-    expect(view.scaffolding.path).toBe('/operating')
-    expect(view.scaffolding.standing).toBe('scaffolding')
-    // A door with no expiry date is a door nobody ever closes.
-    expect(view.scaffolding.notYetBecause).toContain('#86')
+    expect(view.destinations.map((room) => room.path)).not.toContain('/operating')
+    expect(view.destinations.map((room) => room.id)).not.toContain('operating')
+    expect(JSON.stringify(view)).not.toContain('operating page')
   })
 
-  /**
-   * The rule this issue works under: **at no commit is a mechanism reachable only through
-   * a page that is gone.** Six of the eight rooms are stubs, so the old page is where
-   * everything E1–E4 built still works — and it is in the cockpit's own list rather than
-   * in a comment, which is what makes the shell able to render a door to it.
-   */
-  it('is one of the addresses the cockpit hands over, not a secret', () => {
-    expect(cockpitView(store).scaffolding.explains).toContain('still')
+  it('is named by no unbuilt room, because there is no page left to send anyone to', () => {
+    for (const room of cockpitView(store).destinations) {
+      if (room.notYetBecause === null) continue
+      // The two left are E6's, and nothing in this build generates an image or assembles a
+      // cut on ANY page. A door offered here would be one invented to look like an answer.
+      expect(room.notYetBecause, `${room.id} still points at the old page`).not.toContain(
+        'operating page',
+      )
+    }
+  })
+
+  it('has no standing of its own left to wear', () => {
+    expect(COCKPIT_STANDING).not.toContain('scaffolding')
+    for (const room of cockpitView(store).destinations) {
+      expect(COCKPIT_STANDING).toContain(room.standing)
+    }
   })
 })
 

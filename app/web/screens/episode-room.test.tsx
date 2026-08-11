@@ -18,7 +18,9 @@ import { theLongPierExtraction } from '../../server/fixture/long-pier-board.ts'
 import { initLibrary, openLibraryStore, type LibraryPaths } from '../../server/library.ts'
 import { describeLLMBackend, type LLMReadiness } from '../../server/llm/choose.ts'
 import { createFakeLLM } from '../../server/llm/fake.ts'
+import { raiseProposal } from '../../server/domain/proposal.ts'
 import { createRulings, openGates } from '../../server/runner/gate.ts'
+import { SCRIPT_GATE_STAGE } from '../../server/runner/present-step.ts'
 import { markRunRunning, recordRun } from '../../server/runner/run.ts'
 import { createRunner } from '../../server/runner/runner.ts'
 import { scaffoldStage } from '../../server/runner/stage-fixture.ts'
@@ -610,6 +612,255 @@ describe('the ledger renders what a button projected against what the rows recor
     expect(projection.textContent).toContain('nothing in this build produces assets')
     // No meter, no cap, no budget anywhere on this screen (#88 owns that door).
     expect(host.querySelector('.tile__meter')).toBeNull()
+  })
+})
+
+// ── #86 · the doors the scaffolding was the only home for ──────────────────────
+
+/**
+ * **What `WritingRoom.tsx`, `CheckBench.tsx` and `Sweep.tsx` were the only screen for.**
+ *
+ * E5-2's enumeration table said where each of these went. These are the assertions that
+ * followed them here. Every one was made in `App.test.tsx` by searching a string of HTML for
+ * a sentence; every one is made below against the DOM of the room that holds it now.
+ *
+ * **A page retiring may not take an assertion with it** — that is the whole rule #86 works
+ * under, and this block is what makes it checkable rather than promised.
+ */
+describe('the doors the scaffolding held for one episode are on this screen (#86)', () => {
+  /** A note standing against the ep01 script, put there by the verb E5-3 ruled. */
+  async function putTheScriptDown(note: string): Promise<void> {
+    const llm = createFakeLLM()
+    const runner = createRunner(store, stageCatalogue(paths), events, llm)
+    for (let n = 0; n < 20; n += 1) llm.reply(NOTHING_FOUND)
+    const run = runner.enqueueRun({ episodeId: ep01, stage: SCRIPT_GATE_STAGE })
+    await runner.settled(run.id)
+    createRulings(store, events, runner).close(openGates(store)[0]!.gate.id, {
+      notes: [{ note }],
+    })
+    await runner.settled(run.id)
+  }
+
+  /** Claims riding ep02, raised the way anything is raised: never by ratifying anything. */
+  function twoRiders(): void {
+    for (const [who, statement] of [
+      ['Ilse Renn', 'Ilse writes her diversions into the spares ledger by hand.'],
+      ['Tobin Wick', 'Tobin Wick keeps the plant keys on his own ring.'],
+    ] as const) {
+      raiseProposal(store, {
+        entityId: store.get<{ id: string }>(
+          'SELECT id FROM canon_entity WHERE name = ?',
+          who,
+        )!.id,
+        kind: 'fact-delta',
+        raisedBy: 'writer',
+        episodeId: ep02,
+        facts: [{ statement }],
+      })
+    }
+  }
+
+  it('renders both of Ryan’s doors on every written draft, with its freshness beside them', () => {
+    const view = read()
+    still(view)
+
+    const script = view.artifacts.find((one) => one.kind === 'script')!
+    const card = host.querySelector(`#artifact-${script.id}`)!
+    expect(card.querySelector('.room-art__name')!.textContent).toContain('script')
+    // Freshness in words, and the sentence that says why it stands where it stands.
+    expect(card.querySelector('.freshness')!.textContent).toBe(script.standing)
+    expect(card.querySelector('.room-art__because')!.textContent).toBe(script.because)
+
+    // E4-5's two doors, both free, both stating verb + object + scope + cost.
+    const doors = [...card.querySelectorAll('.room-art__doors button.btn')]
+    expect(doors).toHaveLength(2)
+    expect(doors[0]!.textContent).toContain(script.present!.sentence)
+    expect(doors[1]!.textContent).toContain(script.edit.sentence)
+    for (const door of doors) expect(door.querySelector('.cost')!.textContent).toBe('No model call · $0.00')
+  })
+
+  it('carries a note standing against a draft onto the draft it stands against (D21)', async () => {
+    const put = 'Not this week — the third act needs the harbour to be colder.'
+    await putTheScriptDown(put)
+    const view = read()
+    still(view)
+
+    const script = view.artifacts.find((one) => one.kind === 'script')!
+    const card = host.querySelector(`#artifact-${script.id}`)!
+    expect(card.textContent).toContain(put)
+
+    // And the stage that writes it is offerable again, with his own words on the button —
+    // which is the half of D21 the artifact panel cannot say for itself.
+    const again = host.querySelector('#stage-write-the-script button') as HTMLButtonElement
+    expect(again.disabled).toBe(false)
+    expect(again.textContent).toContain(put)
+    // Its cost covers the paid step that lands on the FAR side of the gate, because one
+    // click buys the whole run (E4-4). A button that left it out would lie cheaply.
+    expect(again.querySelector('.cost')!.textContent).toContain('after you approve it')
+  })
+
+  it('opens the whole draft in a field when he asks for it, and never before', () => {
+    const view = read()
+    still(view)
+    expect(host.querySelector('#artifact-edit-box')).toBeNull()
+
+    const script = view.artifacts.find((one) => one.kind === 'script')!
+    still(view, {
+      ...EMPTY_DRAFT,
+      artifact: { artifactId: script.id, text: '## 1 · INT. SOMEWHERE — 06:00' },
+    })
+
+    const box = host.querySelector('#artifact-edit-box') as HTMLTextAreaElement
+    expect(box.value).toBe('## 1 · INT. SOMEWHERE — 06:00')
+    const land = host.querySelector('.room-editbox button.btn') as HTMLButtonElement
+    expect(land.disabled).toBe(false)
+    expect(land.querySelector('.cost')!.textContent).toBe('No model call · $0.00')
+
+    // An empty box is refused in the sentence the API refuses with, before the click.
+    still(view, { ...EMPTY_DRAFT, artifact: { artifactId: script.id, text: '' } })
+    const refused = host.querySelector('.room-editbox button.btn') as HTMLButtonElement
+    expect(refused.disabled).toBe(true)
+    expect(refused.querySelector('.cost')!.textContent).toBe(view.refusals.needsText)
+  })
+
+  it('offers the three writing stages with their costs, and refuses the two it must', () => {
+    const view = read(ep02)
+    still(view)
+
+    // The stage ep02 is AT is pressable and prices itself before the click.
+    const premise = host.querySelector('#stage-write-the-premise button') as HTMLButtonElement
+    expect(premise.disabled).toBe(false)
+    expect(premise.querySelector('.cost')!.textContent).toContain('your money, spent when you click')
+
+    // The two it has not reached are disabled with the reason in words — never a failure
+    // after the click (D15).
+    const outline = host.querySelector('#stage-write-the-outline button') as HTMLButtonElement
+    expect(outline.disabled).toBe(true)
+    expect(outline.querySelector('.cost')!.textContent).toContain(
+      'ep02 is at premise and has not reached outline yet',
+    )
+
+    const script = host.querySelector('#stage-write-the-script button') as HTMLButtonElement
+    expect(script.disabled).toBe(true)
+    expect(script.querySelector('.cost')!.textContent).toContain('has not reached script yet')
+  })
+
+  it('folds a writer’s desk open with every door, every silence and his own words in it', async () => {
+    const put = 'Too tidy. Say what it costs her.'
+    await putTheScriptDown(put)
+    const view = read()
+    still(view, { ...EMPTY_DRAFT, openDesk: 'script' })
+
+    const composed = view.writing.line.find((step) => step.step === 'script')!.desk
+    const desk = host.querySelector('#desk-script')!.parentElement!
+    // The desk's own line about itself, and the audience it composes canon for.
+    expect(desk.querySelector('#desk-script')!.textContent).toBe(composed.sentence)
+    expect(composed.sentence).toContain('canon as the audience knows it at ep01')
+    // What it WAS handed, with the door each entity came through…
+    const first = composed.entities[0]!
+    expect(desk.textContent).toContain(first.name)
+    expect(desk.textContent).toContain(first.reasons[0]!.because)
+    // …and the half that cannot be inferred from that: what it was NOT handed, and the rule
+    // that kept each one out.
+    const out = composed.leftOut.find((one) => one.name === 'Sefa Doule')!
+    expect(desk.textContent).toContain(out.because)
+    // Ryan's own words, with the authority that wrote them named.
+    expect(desk.textContent).toContain(put)
+    expect(desk.textContent).toContain('the note you put the ep01 script down with at round 1')
+    // And the prompt the next click would send, said to be a floor rather than a ceiling.
+    expect(desk.querySelector('.room-finding__quote')!.textContent).toBe(composed.prompt)
+    expect(desk.querySelector('.room-finding__quote')!.textContent).toContain(put)
+    expect(desk.textContent).toContain(composed.promptCaveat)
+
+    // Closed until he asks: reading a desk is free, so it is a fold and not a fetch.
+    still(view)
+    expect(host.querySelector('.room-body--desk .room-finding__quote')).toBeNull()
+  })
+
+  it('says what rides the episode and rules one rider at a time, with no fourth button', () => {
+    twoRiders()
+    const view = read(ep02)
+    still(view)
+
+    const riders = host.querySelector('.room-body--riders')!
+    expect(riders.textContent).toContain('ep02 carries 2 proposals to rule')
+    expect(riders.textContent).toContain('They ride ep02 until you rule them, one at a time')
+
+    expect(host.querySelectorAll('.room-rider')).toHaveLength(2)
+    for (const rider of view.sweep.riders) {
+      const card = host.querySelector(`#rider-${rider.id}`)!
+      // The five parts, on the card: what it says, the change, the usage context that made
+      // it necessary, the implications (computed at read time), and the alternatives.
+      expect(card.textContent).toContain(rider.sentence)
+      expect(card.textContent).toContain(rider.change[0]!)
+      expect(card.textContent).toContain(rider.usageContext)
+      expect(card.textContent).toContain(rider.implications)
+      // Three verbs apiece — ratify, reject-with-note, defer — and never a fourth.
+      const verbs = [...card.querySelectorAll('button.btn')] as HTMLButtonElement[]
+      expect(verbs).toHaveLength(3)
+      expect(verbs.map((one) => one.disabled)).toEqual([false, true, false])
+      expect(verbs[1]!.querySelector('.cost')!.textContent).toBe(view.sweep.refusals.rejectNeedsNote)
+    }
+    // And nothing on this screen rules the pass at once. Three riders take three rulings.
+    for (const bulk of [/ratify all/i, /approve all/i, /rule them all/i, /rule the rest/i]) {
+      expect(room().textContent).not.toMatch(bulk)
+    }
+  })
+
+  it('says nothing is owed on an episode that owes nothing, rather than an empty list', () => {
+    still(read(ep02))
+
+    const riders = host.querySelector('.room-body--riders')!
+    expect(host.querySelectorAll('.room-rider')).toHaveLength(0)
+    expect(riders.textContent).toContain('nothing')
+  })
+
+  it('offers the pin on every waypoint, free, and claims no landing (D8)', () => {
+    const view = read(ep02)
+    still(view)
+
+    const arc = host.querySelector('.room-body--arcs')!
+    const declare = [...arc.querySelectorAll('button.btn')] as HTMLButtonElement[]
+    expect(declare.length).toBeGreaterThan(0)
+    expect(declare[0]!.textContent).toContain('Declare ep02 at waypoint 1')
+    expect(declare[0]!.querySelector('.cost')!.textContent).toBe('No model call · $0.00')
+    // A pin is a production decision. The landing is a claim, and it is raised by the reading
+    // of a script rather than by this button.
+    expect(arc.textContent).toContain('the landing proposal is raised when the script is read')
+  })
+
+  it('lists the run’s own transitions, off the log rather than off a browser that watched them', async () => {
+    await openAGateOnEp02()
+    const view = read(ep02)
+    still(view)
+
+    // The scaffolding accumulated this list in browser state from an SSE replay opened at
+    // sequence 0. This is the same list read back out of the log — which is why it is still
+    // here after a restart, rather than only after a browser watched the run happen.
+    const entries = [...host.querySelectorAll(`#live-${ep02} .live-region__entry`)]
+    expect(entries).toHaveLength(view.live.entries.length)
+    expect(entries.map((entry) => entry.textContent)).toEqual(
+      view.live.entries.map((entry) => `${entry.seq}${entry.sentence}`),
+    )
+    // The steps a run took are in it, by name, in the order they ran.
+    const said = host.querySelector(`#live-${ep02} .live-region__log`)!.textContent ?? ''
+    expect(said).toContain('write-the-premise-brief')
+    expect(said).toContain('the ep02 premise-brief gate is open')
+  })
+
+  it('puts D11’s record in sentences rather than nine bare numbers', () => {
+    buildTheBoard()
+    still()
+
+    const wolf = host.querySelector('.room-body--wolf')!
+    // One line per check, each carrying the check's key and a sentence about how it behaved —
+    // the nine-unlabelled-numbers row was the friction Ryan named, and this is its answer.
+    const lines = [...wolf.querySelectorAll('.room-finding__where')]
+    expect(lines.length).toBeGreaterThan(0)
+    expect(lines[0]!.querySelector('.room-art__name')!.textContent).not.toBe('')
+    expect(lines[0]!.textContent).toContain(read().criedWolf[0]!.sentence)
+    // It is a record and a question. Nothing here acts on it, so there is no button in it.
+    expect(wolf.querySelector('button')).toBeNull()
   })
 })
 

@@ -281,11 +281,13 @@ to a note.
 queue, reached from the episode, ruled one rider at a time through the one ruling API. No
 `swept_at`, no sweep table, no bulk verb, and no route for one.
 
-**Surfaces** (`writing-room.ts` behind `/api/writing/:episodeId`; `app/web/WritingRoom.tsx`).
-The room renders every record kind above, unstyled, and composes none of them: the offers are
-the stages', the gates are `operating.ts`'s, the riders are the sweep's, the pin is the canon
-bench's, the clusters are `panel.ts`'s. The one new render is the desk inspector. **E5 restyles;
-it does not re-derive, and it does not get to drop a door and leave the sentence that names it.**
+**Surfaces** (`writing-room.ts` behind `/api/writing/:episodeId`). The read composes nothing of
+its own: the offers are the stages', the gates are `operating.ts`'s, the riders are the sweep's,
+the pin is the canon bench's, the clusters are `panel.ts`'s. The one new render is the desk
+inspector. **E5 restyles; it does not re-derive, and it does not get to drop a door and leave the
+sentence that names it.** *`app/web/WritingRoom.tsx` was the unstyled surface that rendered all
+of it and was retired by E5-6 (#86), against an enumeration that gave every door a home on a
+cockpit screen first — the read, and every sentence in it, is untouched.*
 
 ## Constraints E1 leaves behind
 

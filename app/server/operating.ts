@@ -74,12 +74,16 @@ import { sweepOnThePage, type SweepOnThePage } from './sweep.ts'
  * showing, which is what makes "preconditions before the button" true rather than
  * decorative: the disabled button and the 409 cannot drift apart.
  *
- * ── This is not the floor ───────────────────────────────────────────────────────
- * The floor is E5's, built to `mockups/floor.html`, and so are the other seven screens.
- * This module is E1's scaffolding: one page, no design system, no components. What it
- * does owe the mockups is the FACTS they render — the health tile's "can this reach a
- * model right now", the lifecycle track, the cost — so that E5 finds the answers already
- * queryable and only has to make them beautiful.
+ * ── The page it was named for has retired; this has not (E5-6, #86) ─────────────
+ * `app/web/App.tsx` was the bare-bones page E1-8 built and four epics grew, and #86 took it
+ * down once every door it held stood on a cockpit screen. **What retired is the render, not
+ * the record.** Every sentence below is still composed here, still tested here, and read by
+ * the screens that replaced it: `stageOffer` and `stageForEpisode` are what the floor's rows
+ * and the episode room's rail are made of, `gateOnThePage` is what the gate room presents,
+ * and `runView`/`operatingView` still answer at `GET /api/run/:id` and `GET /api/operating`.
+ *
+ * The name stays because the route does. Renaming it would be a churn commit that touched
+ * eight files to say the same thing, and the sentence above is cheaper and truer.
  */
 
 // ── What the page is handed ─────────────────────────────────────────────────────

@@ -12,11 +12,13 @@ import { locate, navigate } from './router.ts'
 import { Shell, whereWeAre } from './Shell.tsx'
 
 /**
- * The shell: nine addresses, and not one of them a dead end (E5-0, #80).
+ * The shell: eight addresses, and not one of them a dead end (E5-0, #80; E5-6, #86).
  *
- * The rule this issue works under is that **every door stays open until #86** — the shell
- * adds eight rooms and removes nothing, the old operating page keeps serving, and the nav
- * says how to reach it in words. These assertions are that rule, walked.
+ * The rule #80 worked under was that **every door stays open until #86** — the shell added
+ * eight rooms, removed nothing, and kept the old operating page serving at a ninth address.
+ * #86 is that rule's other end: the page retired once every door it held had a home on a
+ * screen and an assertion there. So what is walked below is eight doors, and the ninth
+ * address landing somewhere real rather than nowhere.
  *
  * The cockpit view is the real one (`server/cockpit.ts`), because a shell tested against a
  * hand-written fixture would pass the day the real one lost a room.
@@ -61,9 +63,29 @@ afterEach(() => {
 async function open(path: string): Promise<void> {
   window.history.replaceState(null, '', path)
   await act(async () => {
-    root.render(<Shell screens={{}} scaffolding={<p>THE OLD OPERATING PAGE</p>} />)
+    root.render(<Shell screens={{}} />)
   })
 }
+
+describe('before the API answers', () => {
+  /**
+   * **Nothing runs without a click, and a first render is not a click** (invariant 5, at the
+   * browser). `App.test.tsx` made this assertion against the scaffolding's own first paint;
+   * the shell is where the cockpit's first paint happens, so it is where the assertion is
+   * kept now. There is nothing to press until the server has said what may be pressed.
+   */
+  it('says so, and draws nothing pressable until it has been told what there is', async () => {
+    // A read that has not come back yet — the state every hard refresh passes through.
+    globalThis.fetch = (() => new Promise(() => {})) as unknown as typeof fetch
+    await act(async () => {
+      root.render(<Shell screens={{}} />)
+    })
+
+    expect(host.textContent).toContain('The API has not answered yet.')
+    expect(host.querySelector('button')).toBeNull()
+    expect(host.querySelector('a')).toBeNull()
+  })
+})
 
 describe('the addresses', () => {
   it('reads a bare address and one holding an id as the same room', () => {
@@ -76,28 +98,36 @@ describe('the addresses', () => {
     })
   })
 
-  it('resolves all eight rooms plus the old page, bare and parameterised alike', () => {
+  it('resolves all eight rooms, bare and parameterised alike', () => {
     for (const room of cockpit.destinations) {
       expect(whereWeAre(cockpit, locate(room.path)).id).toBe(room.id)
       const held = room.path === '/' ? '/' : `${room.path}/some-id`
       expect(whereWeAre(cockpit, locate(held)).id).toBe(room.id)
     }
-    expect(whereWeAre(cockpit, locate('/operating')).id).toBe('operating')
   })
 
   it('lands a typo on the floor rather than on nothing', () => {
     expect(whereWeAre(cockpit, locate('/gnome')).id).toBe('floor')
   })
+
+  /**
+   * **A retired address may stop being a door; it may not become a dead end** (E5-6, #86).
+   * `/operating` was the ninth address for one epic. It is claimed by no room now, so it
+   * resolves the way every unclaimed address does — onto the home screen. A bookmark Ryan
+   * kept from the drill he ruled off lands somewhere real.
+   */
+  it('lands the retired page’s own address on the floor, like any other nobody claims', () => {
+    expect(whereWeAre(cockpit, locate('/operating')).id).toBe('floor')
+  })
 })
 
-describe('every door is in the bar, including the one that retires', () => {
-  it('links all nine, and marks the one you are standing in — twice', async () => {
+describe('every door is in the bar, and the bar is all of them', () => {
+  it('links all eight, and marks the one you are standing in — twice', async () => {
     await open('/canon')
 
     const doors = [...host.querySelectorAll('.shell-door[href]')]
     const paths = doors.map((door) => door.getAttribute('href'))
-    for (const room of cockpit.destinations) expect(paths).toContain(room.path)
-    expect(paths).toContain('/operating')
+    expect(paths).toEqual(cockpit.destinations.map((room) => room.path))
 
     // In ink, and in a word a screen reader can read.
     const current = doors.filter((door) => door.getAttribute('aria-current') === 'page')
@@ -109,8 +139,8 @@ describe('every door is in the bar, including the one that retires', () => {
     await open('/gate')
     expect(document.title).toBe('Showrunner — the gate room')
 
-    await act(async () => navigate('/operating'))
-    expect(document.title).toBe('Showrunner — the old operating page')
+    await act(async () => navigate('/canon'))
+    expect(document.title).toBe('Showrunner — the canon library')
   })
 
   it('carries each room’s explanation to the pointer, where the bar has no room to print it', async () => {
@@ -131,45 +161,55 @@ describe('every door is in the bar, including the one that retires', () => {
   })
 })
 
-describe('the old operating page still serves, at its own address', () => {
-  it('renders it, whole, at /operating', async () => {
-    await open('/operating')
-    expect(host.textContent).toContain('THE OLD OPERATING PAGE')
-  })
-
-  it('does not render it anywhere else — a room is a room', async () => {
-    await open('/')
-    expect(host.textContent).not.toContain('THE OLD OPERATING PAGE')
-  })
-
-  /**
-   * "Unstyled HTML is the point" is that page's own header, and it is still the page Ryan
-   * operates on. The shell adds a bar above it and hands the browser's own surface back
-   * below it, so the cockpit's near-black page and its `--ink` headings do not reach in
-   * and repaint a working page white-on-white.
-   */
-  it('hands it back the browser’s own surface rather than restyling it', async () => {
+/**
+ * **The retirement, walked** (E5-6, #86).
+ *
+ * These four assertions replace the four that drove the old page from this file. Each one
+ * is the same question asked from the other side: it used to serve at its own address, it
+ * used to be last in the bar, it used to be handed the browser's own surface, and every
+ * unbuilt room used to offer it by name. None of that may still be true, and none of it may
+ * have left a stub pointing into thin air.
+ */
+describe('the old operating page has retired, and nothing still reaches for it', () => {
+  it('renders no page of its own at /operating — the floor answers there now', async () => {
     await open('/operating')
 
-    const wrapper = host.querySelector('.scaffolding')!
-    expect(wrapper.textContent).toContain('THE OLD OPERATING PAGE')
-    expect(getComputedStyle(wrapper).colorScheme).toBe('light')
+    expect(host.querySelector('.shell-door[aria-current="page"]')!.getAttribute('href')).toBe('/')
+    expect(document.title).toBe('Showrunner — the floor')
+    expect(host.querySelector('.scaffolding')).toBeNull()
   })
 
-  /**
-   * The charter's hardest line: **at no commit in this epic is a mechanism reachable only
-   * through a page that is gone.** Six rooms are stubs, so every one of them has to hand
-   * Ryan the page where its mechanism still works.
-   */
-  it('is offered by name from inside every unbuilt room', async () => {
+  it('carries no door to it in the bar of any room', async () => {
     for (const room of cockpit.destinations) {
       await open(room.path)
-      const out = host.querySelector('.empty')!
-      expect(out.textContent, `${room.id} does not point anywhere`).toContain(
-        cockpit.scaffolding.name,
-      )
-      expect(host.querySelector('.empty a[href="/operating"]')).not.toBeNull()
+      expect(
+        host.querySelector('.shell-door[href="/operating"]'),
+        `${room.id} still links the old page`,
+      ).toBeNull()
     }
+  })
+
+  it('offers it from no unbuilt room, because there is no page left to offer', async () => {
+    for (const room of cockpit.destinations) {
+      await open(room.path)
+      const out = host.querySelector('.empty')
+      if (out === null) continue
+      expect(out.textContent, `${room.id} still points at the old page`).not.toContain(
+        'operating page',
+      )
+      expect(host.querySelector('.empty a[href="/operating"]')).toBeNull()
+    }
+  })
+
+  it('leaves the two rooms it used to prop up saying what they can honestly say', async () => {
+    await open('/review')
+    const out = host.querySelector('.empty')!
+    // Still an honest empty state rather than a blank one: what it is, that it is not built,
+    // whose it is, and how you would have got here.
+    expect(out.textContent).toContain('Not built yet, and not E5’s')
+    expect(host.textContent).toContain('Reached from a queue of stills waiting on the floor')
+    // And no link out of it at all, because there is nowhere true to send him.
+    expect(out.querySelector('a')).toBeNull()
   })
 })
 
@@ -215,10 +255,7 @@ describe('the unbuilt rooms are honest', () => {
     window.history.replaceState(null, '', '/review')
     await act(async () => {
       root.render(
-        <Shell
-          screens={{ 'review-desk': ({ destination }) => <p>{destination.name} IS BUILT</p> }}
-          scaffolding={<p>the old page</p>}
-        />,
+        <Shell screens={{ 'review-desk': ({ destination }) => <p>{destination.name} IS BUILT</p> }} />,
       )
     })
     expect(host.textContent).toContain('the review desk IS BUILT')
@@ -244,10 +281,6 @@ describe('the shell writes none of the words either', () => {
         room.notYetBecause ?? '',
         room.reachedFrom,
       ]),
-      cockpit.scaffolding.name,
-      cockpit.scaffolding.explains,
-      cockpit.scaffolding.lead,
-      cockpit.scaffolding.notYetBecause ?? '',
       ...cockpit.shows.map((show) => show.title),
       cockpit.switcherExplains,
       'Showrunner',
