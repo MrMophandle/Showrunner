@@ -233,7 +233,7 @@ describe('the draft is on the page as a document, with the findings folded into 
     expect(say.textContent).toContain('severity')
     expect(say.textContent).toContain('confidence')
     // D12, in words, on the card — so a red mark at a gate never reads as a veto over it.
-    expect(blocking.textContent).toContain('never this gate (D12)')
+    expect(blocking.textContent).toContain('never this gate')
     // And the mark that points at it wears the same standing, said as data rather than only
     // as a colour.
     expect(host.querySelector('mark[data-blocking="true"]')).not.toBeNull()
@@ -455,7 +455,7 @@ describe('no verb on this page is ever disabled because a finding stands', () =>
     const verbs = [...host.querySelectorAll('.gate-dock__verbs button.btn')] as HTMLButtonElement[]
     expect(verbs.map((one) => one.disabled)).toEqual([false, false, false, false])
     // The wall is on the page, loud, and it says in words that it is not standing here.
-    expect(gate().textContent).toContain('never this gate (D12)')
+    expect(gate().textContent).toContain('never this gate')
     expect(host.querySelector('.gate-dock__headline')!.textContent).toContain(
       '2 deterministic findings',
     )

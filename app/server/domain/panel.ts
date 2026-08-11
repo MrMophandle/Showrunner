@@ -413,7 +413,7 @@ function whatItFound(row: {
   if (row.verdict === 'partial') {
     return (
       `read scene ${row.read ?? '?'} of this draft and found nothing there${scope} — the rest ` +
-      'of this draft it has not read (D14)'
+      'of this draft it has not read'
     )
   }
   if (row.verdict === 'gapped') {
@@ -423,7 +423,7 @@ function whatItFound(row: {
     )
   }
   if (row.verdict === 'clean') {
-    const put = row.raised === 0 ? '' : ` — ${row.raised} finding(s) you put down`
+    const put = row.raised === 0 ? '' : ` — ${row.raised} finding(s) you dismissed`
     return `clean${scope}${put}`
   }
   const at = row.where.length === 0 ? '' : ` · scene ${row.where.join(', ')}`
@@ -433,7 +433,10 @@ function whatItFound(row: {
 /** What the panel says above its rows. */
 function boardSentence(rows: BoardRow[], read: number, standing: number, gaps: number): string {
   if (rows.length === 0) {
-    return 'Nothing convened for this artifact at all — vanilla, legal and tracked (4.1), and not a clean reading either.'
+    return (
+      'No check was called over this artifact at all. That is not a clean reading; it is ' +
+      'a draft nothing has read.'
+    )
   }
   const partial = partialRows(rows).length
   if (read < rows.length) {
@@ -441,16 +444,17 @@ function boardSentence(rows: BoardRow[], read: number, standing: number, gaps: n
     const narrowed =
       partial === 0
         ? ''
-        : ` ${partial} of those read only the scene that was rewritten (D14), not the draft.`
-    return `${read} of ${rows.length} reviewers have read this draft.${narrowed}${so}`
+        : ` ${partial} of those read only the scene that was rewritten, not the whole draft.`
+    return `${read} of ${rows.length} checks have read this draft.${narrowed}${so}`
   }
   const said =
     standing === 0
       ? partial === 0
-        ? `${rows.length} reviewers read this draft and nothing stands — recorded, because a clean run is a measurement`
-        : `Nothing stands, and ${partial} of the ${rows.length} reviewers have read only the ` +
-          'scene that was rewritten (D14) — the rest of this draft they have not read'
-      : `${standing} finding(s) standing across ${rows.length} reviewers`
+        ? `${rows.length} checks read this draft and nothing stands. That pass is recorded, ` +
+          'because a clean reading is a measurement'
+        : `Nothing stands, and ${partial} of the ${rows.length} checks have read only the ` +
+          'scene that was rewritten. They have not read the rest of this draft'
+      : `${standing} finding(s) standing across ${rows.length} checks`
   return gaps === 0
     ? `${said}.`
     : `${said}, and ${gaps} thing(s) they could not check at all.`

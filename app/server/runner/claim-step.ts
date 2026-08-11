@@ -241,8 +241,8 @@ function claimPrompt(scope: ClaimScope, label: string): string {
     '',
     ...(scope.positions.length === 0
       ? [
-          `${label} declares no position on any arc. It is **vanilla** — legal, tracked, and`,
-          'never a failure state. Return an empty `landings` list; do not invent one.',
+          `${label} declares no position on any arc, so it is **vanilla**. Not every episode`,
+          'advances an arc. Return an empty `landings` list; do not invent one.',
           '',
         ]
       : scope.positions.flatMap((position) => [

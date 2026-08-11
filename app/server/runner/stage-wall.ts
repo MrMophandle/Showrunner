@@ -81,8 +81,8 @@ import { overriddenThrough } from './gate.ts'
  * — which is the single thing D12 exists to deny.
  */
 export const BLOCKS_THE_NEXT_STAGE =
-  'Blocks the next stage until it is resolved, and never this gate (D12): approving over it ' +
-  'at the gate is recorded as your override, putting it down with a note is your answer, and ' +
+  'Refuses the next stage until you settle it, and never this gate. Approving over it ' +
+  'at the gate is recorded as your override, dismissing it with a note is your answer, and ' +
   'a rewrite that re-reads clean is the third way.'
 
 /** One finding standing in the way, with what a sentence needs to name it. */

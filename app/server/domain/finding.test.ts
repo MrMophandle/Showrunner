@@ -332,7 +332,7 @@ describe('dismissing a finding with a note (4.3, 4.4)', () => {
     const id = oneFinding()
     dismissFinding(store, id, 'pays off in ep07')
 
-    expect(() => dismissFinding(store, id, 'actually, no')).toThrow(/kept forever/)
+    expect(() => dismissFinding(store, id, 'actually, no')).toThrow(/kept for good/)
     expect(findFinding(store, id)!.disposition!.note).toEqual('pays off in ep07')
   })
 })

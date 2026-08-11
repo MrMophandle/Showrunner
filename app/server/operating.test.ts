@@ -477,7 +477,7 @@ describe('the operating page — one run, and the gate it parks on', () => {
     // rewrites nothing here, and turns up as an offer on the stage that writes what it names.
     expect(reject.sentence).toContain(
       'But a note you route to another artifact lands there instead — nothing here is ' +
-        'rewritten, and the stage that writes it becomes offerable with your note on it (D21)',
+        'rewritten, and the stage that writes it becomes startable with your note on it',
     )
     expect(reject.enabled).toBe(true)
     // Every depth he may pick, including the `outline` E4-5 added to the closed set (0014).

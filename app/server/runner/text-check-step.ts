@@ -166,7 +166,7 @@ export function panelProjection(
     // The button owns "verb + object + scope" and prefixes this with an em dash, so the
     // separator here is a middle dot: "Convene the ep01 panel — 10 reviewers · 10 Opus
     // calls, ~$1.20".
-    sentence: `${calls + free} reviewers · ${cost.sentence}${freely}`,
+    sentence: `${calls + free} checks · ${cost.sentence}${freely}`,
   }
 }
 
@@ -239,7 +239,7 @@ function textCheckStage(library: LibraryPaths): Stage {
           roster.length === 0
             ? `Nothing convenes over the ${label} ${TEXT_CHECK_KIND}: it declares no canon in ` +
               'scope, its episode declares no arc position, and nothing reads this kind as ' +
-              'craft. That is a vanilla artifact, not a failure (4.1) — and not a clean ' +
+              'craft. That is an artifact no check reads, which is not a failure and not a clean ' +
               'reading either.'
             : null,
       }
@@ -265,7 +265,7 @@ function rosterSentence(roster: readonly CheckSubject[]): string {
   const parts = [
     categories > 0 ? `${categories} category check${plural(categories)}` : '',
     arcs > 0 ? `${arcs} arc position${plural(arcs)}` : '',
-    craft > 0 ? `${craft} craft reviewer${plural(craft)}` : '',
+    craft > 0 ? `${craft} craft check${plural(craft)}` : '',
   ].filter((part) => part !== '')
 
   if (parts.length === 0) return 'nobody'
@@ -398,7 +398,7 @@ function sentenceFor(label: string, kind: ArtifactKind, passes: CheckPass[]): st
 
   const said =
     findings === 0
-      ? `${passes.length} reviewers read the ${label} ${kind} and found nothing — recorded, ` +
+      ? `${passes.length} checks read the ${label} ${kind} and found nothing — recorded, ` +
         'because a clean run is a measurement'
       : `${findings} finding(s) on the ${label} ${kind}: ` +
         passes
@@ -438,7 +438,7 @@ export function artifactOf(
 /** One sentence, two readers — the disabled button states it, the step throws it. */
 export const noArtifactBecause = (label: string, kind: ArtifactKind): string =>
   `${label} has no ${kind} to check. Checks fire at artifact boundaries and never ` +
-  'continuously (4.1) — there is no boundary here yet.'
+  'continuously, and there is no boundary here yet.'
 
 function requireArtifact(
   store: Store,

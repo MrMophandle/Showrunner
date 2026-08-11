@@ -163,7 +163,7 @@ describe('the gap the E4 ledger named — a presenting gate with one exit', () =
     // And every stage on ep01 is refused while it stands — including the one that would
     // rewrite the thing his note is about. That is the deadlock, in one assertion.
     const refused = launchBlockedBecause(store, READY, ep01, stageCatalogue(paths)[SCRIPT_STAGE]!)
-    expect(refused).toContain('One run per episode (D7)')
+    expect(refused).toContain('One run per episode')
     expect(refused).toContain('waiting on your ruling')
   })
 
@@ -188,7 +188,7 @@ describe('the gap the E4 ledger named — a presenting gate with one exit', () =
   it('frees the episode — every stage is offerable again the moment it lands', async () => {
     const runId = await presentTheEp01Script()
     expect(launchBlockedBecause(store, READY, ep01, stageCatalogue(paths)[SCRIPT_STAGE]!)).toContain(
-      'One run per episode (D7)',
+      'One run per episode',
     )
 
     rulings.close(openGates(store)[0]!.gate.id, { notes: [{ note: PUT_DOWN }] })
@@ -235,7 +235,7 @@ describe('the gap the E4 ledger named — a presenting gate with one exit', () =
     expect(outcome.lifecycle.moved).toBe(false)
     expect(outcome.sentence).toContain('Put down at round 1')
     expect(outcome.sentence).toContain('ep01 is free')
-    expect(outcome.sentence).toContain('Nothing regenerates until you ask for it (D21)')
+    expect(outcome.sentence).toContain('Nothing regenerates until you ask for it')
   })
 })
 

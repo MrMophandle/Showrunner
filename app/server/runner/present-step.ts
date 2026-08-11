@@ -268,7 +268,7 @@ export function presentForYourRuling(step: WriteStep): Step<Presentation> {
         const sentence =
           `Put down at round ${standing!.round} — the ${label} ${kind} is exactly as you ruled ` +
           `on it, ${label} is free, and your ${ruled.notes.length === 1 ? 'note stands' : 'notes stand'} ` +
-          'against it until something answers. Nothing regenerates until you ask for it (D21).'
+          'against it until something answers. Nothing regenerates until you ask for it.'
         context.progress(sentence)
         return {
           artifactId: artifact.id,
@@ -319,7 +319,7 @@ export function presentForYourRuling(step: WriteStep): Step<Presentation> {
         (under.blocking.length === 0
           ? ''
           : ` ${under.blocking.length} of them block the next stage and none of them blocks ` +
-            'this gate (D12): approving over one is recorded as your override.')
+            'this gate. Approving over one is recorded as your override.')
 
       context.progress(sentence)
       // The same shape the correction loop's gate carries over the same artifact, and its own

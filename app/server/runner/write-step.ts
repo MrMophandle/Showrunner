@@ -944,8 +944,8 @@ function arcLines(arcs: ArcInContext[], vanilla: boolean, label: string): string
   if (vanilla) {
     lines.push(
       '',
-      `${label} declares no position on any arc. That is **vanilla** — legal, tracked, and ` +
-        'never a failure state. Do not invent a landing to have one.',
+      `${label} declares no position on any arc, so it is **vanilla**. Not every episode ` +
+        'advances an arc. Do not invent a landing to have one.',
     )
   }
   return lines

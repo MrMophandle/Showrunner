@@ -608,7 +608,7 @@ describe('the scene-scoped re-check is paid, and its scope is its reason to exis
     })
 
     expect(applied.recheck.enabled).toBe(true)
-    expect(applied.recheck.sentence).toContain('Re-read scene 4 of the script with the 1 reviewer')
+    expect(applied.recheck.sentence).toContain('Re-read scene 4 of the script with the 1 check')
     expect(applied.recheck.cost).toMatch(/1 Opus call, ~\$\d/)
   })
 })

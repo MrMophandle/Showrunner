@@ -150,7 +150,7 @@ export function linkCategory(store: Store, id: string): CanonEntity {
       throw new Error(
         `“${entity.name}” is registered as a ${entity.categoryKey}, and this show has not ` +
           `declared a \`${entity.categoryKey}\` category. Declare it first — a category is ` +
-          'data (3.2), so that is an edit rather than engineering.',
+          'a row rather than code, so that is an edit rather than engineering.',
       )
     }
 

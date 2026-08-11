@@ -104,7 +104,7 @@ export function relate(
       throw new Error(
         `“${from.name}” is registered as a ${from.categoryKey}, and this show has not declared ` +
           `a \`${from.categoryKey}\` category. A relation type is declared by a category ` +
-          '(D23), so there is nothing yet for this edge to be an instance of.',
+          ', so there is nothing yet for this edge to be an instance of.',
       )
     }
 
@@ -115,7 +115,7 @@ export function relate(
       throw new Error(
         `\`${edge.type}\` is not a relation type the ${category.key} category declares. ` +
           `It declares: ${declared.length > 0 ? declared.join(', ') : 'nothing yet'}. A relation ` +
-          'type is data (D23) — declare it on the category, with a target, a cardinality ' +
+          'type is a row rather than code — declare it on the category, with a target, a cardinality ' +
           'and an inverse, or the edge is invalid.',
       )
     }
@@ -132,7 +132,7 @@ export function relate(
       throw new Error(
         `“${from.name}” already declares a \`${type.name}\` → “${named(standing[0]!.toEntityId)}”, ` +
           `and the ${category.key} category allows ${type.cardinality}. Changing it means ` +
-          'replacing that edge, which is a proposal with a before and an after (E2-2).',
+          'replacing that edge, which is a proposal with a before and an after.',
       )
     }
     if (standing.some((relation) => relation.toEntityId === to)) {
@@ -223,7 +223,7 @@ export function relatedBy(store: Store, entityId: string, name: string): Travers
     throw new Error(
       `\`${name}\` is neither a relation type the ${category.key} category declares nor an ` +
         'inverse any category made navigable from it. Free verbs are refused rather than ' +
-        'guessed at (D23).',
+        'guessed at.',
     )
   }
 

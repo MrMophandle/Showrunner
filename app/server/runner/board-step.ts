@@ -422,7 +422,7 @@ export function renderGrid(where: EpisodeInShow, board: Board): string {
     `# ${where.show.title} · ${episodeLabel(where.episode.number)} — continuity board`,
     '',
     `> Derived from the script, v${board.source?.version ?? '?'}. Scenes come from the ` +
-      'script and are never prescribed to it (D3).',
+      'script and are never prescribed to it.',
     '',
     '| Scene | Location | Present | Environment | Ship | Elapsed |',
     '| --- | --- | --- | --- | --- | --- |',
@@ -485,7 +485,7 @@ function scriptOf(store: Store, episodeId: string): Artifact | undefined {
  */
 const noScriptBecause = (label: string): string =>
   `${label} has no script to read. A continuity board is DERIVED from the written episode ` +
-  'and never prescribed to it (D3) — there is nothing here to extract.'
+  'and never prescribed to it, so there is nothing here to extract.'
 
 function requireScript(store: Store, episodeId: string, label: string): Artifact {
   const script = scriptOf(store, episodeId)

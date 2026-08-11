@@ -138,7 +138,7 @@ export const EDITABLE_KIND: readonly ArtifactKind[] = WRITE_STEP.map(producedBy)
  */
 export const EDIT_REFUSALS = {
   needsText:
-    'Type the draft first — an edit lands what is in the box word for word (D20), and an ' +
+    'Type the draft first. An edit lands what is in the box word for word, and an ' +
     'empty box is not a deletion you meant.',
 } as const
 
@@ -352,7 +352,7 @@ export function staleSentence(
     return first === undefined
       ? `${subject} is stale.`
       : `${subject} was built on the ${label} ${first.input.kind}, and that is stale itself — ` +
-          'staleness travels down every edge it was built along (1.3).'
+          'staleness travels down everything it was built along.'
   }
 
   const said = moved.revisions.map((revision) => revision.summary).filter((one) => one !== '')
@@ -539,12 +539,12 @@ function sceneEditBlockedBecause(
   if (!scene) {
     return (
       `That scene does not belong to this episode. Scenes are derived from the written ` +
-      'episode (D3), and an edit narrows an artifact to one of its own.'
+      'episode, and an edit narrows an artifact to one of its own scenes.'
     )
   }
   if (artifact.kind !== 'script') {
     return (
-      `Only a script breaks into scenes (D3), and this is a ${artifact.kind}. Edit the whole ` +
+      `Only a script breaks into scenes, and this is a ${artifact.kind}. Edit the whole ` +
       'draft instead — the door beside it does exactly that, and costs the same nothing.'
     )
   }
@@ -554,7 +554,7 @@ function sceneEditBlockedBecause(
     return (
       `Scene ${scene.ordinal} is recorded as “${scene.heading}” and that heading is not in the ` +
       `${artifact.kind} on the volume, so there is no span to type over. A scene IS its heading ` +
-      '(E4-3) — edit the whole draft, and the scenes are re-derived from what you type.'
+      'and it has moved. Edit the whole draft, and the scenes are read again from what you type.'
     )
   }
   return null
@@ -614,7 +614,7 @@ function editBlockedBecause(
         ? `is waiting on your ruling — ${busy.pauseReason ?? 'a gate is open'}`
         : `is ${busy.status}`
     return (
-      `${label} already has a ${busy.stage} run, and it ${doing}. One run per episode (D7): ` +
+      `${label} already has a ${busy.stage} run, and it ${doing}. One run per episode: ` +
       'rule on it, or let it finish, and then the draft is yours to type over.'
     )
   }
@@ -634,8 +634,8 @@ function nothingNewBecause(
     return (
       `${EDIT_REFUSALS.needsText} An empty ${artifact.kind} is not a draft — there is nothing ` +
       'for a check to read or a gate to render, and a version that says nothing still stales ' +
-      'everything built on it. Putting the work down is abandoning the episode, which is its ' +
-      'own verb (3.3).'
+      'everything built on it. Stopping the work is abandoning the episode, which is its ' +
+      'own act with its own button.'
     )
   }
   if (readFileSync(join(library.artifactDir, artifact.filePath!), 'utf8') === text) {

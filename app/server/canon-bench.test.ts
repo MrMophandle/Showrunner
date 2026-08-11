@@ -179,7 +179,7 @@ describe('the canon bench — the show, founded', () => {
     )
     // Its edges, and what the category declares about them (D22, D23).
     expect(entity.relations.map((relation) => relation.sentence)).toContain(
-      'species → Halvani · exactly-one, required · facts travel it (D22)',
+      'species → Halvani · exactly-one, required · facts travel it',
     )
     // And the change form's precondition, before anything is typed into it.
     expect(entity.facts[0]!.propose.enabled).toBe(true)
@@ -344,7 +344,7 @@ describe('the canon bench — changing a ratified fact, and reading canon on eit
 
     expect(bench().asOf.sentence).toContain('Canon as of now')
     expect(bench({ ruling: at }).asOf.sentence).toContain(`Canon as of ruling ${at}`)
-    expect(bench({ ruling: at }).asOf.sentence).toContain('half-open')
+    expect(bench({ ruling: at }).asOf.sentence).toContain("A fact's range includes the ruling it opened at")
 
     // A date maps onto a ruling, never the reverse — and a bare date means the END of that
     // day, or every ruling made on the day it names would sit after it.

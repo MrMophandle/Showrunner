@@ -165,7 +165,7 @@ describe('the scene grid renders the board’s own rows and the board’s own ve
     expect(four.verdicts[0]!.blocking).toBe(true)
     // The wall's own sentence, quoted — so a red mark here can never read as a veto at a gate.
     expect(four.verdicts[0]!.blockingSentence).toContain(
-      'Blocks the next stage until it is resolved, and never this gate (D12)',
+      'Refuses the next stage until you settle it, and never this gate',
     )
     expect(grid.rows[5]!.verdicts.map((say) => say.checkKey)).toEqual(['dual-presence'])
     // A scene nothing argued with says nothing. Silence here is an absence of findings, and

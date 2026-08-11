@@ -157,7 +157,7 @@ describe('a check whose findings Ryan keeps putting down', () => {
     expect(record.silent).toBe(1)
 
     expect(record.tune).toBe(
-      'world-rules — you have put down 3 of its last 4 ruled concerns: 2 dismissed with a ' +
+      'world-rules — you have dismissed 3 of its last 4 ruled concerns: 2 dismissed with a ' +
         'note, 1 approved over at a gate, against 1 confirmed by a rewrite. It fired 4 times ' +
         'over 4 concerns in 3 readings, and found nothing in 1 of them. Tune this check?',
     )
@@ -215,7 +215,7 @@ describe('an override at a gate', () => {
     expect(record.overridden).toBe(3)
     expect(record.dismissed).toBe(0)
     expect(record.ruled).toBe(3)
-    expect(record.tune).toContain('you have put down 3 of its last 3 ruled concerns')
+    expect(record.tune).toContain('you have dismissed 3 of its last 3 ruled concerns')
     expect(record.tune).toContain('3 approved over at a gate')
   })
 
@@ -357,7 +357,7 @@ describe('the checks that must never yield a maintenance prompt', () => {
     expect(record.ruled).toBe(3)
     expect(record.dismissed).toBe(3)
     expect(record.gaps).toBe(1)
-    expect(record.tune).toContain('you have put down 3 of its last 3 ruled concerns')
+    expect(record.tune).toContain('you have dismissed 3 of its last 3 ruled concerns')
     expect(record.tune).toContain('could not look 1 time')
   })
 })

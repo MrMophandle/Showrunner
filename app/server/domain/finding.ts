@@ -427,8 +427,8 @@ function versionOf(store: Store, artifactId: string, checked: { id: string; vers
  * eventually says two things.
  */
 export const DISMISSAL_NEEDS_A_NOTE =
-  'Dismissing a finding takes a note. It is read back by later runs (4.4) and counted ' +
-  'against the check that raised it (D11) — an empty one teaches nothing and still ' +
+  'Dismissing a finding takes a note. It is read back by later runs and counted ' +
+  'against the check that raised it. An empty one teaches nothing and still ' +
   'spends the check’s credibility.'
 
 export function dismissFinding(store: Store, findingId: string, note: string): Finding {
@@ -438,7 +438,7 @@ export function dismissFinding(store: Store, findingId: string, note: string): F
     if (finding.disposition) {
       throw new Error(
         `That finding was already ${finding.disposition.kind} — “${finding.disposition.note}”. ` +
-          'A disposition is kept forever (4.4); a later opinion is a later check pass.',
+          'Every disposition is kept for good; a later opinion is a later check pass.',
       )
     }
     if (note.trim() === '') throw new Error(DISMISSAL_NEEDS_A_NOTE)

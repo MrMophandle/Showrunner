@@ -1033,7 +1033,7 @@ function sheetFrom(body: Record<string, unknown>): SheetDraft {
   if (standing !== '' && !ENTITY_STANDING.includes(standing as SheetDraft['standing'] & string)) {
     throw new Error(
       `“${standing}” is not a standing. It is one of: ${ENTITY_STANDING.join(', ')} — declared ` +
-        'intent, not a count (3.1) — or left out, which says nothing rather than saying one-shot.',
+        'intent rather than a count — or left out, which says nothing rather than saying one-shot.',
     )
   }
 

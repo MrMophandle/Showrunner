@@ -501,7 +501,7 @@ describe('the room says where it is and what is happening behind it', () => {
     // The last thing the STEP said, not a sentence this module composed about it — which on
     // the ordinary path is the presentation itself, said by the code that decided to present.
     expect(view.live.latest).toBe(
-      'Presenting the ep01 script v1 for your ruling — round 1. 0 of 10 reviewers have read this draft.',
+      'Presenting the ep01 script v1 for your ruling — round 1. 0 of 10 checks have read this draft.',
     )
     // The transitions are the log's own sentences, ordered by seq.
     expect(view.live.entries.map((one) => one.sentence)).toContain('the ep01 script gate is open')

@@ -393,7 +393,7 @@ describe('one artifact, one ruling — and two doors onto it', () => {
     const refused = launchBlockedBecause(store, ready, episodeId, stageCatalogue(paths)[SCRIPT_STAGE]!)
     expect(refused).toContain('ep01 already has a script-gate run')
     expect(refused).toContain('waiting on your ruling')
-    expect(refused).toContain('One run per episode (D7)')
+    expect(refused).toContain('One run per episode')
     // And the reverse, on the same rule: this stage is refused while any run of ep01 stands.
     expect(
       launchBlockedBecause(store, ready, episodeId, stageCatalogue(paths)[SCRIPT_GATE_STAGE]!),
@@ -428,7 +428,7 @@ describe('one artifact, one ruling — and two doors onto it', () => {
     // Only the sentence is this door's own, because only the sentence is about why THIS gate
     // opened. It says the wall is standing and that it does not stand here.
     expect(payload.sentence).toContain('Presenting the ep01 script v1 for your ruling')
-    expect(payload.sentence).toContain('none of them blocks this gate (D12)')
+    expect(payload.sentence).toContain('none of them blocks this gate')
     expect(payload.sentence).not.toContain('correction budget')
   })
 })

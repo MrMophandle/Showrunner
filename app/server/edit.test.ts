@@ -311,10 +311,10 @@ describe('a scene edit is the one motion aimed at a span', () => {
 
     const held = scenesToEdit(store, paths, script.id)[2]!
     expect(held.edit.enabled).toBe(false)
-    expect(held.edit.blockedBecause).toContain('One run per episode (D7)')
+    expect(held.edit.blockedBecause).toContain('One run per episode')
     expect(() =>
       editScene(store, paths, { artifactId: script.id, sceneId: three.sceneId, text: 'x' }),
-    ).toThrow(/One run per episode \(D7\)/)
+    ).toThrow(/One run per episode/)
   })
 })
 
@@ -568,7 +568,7 @@ describe('what the edit door refuses, in the words the button shows', () => {
 
     const offer = editOffer(store, paths, artifact('script').id)
     expect(offer.enabled).toBe(false)
-    expect(offer.blockedBecause).toContain('One run per episode (D7)')
+    expect(offer.blockedBecause).toContain('One run per episode')
     expect(() =>
       editArtifact(store, paths, { artifactId: artifact('script').id, text: 'x' }),
     ).toThrow(/One run per episode/)

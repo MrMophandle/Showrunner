@@ -255,7 +255,7 @@ export function raiseProposal(store: Store, draft: ProposalDraft): Proposal {
     }
     if (draft.kind === 'revert' && facts.some((part) => part.supersedes === undefined)) {
       throw new Error(
-        'A revert names the ratified fact it overturns — that is its whole content (3.3). ' +
+        'A revert names the ratified fact it overturns, and that is its whole content. ' +
           'Put the fact in `supersedes`; there is no "after" to write.',
       )
     }
@@ -317,7 +317,7 @@ export function raiseProposal(store: Store, draft: ProposalDraft): Proposal {
 
     relations.forEach((part, index) => {
       if (part.op === 'add' && part.type === undefined) {
-        throw new Error('An added edge needs the relation type its category declares (D23).')
+        throw new Error('An added edge needs the relation type its category declares.')
       }
       if (part.op === 'remove' && part.relationId === undefined) {
         throw new Error('A withdrawn edge needs to name which edge.')
@@ -825,7 +825,7 @@ function requireCompleteCanon(store: Store, entity: CanonEntity): void {
     if (edges.some((edge) => edge.type.id === type.id)) continue
     throw new Error(
       `“${entity.name}” cannot become canon without a \`${type.name}\`: the ${category.key} ` +
-        `category declares it required, so every ${category.key} has one (D22). Add the edge ` +
+        `category declares it required, so every ${category.key} has one. Add the edge ` +
         `to the sheet — or declare it \`${UNKNOWN_TARGET}\`, which is a real answer and ` +
         'satisfies this. A candidate may be half-written; canon may not.',
     )

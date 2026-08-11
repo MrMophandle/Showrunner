@@ -189,12 +189,12 @@ function nothingBecause(label: string, ruled: number): string {
   if (ruled > 0) {
     return (
       `Every proposal that rode ${label}’s writing has been ruled — ${ruled} of them, each on ` +
-      'its own row of the ledger, and every disposition kept forever (3.3). The pass is done.'
+      'its own row of the ledger, and every disposition is kept for good. The pass is done.'
     )
   }
   return (
     `Nothing has ever ridden ${label}’s writing, so there is no pass to make. Approving its ` +
-    'script buys the reading that raises what the script claimed of canon (E4-4); a check ' +
+    'script buys the reading that raises what the script claimed of canon. A check ' +
     'remediation and the canon bench can each raise one riding it too. Until one does, this ' +
     'episode owes canon nothing.'
   )
@@ -270,7 +270,7 @@ export function notOnAnEpisodeSweepBecause(proposal: Proposal): string | null {
   if (proposal.episodeId !== null) return null
   return (
     'That proposal rides no episode, so no episode’s completion sweep convenes it — a founding ' +
-    'sheet (D25) and a change raised at the canon bench both ride nothing. Rule it in the canon ' +
+    'sheet and a change raised at the canon bench both ride nothing. Rule it in the canon ' +
     'library’s queue, through the same three verbs.'
   )
 }

@@ -461,7 +461,7 @@ describe('the scene grid is the room’s face, and it renders the board’s own 
     expect(say.textContent).toContain('vacuum-without-protection')
     expect(say.textContent).toContain('severity high · confidence certain')
     expect(say.getAttribute('data-blocking')).toBe('true')
-    expect(say.getAttribute('title')).toContain('never this gate (D12)')
+    expect(say.getAttribute('title')).toContain('never this gate')
   })
 
   it('renders the grid’s health as panel.ts’s own verdicts and sentences', () => {
