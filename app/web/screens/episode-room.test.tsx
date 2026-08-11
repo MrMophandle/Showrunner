@@ -428,7 +428,7 @@ describe('the lifecycle pip is the floor’s component, and wears the states Rya
 
     expect(current.getAttribute('aria-current')).toBe('step')
     expect(current.querySelector('.visually-hidden')!.textContent).toBe(
-      'script — where it stands, and it is yours to move',
+      'script — the stage this episode is at, and yours to move',
     )
     expect(host.querySelectorAll('.room-head [aria-current]')).toHaveLength(1)
   })

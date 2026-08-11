@@ -427,7 +427,7 @@ describe('the lifecycle track wears the states Ryan ruled, not the ones this moc
     ])
     // Amber means his hand and blue means in flight; a merely-current stage is never running.
     expect(view.track.filter((stop) => stop.standing === 'running')).toEqual([])
-    expect(view.track[2]!.sentence).toBe('script — where it stands, and it is yours to move')
+    expect(view.track[2]!.sentence).toBe('script — the stage this episode is at, and yours to move')
   })
 
   it('says the track is of THIS episode, because the component refuses a label-less track', () => {
