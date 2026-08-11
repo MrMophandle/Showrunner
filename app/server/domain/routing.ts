@@ -155,6 +155,12 @@ export interface StandingNote {
   note: string
   gateId: string
   round: number
+  /**
+   * Which verb left it — `reject` or `close` (0015). Carried rather than flattened, because
+   * "I sent this back" and "I put this down" are different instructions to whoever reads the
+   * note next, and the ledger keeps them apart forever.
+   */
+  verdict: 'reject' | 'close'
   /** Null when he routed it nowhere — the legal default, and it lands on the draft (D21). */
   depth: NoteDepth | null
   /** The artifact it stands against. */
@@ -195,6 +201,7 @@ function notesStandingAgainst(store: Store, artifactId: string): StandingNote[] 
   return store
     .all<StandingRow>(
       `SELECT n.note, n.gate_id, n.round, n.depth, n.target, n.target_version, r.ruled_at,
+              r.verdict,
               COALESCE(n.target_version, gr.artifact_version) AS landed_at,
               g.artifact_id AS from_id, from_art.kind AS from_kind, art.version AS at_version
          FROM gate_note n
@@ -203,7 +210,11 @@ function notesStandingAgainst(store: Store, artifactId: string): StandingNote[] 
          JOIN gate g ON g.id = n.gate_id
          JOIN artifact from_art ON from_art.id = g.artifact_id
          JOIN artifact art ON art.id = ?
-        WHERE r.verdict = 'reject'
+        -- Both verbs that leave a note behind (0015). A close is a rejection that stops
+        -- rather than reopening, and what it leaves standing against the artifact is the
+        -- same row read the same way — otherwise putting a draft down would end the run,
+        -- free the episode and quietly drop the only record of why he stopped.
+        WHERE r.verdict IN ('reject', 'close')
           AND ((n.target = ? AND n.target_version IS NOT NULL)
                OR (g.artifact_id = ? AND (n.target IS NULL OR n.target_version IS NULL)))
         ORDER BY r.ruled_at DESC, n.seq DESC`,
@@ -215,6 +226,7 @@ function notesStandingAgainst(store: Store, artifactId: string): StandingNote[] 
       note: row.note,
       gateId: row.gate_id,
       round: row.round,
+      verdict: row.verdict,
       depth: row.depth,
       targetId: artifactId,
       landedAtVersion: row.landed_at,
@@ -273,10 +285,11 @@ export function routedNoteSentence(notes: readonly StandingNote[], subject: stri
   const [newest, ...rest] = notes
   if (!newest) return ''
   const where = `${newest.fromKind} gate`
-  const what =
-    rest.length === 0
-      ? `your note from the ${where}`
-      : `${notes.length} notes from the ${where}`
+  // Which verb left it, in the button's own words (0015). "You sent this back from the script
+  // gate" and "you put this down at its own gate" send Ryan to two different memories, and a
+  // button that told him the wrong one is the archaeology the quote exists to prevent.
+  const one = newest.verdict === 'close' ? `the note you put it down with at the ${where}` : `your note from the ${where}`
+  const what = rest.length === 0 ? one : `${notes.length} notes from the ${where}`
   return `${subject} has ${what} standing against it — rewriting reads it: “${newest.note}”`
 }
 
@@ -284,6 +297,7 @@ interface StandingRow {
   note: string
   gate_id: string
   round: number
+  verdict: 'reject' | 'close'
   depth: NoteDepth | null
   target: string | null
   target_version: number | null

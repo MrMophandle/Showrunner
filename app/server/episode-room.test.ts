@@ -277,9 +277,11 @@ describe('the room links to the rooms that own the decisions it does not', () =>
     const gate = view.rail.gates[0]!
     expect(gate.href).toBe(`/gate/${gate.gateId}`)
     expect(gate.room).toBe('the gate room')
-    // The stub is honest BEFORE the click, not after — off `cockpit.ts`, the same list the
-    // shell draws its bar from, so this room can never point at a door the bar does not have.
-    expect(gate.roomNotYet).toContain('#83')
+    // Off `cockpit.ts`, the same list the shell draws its bar from, so this room can never
+    // point at a door the bar does not have. E5-3 built it, so there is nothing left for the
+    // link to be honest ABOUT — a room that still named the issue that builds it while being
+    // built would be the honesty this field exists for, disagreeing with itself.
+    expect(gate.roomNotYet).toBeNull()
     expect(gate.isOpen).toBe(true)
     expect(gate.standing).toContain('Open at round 1, waiting on you')
     expect(gate.open.sentence).toContain('Rule on the ep02 premise-brief')

@@ -496,8 +496,14 @@ function originSentence(origin: NoteOrigin): string {
         origin.target === null || origin.target === origin.artifactId
           ? ''
           : ` at “${origin.target}”`
+      // One authority, two verbs (0015). What he did next is the difference, and it is said
+      // rather than left to be inferred from a round number that did not go up.
+      const act =
+        origin.verdict === 'close'
+          ? 'Your own note on this draft, written when you put it down at its gate — round'
+          : 'Your own rejection of this draft, at its gate — round'
       return (
-        `Your own rejection of this draft, at its gate — round ${origin.round}, ` +
+        `${act} ${origin.round}, ` +
         `${origin.depth === null ? 'unrouted, which is the legal default' : `routed at ${origin.depth} depth`}` +
         `${where}. It is your opinion of the thing being rewritten.`
       )

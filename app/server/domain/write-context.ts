@@ -267,6 +267,13 @@ export type NoteOrigin =
       round: number
       depth: NoteDepth | null
       target: string | null
+      /**
+       * Which verb wrote it (0015). The AUTHORITY is the same — Ryan, at this artifact's own
+       * gate, about the thing being rewritten — which is why a close is not a fourth origin;
+       * what differs is what he did next, and a writer told "he rejected round 2" when he
+       * actually stopped is being handed the wrong instruction in the right words.
+       */
+      verdict: 'reject' | 'close'
     }
   | {
       /** Written at another artifact's gate and addressed HERE (E4-5, `domain/routing.ts`). */
@@ -735,11 +742,14 @@ function notesFor(store: Store, where: EpisodeInShow, producing: Artifact | null
       : store
           .all<RejectionRow>(
             `SELECT g.id AS gate_id, g.artifact_id, n.round, n.note, n.depth, n.target,
-                    n.target_version, r.ruled_at
+                    n.target_version, r.ruled_at, r.verdict
                FROM gate_note n
                JOIN gate g ON g.id = n.gate_id
                JOIN gate_ruling r ON r.gate_id = n.gate_id AND r.round = n.round
-              WHERE g.artifact_id = ? AND r.verdict = 'reject'
+              -- Both verbs that leave a note (0015). A note he put the draft down with is
+              -- his opinion of the thing being rewritten exactly as a rejection's is, and
+              -- the reason the writing stage became offerable again at all.
+              WHERE g.artifact_id = ? AND r.verdict IN ('reject', 'close')
               ORDER BY n.round DESC, n.seq DESC`,
             producing.id,
           )
@@ -752,7 +762,9 @@ function notesFor(store: Store, where: EpisodeInShow, producing: Artifact | null
             note: row.note,
             at: row.ruled_at,
             sentence:
-              `your round ${row.round} rejection of the ${label} ${producing.kind}` +
+              (row.verdict === 'close'
+                ? `the note you put the ${label} ${producing.kind} down with at round ${row.round}`
+                : `your round ${row.round} rejection of the ${label} ${producing.kind}`) +
               (row.depth === null ? '' : `, routed at ${row.depth} depth`),
             origin: {
               kind: 'gate-rejection' as const,
@@ -761,6 +773,7 @@ function notesFor(store: Store, where: EpisodeInShow, producing: Artifact | null
               round: row.round,
               depth: row.depth,
               target: row.target,
+              verdict: row.verdict,
             },
           }))
 
@@ -875,4 +888,5 @@ interface RejectionRow {
   target: string | null
   target_version: number | null
   ruled_at: string
+  verdict: 'reject' | 'close'
 }

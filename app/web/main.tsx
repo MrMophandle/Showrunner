@@ -5,6 +5,7 @@ import './chrome/chrome.css'
 import { Shell, type Screens } from './chrome/Shell.tsx'
 import { EpisodeRoom } from './screens/EpisodeRoom.tsx'
 import { Floor } from './screens/Floor.tsx'
+import { GateRoom } from './screens/GateRoom.tsx'
 
 /**
  * The cockpit boots into the shell, and the shell keeps the old page (E5-0, #80).
@@ -21,6 +22,9 @@ import { Floor } from './screens/Floor.tsx'
 const SCREENS: Screens = {
   floor: (props) => <Floor {...props} />,
   'episode-room': (props) => <EpisodeRoom {...props} />,
+  // `/gate` is the thin index of what is open and `/gate/<id>` is one gate whole — a room
+  // about one thing answering at its bare address too, which is `router.ts`'s own rule.
+  'gate-room': (props) => <GateRoom {...props} />,
 }
 
 createRoot(document.getElementById('root')!).render(

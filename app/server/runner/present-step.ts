@@ -6,6 +6,7 @@ import { landsOn } from '../domain/routing.ts'
 import { episodeInShow, episodeLabel, type EpisodeInShow } from '../domain/spine.ts'
 import { WRITE_STEP, producedBy, type WriteStep } from '../domain/write-context.ts'
 import { draftsUnderReview, type CorrectionReport } from './correction-loop.ts'
+import { carriesTheRunOn } from './gate.ts'
 import type { Stage, StageCatalogue, StageOffer, Step, StepContext } from './step.ts'
 import { noArtifactBecause } from './text-check-step.ts'
 import { writtenOfKind } from './write-step.ts'
@@ -81,8 +82,21 @@ import { writtenOfKind } from './write-step.ts'
  * more be walled than the ruling itself can, and the wall standing in front of the one door
  * that takes it down would be a check vetoing him by the longest available route.
  *
- * The three verbs still take no preconditions of their own (`gate.ts`). What this step decides
- * is when to present, never whether he may rule.
+ * The verbs still take no preconditions of their own (`gate.ts`). What this step decides is
+ * when to present, never whether he may rule.
+ *
+ * ## The one exit it did not have, and now does (E5-3, #83)
+ *
+ * The E4 ledger inherited this to E5 as a decision rather than a discovery: **"A presenting
+ * gate has one exit, and it is approve."** Everything above is why — no producer, so a
+ * rejection about the presented draft re-presents the same file, and D7 holds the episode
+ * while the gate stands open, so the rewrite the note asked for cannot happen until Ryan
+ * approves the draft he rejected.
+ *
+ * `close` is the answer, and it is a ruling about what the ledger's verbs mean rather than a
+ * special case here (0015, `gate.ts`). What this file owes it is four lines: on a close, end.
+ * The draft is unchanged, the lifecycle is unchanged, the findings are unchanged, and the note
+ * stands where every other note stands.
  */
 
 /**
@@ -114,9 +128,10 @@ export interface Presentation {
   /**
    * How the round that closed it was ruled. A rejection whose notes are about THIS draft
    * re-presents rather than returning; `reject` is E4-5's — every note was routed to another
-   * artifact, so the run ends and nothing is re-presented (D21).
+   * artifact, so the run ends and nothing is re-presented (D21). `close` is E5-3's: he put the
+   * draft down, and that ends the run whatever the notes name.
    */
-  verdict: 'approve' | 'override' | 'reject'
+  verdict: 'approve' | 'override' | 'reject' | 'close'
   /** How many deterministic findings his override was standing over. 0 on a plain approval. */
   stoodOver: number
   /**
@@ -211,7 +226,11 @@ export function presentForYourRuling(step: WriteStep): Step<Presentation> {
       // same function. The one test this door owes for itself — that the episode is standing
       // AT the stage that produces what he ruled on — is `advanceOnPresentedApproval`'s, where
       // it is argued (`domain/lifecycle.ts`).
-      if (ruled && ruled.verdict !== 'reject') {
+      //
+      // **Asked as "did it carry the run on"** (E5-3): with a fourth verb in the ledger, the
+      // negative form would let a close fall through into the approval arm and advance the
+      // lifecycle on a draft Ryan had just put down. `carriesTheRunOn` names the two that do.
+      if (ruled && carriesTheRunOn(ruled.verdict)) {
         const stoodOver = draftsUnderReview(context.store, artifact.id).blocking.length
         const lifecycle = advanceOnPresentedApproval(context.store, context.episodeId, step)
         const sentence =
@@ -228,6 +247,38 @@ export function presentForYourRuling(step: WriteStep): Step<Presentation> {
           verdict: ruled.verdict,
           stoodOver,
           lifecycle,
+          sentence,
+        }
+      }
+
+      // ── Back in on a close: the exit this gate did not have (E5-3, #83) ──────
+      //
+      // The E4 ledger recorded the gap by name: **"A presenting gate has one exit, and it is
+      // approve."** There is no producer here, so a rejection about the draft in front of him
+      // re-presents the same bytes — and D7 holds the episode while this gate is open, so the
+      // rewrite the note asked for cannot happen until he approves the thing he just rejected.
+      // Round 2 of this gate can never show him anything round 1 did not.
+      //
+      // So this is the exit, and it is the smallest one there is: return. The run ends, the
+      // episode is free, the draft is byte for byte as he ruled on it, and the note stands
+      // against it — which reopens the stage that writes it with his words quoted on the
+      // button (`domain/routing.ts`, `runner/write-step.ts`). Nothing regenerates until he
+      // clicks, which is D21 arriving at the one gate that had no way to say it.
+      if (ruled?.verdict === 'close') {
+        const sentence =
+          `Put down at round ${standing!.round} — the ${label} ${kind} is exactly as you ruled ` +
+          `on it, ${label} is free, and your ${ruled.notes.length === 1 ? 'note stands' : 'notes stand'} ` +
+          'against it until something answers. Nothing regenerates until you ask for it (D21).'
+        context.progress(sentence)
+        return {
+          artifactId: artifact.id,
+          version: artifact.version,
+          round: standing!.round,
+          verdict: 'close',
+          stoodOver: 0,
+          // Putting a draft down is not an approval, so it moves nothing — said through the
+          // verb that says where the episode stayed, exactly as E4-5's rejection is.
+          lifecycle: stayedAt(context.store, context.episodeId, sentence),
           sentence,
         }
       }

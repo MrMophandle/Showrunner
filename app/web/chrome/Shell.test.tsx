@@ -175,9 +175,11 @@ describe('the old operating page still serves, at its own address', () => {
 
 describe('the stubs are honest', () => {
   it('say they are not built, and name the issue that builds them', async () => {
-    await open('/gate')
+    // The canon library, because E5-3 built the gate room out of this test (#83 → #84). A
+    // stub leaves by being BUILT, which is the one way out of this table.
+    await open('/canon')
     expect(host.querySelector('.empty')!.textContent).toContain('Not built yet')
-    expect(host.querySelector('.empty')!.textContent).toContain('#83')
+    expect(host.querySelector('.empty')!.textContent).toContain('#84')
   })
 
   it('say the two E6 screens are not E5’s to build', async () => {

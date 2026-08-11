@@ -56,14 +56,16 @@ export const EVENT_KIND = [
   'lock-waiting',
   'lock-acquired',
   'lock-released',
-  // gate transitions (E1-4). 'gate-opened' is one round being presented — round 2 is the
-  // same kind, with the round in `detail`. The three verdicts are three kinds because an
-  // override is an approval OVER something (invariant 3) and a log that cannot tell it
-  // from a plain approval has lost the only record that Ryan overrode anything.
+  // gate transitions (E1-4, and a fifth in E5-3). 'gate-opened' is one round being presented
+  // — round 2 is the same kind, with the round in `detail`. The verdicts are one kind apiece
+  // because an override is an approval OVER something and a close is a draft PUT DOWN
+  // (invariant 3, 0015), and a log that cannot tell either from a plain approval or from a
+  // rejection has lost the only record that Ryan did the different thing.
   'gate-opened',
   'gate-approved',
   'gate-rejected',
   'gate-overridden',
+  'gate-closed',
   // canon dispositions (E2-2). Three, for the same reason the gate has four: "ratified the
   // Mara proposal" WROTE CANON and "deferred the Mara proposal" wrote nothing at all, and a
   // log that cannot tell them apart has lost the only record of when canon moved. A ruling
