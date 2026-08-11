@@ -203,7 +203,7 @@ describe('the scene grid renders the board’s own rows and the board’s own ve
     const grid = room().grid
     expect(grid.rows).toEqual([])
     expect(grid.notYet!.lead).toBe('No continuity board yet.')
-    expect(grid.notYet!.sentence).toContain('an empty grid is not a clean one')
+    expect(grid.notYet!.sentence).toContain('An empty grid is not a clean one')
     expect(grid.notYet!.stage).toBe('continuity-board')
     expect(grid.notYet!.build.enabled).toBe(true)
     expect(grid.notYet!.build.cost).toContain('your money, spent when you click')
@@ -407,7 +407,7 @@ describe('the ledger renders what a button projected against what the rows recor
     // new cost computation this room may not invent.
     expect(ledger.projection).toContain('continuity-board — 1 Opus call')
     expect(ledger.projection).toContain('text-checks — 10 Opus calls')
-    expect(ledger.projection).toContain('nothing in this build produces assets')
+    expect(ledger.projection).toContain('this build neither produces assets nor assembles')
   })
 })
 
@@ -474,7 +474,7 @@ describe('the room hands down the three reads whole', () => {
     // A derived kind gets the edit door DISABLED with its reason, rather than no door at all.
     const board = view.artifacts.find((one) => one.kind === 'continuity-board')!
     expect(board.edit.enabled).toBe(false)
-    expect(board.edit.blockedBecause).toContain('is not written by hand')
+    expect(board.edit.blockedBecause).toContain('rather than written by hand')
     expect(board.present).toBeNull()
   })
 

@@ -609,7 +609,7 @@ describe('the ledger renders what a button projected against what the rows recor
     still()
     const projection = host.querySelector('.room-ledger__projection')!
     expect(projection.textContent).toContain('continuity-board — 1 Opus call')
-    expect(projection.textContent).toContain('nothing in this build produces assets')
+    expect(projection.textContent).toContain('this build neither produces assets nor assembles')
     // No meter, no cap, no budget anywhere on this screen (#88 owns that door).
     expect(host.querySelector('.tile__meter')).toBeNull()
   })

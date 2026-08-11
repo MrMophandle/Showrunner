@@ -510,8 +510,8 @@ export function episodeRoomView(
       sentence:
         `${count(one.readings, 'reading')}, ${one.silent} of them silent · ` +
         `${count(one.firings, 'firing')} over ${count(one.concerns.length, 'concern')} · ` +
-        `${one.dismissed} you put down, ${one.overridden} you overrode, ${one.confirmed} a ` +
-        `rewrite confirmed, ${one.unruled} unruled · ${one.gaps} it could not look at`,
+        `${one.dismissed} you dismissed, ${one.overridden} you overrode, ${one.confirmed} ` +
+        `confirmed by a rewrite, ${one.unruled} unruled · ${one.gaps} it could not read`,
       tune: one.tune,
     })),
     live: roomLive(store, label, runs),
@@ -525,60 +525,64 @@ const HEADINGS: RoomHeadings = {
   grid: {
     name: 'Scene grid',
     explains:
-      'the continuity board as it stands — one row per scene, and the deterministic rules ' +
-      'read these rows rather than the script, which is why re-checking one costs nothing',
+      'The continuity board as it stands, one row per scene. The deterministic rules read ' +
+      'these rows rather than the script, so re-checking a scene costs nothing.',
   },
   artifacts: {
     name: 'Artifacts',
     explains:
-      'freshness is computed off what each was built from, never remembered — and every one ' +
-      'carries the two doors: type over it yourself, or put it in front of you for a ruling',
+      'Every draft this episode has on the volume, with the version each one was built ' +
+      'from. Those versions are compared every time you open this page. You can edit any ' +
+      'of them yourself, or present one for a ruling.',
   },
   findings: {
     name: 'Findings',
     explains:
-      'checks argue, never veto — severity and confidence side by side, and three things you ' +
-      'may do about each: rewrite the span, propose the canon change, or put it down with a note',
+      'What the checks flagged, with severity and confidence printed as two readings. A ' +
+      'check argues and never decides. For each finding you can rewrite the span, propose ' +
+      'the canon change, or dismiss it with a note.',
   },
   rail: {
     name: 'Stage rail',
     explains:
-      'what may be started on this episode, what it costs before you click, and — for the ' +
-      'ones that may not — the reason in words rather than a failure afterwards',
+      'What you can start on this episode, and what each one costs before you click it. ' +
+      'Anything you cannot start says why here rather than failing after the click.',
   },
   gates: {
     name: 'Gates',
-    explains: 'every draft this episode has put in front of you, and the room where you rule on one',
+    explains:
+      'Every draft this episode has opened a gate on, and the room where you rule on one.',
   },
   riders: {
     name: 'Riding this episode',
     explains:
-      'what its writing claimed of canon and nobody has ruled yet — one at a time, each on ' +
-      'its own row of the ledger, and approving the script was not a ruling on any of them',
+      'What the writing claimed about canon and you have not ruled on yet. You rule on ' +
+      'them one at a time. Approving the script did not rule on any of them.',
   },
   arcs: {
     name: 'Arc positions',
     explains:
-      'where this episode says it sits on each arc — a pin, which is not a landing: the ' +
-      'landing proposal is raised when the script is read, and you rule it',
+      'Where this episode says it sits on each arc. A pin is not a landing: the landing ' +
+      'proposal is raised when the script is read, and you rule on it.',
   },
   ledger: {
     name: 'Cost ledger',
     explains:
-      'what each button projected before you clicked it, against what the ledger recorded ' +
-      'afterwards — failed calls included, because a call that came back wrong still spent',
+      'What each button projected before you clicked it, beside what the ledger recorded ' +
+      'afterwards. Failed calls are in here too, because a call that came back wrong still ' +
+      'spent money.',
   },
   desk: {
     name: 'The writer’s desk',
     explains:
-      'what a writer would be handed if you clicked — every fact, why it is there, what was ' +
-      'left out and the rule that kept it out, and your own notes with where you gave them',
+      'What the model would be handed if you clicked: every fact, why it is there, what was ' +
+      'left out and the rule that left it out, and your own notes with where you gave them.',
   },
   criedWolf: {
     name: 'Reviewing the reviewers',
     explains:
-      'how each check has behaved lately across this show — a question you read, and nothing ' +
-      'here disables, demotes or re-weights anything (D11)',
+      'How each check has behaved across this show lately. This panel is yours to read, and ' +
+      'nothing on it disables, demotes or re-weights a check.',
   },
 }
 
@@ -593,8 +597,7 @@ function nothingWritten(writing: WritingRoomView, label: string): Absence | null
     lead: `Nothing has been written for ${label} yet.`,
     sentence:
       `${first.offer.sentence} — ${first.offer.enabled ? first.offer.cost : first.offer.blockedBecause}. ` +
-      'Freshness is computed off what each artifact was built from, so there is nothing here ' +
-      'to be stale about until something is.',
+      'Nothing has been built for this episode yet, so nothing here can be out of date.',
   }
 }
 
@@ -605,8 +608,9 @@ function noArcs(writing: WritingRoomView, label: string): Absence | null {
     lead: `${label} stands on no arc.`,
     sentence:
       writing.positions?.standing ??
-      'This show declares no arcs, so there is nothing here to stand on. An episode touching ' +
-        'no arc is vanilla, which is legal, tracked, and never a failure state (1.1).',
+      'This show declares no arcs, so there is nothing here for an episode to sit on. An ' +
+        'episode that touches no arc is vanilla. Not every episode advances an arc, and the ' +
+        'season map tracks which ones do.',
   }
 }
 
@@ -618,9 +622,9 @@ function standingOf(
 ): string {
   if (abandonedAt !== null) {
     return (
-      `${label} was put down on ${abandonedAt.slice(0, 10)} — it keeps the stage it reached, ` +
-      'its claims were parked, and each ratified fact it established got a revert proposal of ' +
-      'its own (3.3).'
+      `${label} was abandoned on ${abandonedAt.slice(0, 10)}. It keeps the stage it reached, ` +
+      'the proposals riding it were parked, and each fact it had established came back to ' +
+      'you as its own revert proposal.'
     )
   }
   // The pin's own sentence, composed where the pin is (`canon-bench.ts`) — including the
@@ -735,10 +739,10 @@ function sceneGrid(
         : {
             lead: 'No continuity board yet.',
             sentence:
-              `Nothing has read the ${label} script into a grid, so there is nothing here for ` +
-              'the deterministic rules to reason over — and an empty grid is not a clean one. ' +
-              'Extracting the board is a paid reading; re-running the rules over it afterwards ' +
-              'costs nothing, as many times as you like (3.2b).',
+              `Nothing has read the ${label} script into a grid yet, so the deterministic ` +
+              'rules have no rows to read. An empty grid is not a clean one. Extracting the ' +
+              'board is one model call; running the rules over it afterwards costs nothing, ' +
+              'as many times as you like.',
             build: stageOffer(store, llm, episodeId, build),
             stage: build.name,
           },
@@ -775,8 +779,8 @@ function boardFreshness(
   }
   return {
     sentence:
-      `The board stands at v${board.artifact.version} and nothing it was built from has moved ` +
-      'since — asked of the edges every time, never remembered (1.3).',
+      `The board stands at v${board.artifact.version}, and nothing it was built from has ` +
+      'moved since. Those versions are compared every time you open this page.',
     stale: false,
   }
 }
@@ -787,9 +791,9 @@ const noSceneDoor = (label: string, ordinal: number): Offer => ({
   cost: 'Nothing to cost: there is no draft to type over.',
   enabled: false,
   blockedBecause:
-    `The board has a row for scene ${ordinal} and there is no ${label} script on the volume ` +
-    'to open it from. Scenes are derived from the written episode (D3) — write it, or edit ' +
-    'the whole draft.',
+    `The board has a row for scene ${ordinal}, and there is no ${label} script on the volume ` +
+    'to open it from. A scene is read out of the written episode, so write the script or ' +
+    'edit the whole draft.',
 })
 
 /**
@@ -860,7 +864,7 @@ function freshnessSentence(store: Store, freshness: ArtifactFreshness): string {
   const artifact = freshness.artifact
   const subject = `The ${artifact.kind}${artifact.slot ? ` ${artifact.slot}` : ''}`
   if (freshness.status === 'not-started') {
-    return `${subject} has been recorded and never produced — there is no draft on the volume.`
+    return `${subject} has a row and no draft. Nothing was ever written to the volume for it.`
   }
   if (freshness.status === 'stale') {
     return staleSentence(store, artifact, freshness.reasons)
@@ -879,9 +883,9 @@ const derivedEditDoor = (kind: string): Offer => ({
   cost: 'Nothing to cost: this is not a kind anybody types.',
   enabled: false,
   blockedBecause:
-    `A ${kind} is not written by hand — it is derived from something that is, and editing it ` +
+    `A ${kind} is read out of something else rather than written by hand. Typing over it ` +
     'would put a reading on the volume that nothing read. Edit what it was built from, and ' +
-    'rebuild it.',
+    'build it again.',
 })
 
 // ── The stage rail ──────────────────────────────────────────────────────────────
@@ -917,14 +921,13 @@ function stageRail(
         : {
             lead: `No gate has ever opened on ${label}.`,
             sentence:
-              'A writing stage opens one when its draft stops arguing with the checks, and a ' +
-              'presenting stage opens one whenever you ask for a ruling — both are on the rail ' +
-              'above, and both say what they cost before the click.',
+              'A writing stage opens one when its draft stops arguing with the checks. A ' +
+              'presenting stage opens one whenever you ask for a ruling. Both stages are on ' +
+              'the rail above, and both say what they cost before you click.',
           },
     notInThisBuild:
-      'Producing shot images, TTS takes and a mix is E6’s, and assembling and publishing is ' +
-      'E7’s. There is no button for them here because there is no code behind one — a rail ' +
-      'that offered a stage nothing is going to run would be promising work.',
+      'E6 builds shot images, speech takes and the mix. E7 builds assembly and publishing. ' +
+      'None of them has a button here, because there is no code behind one yet.',
   }
 }
 
@@ -936,15 +939,15 @@ function gateDoor(gate: GateInTheRoom, room: Destination): GateDoor {
     round: gate.round,
     isOpen: gate.isOpen,
     standing: gate.isOpen
-      ? `Open at round ${gate.round}, waiting on you — ${count(standing, 'finding')} stand on it`
-      : `Ruled at round ${gate.round} — kept as the record of what you decided`,
+      ? `Open at round ${gate.round}, waiting on you — ${count(standing, 'finding')} stand on ${gate.subject}`
+      : `Ruled at round ${gate.round}, and kept as the record of what you decided`,
     href: `${room.path}/${gate.id}`,
     room: room.name,
     roomNotYet: room.notYetBecause,
     open: {
       sentence: gate.isOpen
         ? `Rule on ${gate.subject} — round ${gate.round}, at its gate`
-        : `Read back ${gate.subject} at round ${gate.round} — what stood, and what you said`,
+        : `Read back ${gate.subject} at round ${gate.round} — what stood, and what you decided`,
       // Going there spends nothing. What a REJECTION buys is the stage's own declared cost and
       // it is stated at the gate, on the button that spends it — quoting one of three verdicts
       // here would be pricing a decision he has not made.
@@ -986,11 +989,12 @@ function arcsInTheRoom(
       statement: arc.statement,
       note:
         pinned === undefined
-          ? 'This episode declares no position on this arc. Nothing is owed here — an episode ' +
-            'touching no arc is vanilla, which is legal and tracked (1.1).'
-          : `This episode declares waypoint ${pinned.ordinal}, and its behaviour is checked ` +
-            'against it. A pin is not a landing: the landing proposal is raised when the ' +
-            'script is read, and you rule it (D8).',
+          ? 'This episode declares no position on this arc, and owes it nothing. An episode ' +
+            'that declares a position on no arc at all is vanilla. Not every episode ' +
+            'advances an arc, and the season map tracks which ones do.'
+          : `This episode declares waypoint ${pinned.ordinal}, and the checks read it against ` +
+            'that waypoint. A pin is not a landing: the landing proposal is raised when the ' +
+            'script is read, and you rule on it.',
       waypoints: waypoints.map((one): WaypointInTheRoom => ({
         waypointId: one.waypointId,
         ordinal: one.ordinal,
@@ -1047,12 +1051,14 @@ function episodeLedger(
       label:
         stage ??
         (runId === ''
-          ? 'Clicks outside a run — a pre-drafted rewrite, or a scene re-check (E3-5, D14)'
+          ? 'Clicks outside a run — a pre-drafted rewrite, or a scene re-check'
           : `A run of a stage this build no longer has`),
       detail: [
         `${count(entries.length, 'call')}`,
         failed === 0 ? '' : `${failed} of them failed and cost money anyway`,
-        unpriced === 0 ? '' : `${count(unpriced, 'call')} nobody could price, so this is a floor`,
+        unpriced === 0
+          ? ''
+          : `${count(unpriced, 'call')} came back with no price, so this total is a floor`,
       ]
         .filter(Boolean)
         .join(' · '),
@@ -1084,13 +1090,13 @@ function episodeLedger(
     sentence: spentSentence(totals),
     projection:
       offerable.length === 0
-        ? `Nothing offerable on ${label} right now would spend a cent — every stage that can ` +
-          'be started on it reads rows rather than calling a model, and nothing in this build ' +
-          'produces assets or assembles an episode (E6, E7).'
-        : `What is still offerable on ${label} states its own price before the click: ` +
+        ? `Nothing you can start on ${label} right now would spend a cent. Every stage still ` +
+          'open to it reads rows instead of calling a model, and this build neither produces ' +
+          'assets nor assembles an episode.'
+        : `Every stage you can still start on ${label} states its price before you click: ` +
           offerable.map((one) => `${one.stage.name} — ${one.offer.cost}`).join('; ') +
-          '. There is no projection past the writing line, because nothing in this build ' +
-          'produces assets or assembles an episode (E6, E7).',
+          '. Nothing is projected past the writing line, because this build neither produces ' +
+          'assets nor assembles an episode.',
   }
 }
 
