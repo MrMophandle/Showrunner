@@ -67,6 +67,15 @@ export interface RecheckFlag {
   reason: string
 }
 
+/** One episode's pin on one arc, from the arc's side. What `positionsOnArc` returns. */
+export interface ArcTouch {
+  episode: Episode
+  arc: Arc
+  waypoint: ArcWaypoint
+  declaredOrdinal: number
+  declaredAt: string
+}
+
 export type ArcEditKind =
   | 'arc-created'
   | 'statement-edited'
@@ -304,6 +313,53 @@ export function isVanilla(store: Store, episodeId: string): boolean {
 }
 
 /**
+ * The other way round: every episode that declares a position on ONE arc, in episode order
+ * (E5-5, #85). `positionsOf` answers "where does this episode stand"; this answers "who has
+ * touched this arc", which is the question both the season map's row and the arc page's
+ * episode list ask, and the one the hanging-thread computation counts in.
+ *
+ * It reads the same three tables `episodesNeedingRecheck` does and applies no drift filter —
+ * a position that has NOT drifted is still a touch. Ordered by episode number because that
+ * is the axis a season is read along; the season map's columns are exactly this order.
+ */
+export function positionsOnArc(store: Store, arcId: string): ArcTouch[] {
+  return store
+    .all<TouchRow>(
+      `SELECT p.declared_ordinal, p.declared_at,
+              e.id AS episode_id, e.season_id AS episode_season_id, e.number, e.title, e.lifecycle,
+              e.abandoned_at AS episode_abandoned_at,
+              e.created_at AS episode_created_at, e.updated_at AS episode_updated_at,
+              a.id AS arc_id, a.show_id, a.season_id, a.scope, a.kind,
+              a.name AS arc_name, a.statement, a.created_at AS arc_created_at,
+              w.id AS waypoint_id, w.ordinal, w.name AS waypoint_name, w.description,
+              w.landing_criteria, w.created_at AS waypoint_created_at
+         FROM episode_arc_position p
+         JOIN episode e ON e.id = p.episode_id
+         JOIN arc a ON a.id = p.arc_id
+         JOIN arc_waypoint w ON w.id = p.waypoint_id
+        WHERE p.arc_id = ?
+        ORDER BY e.number`,
+      arcId,
+    )
+    .map((row) => ({
+      episode: {
+        id: row.episode_id,
+        seasonId: row.episode_season_id,
+        number: row.number,
+        title: row.title,
+        lifecycle: row.lifecycle,
+        abandonedAt: row.episode_abandoned_at,
+        createdAt: row.episode_created_at,
+        updatedAt: row.episode_updated_at,
+      },
+      arc: arcFromJoin(row),
+      waypoint: waypointFromJoin(row),
+      declaredOrdinal: row.declared_ordinal,
+      declaredAt: row.declared_at,
+    }))
+}
+
+/**
  * The episodes whose declared position has drifted — a waypoint went in ahead of them, so
  * what they were checked against is no longer where they sit. Computed from the ordinal
  * they declared against versus the waypoint's ordinal now; no flag is ever written.
@@ -469,6 +525,9 @@ interface RecheckRow extends ArcJoin {
   episode_created_at: string
   episode_updated_at: string
 }
+
+/** The same join, without the drift filter — `positionsOnArc` reads every touch. */
+type TouchRow = RecheckRow
 
 interface EditRow {
   seq: number

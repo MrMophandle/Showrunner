@@ -371,6 +371,43 @@ export function landingOf(
   return row && { arcId: row.arc_id, waypointId: row.waypoint_id }
 }
 
+/** One landing claimed on an arc, with the waypoint it lands and the proposal's own record. */
+export interface ArcLanding {
+  waypointId: string
+  /** Ruled or not — `status` and `disposition` are the proposal's, derived from the ledger. */
+  proposal: Proposal
+}
+
+/**
+ * **Every landing anyone has claimed on this arc, ruled or not** (E5-5, #85; D24, 5.7).
+ *
+ * `openLandingsOfArc` answers what is still waiting; this answers the larger question the
+ * season map and the arc page both ask, and it is the one that lets a **pin** be told from a
+ * **landing** on screen. A pin is `episode_arc_position` — a production decision, free, moved
+ * at the bench (E4-4). A landing is a proposal, and it is only canon once Ryan has ratified
+ * it, at which point `proposal.disposition` carries the `canon_ruling.seq` the fact is read
+ * as-of forever (D9). Two different inks, because they are two different kinds of thing.
+ *
+ * The status is not stored anywhere and is not read from here: `findProposal` derives it from
+ * the ledger, which is why a landing that was rejected or deferred comes back saying so rather
+ * than vanishing and leaving a pin that looks untouched.
+ */
+export function landingsOfArc(store: Store, arcId: string): ArcLanding[] {
+  return store
+    .all<{ proposal_id: string; waypoint_id: string }>(
+      `SELECT l.proposal_id, l.waypoint_id
+         FROM proposal_landing l
+         JOIN proposal p ON p.id = l.proposal_id
+        WHERE l.arc_id = ?
+        ORDER BY p.rowid`,
+      arcId,
+    )
+    .map((row) => ({
+      waypointId: row.waypoint_id,
+      proposal: findProposal(store, row.proposal_id)!,
+    }))
+}
+
 /** The landings nobody has ruled yet on one arc — the arc page's pending column (D24). */
 export function openLandingsOfArc(store: Store, arcId: string): Proposal[] {
   return store

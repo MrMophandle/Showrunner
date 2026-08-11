@@ -1,0 +1,565 @@
+/**
+ * The season map's own layout (E5-5, #85) — lifted from `mockups/season-map.html`.
+ *
+ * `chrome.css` is the design system and knows nothing about an arc; this file is the room: a
+ * grid whose columns are episodes and whose rows are arcs, the arc-label column pinned while
+ * the season scrolls under it, and the hanging threads below. Every colour, radius and type
+ * size is a `chrome.css` token; every geometry is the mockup's.
+ *
+ * ── The grid scrolls inside its own box, and the page never scrolls sideways ─────
+ *
+ * This is the approved detail and it is the whole reason the grid is not just a wide table.
+ * `.season-scroller` is the only thing on this screen that may move horizontally: a nine-column
+ * season is wider than any wrap, and a PAGE that scrolled sideways would take the breadcrumb,
+ * the threads and the two empty states with it. So the overflow is on the box.
+ *
+ * The box also declares a **height**, and that is the second half of the same decision. It is
+ * the tallest thing here and it grows with the number of arcs a show has; a map whose grid grew
+ * to fit twelve arcs would push the hanging-threads panel off the bottom of the screen, which is
+ * the panel that says which arc Ryan has forgotten. The gate room made exactly this call for the
+ * draft it renders, for exactly this reason. `height`, never `max-height` — `held-still.ts` says
+ * why in its own words: a max-height grows the same way and only stops later.
+ *
+ * That height is also what makes the whole page hold still. A landing ratifying changes a cell
+ * INSIDE this box; the box cannot grow, so nothing below it moves. `season-map.test.tsx` asserts
+ * it with `heldStill` around a real ratification.
+ *
+ * ── The label column is sticky, not duplicated ──────────────────────────────────
+ *
+ * `position: sticky; left: 0` on the first cell of every row, with a `box-shadow` standing in
+ * for a border so the pinned edge does not double when the grid is scrolled to zero. It is the
+ * mockup's own technique, kept because the alternative — a second table of labels beside a
+ * scrolling one — is two grids whose rows can fall out of step by a pixel and stay that way.
+ */
+
+/* The mockup's own frame — 1320px, the widest of the eight, and it says why: nine columns. */
+.wrap[data-room='season-map'] {
+  max-width: 1320px;
+}
+
+.season {
+  /*
+   * The column ruler. 190px for the arc label, then one track per episode, then the "ahead"
+   * strip. A screen sets `--season-cols` from the number of episodes it was handed; nothing
+   * about the count is written down here, because no show's season length is this file's
+   * business (no hardcoded show or season anywhere).
+   */
+  --season-label: 190px;
+  --season-track: minmax(104px, 1fr);
+  --season-ahead: 168px;
+  /* What the grid box is made of: its header row, one arc row, and the touched summary. */
+  --season-head: 76px;
+  --season-rowh: 92px;
+  --season-foot: 42px;
+}
+
+.season-head {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 20px;
+}
+
+.season-head__meta {
+  font-size: var(--type-read);
+  color: var(--muted);
+}
+
+/* The season chooser. It stays a list until season #2, the way the show switcher does. */
+.season-choices {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-left: auto;
+}
+
+.season-choice {
+  font-size: var(--type-small);
+  color: var(--muted);
+  text-decoration: none;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-chip);
+  padding: 2px 9px;
+}
+
+.season-choice:hover {
+  color: var(--ink-2);
+  border-color: var(--line-strong);
+}
+
+.season-choice[aria-current='page'] {
+  color: var(--ink);
+  border-color: var(--line-strong);
+}
+
+/* ── The grid ──────────────────────────────────────────────────────────────────── */
+
+/*
+ * The box's height is a `min()` of what the rows actually need and a cap of four arc rows.
+ *
+ * A flat 420px would leave a season with one arc staring at 300px of nothing; a bare `auto`
+ * would let a show with twelve arcs push the hanging threads off the screen AND would unseal
+ * the box, because `held-still.ts` asks the CSSOM whether this can grow and `auto` answers yes.
+ * The `min()` is both: it fits when it can and it stops when it must, and it is never `auto`,
+ * so a landing repainting a cell can never move the panels below.
+ *
+ * The arithmetic is CSS's rather than a component's — a screen supplies `--season-rows`, which
+ * is how many arcs the season has, and that is a fact about the season rather than a number
+ * about layout.
+ */
+.season-scroller {
+  overflow: auto;
+  height: min(420px, calc(var(--season-head) + var(--season-rows) * var(--season-rowh) + var(--season-foot)));
+}
+
+/*
+ * A cold arc's label carries three or four lines of warning under its name, so every row on a
+ * map with one on it is taller. Whether this season HAS a cold arc is a fact the map already
+ * computed (`season-map.ts`), so the screen states it and the stylesheet does the arithmetic —
+ * rather than a box sized for the quiet case putting the "arcs touched" row below its own fold
+ * on exactly the season Ryan opened the map to read.
+ */
+.season-scroller[data-cold='true'] {
+  --season-rowh: 152px;
+}
+
+.season-map {
+  min-width: max-content;
+}
+
+.season-row {
+  display: grid;
+  grid-template-columns:
+    var(--season-label)
+    repeat(var(--season-count), var(--season-track))
+    var(--season-ahead);
+  align-items: stretch;
+}
+
+/* ── The episode header ────────────────────────────────────────────────────────── */
+
+.season-row--head .season-cell {
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.season-ep {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0 6px;
+}
+
+.season-ep__n {
+  font-size: var(--type-label);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.season-ep__t {
+  font-size: var(--type-read);
+  font-weight: 650;
+  color: var(--ink);
+  line-height: 1.25;
+  text-decoration: none;
+}
+
+.season-ep__t:hover {
+  border-bottom: 1px solid var(--line-strong);
+}
+
+.season-ep__st {
+  font-size: var(--type-label);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 3px;
+  color: var(--muted);
+}
+
+.season-ep__st::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--line-strong);
+  flex: none;
+}
+
+.season-ep[data-tone='past'] {
+  opacity: 0.62;
+}
+
+.season-ep[data-tone='past'] .season-ep__t {
+  color: var(--ink-2);
+}
+
+.season-ep[data-tone='gate'] .season-ep__st {
+  color: var(--warn);
+}
+
+.season-ep[data-tone='gate'] .season-ep__st::before {
+  background: var(--warn);
+}
+
+.season-ep[data-tone='live'] .season-ep__st {
+  color: var(--live);
+}
+
+.season-ep[data-tone='live'] .season-ep__st::before {
+  background: var(--live);
+}
+
+.season-ep[data-tone='planned'] .season-ep__t {
+  color: var(--ink-2);
+}
+
+.season-ep[data-tone='planned'] .season-ep__st {
+  font-style: italic;
+}
+
+/* ── The arc rows ──────────────────────────────────────────────────────────────── */
+
+.season-row--arc + .season-row--arc {
+  border-top: 1px solid var(--rule);
+}
+
+.season-row--arc .season-cell {
+  padding: 16px 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+
+/* The arc's track line, drawn behind the chips. */
+.season-cell--track::before {
+  content: '';
+  position: absolute;
+  left: -50%;
+  right: 50%;
+  top: 50%;
+  height: 2px;
+  background: var(--track-pip);
+}
+
+.season-cell--first::before {
+  display: none;
+}
+
+/* The cold stretch: a dashed amber run where nothing declared a position. */
+.season-cell--cold::before {
+  background: repeating-linear-gradient(90deg, #4a3d14 0 5px, transparent 5px 10px);
+}
+
+/*
+ * The label column stays put while the season scrolls sideways. The head cell and the foot
+ * label pin with it, so the three rows of the first column move as one edge.
+ */
+.season-arclabel,
+.season-row--head .season-cell:first-child,
+.season-row--foot .season-foot__label {
+  position: sticky;
+  left: 0;
+  z-index: 3;
+  background: var(--card);
+  box-shadow: 1px 0 0 var(--line);
+}
+
+.season-arclabel {
+  padding: 16px 12px 16px 2px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  justify-content: center;
+}
+
+.season-arclabel__nm a {
+  font-size: var(--type-action);
+  font-weight: 650;
+  color: var(--ink);
+  text-decoration: none;
+  border-bottom: 1px dashed var(--line-strong);
+}
+
+.season-arclabel__nm a:hover {
+  border-bottom-color: var(--ink);
+}
+
+.season-arclabel__kind {
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.season-arclabel__warn {
+  font-size: 11.5px;
+  color: var(--warn);
+  display: flex;
+  align-items: flex-start;
+  gap: 5px;
+  margin-top: 3px;
+  line-height: 1.35;
+}
+
+.season-arclabel__warn::before {
+  content: '◆';
+  font-size: 8px;
+  position: relative;
+  top: 4px;
+}
+
+/* ── One plotted waypoint ──────────────────────────────────────────────────────── */
+
+/*
+ * The three inks. They are `data-ink` rather than three class names on purpose: an attribute
+ * changing is invisible to `held-still.ts`'s flow signature, so a landing ratifying repaints
+ * its own cell without registering as a page that moved. The word in `.season-wp__ruling` is
+ * what changes visibly, and it changes inside the sealed grid box.
+ */
+.season-wp {
+  position: relative;
+  z-index: 1;
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1.25;
+  border: 1px solid var(--line-strong);
+  background: var(--card);
+  border-radius: 7px;
+  padding: 4px 8px;
+  color: var(--ink-2);
+  text-align: center;
+  max-width: 100%;
+}
+
+/* Canon: ratified, with a ruling behind it. The solid chip. */
+.season-wp[data-ink='landed'] {
+  border-color: var(--line-strong);
+  color: var(--ink);
+}
+
+/* Waiting on Ryan. Amber, which is what amber means everywhere else in this cockpit. */
+.season-wp[data-ink='riding'] {
+  background: var(--warn);
+  border-color: var(--warn);
+  color: var(--on-warn);
+  font-weight: 700;
+}
+
+/* A plan. Dashed and quiet — a pin is not a landing. */
+.season-wp[data-ink='pinned'] {
+  border-style: dashed;
+  color: var(--muted);
+  background: none;
+}
+
+.season-wp__no {
+  display: block;
+  font-size: 9.5px;
+  letter-spacing: var(--track-tag);
+  text-transform: uppercase;
+  opacity: 0.72;
+  font-weight: 700;
+}
+
+/*
+ * The lineage, in the cell. Only a landing has one, which is the whole distinction — and it is
+ * **out of flow**, which is the second half of the same sentence.
+ *
+ * A ruling arriving is the one thing that changes a cell while Ryan is looking at the grid, and
+ * an in-flow line appearing under the chip would make the chip taller, the row taller, and every
+ * arc below it move down. `position: absolute` makes that impossible: the line is drawn under
+ * the chip and occupies none of the row. `held-still.ts` reads it the same way — an absolutely
+ * positioned box is sealed, so a landing landing in the row above the arc Ryan is reading is not
+ * a page that moved.
+ */
+.season-wp__ruling {
+  position: absolute;
+  top: 100%;
+  /* Wider than the chip it hangs under: "ratified at ruling 7 · 2026-08-11" is longer than a
+     waypoint's name, and a ruling ellipsised into "202…" is a lineage nobody can read. */
+  left: -28px;
+  right: -28px;
+  font-size: 9.5px;
+  font-weight: 400;
+  color: var(--good);
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* An episode on the arc's track that declares nothing. */
+.season-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--track-pip);
+  position: relative;
+  z-index: 1;
+}
+
+/* ── Ahead: the waypoints nothing holds ────────────────────────────────────────── */
+
+.season-ahead {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: flex-end;
+  padding: 16px 2px 16px 8px;
+}
+
+.season-ahead__wp {
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1.2;
+  border: 1px dashed var(--line-strong);
+  border-radius: 7px;
+  padding: 3px 8px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.season-ahead__none {
+  font-size: 11px;
+  color: var(--faint);
+}
+
+/* ── The touched summary ───────────────────────────────────────────────────────── */
+
+.season-row--foot {
+  border-top: 1px solid var(--line);
+}
+
+.season-row--foot .season-cell {
+  padding: 10px 6px;
+  text-align: center;
+  font-size: 11.5px;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.season-foot__label {
+  padding: 10px 12px 10px 2px;
+  font-size: var(--type-label);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+}
+
+.season-vanilla {
+  color: var(--ink-2);
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-chip);
+  padding: 1px 7px;
+  font-size: var(--type-label);
+}
+
+.season-note {
+  font-size: var(--type-meta);
+  color: var(--muted);
+  margin-top: 12px;
+  display: block;
+}
+
+.season-note b {
+  color: var(--ink-2);
+}
+
+/* ── Hanging threads ───────────────────────────────────────────────────────────── */
+
+.season-thread {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--rule);
+}
+
+.season-thread:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.season-thread__h {
+  font-size: var(--type-action);
+  color: var(--ink);
+  font-weight: 650;
+}
+
+.season-thread__h a {
+  color: var(--ink);
+  text-decoration: none;
+  border-bottom: 1px dashed var(--line-strong);
+}
+
+.season-thread[data-cold='true'] .season-thread__h {
+  color: var(--warn);
+}
+
+.season-thread[data-cold='true'] .season-thread__h a {
+  color: var(--warn);
+}
+
+.season-thread__p {
+  font-size: var(--type-read);
+  color: var(--ink-2);
+  margin-top: 3px;
+}
+
+.season-thread__why {
+  font-size: var(--type-meta);
+  color: var(--muted);
+  margin-top: 3px;
+  display: block;
+}
+
+/* ── The two absences ──────────────────────────────────────────────────────────── */
+
+/*
+ * The mockup draws three columns of premise cards and a costed button here. Neither
+ * mechanism exists, so the region is one honest empty state with the issue that holds the
+ * mechanism named in it — never a table invented to have something to draw.
+ */
+.season-gaps {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: var(--panel-gap);
+}
+
+.season-gap__issue {
+  font-size: var(--type-meta);
+  color: var(--muted);
+  margin-top: 8px;
+  display: block;
+}
+
+.season-gap__issue a {
+  color: var(--ink-2);
+  text-decoration: none;
+  border-bottom: 1px solid var(--line);
+}
+
+.season-gap__issue a:hover {
+  color: var(--ink);
+}
+
+/* ── Narrow ────────────────────────────────────────────────────────────────────── */
+
+@media (max-width: 800px) {
+  .season {
+    --season-label: 132px;
+    --season-track: minmax(88px, 1fr);
+    --season-ahead: 120px;
+  }
+
+  .season-scroller {
+    height: min(340px, calc(var(--season-head) + var(--season-rows) * var(--season-rowh) + var(--season-foot)));
+  }
+
+  .season-choices {
+    margin-left: 0;
+  }
+}

@@ -1,0 +1,355 @@
+/**
+ * The arc page's own layout (E5-5, #85) — lifted from `mockups/arc.html`.
+ *
+ * Two columns: the arc's statement and its waypoint spine on the left, the rail on the right.
+ * Every colour, radius and type size is a `chrome.css` token; every geometry is the mockup's.
+ *
+ * ── The spine is a list, drawn as a spine ───────────────────────────────────────
+ *
+ * A pip per waypoint with a 2px rule running between them, which is the mockup's own drawing
+ * and the right one: the order IS the arc, and a plain list would lose the one thing D8 says
+ * matters — that a waypoint sits ahead of or behind another. The pip carries the standing, so
+ * "landed" and "declared but not landed" are told apart at the same glance as the order.
+ *
+ * ── Nothing here scrolls inside itself, and nothing needs to ────────────────────
+ *
+ * This page has no live region and no growing box: every panel is a fixed read of rows that
+ * only change when Ryan rules something, and a ruling re-reads the page. The one thing that
+ * could have grown is the check's own composed prompt material, and it sits in a `<pre>` with
+ * its own height and its own scrollbar — a worked example is long, and a page that grew to
+ * fit one would put the history panel below the fold. `height`, never `max-height`.
+ */
+
+/* The mockup's own frame — 1280px, which is `--wrap`'s own value, so nothing is overridden. */
+
+.arc-head {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+
+.arc-head h1 {
+  font-size: 26px;
+  font-weight: 700;
+}
+
+/*
+ * The two chips and the line under them are one-line summaries of where the arc stands, and
+ * ratifying a landing rewrites all three. So each declares a HEIGHT: they are the only things
+ * above the statement, and **the statement is what D24 says Ryan comes here to re-read**. A
+ * one-line summary that reflowed the prose under it would move the one paragraph on this page
+ * that must not move. `arc.test.tsx` asserts it with `heldStill`.
+ */
+.arc-chip {
+  font-size: var(--type-label);
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  border-radius: var(--radius-tag);
+  padding: 1px 8px;
+  color: var(--ink-2);
+  border: 1px solid var(--line-strong);
+  height: 19px;
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+}
+
+.arc-chip--standing {
+  color: var(--live);
+  border-color: var(--live-edge);
+}
+
+.arc-headsub {
+  font-size: var(--type-read);
+  color: var(--muted);
+  margin-bottom: 22px;
+  height: 20px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.arc-cols {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--rail);
+  gap: 20px;
+  align-items: start;
+}
+
+@media (max-width: 1080px) {
+  .arc-cols {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* ── The statement — the thing you re-read ─────────────────────────────────────── */
+
+.arc-statement p {
+  font-size: 16px;
+  line-height: 1.6;
+  color: var(--ink-2);
+}
+
+.arc-statement p + p {
+  margin-top: 12px;
+}
+
+/* ── The waypoint spine ────────────────────────────────────────────────────────── */
+
+.arc-wprow {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  gap: 16px;
+  padding-bottom: 22px;
+  position: relative;
+}
+
+.arc-wprow:last-child {
+  padding-bottom: 0;
+}
+
+.arc-wprow::before {
+  content: '';
+  position: absolute;
+  left: 14px;
+  top: 26px;
+  bottom: -4px;
+  width: 2px;
+  background: var(--line);
+}
+
+.arc-wprow:last-child::before {
+  display: none;
+}
+
+.arc-pip {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: 2px solid var(--line);
+  background: var(--page);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--muted);
+  z-index: 1;
+  position: relative;
+}
+
+/* The four standings. Canon, waiting on you, a plan, and not yet held by anything. */
+.arc-wprow[data-standing='landed'] .arc-pip {
+  background: var(--line-strong);
+  border-color: var(--line-strong);
+  color: var(--ink);
+}
+
+.arc-wprow[data-standing='riding'] .arc-pip {
+  background: var(--warn);
+  border-color: var(--warn);
+  color: var(--on-warn);
+}
+
+.arc-wprow[data-standing='pinned'] .arc-pip {
+  border-style: dashed;
+  border-color: var(--line-strong);
+}
+
+.arc-wprow[data-standing='ahead'] .arc-pip {
+  border-style: dashed;
+}
+
+.arc-wp__t {
+  font-size: 16px;
+  font-weight: 650;
+  color: var(--ink);
+  line-height: 1.3;
+}
+
+.arc-wprow[data-standing='ahead'] .arc-wp__t {
+  color: var(--ink-2);
+}
+
+.arc-wp__means {
+  font-size: var(--type-body);
+  color: var(--ink-2);
+  margin-top: 4px;
+}
+
+.arc-wp__lands {
+  font-size: var(--type-meta);
+  color: var(--muted);
+  margin-top: 5px;
+}
+
+.arc-wp__lands b {
+  color: var(--ink-2);
+  font-weight: 600;
+}
+
+.arc-wp__meta {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+  align-items: center;
+}
+
+.arc-wp__recheck {
+  font-size: var(--type-meta);
+  color: var(--warn);
+  margin-top: 6px;
+  display: block;
+}
+
+/* The lineage tag. Only a landed waypoint has one, which is what makes it canon. */
+.arc-tag--ruling {
+  color: var(--good);
+  border-color: #1d4d1d;
+}
+
+/* ── The rail ──────────────────────────────────────────────────────────────────── */
+
+.arc-kv {
+  display: flex;
+  gap: 10px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--rule);
+  font-size: var(--type-body);
+  align-items: baseline;
+}
+
+.arc-kv:last-child {
+  border-bottom: none;
+}
+
+.arc-kv__k {
+  font-size: 11.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  min-width: 104px;
+  flex: none;
+}
+
+.arc-kv__v {
+  color: var(--ink-2);
+}
+
+.arc-eps {
+  display: flex;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+
+.arc-ep {
+  font-size: var(--type-small);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-chip);
+  padding: 2px 9px;
+  color: var(--ink-2);
+  text-decoration: none;
+}
+
+.arc-ep:hover {
+  color: var(--ink);
+}
+
+.arc-ep[data-standing='pinned'] {
+  border-style: dashed;
+  color: var(--muted);
+}
+
+.arc-ep[data-standing='riding'] {
+  border-color: var(--warn);
+  color: var(--warn);
+}
+
+.arc-ep[data-standing='landed'] {
+  border-color: #1d4d1d;
+  color: var(--good);
+}
+
+.arc-note {
+  font-size: var(--type-meta);
+  color: var(--muted);
+  margin-top: 9px;
+  display: block;
+}
+
+/* ── How it is checked ─────────────────────────────────────────────────────────── */
+
+.arc-rule {
+  font-size: var(--type-read);
+  color: var(--ink-2);
+  line-height: 1.6;
+}
+
+.arc-check__for {
+  font-size: var(--type-meta);
+  color: var(--muted);
+  margin-top: 10px;
+  display: block;
+}
+
+.arc-check__label {
+  font-size: var(--type-meta);
+  color: var(--ink-2);
+  margin-top: 8px;
+  display: block;
+}
+
+/*
+ * The check's own words, in the check's own shape — a monospace block, because that is what
+ * the model is sent. It has a height and scrolls itself: the reference lists every waypoint
+ * with its description and its landing criteria, so on a four-waypoint arc it is longer than
+ * everything else on this page put together.
+ */
+.arc-check__text {
+  display: block;
+  margin-top: 8px;
+  padding: 9px 11px;
+  background: var(--page);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--ink-2);
+  white-space: pre-wrap;
+  overflow: auto;
+  height: 200px;
+}
+
+/* ── History ───────────────────────────────────────────────────────────────────── */
+
+.arc-hist {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--rule);
+  font-size: var(--type-read);
+}
+
+.arc-hist:last-child {
+  border-bottom: none;
+}
+
+.arc-hist__w {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.arc-hist__d {
+  font-size: var(--type-small);
+  color: var(--muted);
+}
+
+.arc-hist__note {
+  font-size: var(--type-meta);
+  color: var(--ink-2);
+  font-style: italic;
+  display: block;
+  margin-top: 2px;
+}

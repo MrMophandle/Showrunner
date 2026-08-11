@@ -262,7 +262,24 @@ function subjectOf(category: CanonCategory, provenance: CanonEntity[]): CheckSub
  * and the finding's own concern names the arc it is about.
  */
 export function waypointChecksFor(store: Store, artifact: Artifact): CheckSubject[] {
-  return positionsOf(store, artifact.episodeId).map((position) => ({
+  return positionsOf(store, artifact.episodeId).map((position) => waypointCheckFor(store, position))
+}
+
+/**
+ * One declared position's drift check, composed — and **exported so the arc page can render
+ * the real thing** (E5-5, #85; D24's "how the arc is checked, with a worked example").
+ *
+ * D24 asks the arc page to teach how the arc is checked. The honest way to answer that is to
+ * show what the check actually carries, so `arc-page.ts` calls THIS function and renders its
+ * `instructions` and `reference` verbatim. A screen that paraphrased them would be a second
+ * copy of the check's own words, and the copy that drifted would be the one Ryan read — the
+ * same argument E4-7 made about refusal strings, one level out.
+ *
+ * It composes and sends nothing: no model call, no `check_pass` row, no cost. Rendering the
+ * worked example is a read (invariant 5), which is why the arc page may call it on page load.
+ */
+export function waypointCheckFor(store: Store, position: ArcPosition): CheckSubject {
+  return {
     key: WAYPOINT_CHECK_KEY,
     label: `“${position.arc.name}” @ waypoint ${position.waypoint.ordinal} — ${position.waypoint.name}`,
     instructions: WAYPOINT_INSTRUCTIONS,
@@ -270,7 +287,7 @@ export function waypointChecksFor(store: Store, artifact: Artifact): CheckSubjec
     // An arc is not canon until a landing is ratified (D8), so there is no entity this check
     // is about and nothing for a finding to name.
     subjectEntityIds: [],
-  }))
+  }
 }
 
 /**

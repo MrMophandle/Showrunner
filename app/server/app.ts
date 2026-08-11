@@ -13,6 +13,7 @@ import {
   type BenchStanding,
   type SheetDraft,
 } from './canon-bench.ts'
+import { arcIndexView, arcPageView } from './arc-page.ts'
 import { canonLibraryView } from './canon-library.ts'
 import { cockpitView } from './cockpit.ts'
 import type { Store } from './db/store.ts'
@@ -51,6 +52,7 @@ import {
 } from './runner/gate.ts'
 import type { Runner } from './runner/runner.ts'
 import { stageCatalogue } from './runner/stages.ts'
+import { seasonMapView } from './season-map.ts'
 import { notOnAnEpisodeSweepBecause, sweepView } from './sweep.ts'
 import { writingRoomView } from './writing-room.ts'
 
@@ -324,6 +326,54 @@ export function createApp(
   app.get('/api/gate/:gateId', (c) => {
     const view = gateRoomView(store, paths, c.req.param('gateId'), operating.readiness())
     if (!view) return c.json({ error: `No such gate: ${c.req.param('gateId')}` }, 404)
+    return c.json(view)
+  })
+
+  /**
+   * **The season map** (E5-5): episodes as columns, arcs as rows, every waypoint plotted where
+   * an episode put it, and the hanging threads computed off the pins (5.7, D8).
+   *
+   * Two addresses for one room, which is `router.ts`'s own rule: `/api/season` is whichever
+   * season the bar's link lands on, and `/api/season/:id` is a named one. Neither picks
+   * silently — the view carries every season in the library with the current one marked.
+   *
+   * A GET, and it rules nothing. There is no verb on this screen at all: a landing is ratified
+   * at its gate or in the completion sweep, where its five parts are rendered beside it.
+   */
+  app.get('/api/season', (c) => {
+    const view = seasonMapView(store, null)
+    if (!view) {
+      return c.json(
+        {
+          error:
+            'There is no season in this library yet. `npm run fixture:load` seeds Grey ' +
+            'Harbor — it spends nothing and is safe to run twice.',
+        },
+        404,
+      )
+    }
+    return c.json(view)
+  })
+
+  app.get('/api/season/:seasonId', (c) => {
+    const view = seasonMapView(store, c.req.param('seasonId'))
+    if (!view) return c.json({ error: `No such season: ${c.req.param('seasonId')}` }, 404)
+    return c.json(view)
+  })
+
+  /**
+   * **The arc page** (E5-5, D24): one arc — its statement, its waypoints in order with what
+   * landing each looks like, the episodes touching it, how it is checked, and its history.
+   *
+   * A GET, and composing the worked example is part of the read: `arc-page.ts` calls the
+   * drift check's own composer to render what it carries, which sends nothing and spends
+   * nothing (invariant 5).
+   */
+  app.get('/api/arc', (c) => c.json(arcIndexView(store)))
+
+  app.get('/api/arc/:arcId', (c) => {
+    const view = arcPageView(store, c.req.param('arcId'))
+    if (!view) return c.json({ error: `No such arc: ${c.req.param('arcId')}` }, 404)
     return c.json(view)
   })
 
