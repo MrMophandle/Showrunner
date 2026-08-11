@@ -840,6 +840,49 @@ a.btn {
   border-radius: 3px;
 }
 
+/* ── A word with its meaning one hover or one Tab away (#99) ──────────────────────
+ * The mark is a dotted underline in the muted ink the explanation line is already set in,
+ * so a marked word reads as the same sentence rather than as a link into somewhere else.
+ * Nothing here is a new colour or a new measure — every value is one this file already
+ * names, which is why `drift.test.ts` has nothing new to check.
+ *
+ * The definition is in the DOM at all times and taken out of flow, so it can neither push
+ * the line around when it opens nor go missing when `aria-describedby` asks for it. It
+ * opens on hover AND on keyboard focus: `title` would answer a pointer and nobody else.
+ */
+.term {
+  position: relative;
+}
+
+.term__word {
+  border-bottom: 1px dotted var(--line-strong);
+  cursor: help;
+}
+
+.term__def {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 6px);
+  z-index: 20;
+  width: max-content;
+  max-width: 30ch;
+  background: var(--card-raised);
+  color: var(--ink);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-chip);
+  padding: 8px 10px;
+  font-size: var(--type-meta);
+  line-height: 1.45;
+  text-transform: none;
+  letter-spacing: 0;
+  visibility: hidden;
+}
+
+.term:hover .term__def,
+.term__word:focus-visible ~ .term__def {
+  visibility: visible;
+}
+
 /* Skip past the shell's doors straight to the screen. First thing in the tab order. */
 .skip-link {
   position: absolute;

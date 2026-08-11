@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { Glossed } from './Term.tsx'
 
 /**
  * A section heading that cannot appear without saying what it means (E5-0, #80).
@@ -74,7 +75,15 @@ export function SectionHeader({
   return (
     <div className="section-h">
       <Heading className="section-h__name">{name}</Heading>
-      <p className="section-h__explains">{explains}</p>
+      {/*
+       * The one place in the cockpit that marks a glossary term (#99). Every section is
+       * required to carry this line, so wrapping it here reaches every screen from one
+       * call site — and leaves buttons, counts and cost lines unmarked, which is the
+       * restraint the decision is written down for in `server/glossary.ts`.
+       */}
+      <p className="section-h__explains">
+        <Glossed text={explains} />
+      </p>
       {/*
        * The count badge the mockups draw beside a heading — "NEEDS YOU ③" — and anything
        * else that belongs ON the heading line rather than under it. `.section-h__count` was
