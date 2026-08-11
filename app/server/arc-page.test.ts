@@ -140,7 +140,7 @@ describe('the how-it-is-checked panel renders the drift check’s real composed 
     expect(checked.none!.lead).toBe('Nothing convenes it on this arc yet.')
     expect(checked.none!.sentence).toContain('an empty list rather than a check that says so')
     // The prose about HOW it works is still there — the mechanism is true either way.
-    expect(checked.sentence).toContain('argued, never vetoed')
+    expect(checked.sentence).toContain('A finding argues and never decides')
   })
 })
 
@@ -179,7 +179,7 @@ describe('the waypoint spine tells landed from riding from pinned from ahead', (
     expect(three.standing).toBe('riding')
     expect(three.lineage).toBeNull()
     expect(three.tags.join(' ')).toContain('it becomes canon when you ratify it, and not before')
-    expect(page().standingChip).toBe('declared to waypoint 3 of 3 — nothing landed yet')
+    expect(page().standingChip).toBe('declared to waypoint 3 of 3, and nothing has landed yet')
   })
 
   it('carries what each waypoint means and what landing it looks like, off the sheet', () => {
@@ -245,7 +245,7 @@ describe('the rail says what the arc is, who touches it, and whether it has gone
     expect(view.episodes).toHaveLength(1)
     expect(view.episodes[0]!.label).toBe('ep01')
     expect(view.episodes[0]!.standing).toBe('pinned')
-    expect(view.episodes[0]!.sentence).toContain('a pin, which is a plan and not canon')
+    expect(view.episodes[0]!.sentence).toContain('which is a pin: a plan, and not canon')
     expect(view.episodes[0]!.href).toBe(`/episode/${ep01}`)
 
     expect(view.untouchedNote).toContain('ep02 “Dry Stores” does not touch it')
@@ -258,7 +258,7 @@ describe('the rail says what the arc is, who touches it, and whether it has gone
 
     const view = page()
     expect(view.noEpisodes!.lead).toBe('No episode declares a position on this arc.')
-    expect(view.noEpisodes!.sentence).toContain('vanilla, which is legal, tracked')
+    expect(view.noEpisodes!.sentence).toContain('vanilla, and not every episode advances an arc')
     expect(view.standingChip).toBe('untouched — waypoint 1 of 3 is still ahead')
     expect(view.glance.find((row) => row.key === 'Health')!.value).toContain(
       'no episode declares a position on it, so there is no silence to measure yet',
@@ -295,7 +295,7 @@ describe('the history is the arc’s whole record, and a rename keeps Ryan’s n
 
     // The declaration, said as a pin rather than as a landing.
     const declared = history.find((line) => line.what.includes('declared'))!
-    expect(declared.when).toContain('a pin; a landing is a separate ruling')
+    expect(declared.when).toContain('a pin, and a landing is a separate ruling')
 
     // And the ruling, with its seq and Ryan's note.
     const ruled = history.find((line) => line.what.includes('ratified'))!
@@ -340,6 +340,6 @@ describe('the arc page is reachable, and its bare address is not a dead end', ()
     const index = arcIndexView(store)
     expect(index.arcs).toHaveLength(0)
     expect(index.empty!.lead).toBe('No arc in this library.')
-    expect(index.empty!.sentence).toContain('every episode in it is vanilla')
+    expect(index.empty!.sentence).toContain('every episode in it is then vanilla')
   })
 })

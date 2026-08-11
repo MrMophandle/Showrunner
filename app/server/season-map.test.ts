@@ -109,11 +109,11 @@ describe('a pin and a landing are different inks, and only one of them is canon'
       `ratified at ruling ${ruling.seq} · ${ruling.at.slice(0, 10)}`,
     )
     expect(landed.sentence).toContain('You ratified it')
-    expect(landed.sentence).toContain('canon with lineage')
+    expect(landed.sentence).toContain('it carries the episode that established it')
 
     // The pin carries none, and says in words that it is a plan rather than canon.
     expect(pin.lineage).toBeNull()
-    expect(pin.sentence).toContain('a pin, which is a plan and not canon')
+    expect(pin.sentence).toContain('which is a pin: a plan, and not canon')
     expect(pin.sentence).toContain('No landing proposal stands behind it')
   })
 
@@ -123,7 +123,7 @@ describe('a pin and a landing are different inks, and only one of them is canon'
     const riding = cell(rowFor(fixtureArc().id), ep02).waypoint!
     expect(riding.ink).toBe('riding')
     expect(riding.lineage).toBeNull()
-    expect(riding.sentence).toContain('invisible to canon until you rule it')
+    expect(riding.sentence).toContain('The checks can see the claim and canon cannot')
     expect(riding.sentence).toContain('A pin is not a landing')
   })
 
@@ -198,7 +198,7 @@ describe('hanging threads are computed off the pins, and a long silence goes lou
     expect(thread.heading).toContain('The tow line')
     expect(thread.sentence).toContain('Waypoint 1 “owed” is where “The tow line” goes next')
     expect(thread.sentence).toContain('ep01 “The Long Pier” declares it and stands at script')
-    expect(thread.why).toContain('the longest run of episodes declaring no position on it')
+    expect(thread.why).toContain('The longest run of episodes declaring no position on it')
     // Two, because adding four episodes left the FIXTURE's arc silent for five as well —
     // which is the computation working rather than a leak: cold is read off the pins and the
     // episode order, so lengthening the season is exactly what makes an untouched arc cold.
@@ -241,7 +241,7 @@ describe('hanging threads are computed off the pins, and a long silence goes lou
     expect(only.cold).toBe(false)
     expect(only.heading).toBe('Everything is holding')
     expect(only.sentence).toContain('No arc has gone 3 episodes without an episode declaring')
-    expect(only.why).toContain('there is no thread table and no cold flag anywhere in this schema')
+    expect(only.why).toContain('Nothing in this app remembers that an arc has gone quiet')
     expect(view.meta).toContain('no hanging threads')
   })
 
@@ -270,7 +270,7 @@ describe('a waypoint no episode holds sits ahead of every column, earmarked to n
     expect(row.ahead.map((one) => one.ordinal)).toEqual(['wp 1', 'wp 3'])
     expect(row.aheadNone).toBeNull()
     expect(row.ahead[0]!.sentence).toContain(
-      'Nothing earmarks a waypoint to an episode in this build',
+      'assigns a waypoint to an episode in advance',
     )
   })
 })
@@ -294,7 +294,7 @@ describe('a vanilla episode’s column is a designed render, never a failure sta
 
     expect(view.vanillaNote).toContain('ep07 “Slack Tide”')
     expect(view.vanillaNote).toContain('touch no arc')
-    expect(view.vanillaNote).toContain('Legal, tracked, never a failure state')
+    expect(view.vanillaNote).toContain('Not every episode advances an arc')
     expect(view.meta).toContain('vanilla')
 
     // And the episode that DOES touch the arc is not tagged.

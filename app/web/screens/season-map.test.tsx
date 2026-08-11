@@ -125,8 +125,8 @@ describe('a pin and a landing are drawn differently, and only one carries a ruli
     expect(pinned.querySelector('.season-wp__ruling')!.textContent).toBe('')
 
     // And both say what they are in words, for an eye and for a screen reader.
-    expect(pinned.getAttribute('aria-label')).toContain('a pin, which is a plan and not canon')
-    expect(landed.getAttribute('aria-label')).toContain('canon with lineage')
+    expect(pinned.getAttribute('aria-label')).toContain('which is a pin: a plan, and not canon')
+    expect(landed.getAttribute('aria-label')).toContain('it carries the episode that established it')
   })
 
   it('draws a landing still waiting on Ryan in the amber that means “your attention”', () => {
