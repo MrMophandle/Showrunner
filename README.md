@@ -66,14 +66,17 @@ not contain `:`, because the runner reserves `<id>:rejection` and `<id>:iteratio
 |---|---|
 | `guard` | `check(ctx)` returning `{pass: true, message?}` or `{pass: false, message}` |
 | `script` | `argv(ctx)` returning an argv array, optional `env(ctx)` and `cwd` |
-| `agent` | `promptFile`, `model`, `allowedTools`, `context` (`"fresh"` or `"shared"`), optional `schema` |
+| `agent` | `promptFile`, `model`, `allowedTools`, `context` (`"fresh"` or `"shared"`), optional `schema`, `maxTurns`, `idleTimeoutMs`, `maxBudgetUsd` |
 | `gate` | `message(ctx)`, optional `onReject` agent, `maxAttempts` (default 10) |
 | `loop` | `body` agent, `until` sentinel, `maxIterations`, optional `progress(ctx)` |
 
 The two nested steps are attributed in opposite ways. A gate's `onReject` agent **is** a step of
 its own: its events are logged under its own id, and its id shares the pipeline's id namespace.
 A loop's `body` is **not** a step of its own: its events are logged under the loop's id, so the
-loop stays one step in the run's history however many times the body runs.
+loop stays one step in the run's history however many times the body runs. **A loop body may not
+carry a schema**, and `orderSteps` refuses the pipeline at load time when one does: the loop ends
+on `until` appearing in the body's final text, and a body with a schema has no prose final text —
+its text is the serialized verdict, so the sentinel would be matched against substrings of JSON.
 
 ## Agent steps
 
@@ -88,10 +91,14 @@ const agent = createAgentExecutor({ query: sdkQuery, promptsDir, models });
 ```
 
 `query` is a seam, not a convenience: production passes `sdkQuery` and the tests pass a fake, so
-`engine/src/sdk-query.ts` is the only file in the engine that imports `@anthropic-ai/claude-agent-sdk`
-and the suite never touches the network. `promptsDir` is optional and defaults, per call, to
-`<showRoot>/prompts`. `models` is an alias map (`{ medium: "claude-sonnet-5" }`); a model the map
-does not name is passed to the SDK unchanged.
+`engine/src/sdk-query.ts` is the only **source** file in the engine that imports
+`@anthropic-ai/claude-agent-sdk`. One test names the package as well — `engine/test/sdk-query.test.ts`
+uses `import type` for the SDK's own message types, which TypeScript erases, so it adds no runtime
+import of its own. **The suite never touches the network unless `SHOWRUNNER_LIVE` is set**: loading
+the SDK module spawns nothing, and calling `query()` is what every test but the live one avoids.
+
+`promptsDir` is optional and defaults, per call, to `<showRoot>/prompts`. `models` is an alias map
+(`{ medium: "claude-sonnet-5" }`); a model the map does not name is passed to the SDK unchanged.
 
 ### The prompt file
 
@@ -109,9 +116,12 @@ or queried.
 | `{{results.<stepId>.<field>}}` | a field of that step's result object, at any depth (`{{results.review.notes.tone}}`) |
 
 **Every hole is an error.** An unknown variable, a step with no result, a path through a non-object,
-a missing key, a null value, or a surviving `{{` or `}}` throws `TemplateError` naming the variable
-as written, and the step fails before the query is made. A prompt with a hole in it lies to the
-model quietly, which is the failure this refuses to ship.
+a missing key, a null value, or a value `JSON.stringify` cannot represent throws `TemplateError`
+naming the variable as written — `{{results.missing}}: no result for step "missing"` — and the step
+fails before the query is made. A `{{` or `}}` still in the text after substitution is refused too,
+by a different message that quotes the text rather than a variable, because there is no
+well-formed variable to name: `unbalanced or malformed template braces near: <40 characters>`.
+A prompt with a hole in it lies to the model quietly, which is the failure this refuses to ship.
 
 ### What the query runs with
 
@@ -122,7 +132,7 @@ model quietly, which is the failure this refuses to ship.
 | `tools` / `allowedTools` | the step's `allowedTools` | `tools` decides what is in context, `allowedTools` auto-approves it; `mcp__`-prefixed names go only to `allowedTools` |
 | `settingSources` | `[]` | No user, project or local settings on the host machine leak into a step |
 | `systemPrompt` | `{ type: "preset", preset: "claude_code" }` | Omitting it would give a minimal prompt rather than Claude Code's |
-| `outputFormat` | `{ type: "json_schema", schema }` when the step has one | The SDK validates the verdict against **JSON Schema draft-07** and re-prompts on mismatch; a `$schema` naming a newer draft is refused by the executor before the query |
+| `outputFormat` | `{ type: "json_schema", schema }` when the step has one | The SDK validates the verdict against **JSON Schema draft-07** and re-prompts on mismatch. The executor checks the schema before the query: a `$schema` key, if present, must name draft-07, and anything else — a newer draft, an older one, a draft this code has never heard of — is refused. A schema with no `$schema` key is accepted, draft-07 being the SDK's default. |
 | `abortController` | one per query | How a timeout stops the query |
 
 ### The three events
@@ -140,7 +150,9 @@ The executor owes the log exactly these three, and the runner writes `step_start
 count is reported on `loop_iteration` (design §6.7: an iteration with zero tool calls did nothing).
 The SDK delivers a schema verdict through a synthetic tool call named `StructuredOutput`, which
 `engine/src/sdk-query.ts` drops before the executor sees it, so that call is neither logged as an
-`agent_tool_call` nor counted — the verdict itself arrives on the result message.
+`agent_tool_call` nor counted — the verdict itself arrives on the result message. **The drop is by
+name and unconditional**: the adapter matches the string `StructuredOutput` on every step, schema
+or not, so a real tool that happened to carry that name would be dropped too, invisibly.
 
 `costUsd` is the SDK's **client-side estimate**, not billing data. Authoritative figures come from
 the Usage and Cost API.
@@ -149,12 +161,22 @@ the Usage and Cost API.
 `~/.claude/projects/<encoded-cwd>/<session-id>.jsonl` on the machine that ran the step, and is not
 copied into the show repository.
 
+**An executor may throw only when the event log itself is unwritable.** The script executor never
+throws: every rejected `emit` becomes `{ ok: false, error: "log write failed: …" }`. The agent
+executor guards the `agent_tool_call` emit the same way, but its `agent_query` and `agent_result`
+emits are unguarded and reject out of the executor. A throw leaves the step `running` with no
+terminal event, and design §6.9's replay re-executes that step on the next run.
+
 ### The outcome
 
 A step succeeds as `{ ok: true, text, toolCalls }`, with `verdict` carrying the parsed object when
 the step declared a schema. It fails as `{ ok: false, error }`. **A success with no structured
 output is a failure** for a step with a schema: the SDK can end `subtype: "success"` without one,
 and a missing verdict is never treated as an empty one.
+
+**A returned verdict must not be mutated.** The runner stores it by reference as
+`ctx.results[stepId]` and emits the same object into the log, so a later edit to it would change
+both what a downstream prompt renders and what the log claims the step decided.
 
 ### The bounds, and what each failure says
 
@@ -163,17 +185,28 @@ the SDK's iterator honouring the abort.
 
 | Bound | Effect | The error |
 |---|---|---|
-| `timeoutMs` | Wall clock for the whole query | `timed out after <n> ms` |
-| `idleTimeoutMs` | Wall clock reset on every message from the SDK | `idle for <n> ms` |
+| `timeoutMs` | Wall clock for the whole query | `timeout after <n>ms` — the same wording the script executor uses for the same fault |
+| `idleTimeoutMs` | Wall clock reset on every message from the SDK | `idle timeout after <n>ms` |
 | `maxTurns` | The SDK stops after that many agentic turns | `error_max_turns`, plus `: <errors>` when the result carried any |
 | `maxBudgetUsd` | The SDK stops when its cost estimate reaches the cap | `error_max_budget_usd`, plus `: <errors>` when the result carried any |
+
+The SDK's result message carries one of exactly four error subtypes, and each becomes the step's
+error verbatim, with `: <errors>` appended when the result carried any: `error_max_turns`,
+`error_during_execution`, `error_max_budget_usd`, and `error_max_structured_output_retries` — the
+last being the schema-retry failure, raised when the model's verdict failed validation often enough
+that the SDK stopped re-prompting.
 
 Other failures are worded so the log says which layer broke: `query failed: <msg>` when the SDK
 threw and no result had arrived, `log write failed: <msg>` when `emit` rejected, `message handling
 failed: <msg>` when the executor's own handler threw, `query ended without a result message`,
 `result message with no subtype`, `success without structured output`, and `schema must be JSON
-Schema draft-07, got <declared>`. A deadline, a rejected `emit` or a handler fault discards a result
-that raced in, so a timeout wins over a result that arrived after it.
+Schema draft-07, got <declared>`.
+
+A deadline, a rejected `emit` or a handler fault **outranks** a result that raced in, so a timeout
+wins over a result that arrived after it. The result message is still kept, not discarded: when one
+arrived before the clock was observed, `agent_result` reports its `subtype`, `numTurns`,
+`durationMs`, `costUsd` and `sessionId` alongside `ok: false` and the failure, which is the only
+record of what the query had spent when it was cut off.
 
 ### The context policy
 
@@ -182,9 +215,13 @@ run, the second and later queries of the same step continue the session the firs
 how a loop body keeps its conversation across iterations. Sessions are held in memory by the
 executor, keyed on `<episodeId>/<runId>/<stepId>`.
 
-**A restart does not recover a session.** Resuming a run builds a new executor, so the first query of
-a shared step after a restart is fresh; its `agent_query` records `resumed: false`, which is the
-log's record of the discontinuity.
+**The session map belongs to the executor, not to the run.** A restart of the engine *process*
+discards it, because the next process builds a new executor with an empty map; a second `run()`
+inside the same process keeps it. Keeping it changes nothing across runs in practice, since the key
+carries the run id and a new run's keys therefore miss — but an executor that outlives several
+episodes is exactly why the key carries the episode id too. Either way, the first query of a shared
+step after a restart is fresh, and its `agent_query` records `resumed: false`, which is the log's
+record of the discontinuity.
 
 ### The live test
 

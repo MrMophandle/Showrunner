@@ -144,7 +144,13 @@ export type AgentOutcome =
  *  it is handed, which stamps the step id for it.
  *
  *  An implementation that emits none of these still runs, and the run still completes — the cost
- *  is paid later, by an operator who cannot see what a step did. */
+ *  is paid later, by an operator who cannot see what a step did.
+ *
+ *  An executor may throw only when the event log itself is unwritable. The script executor never
+ *  throws (every rejected emit becomes `{ ok: false, error: "log write failed: …" }`); the agent
+ *  executor guards the `agent_tool_call` emit the same way but its `agent_query` and `agent_result`
+ *  emits are unguarded and reject out of the executor. A throw leaves the step `running` with no
+ *  terminal event; §6.9's replay re-executes it on the next run. */
 export interface Executors {
   /** Obligations: one `script_line` per line of stdout or stderr that is not a progress line, in
    *  the order the lines happened, and one `step_progress` per `::progress {...}` line on stdout
@@ -153,6 +159,9 @@ export interface Executors {
   /** Obligations: one `agent_query` per query the step makes, carrying the prompt file, model,
    *  allowlist and context policy it ran with; one `agent_tool_call` per tool invocation, with
    *  its arguments; and one `agent_result` when the step is done, carrying the verdict JSON if
-   *  the step has a schema and the final text otherwise (spec §6.5). */
+   *  the step has a schema and the final text otherwise (spec §6.5).
+   *
+   *  A returned verdict is stored by reference in `ctx.results` and emitted into the log; it must
+   *  not be mutated after it is returned. */
   agent: (step: AgentStep, ctx: RunContext, emit: Emit) => Promise<AgentOutcome>;
 }
