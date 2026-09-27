@@ -59,4 +59,37 @@ describe("scriptExecutor", () => {
     const out = events.filter((e) => e.kind === "script_line").map((e) => e.payload["line"]);
     expect(out).toEqual(["a; echo pwned"]);
   });
+
+  it("preserves script_line order even when the log write is slow and jittery", async () => {
+    const step: ScriptStep = { kind: "script", id: "s", argv: () => ["python3", "-c", "for i in range(300): print(i)"] };
+    const events: { kind: EventKind; payload: Record<string, unknown> }[] = [];
+    const emit = async (kind: EventKind, payload: Record<string, unknown>) => {
+      await new Promise((r) => setTimeout(r, Math.random() * 3));
+      events.push({ kind, payload });
+    };
+    const r = await scriptExecutor(step, ctx, emit);
+    expect(r).toEqual({ ok: true });
+    const lines = events.filter((e) => e.kind === "script_line").map((e) => Number(e.payload["line"]));
+    expect(lines).toEqual(Array.from({ length: 300 }, (_, i) => i));
+  });
+
+  it("fails the step, and never hangs or leaks a rejection, when the log write rejects", async () => {
+    const step: ScriptStep = { kind: "script", id: "s", argv: () => ["python3", fixture("progress.py"), "3"] };
+    let n = 0;
+    const emit = async () => { if (++n === 2) throw new Error("disk full"); };
+    const r = await scriptExecutor(step, ctx, emit);
+    expect(r).toEqual({ ok: false, error: "log write failed: disk full" });
+  });
+
+  it("times out even when a grandchild holds the stdio pipes open", async () => {
+    const step: ScriptStep = {
+      kind: "script", id: "s", timeoutMs: 300,
+      argv: () => ["python3", "-c", "import subprocess, time; subprocess.Popen(['sleep', '30']); time.sleep(30)"],
+    };
+    const { emit } = collector();
+    const started = Date.now();
+    const r = await scriptExecutor(step, ctx, emit);
+    expect(r).toEqual({ ok: false, error: "timeout after 300ms" });
+    expect(Date.now() - started).toBeLessThan(5000);
+  });
 });
