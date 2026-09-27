@@ -26,12 +26,19 @@ export async function loadPrompt(promptsDir: string, promptFile: string): Promis
 type TemplateContext = Pick<RunContext, "episodeId" | "runId" | "showRoot" | "results">;
 
 const VARIABLE = /\{\{([^{}]*)\}\}/g;
+const LEFTOVER_BRACE = /\{\{|\}\}/;
 
 /** Substitutes every `{{...}}` in `template`. Every hole is an error: an unknown name, a missing
  *  result, a path through a non-object, or a null value throws TemplateError naming the variable
- *  as written, because a prompt with a hole in it lies to the model quietly. */
+ *  as written, because a prompt with a hole in it lies to the model quietly.
+ *
+ *  A doubled brace surviving the substitution is the one hole VARIABLE cannot see — its character
+ *  class matches no brace, so `{{results.{x}}}` and an unterminated `{{results.setup` match nothing
+ *  and would otherwise pass into the prompt verbatim. So after substituting, any remaining `{{` or
+ *  `}}` is refused. Single braces are left alone. A rendered *value* that itself contains `{{` is
+ *  refused too, which is intended: a step's result is never expected to carry template syntax. */
 export function renderPrompt(template: string, ctx: TemplateContext): string {
-  return template.replace(VARIABLE, (whole, inner: string) => {
+  const rendered = template.replace(VARIABLE, (whole, inner: string) => {
     const expr = inner.trim();
     const fail = (why: string): never => { throw new TemplateError(`${whole}: ${why}`); };
     if (expr === "") return fail("empty variable");
@@ -56,4 +63,9 @@ export function renderPrompt(template: string, ctx: TemplateContext): string {
     if (typeof value === "number" || typeof value === "boolean") return String(value);
     return JSON.stringify(value, null, 2);
   });
+  const leftover = rendered.search(LEFTOVER_BRACE);
+  if (leftover !== -1) {
+    throw new TemplateError(`unbalanced or malformed template braces near: ${rendered.slice(leftover, leftover + 40)}`);
+  }
+  return rendered;
 }

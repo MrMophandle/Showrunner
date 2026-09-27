@@ -54,4 +54,10 @@ describe("renderPrompt", () => {
     expect(() => renderPrompt("{{}}", ctx)).toThrow(TemplateError);
     expect(() => renderPrompt("{{results.nul}}", { ...ctx, results: { nul: null } })).toThrow(/nul/);
   });
+  it("refuses doubled braces left over after substitution, but not single braces in a value", () => {
+    expect(() => renderPrompt("{{results.{x}}}", ctx)).toThrow(TemplateError);
+    expect(() => renderPrompt("{{results.{x}}}", ctx)).toThrow(/unbalanced or malformed template braces near: \{\{results\.\{x\}\}\}/);
+    expect(() => renderPrompt("{{results.setup", ctx)).toThrow(/unbalanced or malformed template braces near: \{\{results\.setup/);
+    expect(renderPrompt("{{results.setup}}", { ...ctx, results: { setup: "a {b} c" } })).toBe("a {b} c");
+  });
 });
