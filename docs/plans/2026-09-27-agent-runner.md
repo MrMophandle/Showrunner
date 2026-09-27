@@ -230,7 +230,7 @@ MSG
 | `{{results.<key>}}` | `ctx.results[key]`; a string as-is, a number or boolean via `String()`, an object or array as `JSON.stringify(value, null, 2)`. `<key>` runs to the next `.` or the closing braces and may contain `-` and `:` (so `{{results.outline-gate:rejection}}` and `{{results.draft:iteration}}` work). |
 | `{{results.<key>.<a>.<b>}}` | the dotted path into an object result, each segment an object key |
 
-Whitespace inside the braces is ignored. Anything else inside `{{ }}` — an unknown top-level name, a results key that is absent, a path through a non-object, a value that is `null` or `undefined` — throws `TemplateError` naming the variable exactly as written. A prompt with a hole is a prompt that lies to the model, so every hole is loud.
+Leading and trailing whitespace inside the braces is trimmed (`{{ results.setup }}` works); whitespace elsewhere in the expression is not (`{{results. setup}}` is an unknown variable). Anything else inside `{{ }}` — an unknown top-level name, a results key that is absent, a path through a non-object, a value that is `null` or `undefined` — throws `TemplateError` naming the variable exactly as written. A prompt with a hole is a prompt that lies to the model, so every hole is loud.
 
 - [ ] **Step 1: Write the fixtures**
 
@@ -1588,3 +1588,10 @@ git push -u origin agent-runner
 - **Session transcripts** persist under `~/.claude/projects/<encoded-cwd>/<session-id>.jsonl` on the machine that ran the step; `agent_result.sessionId` is the pointer the troubleshooting agent (spec §6.8) follows to the full conversation. Not copied into the show repository.
 - **Cost accounting** uses the SDK's client-side estimate. Authoritative figures come from the Usage and Cost API, which is Plan E's concern if the board ever shows money.
 - **Authentication for a shipped product** must be API-key based: Anthropic's policy note on the Agent SDK pages says third-party developers may not offer claude.ai login for products built on it. Ryan's own machine may use its Claude Code login. This matters for the "give it to friends" question and belongs to a later packaging plan, not to C–F.
+
+---
+
+## Whole-branch review and fix wave (2026-09-27)
+
+The whole-branch review at `59b0f5e` returned "ready to merge with fixes": no Critical, eight Importants (the handoff layer: README claims, the `Executors` throw contract, a missing committed deferred document, and one real guard — a loop body with a schema could end its loop early on a substring of its own verdict JSON), and seven Minors. One fix wave of three commits followed: `9f7fb6a` (the loop-schema guard in `orderSteps`, the timeout wording aligned to the script executor's `timeout after Nms`, the reject-path deadline guard, result metadata kept on a deadline, the draft-07 allowlist, `TemplateError.name`, the non-serializable-value guard), `f124a11` (the README's agent section checked line by line against the code; the `Executors` contract), and `8c0bca4` (a second live test asking for a tool outside the allowlist). Every deferred item, the §4.7 closure, and every ruling made during execution are recorded in `docs/plans/2026-09-27-agent-runner-deferred.md`.
+

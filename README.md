@@ -217,8 +217,9 @@ executor, keyed on `<episodeId>/<runId>/<stepId>`.
 
 **The session map belongs to the executor, not to the run.** A restart of the engine *process*
 discards it, because the next process builds a new executor with an empty map; a second `run()`
-inside the same process keeps it. Keeping it changes nothing across runs in practice, since the key
-carries the run id and a new run's keys therefore miss — but an executor that outlives several
+inside the same process keeps it — so a run resumed in the same process (a second `run()` for the
+same run id, after a gate answer) finds its shared sessions intact, which is the intended behaviour.
+Across runs it changes nothing, since the key carries the run id and a new run's keys therefore miss — but an executor that outlives several
 episodes is exactly why the key carries the episode id too. Either way, the first query of a shared
 step after a restart is fresh, and its `agent_query` records `resumed: false`, which is the log's
 record of the discontinuity.
