@@ -59,6 +59,32 @@ describe("loops", () => {
     expect(result).toEqual({ status: "failed", stepId: "draft-loop", error: "exhausted 3 iterations without sentinel DRAFT_COMPLETE" });
   });
 
+  it("emits a step_progress after every iteration when the loop declares a progress hook", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "show-"));
+    const texts = ["scene one", "scene two", "all done DRAFT_COMPLETE"];
+    let i = 0;
+    const executors: Executors = {
+      script: async () => ({ ok: true }),
+      agent: async () => ({ ok: true, text: texts[i++] ?? "", toolCalls: 1 }),
+    };
+    const loop: LoopStep = {
+      kind: "loop", id: "draft-loop", body, until: "DRAFT_COMPLETE", maxIterations: 5,
+      // Derived from what the hook is handed, the way a real one would derive it from disk.
+      progress: (ctx) => ({ done: Number(ctx.results["draft:iteration"]), total: 3, unit: "scenes" }),
+    };
+    const log = new EventLog(EventLog.logPath(root, "s02e01", "r1"));
+    const result = await run({ pipeline: { name: "p", steps: [loop] }, ctx: { runId: "r1", episodeId: "s02e01", showRoot: root }, log, executors });
+
+    expect(result).toEqual({ status: "completed" });
+    const progress = (await log.read()).filter((e) => e.kind === "step_progress");
+    expect(progress.map((e) => e.stepId)).toEqual(["draft-loop", "draft-loop", "draft-loop"]);
+    expect(progress.map((e) => e.payload)).toEqual([
+      { done: 1, total: 3, unit: "scenes" },
+      { done: 2, total: 3, unit: "scenes" },
+      { done: 3, total: 3, unit: "scenes" },
+    ]);
+  });
+
   it("fails when the cap is reached without the sentinel, and shows the dead iterations", async () => {
     const { result, events } = await runLoop(["scene one", "", ""], [3, 0, 0], 3);
     expect(result).toEqual({ status: "failed", stepId: "draft-loop", error: "exhausted 3 iterations without sentinel DRAFT_COMPLETE" });

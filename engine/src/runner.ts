@@ -354,6 +354,7 @@ async function runLoopStep(
     }
     const sentinel = r.text.includes(step.until);
     await emit("loop_iteration", { iteration, max: step.maxIterations, sentinel, toolCalls: r.toolCalls });
+    if (step.progress) await emit("step_progress", { ...(await step.progress(iterCtx)) });
     if (sentinel) {
       await emit("step_completed", { result: r.text, iterations: iteration });
       return { kind: "completed", result: r.text };

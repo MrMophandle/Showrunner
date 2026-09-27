@@ -1,3 +1,5 @@
+import type { Progress } from "./state.js";
+
 export type StepId = string;
 
 export type EventKind =
@@ -27,6 +29,9 @@ interface StepBase {
   inputs?: string[];
   /** Files (relative to showRoot) this step writes. Hashed on completion and recorded. */
   outputs?: string[];
+  /** Wall-clock budget for the step. The script executor enforces it by killing the child's whole
+   *  process group; enforcement for agent steps belongs to the agent executor. */
+  timeoutMs?: number;
 }
 
 export type GuardResult = { pass: true; message?: string } | { pass: false; message: string };
@@ -42,7 +47,6 @@ export interface ScriptStep extends StepBase {
   argv: (ctx: RunContext) => string[];
   env?: (ctx: RunContext) => Record<string, string>;
   cwd?: string;
-  timeoutMs?: number;
 }
 
 export interface AgentStep extends StepBase {
@@ -69,6 +73,11 @@ export interface LoopStep extends StepBase {
   /** The exact string whose presence in the body's final text ends the loop. */
   until: string;
   maxIterations: number;
+  /** Called after every iteration; its result is emitted as step_progress. Spec §6.7 wants a
+   *  loop's progress derived from disk rather than self-reported — counting what was actually
+   *  written against what was planned — because a derived number cannot be wrong about it. The
+   *  context it receives carries `<body-id>:iteration`, the number of the iteration just run. */
+  progress?: (ctx: RunContext) => Progress | Promise<Progress>;
 }
 
 export type Step = GuardStep | ScriptStep | AgentStep | GateStep | LoopStep;
@@ -84,8 +93,24 @@ export type AgentOutcome =
   | { ok: true; text: string; verdict?: unknown; toolCalls: number }
   | { ok: false; error: string };
 
-/** The two step kinds that do real work are injected, so the runner is testable with fakes. */
+/** The two step kinds that do real work are injected, so the runner is testable with fakes.
+ *
+ *  Each executor owes the log a fixed set of events, because the dashboard, the restart logic and
+ *  the troubleshooting agent are all projections of the log and nothing else (spec §6.5, §6.8).
+ *  The runner writes step_started, step_completed, step_failed, step_cached and input_changed
+ *  around the call; everything below is the executor's own obligation, emitted through the `emit`
+ *  it is handed, which stamps the step id for it.
+ *
+ *  An implementation that emits none of these still runs, and the run still completes — the cost
+ *  is paid later, by an operator who cannot see what a step did. */
 export interface Executors {
+  /** Obligations: one `script_line` per line of stdout or stderr that is not a progress line, in
+   *  the order the lines happened, and one `step_progress` per `::progress {...}` line on stdout
+   *  (spec §6.7). The progress line itself is never also logged as a script_line. */
   script: (step: ScriptStep, ctx: RunContext, emit: Emit) => Promise<ScriptOutcome>;
+  /** Obligations: one `agent_query` per query the step makes, carrying the prompt file, model,
+   *  allowlist and context policy it ran with; one `agent_tool_call` per tool invocation, with
+   *  its arguments; and one `agent_result` when the step is done, carrying the verdict JSON if
+   *  the step has a schema and the final text otherwise (spec §6.5). */
   agent: (step: AgentStep, ctx: RunContext, emit: Emit) => Promise<AgentOutcome>;
 }
