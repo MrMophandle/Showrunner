@@ -61,6 +61,18 @@ function lastCompletion(stepId: StepId, logs: Event[][]): CachedCompletion | und
   return undefined;
 }
 
+/** The error recorded by the most recent step_failed for a step, or a stand-in when the log
+ *  records the failure without one (an older log, or a crash between the two writes). */
+function lastFailure(events: Event[], stepId: StepId): string {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i];
+    if (e && e.kind === "step_failed" && e.stepId === stepId && typeof e.payload["error"] === "string") {
+      return e.payload["error"];
+    }
+  }
+  return "failed in an earlier attempt";
+}
+
 export async function run(opts: RunOptions): Promise<RunResult> {
   const { pipeline, log, executors } = opts;
   // Validate the episode id at entry: every path the run touches is built from it.
@@ -68,31 +80,27 @@ export async function run(opts: RunOptions): Promise<RunResult> {
   const ordered = orderSteps(pipeline);
   const priorEvents: Event[][] = [];
   for (const pl of opts.priorLogs ?? []) priorEvents.push(await pl.read());
-  const ownEvents = await log.read();
 
-  if (ownEvents.length === 0) {
-    await log.append({ runId: opts.ctx.runId, kind: "run_started", payload: { pipeline: pipeline.name, episodeId: opts.ctx.episodeId } });
+  // The log is read exactly once per run. Every append below also pushes onto this array, so it
+  // stays the current contents of the file without the file being re-read per step.
+  const events: Event[] = await log.read();
+  const append = async (e: Omit<Event, "ts">): Promise<void> => { events.push(await log.append(e)); };
+
+  if (events.length === 0) {
+    await append({ runId: opts.ctx.runId, kind: "run_started", payload: { pipeline: pipeline.name, episodeId: opts.ctx.episodeId } });
   }
 
-  const state: RunState = deriveRunState(await log.read());
+  const state: RunState = deriveRunState(events);
   if (state.finished) {
     if (state.status === "completed") return { status: "completed" };
     const failedId = Object.entries(state.steps).find(([, v]) => v === "failed")?.[0] ?? "";
-    let error = "failed in an earlier attempt";
-    for (let i = ownEvents.length - 1; i >= 0; i--) {
-      const e = ownEvents[i];
-      if (e && e.kind === "step_failed" && e.stepId === failedId && typeof e.payload["error"] === "string") {
-        error = e.payload["error"];
-        break;
-      }
-    }
-    return { status: "failed", stepId: failedId, error };
+    return { status: "failed", stepId: failedId, error: lastFailure(events, failedId) };
   }
   if (state.openGate) return { status: "waiting", gate: state.openGate };
 
   const ctx: RunContext = { ...opts.ctx, results: { ...state.results } };
   const emitFor = (stepId: StepId | undefined): Emit => async (kind, payload) => {
-    await log.append(stepId === undefined
+    await append(stepId === undefined
       ? { runId: ctx.runId, kind, payload }
       : { runId: ctx.runId, stepId, kind, payload });
   };
@@ -116,7 +124,7 @@ export async function run(opts: RunOptions): Promise<RunResult> {
       continue;
     }
 
-    const outcome = await runStep(step, ctx, emitFor, executors, log, [...priorEvents, await log.read()]);
+    const outcome = await runStep(step, ctx, emitFor, executors, events, [...priorEvents, events]);
     if (outcome.kind === "completed") {
       state.steps[step.id] = "completed";
       if (outcome.result !== undefined) ctx.results[step.id] = outcome.result;
@@ -155,7 +163,7 @@ type StepOutcome =
 
 async function runStep(
   step: Step, ctx: RunContext, emitFor: (id: StepId | undefined) => Emit,
-  executors: Executors, log: EventLog, allLogs: Event[][],
+  executors: Executors, events: Event[], allLogs: Event[][],
 ): Promise<StepOutcome> {
   const emit = emitFor(step.id);
   switch (step.kind) {
@@ -174,7 +182,7 @@ async function runStep(
     case "agent":
       return runAgentStep(step, ctx, emit, executors);
     case "gate":
-      return runGateStep(step, ctx, emit, executors, log);
+      return runGateStep(step, ctx, emit, executors, emitFor, events);
     case "loop":
       return runLoopStep(step, ctx, emit, executors);
   }
@@ -224,8 +232,10 @@ async function runAgentStep(step: AgentStep, ctx: RunContext, emit: Emit, execut
   return { kind: "completed", result };
 }
 
-async function runGateStep(step: GateStep, ctx: RunContext, emit: Emit, executors: Executors, log: EventLog): Promise<StepOutcome> {
-  const events = await log.read();
+async function runGateStep(
+  step: GateStep, ctx: RunContext, emit: Emit, executors: Executors,
+  emitFor: (id: StepId | undefined) => Emit, events: Event[],
+): Promise<StepOutcome> {
   const state = deriveRunState(events);
   const attempts = state.gateAttempts[step.id] ?? 0;
   const maxAttempts = step.maxAttempts ?? 10;
@@ -258,7 +268,7 @@ async function runGateStep(step: GateStep, ctx: RunContext, emit: Emit, executor
     if (step.onReject) {
       const notes = lastAnswer.payload["notes"];
       const fixCtx: RunContext = { ...ctx, results: { ...ctx.results, [`${step.id}:rejection`]: notes ?? "" } };
-      const fixEmit: Emit = async (kind, payload) => { await log.append({ runId: ctx.runId, stepId: step.onReject!.id, kind, payload }); };
+      const fixEmit = emitFor(step.onReject.id);
       await fixEmit("step_started", { kind: "agent", rejectionOf: step.id, attempt: attempts });
       const r = await executors.agent(step.onReject, fixCtx, fixEmit);
       if (!r.ok) {

@@ -127,6 +127,25 @@ describe("run", () => {
     expect((await log2.read()).some((e) => e.kind === "step_cached")).toBe(false);
   });
 
+  it("reads its own log exactly once for the whole run", async () => {
+    const root = await show();
+    const g: GuardStep = { kind: "guard", id: "g", check: () => ({ pass: true }) };
+    const s: ScriptStep = { kind: "script", id: "s", dependsOn: ["g"], argv: () => ["true"] };
+    const a: AgentStep = { kind: "agent", id: "a", dependsOn: ["s"], promptFile: "x.md", model: "m", allowedTools: [], context: "fresh" };
+    const log = new EventLog(EventLog.logPath(root, "s02e01", "r1"));
+    const original = EventLog.prototype.read;
+    const reads: string[] = [];
+    EventLog.prototype.read = function (this: EventLog) { reads.push(this.path); return original.call(this); };
+    try {
+      const res = await run({ pipeline: { name: "p", steps: [g, s, a] }, ctx: { runId: "r1", episodeId: "s02e01", showRoot: root }, log, executors: okExecutors([]) });
+      expect(res).toEqual({ status: "completed" });
+    } finally {
+      EventLog.prototype.read = original;
+    }
+    expect(reads.filter((p) => p === log.path)).toHaveLength(1);
+    expect((await log.read()).filter((e) => e.kind === "step_completed")).toHaveLength(3);
+  });
+
   it("re-executes a step whose log shows it running with no terminal event", async () => {
     const root = await show();
     const calls: string[] = [];
