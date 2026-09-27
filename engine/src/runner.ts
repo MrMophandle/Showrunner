@@ -13,7 +13,9 @@ export interface RunOptions {
   ctx: Omit<RunContext, "results">;
   log: EventLog;
   executors: Executors;
-  /** Logs of earlier runs of the same episode, consulted for cached step hashes. */
+  /** Logs of earlier runs of the same episode, oldest first, consulted for cached step hashes.
+   *  The order is load-bearing: when two of them record a completion of the same step, the one
+   *  later in this array wins, so the newest run's hashes are the ones compared against disk. */
   priorLogs?: EventLog[];
 }
 
@@ -27,6 +29,12 @@ export async function answerGate(
   answer: { approved: boolean; notes?: string; by?: string },
 ): Promise<void> {
   const state = deriveRunState(await log.read());
+  // An answer carries the run it answers. A mismatch means the caller is holding a stale run id
+  // — a console tab left open across a restart — and the answer would be written into the wrong
+  // run's history under a gate that happens to share its step id.
+  if (state.runId !== runId) {
+    throw new Error(`run id mismatch: the log at ${log.path} is run ${JSON.stringify(state.runId)}, not ${JSON.stringify(runId)}`);
+  }
   if (!state.openGate || state.openGate.stepId !== stepId) {
     throw new Error(`gate ${JSON.stringify(stepId)} is not open on run ${runId}`);
   }
@@ -41,7 +49,7 @@ type Hashes = Record<string, string | null>;
 
 interface CachedCompletion { inputHashes: Hashes; outputHashes: Hashes; result?: unknown }
 
-/** The most recent step_completed for a step across a set of logs, newest log last. */
+/** The most recent step_completed for a step, searching the given logs from the last backwards. */
 function lastCompletion(stepId: StepId, logs: Event[][]): CachedCompletion | undefined {
   for (let i = logs.length - 1; i >= 0; i--) {
     const events = logs[i] ?? [];

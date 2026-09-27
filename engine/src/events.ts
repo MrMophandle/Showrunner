@@ -28,7 +28,9 @@ export class EventLog {
   }
 
   async append(e: Omit<Event, "ts">): Promise<Event> {
-    const full: Event = { ts: new Date().toISOString(), ...e };
+    // The stamp is applied last so a caller cannot supply its own: the log is the source of
+    // truth for when things happened, and a replayed or hand-built event must not backdate it.
+    const full: Event = { ...e, ts: new Date().toISOString() };
     await mkdir(path.dirname(this.path), { recursive: true });
     await appendFile(this.path, JSON.stringify(full) + "\n", "utf8");
     return full;
@@ -49,8 +51,8 @@ export class EventLog {
       if (line === undefined || line.trim() === "") continue;
       try {
         out.push(JSON.parse(line) as Event);
-      } catch {
-        throw new Error(`event log ${this.path}: malformed JSON at line ${i + 1}`);
+      } catch (err) {
+        throw new Error(`event log ${this.path}: malformed JSON at line ${i + 1}`, { cause: err });
       }
     }
     return out;

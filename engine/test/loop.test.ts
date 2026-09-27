@@ -85,6 +85,26 @@ describe("loops", () => {
     ]);
   });
 
+  it("completes, not exhausts, when the sentinel arrives on the last permitted iteration", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "show-"));
+    const texts = ["scene one", "scene two", "all done DRAFT_COMPLETE"];
+    const seen: unknown[] = [];
+    let i = 0;
+    const executors: Executors = {
+      script: async () => ({ ok: true }),
+      agent: async (_step, ctx) => { seen.push(ctx.results["draft:iteration"]); return { ok: true, text: texts[i++] ?? "", toolCalls: 1 }; },
+    };
+    const loop: LoopStep = { kind: "loop", id: "draft-loop", body, until: "DRAFT_COMPLETE", maxIterations: 3 };
+    const log = new EventLog(EventLog.logPath(root, "s02e01", "r1"));
+    const result = await run({ pipeline: { name: "p", steps: [loop] }, ctx: { runId: "r1", episodeId: "s02e01", showRoot: root }, log, executors });
+
+    expect(result).toEqual({ status: "completed" });
+    expect(seen).toEqual([1, 2, 3]);
+    const events = await log.read();
+    expect(events.filter((e) => e.kind === "loop_iteration").at(-1)?.payload).toEqual({ iteration: 3, max: 3, sentinel: true, toolCalls: 1 });
+    expect(events.some((e) => e.kind === "step_failed")).toBe(false);
+  });
+
   it("fails when the cap is reached without the sentinel, and shows the dead iterations", async () => {
     const { result, events } = await runLoop(["scene one", "", ""], [3, 0, 0], 3);
     expect(result).toEqual({ status: "failed", stepId: "draft-loop", error: "exhausted 3 iterations without sentinel DRAFT_COMPLETE" });

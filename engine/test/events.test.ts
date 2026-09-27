@@ -20,6 +20,25 @@ describe("EventLog", () => {
     expect(events[1]?.ts).toBe(b.ts);
   });
 
+  it("stamps every event itself, ignoring a ts the caller supplied", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "evlog-"));
+    const log = new EventLog(path.join(dir, "r1.jsonl"));
+    const stale = { ts: "1999-01-01T00:00:00.000Z", runId: "r1", kind: "run_started" as const, payload: {} };
+    const written = await log.append(stale as unknown as Parameters<typeof log.append>[0]);
+    expect(written.ts).not.toBe(stale.ts);
+    expect(Date.parse(written.ts)).toBeGreaterThan(Date.parse("2020-01-01T00:00:00.000Z"));
+    expect((await log.read())[0]?.ts).toBe(written.ts);
+  });
+
+  it("names the malformed line and keeps the parse error as the cause", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "evlog-"));
+    const p = path.join(dir, "bad.jsonl");
+    await writeFile(p, '{"ts":"t","runId":"r","kind":"run_started","payload":{}}\nnot json\n');
+    const err = await new EventLog(p).read().then(() => undefined, (e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).cause).toBeInstanceOf(Error);
+  });
+
   it("reads an absent log as empty", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "evlog-"));
     const log = new EventLog(path.join(dir, "none.jsonl"));

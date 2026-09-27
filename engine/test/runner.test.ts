@@ -111,6 +111,35 @@ describe("run", () => {
     expect(ev3.some((e) => e.kind === "step_completed" && e.stepId === "s")).toBe(true);
   });
 
+  it("re-runs a script step whose outputs changed under it, without calling that an input change", async () => {
+    const root = await show();
+    await writeFile(path.join(root, "in.txt"), "v1");
+    let runs = 0;
+    const execs: Executors = {
+      script: async (_step, ctx) => { runs++; await writeFile(path.join(ctx.showRoot, "out.txt"), "generated"); return { ok: true }; },
+      agent: async () => ({ ok: true, text: "", toolCalls: 0 }),
+    };
+    const s: ScriptStep = { kind: "script", id: "s", inputs: ["in.txt"], outputs: ["out.txt"], argv: () => ["true"] };
+    const p: Pipeline = { name: "p", steps: [s] };
+    const ctx = { runId: "r1", episodeId: "s02e01", showRoot: root };
+
+    const log1 = new EventLog(EventLog.logPath(root, "s02e01", "r1"));
+    expect(await run({ pipeline: p, ctx, log: log1, executors: execs })).toEqual({ status: "completed" });
+    expect(runs).toBe(1);
+
+    // Someone edited the output by hand. The input is untouched, so this is not an input change,
+    // but the recorded result no longer describes what is on disk and must not be served.
+    await writeFile(path.join(root, "out.txt"), "edited by hand");
+    const log2 = new EventLog(EventLog.logPath(root, "s02e01", "r2"));
+    expect(await run({ pipeline: p, ctx: { ...ctx, runId: "r2" }, log: log2, executors: execs, priorLogs: [log1] })).toEqual({ status: "completed" });
+    expect(runs).toBe(2);
+
+    const ev2 = await log2.read();
+    expect(ev2.some((e) => e.kind === "step_cached")).toBe(false);
+    expect(ev2.some((e) => e.kind === "input_changed")).toBe(false);
+    expect(ev2.some((e) => e.kind === "step_completed" && e.stepId === "s")).toBe(true);
+  });
+
   it("re-runs a script step that declares outputs but no inputs, and never caches it", async () => {
     const root = await show();
     let runs = 0;

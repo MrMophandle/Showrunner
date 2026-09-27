@@ -79,9 +79,55 @@ describe("deriveRunState", () => {
     expect(s.steps).toEqual({ a: "bypassed", b: "skipped", c: "skipped" });
   });
 
-  it("treats a cached step as completed", () => {
+  it("treats a cached step as completed and clears the position it held", () => {
     const s = deriveRunState([ev("step_cached", "a", { result: 5 }, "t1")]);
     expect(s.steps).toEqual({ a: "completed" });
     expect(s.results).toEqual({ a: 5 });
+
+    const resumed = deriveRunState([ev("step_started", "a", {}, "t1"), ev("step_cached", "a", { result: 5 }, "t2")]);
+    expect(resumed.position).toBeUndefined();
+  });
+
+  it("takes the run id from the first event", () => {
+    expect(deriveRunState([ev("run_started", undefined, {}, "t0")]).runId).toBe("r");
+    expect(deriveRunState([]).runId).toBe("");
+  });
+
+  it("clears the position and any open gate when the run finishes", () => {
+    const s = deriveRunState([
+      ev("step_started", "a", { kind: "script" }, "t1"),
+      ev("run_finished", undefined, { status: "failed" }, "t2"),
+    ]);
+    expect(s.position).toBeUndefined();
+
+    const withGate = deriveRunState([
+      ev("gate_opened", "g", { attempt: 1, message: "m" }, "t1"),
+      ev("run_finished", undefined, { status: "failed" }, "t2"),
+    ]);
+    expect(withGate.openGate).toBeUndefined();
+    expect(withGate.finished).toBe(true);
+  });
+
+  it("clears an open gate when that gate's step fails", () => {
+    const s = deriveRunState([
+      ev("gate_opened", "g", { attempt: 1, message: "m" }, "t1"),
+      ev("step_failed", "g", { error: "rejected 10 times" }, "t2"),
+    ]);
+    expect(s.openGate).toBeUndefined();
+    expect(s.steps).toEqual({ g: "failed" });
+  });
+
+  it("ignores a step_progress for a step that is not the current position", () => {
+    const s = deriveRunState([
+      ev("step_started", "b", { kind: "script" }, "t1"),
+      ev("step_progress", "a", { done: 9, total: 9, unit: "shots" }, "t2"),
+    ]);
+    expect(s.position).toEqual({ stepId: "b", startedAt: "t1" });
+  });
+
+  it("falls back to attempt 1 when the logged attempt is not a finite number", () => {
+    const s = deriveRunState([ev("gate_opened", "g", { attempt: "not a number", message: "m" }, "t1")]);
+    expect(s.openGate?.attempt).toBe(1);
+    expect(s.gateAttempts).toEqual({ g: 1 });
   });
 });

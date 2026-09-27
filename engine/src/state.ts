@@ -36,6 +36,9 @@ export function deriveRunState(events: Event[]): RunState {
         s.finished = true;
         s.status = e.payload["status"] === "completed" ? "completed" : "failed";
         delete s.position;
+        // A finished run has nothing open. A gate left open by a run that then failed would
+        // otherwise be reported as still awaiting an answer that can never be acted on.
+        delete s.openGate;
         break;
       case "step_started":
         if (id) { s.steps[id] = "running"; s.position = { stepId: id, startedAt: e.ts }; }
@@ -57,7 +60,12 @@ export function deriveRunState(events: Event[]): RunState {
         }
         break;
       case "step_failed":
-        if (id) { s.steps[id] = "failed"; if (s.position?.stepId === id) delete s.position; }
+        if (id) {
+          s.steps[id] = "failed";
+          if (s.position?.stepId === id) delete s.position;
+          // A gate that fails its attempt cap is failed, not waiting.
+          if (s.openGate?.stepId === id) delete s.openGate;
+        }
         break;
       case "step_skipped":
         // Two different outcomes share one event kind: a step its own `when` turned off is
@@ -70,7 +78,10 @@ export function deriveRunState(events: Event[]): RunState {
         break;
       case "gate_opened":
         if (id) {
-          const attempt = Number(e.payload["attempt"] ?? 1);
+          // A malformed attempt must not poison the cap comparison with NaN, which would make
+          // `attempts >= maxAttempts` false forever and let the gate reopen without limit.
+          const raw = Number(e.payload["attempt"] ?? 1);
+          const attempt = Number.isFinite(raw) ? raw : 1;
           s.steps[id] = "waiting";
           s.gateAttempts[id] = attempt;
           s.openGate = { stepId: id, attempt, message: String(e.payload["message"] ?? ""), openedAt: e.ts };
@@ -84,9 +95,10 @@ export function deriveRunState(events: Event[]): RunState {
             s.steps[id] = "completed";
             s.results[id] = e.payload;
           } else {
-            // A rejected gate leaves the step "running" with no open gate and no position.
-            // The runner treats "running with no position" as mid-step and re-executes the
-            // step, which for a gate runs the fix agent and reopens it (next attempt).
+            // A rejected gate leaves the step "running" with no open gate. The runner
+            // re-executes any step whose status is not terminal and does not consult
+            // `position` to decide that, so the gate is re-executed: it runs the fix agent
+            // and reopens at the next attempt.
             s.steps[id] = "running";
           }
         }

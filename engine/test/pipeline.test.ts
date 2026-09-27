@@ -34,22 +34,27 @@ describe("orderSteps", () => {
   });
   it("throws on a duplicate id", () => {
     const p: Pipeline = { name: "t", steps: [g("a"), g("a")] };
+    expect(() => orderSteps(p)).toThrow(PipelineError);
     expect(() => orderSteps(p)).toThrow(/duplicate/);
   });
   it("throws on a cycle", () => {
     const p: Pipeline = { name: "t", steps: [g("a", ["b"]), g("b", ["a"])] };
+    expect(() => orderSteps(p)).toThrow(PipelineError);
     expect(() => orderSteps(p)).toThrow(/cycle/);
   });
 
   it("throws when a gate's fix agent takes a top-level step's id", () => {
     const p: Pipeline = { name: "t", steps: [g("fix"), gate("gt", "fix")] };
+    expect(() => orderSteps(p)).toThrow(PipelineError);
     expect(() => orderSteps(p)).toThrow(/duplicate/);
   });
   it("throws when a loop body and a gate's fix agent share an id", () => {
     const p: Pipeline = { name: "t", steps: [gate("gt", "shared"), loop("lp", "shared")] };
+    expect(() => orderSteps(p)).toThrow(PipelineError);
     expect(() => orderSteps(p)).toThrow(/duplicate/);
   });
   it("throws when any id contains a colon, top-level or nested", () => {
+    expect(() => orderSteps({ name: "t", steps: [g("a:b")] })).toThrow(PipelineError);
     expect(() => orderSteps({ name: "t", steps: [g("a:b")] })).toThrow(/":"/);
     expect(() => orderSteps({ name: "t", steps: [gate("gt", "a:b")] })).toThrow(/":"/);
     expect(() => orderSteps({ name: "t", steps: [loop("lp", "a:b")] })).toThrow(/":"/);

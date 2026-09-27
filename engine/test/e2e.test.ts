@@ -1,9 +1,33 @@
 import { describe, it, expect } from "vitest";
-import { mkdtemp, writeFile, readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { run, answerGate, EventLog, deriveRunState, deriveStage, scriptExecutor } from "../src/index.js";
-import type { Executors, Pipeline, StageMap } from "../src/index.js";
+import type { Executors, Pipeline, StageMap, Event } from "../src/index.js";
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const fixture = (name: string) => path.join(here, "fixtures", name);
+
+/** A pipeline of the two step kinds a crash can interrupt halfway: a loop and a script. */
+function crashPipeline(): Pipeline {
+  return {
+    name: "write",
+    steps: [
+      { kind: "loop", id: "draft-loop", until: "DRAFT_COMPLETE", maxIterations: 4,
+        body: { kind: "agent", id: "draft", promptFile: "draft.md", model: "writer", allowedTools: ["Write"], context: "fresh" } },
+      { kind: "script", id: "stamp", dependsOn: ["draft-loop"], outputs: ["stamp.txt"],
+        argv: (ctx) => ["python3", fixture("stamp.py"), path.join(ctx.showRoot, "stamp.txt"), path.join(ctx.showRoot, "runs.txt")] },
+    ],
+  };
+}
+
+const at = (n: number) => `2026-01-01T10:00:0${n}.000Z`;
+
+async function writeCrashLog(logPath: string, events: Omit<Event, "ts">[]): Promise<void> {
+  await mkdir(path.dirname(logPath), { recursive: true });
+  await writeFile(logPath, events.map((e, i) => JSON.stringify({ ts: at(i), ...e })).join("\n") + "\n");
+}
 
 describe("end to end", () => {
   it("premise → guard → loop → gate → script → done, surviving a restart", async () => {
@@ -56,5 +80,64 @@ describe("end to end", () => {
     expect(kinds.filter((k) => k === "loop_iteration")).toHaveLength(2);
     expect(kinds).toContain("step_progress");
     expect(kinds.at(-1)).toBe("run_finished");
+  });
+
+  it("resumes a crash mid-loop: the finished iterations are not repeated", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "show-"));
+    let bodyCalls = 0;
+    const executors: Executors = {
+      script: scriptExecutor,
+      agent: async () => { bodyCalls++; return { ok: true, text: "DRAFT_COMPLETE", toolCalls: 2 }; },
+    };
+    const logPath = EventLog.logPath(root, "s02e01", "r1");
+    await writeCrashLog(logPath, [
+      { runId: "r1", kind: "run_started", payload: { pipeline: "write", episodeId: "s02e01" } },
+      { runId: "r1", stepId: "draft-loop", kind: "step_started", payload: { kind: "loop", body: "draft", until: "DRAFT_COMPLETE", max: 4 } },
+      { runId: "r1", stepId: "draft-loop", kind: "loop_iteration", payload: { iteration: 1, max: 4, sentinel: false, toolCalls: 3 } },
+    ]);
+
+    const res = await run({ pipeline: crashPipeline(), ctx: { runId: "r1", episodeId: "s02e01", showRoot: root }, log: new EventLog(logPath), executors });
+    expect(res).toEqual({ status: "completed" });
+    expect(bodyCalls).toBe(1);
+
+    const events = await new EventLog(logPath).read();
+    expect(events.filter((e) => e.kind === "loop_iteration").map((e) => e.payload["iteration"])).toEqual([1, 2]);
+    expect(events.filter((e) => e.kind === "step_started" && e.stepId === "draft-loop")).toHaveLength(2);
+    expect(await readFile(path.join(root, "stamp.txt"), "utf8")).toBe("ok");
+    expect(events.at(-1)?.kind).toBe("run_finished");
+    expect(events.at(-1)?.payload["status"]).toBe("completed");
+  });
+
+  it("resumes a crash mid-script: the script re-runs, and idempotency is the script's job", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "show-"));
+    // The crashed run had already invoked the script once; its ledger line survives the crash.
+    await writeFile(path.join(root, "runs.txt"), "x\n");
+    let bodyCalls = 0;
+    const executors: Executors = {
+      script: scriptExecutor,
+      agent: async () => { bodyCalls++; return { ok: true, text: "DRAFT_COMPLETE", toolCalls: 2 }; },
+    };
+    const logPath = EventLog.logPath(root, "s02e01", "r1");
+    await writeCrashLog(logPath, [
+      { runId: "r1", kind: "run_started", payload: { pipeline: "write", episodeId: "s02e01" } },
+      { runId: "r1", stepId: "draft-loop", kind: "step_started", payload: { kind: "loop", body: "draft", until: "DRAFT_COMPLETE", max: 4 } },
+      { runId: "r1", stepId: "draft-loop", kind: "loop_iteration", payload: { iteration: 1, max: 4, sentinel: true, toolCalls: 3 } },
+      { runId: "r1", stepId: "draft-loop", kind: "step_completed", payload: { result: "DRAFT_COMPLETE", iterations: 1 } },
+      { runId: "r1", stepId: "stamp", kind: "step_started", payload: { kind: "script", argv: ["python3"], inputHashes: {} } },
+    ]);
+
+    const res = await run({ pipeline: crashPipeline(), ctx: { runId: "r1", episodeId: "s02e01", showRoot: root }, log: new EventLog(logPath), executors });
+    expect(res).toEqual({ status: "completed" });
+    // The completed loop is left alone; the interrupted script is re-executed.
+    expect(bodyCalls).toBe(0);
+    expect((await readFile(path.join(root, "runs.txt"), "utf8")).trim().split("\n")).toHaveLength(2);
+    expect(await readFile(path.join(root, "stamp.txt"), "utf8")).toBe("ok");
+
+    const events = await new EventLog(logPath).read();
+    // Spec §6.9: the re-execution is logged as a new step_started after the orphaned one, so the
+    // interruption stays visible in the history rather than being erased.
+    expect(events.filter((e) => e.kind === "step_started" && e.stepId === "stamp")).toHaveLength(2);
+    expect(events.some((e) => e.kind === "step_progress" && e.stepId === "stamp")).toBe(true);
+    expect(events.at(-1)?.kind).toBe("run_finished");
   });
 });

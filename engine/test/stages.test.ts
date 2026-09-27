@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { STAGES, deriveStage, stageIndex, compareStages, type StageMap } from "../src/stages.js";
+import { STAGES, deriveStage, isStage, stageIndex, compareStages, type StageMap } from "../src/stages.js";
 import type { RunState } from "../src/state.js";
 
 const map: StageMap = {
@@ -49,5 +49,16 @@ describe("stages", () => {
 
   it("reports the final stage when the run completed", () => {
     expect(deriveStage(base({ finished: true, status: "completed" }), map, none)).toBe("COMPLETE");
+  });
+
+  it("does not report the final stage for a run that finished failed", () => {
+    const s = base({ finished: true, status: "failed", steps: { "outline-gate": "completed", "script-gate": "failed" } });
+    expect(deriveStage(s, map, none)).toBe("OUTLINE");
+    expect(deriveStage(base({ finished: true, status: "failed" }), map, none)).toBe("IDEA");
+  });
+
+  it("recognises exactly the stage vocabulary", () => {
+    for (const stage of STAGES) expect(isStage(stage)).toBe(true);
+    for (const other of ["complete", "DONE", "", "NEEDS_SCRIPT"]) expect(isStage(other), other).toBe(false);
   });
 });

@@ -67,6 +67,29 @@ describe("gates", () => {
     expect(events.some((e) => e.kind === "step_skipped" && e.stepId === "after")).toBe(true);
   });
 
+  it("defaults the attempt cap to 10, and fails once those ten rejections are spent", async () => {
+    const { log, ctx, executors } = await setup();
+    const g: GateStep = { kind: "gate", id: "g", message: () => "Approve?" };
+    const pipeline: Pipeline = { name: "p", steps: [g] };
+
+    for (let attempt = 1; attempt <= 10; attempt++) {
+      const r = await run({ pipeline, ctx, log, executors });
+      expect(r).toMatchObject({ status: "waiting", gate: { stepId: "g", attempt } });
+      await answerGate(log, "r1", "g", { approved: false, notes: `no ${attempt}` });
+    }
+    expect(await run({ pipeline, ctx, log, executors })).toEqual({ status: "failed", stepId: "g", error: "rejected 10 times" });
+    const events = await log.read();
+    expect(events.filter((e) => e.kind === "gate_opened")).toHaveLength(10);
+    expect(events.at(-1)?.kind).toBe("run_finished");
+  });
+
+  it("refuses to answer with a run id the log does not belong to", async () => {
+    const { pipeline, log, ctx, executors } = await setup();
+    await run({ pipeline, ctx, log, executors });
+    await expect(answerGate(log, "r2", "g", { approved: true })).rejects.toThrow(/run id mismatch/);
+    expect((await log.read()).some((e) => e.kind === "gate_answered")).toBe(false);
+  });
+
   it("refuses to answer a gate that is not open", async () => {
     const { pipeline, log, ctx, executors } = await setup();
     await run({ pipeline, ctx, log, executors });
