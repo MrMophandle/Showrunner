@@ -146,6 +146,35 @@ describe("run", () => {
     expect((await log.read()).filter((e) => e.kind === "step_completed")).toHaveLength(3);
   });
 
+  it("refuses a second concurrent run on the same log", async () => {
+    const root = await show();
+    let scriptCalls = 0;
+    const execs: Executors = {
+      script: async () => { scriptCalls++; await new Promise((r) => setTimeout(r, 30)); return { ok: true }; },
+      agent: async () => ({ ok: true, text: "", toolCalls: 0 }),
+    };
+    const s: ScriptStep = { kind: "script", id: "s", argv: () => ["true"] };
+    const pipeline: Pipeline = { name: "p", steps: [s] };
+    const ctx = { runId: "r1", episodeId: "s02e01", showRoot: root };
+    const log = new EventLog(EventLog.logPath(root, "s02e01", "r1"));
+
+    const first = run({ pipeline, ctx, log, executors: execs });
+    const second = run({ pipeline, ctx, log: new EventLog(log.path), executors: execs });
+    const [a, b] = await Promise.allSettled([first, second]);
+
+    expect(a.status).toBe("fulfilled");
+    if (a.status === "fulfilled") expect(a.value).toEqual({ status: "completed" });
+    expect(b.status).toBe("rejected");
+    if (b.status === "rejected") expect(String(b.reason)).toMatch(/already in progress/);
+    expect(scriptCalls).toBe(1);
+    const events = await log.read();
+    expect(events.filter((e) => e.kind === "run_started")).toHaveLength(1);
+    expect(events.filter((e) => e.kind === "step_started" && e.stepId === "s")).toHaveLength(1);
+
+    // The key is released when the run settles, so a later run on the same log is allowed.
+    expect(await run({ pipeline, ctx, log, executors: execs })).toEqual({ status: "completed" });
+  });
+
   it("re-executes a step whose log shows it running with no terminal event", async () => {
     const root = await show();
     const calls: string[] = [];

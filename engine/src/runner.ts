@@ -1,3 +1,4 @@
+import path from "node:path";
 import type { EventLog, Event } from "./events.js";
 import { orderSteps } from "./pipeline.js";
 import { deriveRunState, type GateState, type RunState } from "./state.js";
@@ -73,7 +74,24 @@ function lastFailure(events: Event[], stepId: StepId): string {
   return "failed in an earlier attempt";
 }
 
+/** The runs in flight, keyed by the resolved path of the log each one is writing. The log is
+ *  append-only and its read-derive-append cycle is not atomic, so two runs over one file would
+ *  each derive state from a log the other is still writing and duplicate every step. */
+const active = new Map<string, Promise<RunResult>>();
+
 export async function run(opts: RunOptions): Promise<RunResult> {
+  const key = path.resolve(opts.log.path);
+  if (active.has(key)) throw new Error(`run already in progress for ${key}`);
+  const running = execute(opts);
+  active.set(key, running);
+  try {
+    return await running;
+  } finally {
+    active.delete(key);
+  }
+}
+
+async function execute(opts: RunOptions): Promise<RunResult> {
   const { pipeline, log, executors } = opts;
   // Validate the episode id at entry: every path the run touches is built from it.
   parseEpisodeId(opts.ctx.episodeId);
