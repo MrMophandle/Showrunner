@@ -100,6 +100,47 @@ describe("gates", () => {
     expect(fixCalls).toEqual(["fix:redo"]);
   });
 
+  it("does not re-run a fix agent the log already shows completed", async () => {
+    const { pipeline, log, ctx, executors, fixCalls } = await setup();
+    await mkdir(path.dirname(log.path), { recursive: true });
+    const lines = [
+      { ts: "2026-01-01T10:00:00.000Z", runId: "r1", kind: "run_started", payload: { pipeline: "p", episodeId: "s02e01" } },
+      { ts: "2026-01-01T10:00:01.000Z", runId: "r1", stepId: "before", kind: "step_started", payload: { kind: "guard" } },
+      { ts: "2026-01-01T10:00:02.000Z", runId: "r1", stepId: "before", kind: "step_completed", payload: { result: null } },
+      { ts: "2026-01-01T10:00:03.000Z", runId: "r1", stepId: "g", kind: "gate_opened", payload: { attempt: 1, message: "Approve s02e01?" } },
+      { ts: "2026-01-01T10:00:04.000Z", runId: "r1", stepId: "g", kind: "gate_answered", payload: { approved: false, notes: "redo", attempt: 1, waitedMs: 0 } },
+      { ts: "2026-01-01T10:00:05.000Z", runId: "r1", stepId: "fix", kind: "step_started", payload: { kind: "agent", rejectionOf: "g", attempt: 1 } },
+      { ts: "2026-01-01T10:00:06.000Z", runId: "r1", stepId: "fix", kind: "step_completed", payload: { result: "fixed", toolCalls: 1 } },
+    ];
+    await writeFile(log.path, lines.map((l) => JSON.stringify(l)).join("\n") + "\n");
+
+    const r = await run({ pipeline, ctx, log, executors });
+    expect(r).toMatchObject({ status: "waiting", gate: { stepId: "g", attempt: 2 } });
+    expect(fixCalls).toEqual([]);
+    const events = await log.read();
+    expect(events.filter((e) => e.kind === "step_started" && e.stepId === "fix")).toHaveLength(1);
+    expect(events.at(-1)).toMatchObject({ kind: "gate_opened", stepId: "g" });
+  });
+
+  it("runs the fix agent again for a later rejection, even though an earlier one completed", async () => {
+    const { log, ctx, executors, fixCalls } = await setup();
+    const fix: AgentStep = { kind: "agent", id: "fix", promptFile: "fix.md", model: "m", allowedTools: [], context: "fresh" };
+    const g: GateStep = { kind: "gate", id: "g", message: () => "Approve?", onReject: fix, maxAttempts: 4 };
+    const pipeline: Pipeline = { name: "p", steps: [g] };
+
+    await run({ pipeline, ctx, log, executors });
+    await answerGate(log, "r1", "g", { approved: false, notes: "first pass" });
+    await run({ pipeline, ctx, log, executors });
+    expect(fixCalls).toEqual(["fix:first pass"]);
+
+    // The second rejection is appended after the first fix agent's step_completed, so the
+    // completed-agent check looks only at what follows it and the agent runs again.
+    await answerGate(log, "r1", "g", { approved: false, notes: "second pass" });
+    const r = await run({ pipeline, ctx, log, executors });
+    expect(r).toMatchObject({ status: "waiting", gate: { stepId: "g", attempt: 3 } });
+    expect(fixCalls).toEqual(["fix:first pass", "fix:second pass"]);
+  });
+
   it("never opens a gate whose dependency failed", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "show-"));
     const dep: GuardStep = { kind: "guard", id: "dep", check: () => ({ pass: false, message: "nope" }) };

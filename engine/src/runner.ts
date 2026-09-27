@@ -274,8 +274,10 @@ async function runGateStep(
 
   // The log is append-only, so array position is the authoritative order. Never compare timestamps.
   let lastGate: Event | undefined;
-  for (const e of events) {
-    if (e.stepId === step.id && (e.kind === "gate_opened" || e.kind === "gate_answered")) lastGate = e;
+  let lastGateAt = -1;
+  for (let i = 0; i < events.length; i++) {
+    const e = events[i];
+    if (e && e.stepId === step.id && (e.kind === "gate_opened" || e.kind === "gate_answered")) { lastGate = e; lastGateAt = i; }
   }
   if (lastGate?.kind === "gate_opened") {
     return {
@@ -297,7 +299,12 @@ async function runGateStep(
       await emit("step_failed", { error });
       return { kind: "failed", error };
     }
-    if (step.onReject) {
+    // A crash between the fix agent completing and the gate reopening must not run the agent
+    // twice: the agent has already edited the files, and a second pass would edit them again.
+    const fixId = step.onReject?.id;
+    const fixAlreadyDone = fixId !== undefined
+      && events.slice(lastGateAt + 1).some((e) => e.kind === "step_completed" && e.stepId === fixId);
+    if (step.onReject && !fixAlreadyDone) {
       const notes = lastAnswer.payload["notes"];
       const fixCtx: RunContext = { ...ctx, results: { ...ctx.results, [`${step.id}:rejection`]: notes ?? "" } };
       const fixEmit = emitFor(step.onReject.id);
