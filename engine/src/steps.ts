@@ -56,16 +56,40 @@ export interface ScriptStep extends StepBase {
   cwd?: string;
 }
 
+/** A JSON Schema, draft-07. The Agent SDK validates verdicts against draft-07 and rejects a schema
+ *  that declares a newer draft, so a `$schema` key, if present, must name draft-07. */
+export type JsonSchema = Record<string, unknown>;
+
 export interface AgentStep extends StepBase {
   kind: "agent";
   /** Path of the prompt file, relative to the show's prompts directory. */
   promptFile: string;
+  /** A model alias or id. The executor resolves aliases through its `models` map and passes
+   *  anything else to the SDK unchanged. */
   model: string;
+  /** Built-in tools the agent may use, e.g. ["Read", "Glob", "Grep"]. Nothing else is in context
+   *  and nothing else is approved: the executor runs with permissionMode "dontAsk". */
   allowedTools: string[];
+  /** "fresh": every query starts a new session. "shared": within one run, later queries of this
+   *  step resume the session its first query opened (a loop body keeps its conversation across
+   *  iterations). After a restart the session is not recovered: the next query is fresh, and the
+   *  log shows it. */
   context: "fresh" | "shared";
-  /** JSON schema the agent's verdict must satisfy, when the step produces one. */
-  schema?: object;
+  /** JSON schema the agent's verdict must satisfy, when the step produces one. With a schema the
+   *  outcome carries `verdict`; a success with no verdict is a failure. */
+  schema?: JsonSchema;
+  /** Maximum agentic turns (tool-use round trips) before the SDK stops the query. */
+  maxTurns?: number;
+  /** Fail the step when no message arrives from the SDK for this long. `timeoutMs` on StepBase
+   *  bounds the whole query; this bounds the silence between messages. */
+  idleTimeoutMs?: number;
+  /** Stop the query when the SDK's client-side cost estimate reaches this many US dollars. */
+  maxBudgetUsd?: number;
 }
+
+/** An agent step nested inside a gate (`onReject`) or a loop (`body`). It has no `when` and no
+ *  `dependsOn`: it runs because its parent decided so. */
+export type NestedAgentStep = Omit<AgentStep, "when" | "dependsOn">;
 
 export interface GateStep extends StepBase {
   kind: "gate";
@@ -74,7 +98,7 @@ export interface GateStep extends StepBase {
    *  are logged under its own id, so its id shares the pipeline's id namespace (orderSteps
    *  enforces that) and a completed run of it is visible in the log and is not repeated after a
    *  crash. Its context carries the rejection notes as the result key `<gate-id>:rejection`. */
-  onReject?: AgentStep;
+  onReject?: NestedAgentStep;
   maxAttempts?: number;
 }
 
@@ -84,7 +108,7 @@ export interface LoopStep extends StepBase {
    *  under the loop's id, so the loop is one step in the run's history however many times the
    *  body runs, and the iterations are told apart by the loop_iteration events between them. The
    *  body's id still has to be unique — it names the result key `<body-id>:iteration`. */
-  body: AgentStep;
+  body: NestedAgentStep;
   /** The exact string whose presence in the body's final text ends the loop. */
   until: string;
   maxIterations: number;
