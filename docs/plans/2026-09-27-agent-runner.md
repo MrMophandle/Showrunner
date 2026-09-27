@@ -1170,7 +1170,7 @@ Expected: PASS, 5 and 17 tests; the suite is `124 passed` across 16 files (94 + 
 - [ ] **Step 5: Commit**
 
 ```bash
-cd ~/GitHub/Showrunner && git add engine/src/agent-step.ts engine/test/agent-timeouts.test.ts && git commit -F - <<'MSG'
+cd ~/GitHub/Showrunner && git add engine/src/agent-step.ts engine/test/agent-timeouts.test.ts engine/test/agent-step.test.ts && git commit -F - <<'MSG'
 agent-step: total and idle deadlines that do not depend on the iterator honouring abort
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
@@ -1285,7 +1285,7 @@ describe("the executor inside a run", () => {
     const ctx1 = { runId: "r1", episodeId: "s02e01", showRoot: root };
     const first = await run({ pipeline, executors, log, ctx: ctx1 });
     expect(first.status).toBe("waiting");
-    await answerGate(log, "r1", "g", { decision: "rejected", notes: "too long", by: "test" });
+    await answerGate(log, "r1", "g", { approved: false, notes: "too long", by: "test" });
     const second = await run({ pipeline, executors, log, ctx: ctx1 });
     expect(second.status).toBe("waiting");
     const events = await log.read();
@@ -1297,7 +1297,7 @@ describe("the executor inside a run", () => {
 });
 ```
 
-If the `answerGate` signature or the gate answer shape in Plan A differs from `{ decision, notes, by }`, read `engine/src/runner.ts` and use the real one; the test's intent is fixed, its call shape is not.
+`answerGate`'s signature in Plan A is `answerGate(log, runId, stepId, { approved: boolean; notes?: string; by?: string })` (`engine/src/runner.ts:27-30`); the test above uses it.
 
 - [ ] **Step 2: Run them to verify they fail**
 
@@ -1332,15 +1332,64 @@ and after the pump (whether it succeeded or not), when a session id was seen:
     if (step.context === "shared" && sessionId !== undefined) sessions.set(sessionKey, sessionId);
 ```
 
+**Four items from the Task 4 review, folded into this task by the controller (they touch the pump region):**
+
+1. A settled `next()` could beat an earlier-fired deadline (`Promise.race` adopts inputs in array order when both are already settled, and an end-of-stream `next()` resolves synchronously). In `pump`, record the reason and check it after the race:
+
+```ts
+  let reason: string | undefined;
+  const fired = new Promise<never>((_, reject) => { fire = (why) => { reason = why; reject(new Deadline(why)); }; });
+  ...
+      const next = await Promise.race([it.next(), fired]);
+      if (reason !== undefined) throw new Deadline(reason);
+```
+
+2. In `pump`'s `catch`, abort and return the iterator for every error, not only `Deadline` — a rejected emit or a handler fault must not leave the SDK's child process running on an abandoned iterator:
+
+```ts
+  } catch (err) {
+    controller.abort();
+    void it.return?.().catch(() => {});
+    throw err;
+  }
+```
+
+3. A third class beside `Deadline` and `EmitFailure`:
+
+```ts
+/** Thrown in place of anything else the executor's own message handler throws — a stream whose
+ *  shape the handler did not survive, as against a query that failed or a log that failed. Without
+ *  the class such a throw would land in the `query failed` branch, which fires only when no result
+ *  message has arrived, so a handler fault after a result was stored would be swallowed and the
+ *  step would report the success it never finished reading. */
+class HandlerFailure extends Error {}
+```
+
+The whole body of the `onMessage` callback is wrapped: `try { ...existing body... } catch (err) { if (err instanceof EmitFailure) throw err; throw new HandlerFailure(errorMessage(err)); }`, and the executor's catch gains `else if (err instanceof HandlerFailure) { failure = `message handling failed: ${err.message}`; result = undefined; }` before the `else if (!result)` branch, which then sees only the iterator's own throws. Test, in `engine/test/agent-step.test.ts` under "failures":
+
+```ts
+  it("a throw inside the executor's own message handling fails the step, even after a result arrived", async () => {
+    const malformed = { type: "assistant", message: { content: {} } } as unknown as AgentMessage;
+    const f = fake([init, success(), malformed]);
+    const rec = recorder();
+    const r = await createAgentExecutor({ query: f.query, promptsDir })(step(), ctx(), rec.emit);
+    expect(r).toMatchObject({ ok: false });
+    expect((r as { error: string }).error).toMatch(/^message handling failed: /);
+    expect(rec.events.at(-1)!.payload).toMatchObject({ ok: false });
+  });
+```
+
+4. The idle test in `engine/test/agent-timeouts.test.ts` records `const t0 = Date.now();` before the call and asserts `expect(Date.now() - t0).toBeGreaterThan(120);` after it, so the reset on the ~60 ms message is load-bearing (the fire lands at ~160 ms, not ~100).
+
 - [ ] **Step 4: Run the tests and the suite**
 
-Run: `cd ~/GitHub/Showrunner/engine && npx vitest run test/agent-context.test.ts && npx vitest run && npm run typecheck`
-Expected: PASS, 5 tests; the suite is `129 passed` across 17 files; typecheck prints nothing.
+Run: `cd ~/GitHub/Showrunner/engine && npx vitest run test/agent-context.test.ts test/agent-step.test.ts test/agent-timeouts.test.ts && npx vitest run && npm run typecheck`
+Expected: PASS, 5 + 18 + 5 tests; the suite is `130 passed` across 17 files; typecheck prints nothing.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-cd ~/GitHub/Showrunner && git add engine/src/agent-step.ts engine/test/agent-context.test.ts && git commit -F - <<'MSG'
+cd ~/GitHub/Showrunner && git add engine/src/agent-step.ts engine/test/agent-context.test.ts engine/test/agent-step.test.ts engine/test/agent-timeouts.test.ts && git commit -F - <<'MSG'
 agent-step: shared context resumes the step's session within a run; the executor proven inside a loop and a gate
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
@@ -1477,7 +1526,7 @@ export * from "./sdk-query.js";
 - [ ] **Step 6: Run everything**
 
 Run: `cd ~/GitHub/Showrunner/engine && npx vitest run && npm run typecheck && grep -rn -i 'dead ?light' engine/ README.md ; grep -rn 'bypassPermissions' engine/src ; grep -rln 'claude-agent-sdk' engine/src`
-Expected: `129 passed | 1 skipped` across 18 files; typecheck prints nothing; the first two greps print nothing; the third prints only `engine/src/sdk-query.ts`.
+Expected: `130 passed | 1 skipped` across 18 files; typecheck prints nothing; the first two greps print nothing; the third prints only `engine/src/sdk-query.ts`.
 
 - [ ] **Step 7: Commit and push**
 
