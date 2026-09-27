@@ -755,7 +755,7 @@ git commit -m "engine: append-only JSONL event log" -m $'Co-Authored-By: Claude 
 
 **Interfaces:**
 - Produces:
-  - `hashFile(absPath: string): Promise<string | null>` — sha256 hex of the file's bytes; `null` if the file does not exist
+  - `hashFile(absPath: string): Promise<string | null>` — sha256 hex of the file's bytes; `null` if the file does not exist (streamed, constant memory — outputs include multi-gigabyte media)
   - `hashFiles(showRoot: string, relPaths: string[]): Promise<Record<string, string | null>>` — keyed by the relative path, in the order given
   - `sameHashes(a: Record<string, string | null>, b: Record<string, string | null>): boolean` — same keys, same values
 
@@ -803,17 +803,20 @@ Expected: FAIL — cannot find module `../src/hash.js`.
 `engine/src/hash.ts`:
 ```ts
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { createReadStream } from "node:fs";
 import path from "node:path";
 
+/** Streams the file through sha256 in constant memory — declared outputs include
+ *  full-episode WAV mixes and mastered MP4s, and `readFile` refuses files over 2 GiB. */
 export async function hashFile(absPath: string): Promise<string | null> {
+  const hash = createHash("sha256");
   try {
-    const bytes = await readFile(absPath);
-    return createHash("sha256").update(bytes).digest("hex");
+    for await (const chunk of createReadStream(absPath)) hash.update(chunk as Buffer);
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw err;
   }
+  return hash.digest("hex");
 }
 
 export async function hashFiles(showRoot: string, relPaths: string[]): Promise<Record<string, string | null>> {
