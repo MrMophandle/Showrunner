@@ -430,6 +430,10 @@ describe("orderSteps", () => {
     const p: Pipeline = { name: "t", steps: [g("c", ["a", "b"]), g("a"), g("b", ["a"])] };
     expect(orderSteps(p).map((s) => s.id)).toEqual(["a", "b", "c"]);
   });
+  it("prefers declaration order when several steps are ready", () => {
+    const p: Pipeline = { name: "t", steps: [g("z"), g("a"), g("m", ["z", "a"])] };
+    expect(orderSteps(p).map((s) => s.id)).toEqual(["z", "a", "m"]);
+  });
   it("throws on a missing dependency", () => {
     const p: Pipeline = { name: "t", steps: [g("a", ["nope"])] };
     expect(() => orderSteps(p)).toThrow(PipelineError);
@@ -598,7 +602,7 @@ export function orderSteps(p: Pipeline): Step[] {
 - [ ] **Step 5: Run to verify it passes**
 
 Run: `npx vitest run test/pipeline.test.ts && npm run typecheck`
-Expected: PASS, 4 tests; `typecheck` exits 0.
+Expected: PASS, 5 tests; `typecheck` exits 0.
 
 - [ ] **Step 6: Commit**
 
