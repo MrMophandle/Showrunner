@@ -25,11 +25,11 @@ describe("agent timeouts", () => {
     const rec = recorder();
     const t0 = Date.now();
     const r = await createAgentExecutor({ query, promptsDir })(step({ timeoutMs: 100 }), ctx(), rec.emit);
-    expect(r).toEqual({ ok: false, error: "timed out after 100 ms" });
+    expect(r).toEqual({ ok: false, error: "timeout after 100ms" });
     expect(Date.now() - t0).toBeLessThan(2000);
     expect(controller!.signal.aborted).toBe(true);
     expect(returned).toBe(true);
-    expect(rec.events.at(-1)!.payload).toMatchObject({ ok: false, error: "timed out after 100 ms", toolCalls: 0 });
+    expect(rec.events.at(-1)!.payload).toMatchObject({ ok: false, error: "timeout after 100ms", toolCalls: 0 });
   });
 
   it("idleTimeoutMs fails a query that goes silent after its first message, and resets on every message", async () => {
@@ -43,7 +43,7 @@ describe("agent timeouts", () => {
     };
     const t0 = Date.now();
     const r = await createAgentExecutor({ query, promptsDir })(step({ idleTimeoutMs: 200 }), ctx(), recorder().emit);
-    expect(r).toEqual({ ok: false, error: "idle for 200 ms" });
+    expect(r).toEqual({ ok: false, error: "idle timeout after 200ms" });
     expect(controller!.signal.aborted).toBe(true);
     // The message at ~60 ms rearms the idle clock, so the fire lands at ~260 ms rather than ~200.
     // Without the reset the fire would land at ~200 ms and this assertion would fail; a 60 ms timer
@@ -69,7 +69,46 @@ describe("agent timeouts", () => {
       yield { type: "result", subtype: "success", result: "late", session_id: "s", num_turns: 1, duration_ms: 1, total_cost_usd: 0 };
     };
     const r = await createAgentExecutor({ query, promptsDir })(step({ timeoutMs: 80 }), ctx(), recorder().emit);
-    expect(r).toEqual({ ok: false, error: "timed out after 80 ms" });
+    expect(r).toEqual({ ok: false, error: "timeout after 80ms" });
+  });
+
+  it("a timeout keeps the metadata of a result that arrived before the clock fired", async () => {
+    // The result reaches the executor at ~0 ms and the clock fires at 50 ms, so the step fails on
+    // the deadline while holding a complete result message. The failure wins the outcome; what the
+    // query had spent by the time it was cut off still reaches the log.
+    const query: QueryFn = async function* () {
+      yield init;
+      yield { type: "result", subtype: "success", result: "early", session_id: "s", num_turns: 2, duration_ms: 12, total_cost_usd: 0.42 };
+      await never();
+    };
+    const rec = recorder();
+    const r = await createAgentExecutor({ query, promptsDir })(step({ timeoutMs: 50 }), ctx(), rec.emit);
+    expect(r).toEqual({ ok: false, error: "timeout after 50ms" });
+    expect(rec.events.at(-1)!.kind).toBe("agent_result");
+    expect(rec.events.at(-1)!.payload).toMatchObject({ ok: false, error: "timeout after 50ms", costUsd: 0.42, subtype: "success", numTurns: 2, durationMs: 12, sessionId: "s" });
+  });
+
+  it("a clock that fired outranks an iterator rejection the race adopted in the same turn", async () => {
+    // The emit on the tool call sleeps past the 10 ms deadline, so when the pump comes back round
+    // both `fired` and the iterator's next() are already settled. Promise.race adopts them in
+    // array order, which hands back the iterator's "boom" rather than the Deadline, and the check
+    // after the await never runs. Without the guard in the pump's catch the step would report
+    // `query failed: boom` for a query that had in fact timed out.
+    const messages: AgentMessage[] = [init, { type: "assistant", message: { content: [{ type: "tool_use", id: "t1", name: "Read", input: {} }] } }];
+    let i = 0;
+    const query: QueryFn = () => ({
+      [Symbol.asyncIterator]: () => ({
+        next: async () => {
+          if (i < messages.length) return { done: false as const, value: messages[i++]! };
+          throw new Error("boom");
+        },
+      }),
+    });
+    const emit = async (kind: EventKind, _payload: Record<string, unknown>): Promise<void> => {
+      if (kind === "agent_tool_call") await new Promise((r) => setTimeout(r, 40));
+    };
+    const r = await createAgentExecutor({ query, promptsDir })(step({ timeoutMs: 10, allowedTools: ["Read"] }), ctx(), emit);
+    expect(r).toEqual({ ok: false, error: "timeout after 10ms" });
   });
 
   it("an emit that rejects on agent_tool_call fails the step as a log write, not a query failure", async () => {

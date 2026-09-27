@@ -53,8 +53,6 @@ export interface AgentExecutorOptions {
   models?: Record<string, string>;
 }
 
-const NEWER_DRAFTS = ["2019-09", "2020-12"];
-
 /** Thrown by `pump` when the total or the idle clock fires. Its message is the failure string. */
 class Deadline extends Error {}
 
@@ -97,12 +95,12 @@ async function pump(
   let reason: string | undefined;
   let fire!: (reason: string) => void;
   const fired = new Promise<never>((_, reject) => { fire = (why) => { reason = why; reject(new Deadline(why)); }; });
-  const total = bounds.timeoutMs !== undefined ? setTimeout(() => fire(`timed out after ${bounds.timeoutMs} ms`), bounds.timeoutMs) : undefined;
+  const total = bounds.timeoutMs !== undefined ? setTimeout(() => fire(`timeout after ${bounds.timeoutMs}ms`), bounds.timeoutMs) : undefined;
   let idle: NodeJS.Timeout | undefined;
   const armIdle = () => {
     if (bounds.idleTimeoutMs === undefined) return;
     if (idle) clearTimeout(idle);
-    idle = setTimeout(() => fire(`idle for ${bounds.idleTimeoutMs} ms`), bounds.idleTimeoutMs);
+    idle = setTimeout(() => fire(`idle timeout after ${bounds.idleTimeoutMs}ms`), bounds.idleTimeoutMs);
   };
   fired.catch(() => {}); // the race below observes it; this silences an unhandled-rejection report when nothing is racing
   armIdle();
@@ -118,12 +116,19 @@ async function pump(
       if (reason !== undefined) throw new Deadline(reason);
       if (next.done) return;
       armIdle();
+      // onMessage is not raced against the clocks: a stalled handler — a log append that blocks —
+      // delays the deadline by its own duration, and the clock is observed at the next next().
       await onMessage(next.value);
     }
   } catch (err) {
+    // A clock that fired is the truth about this step even when the race adopted something else.
+    // `fired` and a rejecting next() can both be settled when the race is set up, and Promise.race
+    // then adopts the array-order first — the iterator's rejection — so the check after the await
+    // never runs. `fire` sets `reason` synchronously, so it outranks the error raised beside it.
+    const out = reason !== undefined && !(err instanceof Deadline) ? new Deadline(reason) : err;
     controller.abort();
     try { void it.return?.().catch(() => {}); } catch { /* a return() that throws synchronously has nothing to tell us */ }
-    throw err;
+    throw out;
   } finally {
     if (total) clearTimeout(total);
     if (idle) clearTimeout(idle);
@@ -153,8 +158,11 @@ export function createAgentExecutor(opts: AgentExecutorOptions): Executors["agen
     } catch (err) {
       return { ok: false, error: errorMessage(err) };
     }
+    // An allowlist rather than a denylist: the SDK validates against draft-07 only, so anything a
+    // `$schema` names that is not draft-07 is refused, including a draft this code has never heard
+    // of. A schema with no `$schema` key at all is accepted — draft-07 is the SDK's default.
     const declared = step.schema?.["$schema"];
-    if (typeof declared === "string" && NEWER_DRAFTS.some((d) => declared.includes(d))) {
+    if (typeof declared === "string" && !declared.includes("draft-07")) {
       return { ok: false, error: `schema must be JSON Schema draft-07, got ${declared}` };
     }
 
@@ -219,18 +227,23 @@ export function createAgentExecutor(opts: AgentExecutorOptions): Executors["agen
         }
       });
     } catch (err) {
-      if (err instanceof Deadline) { failure = err.message; result = undefined; }
-      else if (err instanceof EmitFailure) { failure = `log write failed: ${err.message}`; result = undefined; }
-      else if (err instanceof HandlerFailure) { failure = `message handling failed: ${err.message}`; result = undefined; }
+      // The result is deliberately left in place. `r` below is computed from `failure`, so a
+      // failure still wins the outcome; keeping the message means agent_result can still report the
+      // subtype, turns, duration, cost and session id of a result that raced in before the clock
+      // was observed, which is the only record of what the query had spent when it was cut off.
+      if (err instanceof Deadline) { failure = err.message; }
+      else if (err instanceof EmitFailure) { failure = `log write failed: ${err.message}`; }
+      else if (err instanceof HandlerFailure) { failure = `message handling failed: ${err.message}`; }
       // What is left is the iterator's own throw. A result already stored wins over it: the SDK
       // throws after yielding an error result, and that result classifies the failure precisely.
       else if (!result) failure = `query failed: ${errorMessage(err)}`;
     }
     if (step.context === "shared" && sessionId !== undefined) sessions.set(sessionKey, sessionId);
 
-    // 8: the outcome. A deadline, a rejected emit or a handler fault discards the result that
-    //    raced in, so `r` is a result only when nothing has already failed — and the total timeout
-    //    therefore wins over a result that arrived after it.
+    // 8: the outcome. A deadline, a rejected emit or a handler fault outranks the result that
+    //    raced in: `r` is a result only when nothing has already failed, so the total timeout wins
+    //    over a result that arrived after it. The result message itself is kept, and step 9 still
+    //    reports its metadata.
     const r = failure !== undefined ? undefined : result;
     let outcome: AgentOutcome;
     if (r === undefined) {

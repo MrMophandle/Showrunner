@@ -54,6 +54,13 @@ describe("renderPrompt", () => {
     expect(() => renderPrompt("{{}}", ctx)).toThrow(TemplateError);
     expect(() => renderPrompt("{{results.nul}}", { ...ctx, results: { nul: null } })).toThrow(/nul/);
   });
+  it("gives TemplateError a name of its own, so a caught error says which layer refused", () => {
+    expect(new TemplateError("x").name).toBe("TemplateError");
+  });
+  it("refuses a value JSON.stringify cannot represent rather than rendering \"undefined\"", () => {
+    expect(() => renderPrompt("{{results.fn}}", { ...ctx, results: { fn: () => 1 } })).toThrow(TemplateError);
+    expect(() => renderPrompt("{{results.fn}}", { ...ctx, results: { fn: () => 1 } })).toThrow(/not serializable/);
+  });
   it("refuses doubled braces left over after substitution, but not single braces in a value", () => {
     expect(() => renderPrompt("{{results.{x}}}", ctx)).toThrow(TemplateError);
     expect(() => renderPrompt("{{results.{x}}}", ctx)).toThrow(/unbalanced or malformed template braces near: \{\{results\.\{x\}\}\}/);

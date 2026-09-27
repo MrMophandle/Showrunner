@@ -19,6 +19,9 @@ describe("toAgentMessage", () => {
         content: [
           { type: "tool_use", id: "t1", name: "Read", input: { file_path: "/show/notes.md" } },
           { type: "text", text: "read it" },
+          // "StructuredOutput" is spelled out here rather than imported from the source constant,
+          // deliberately: this literal pins the wire name the live run observed, so renaming the
+          // constant away from the name the SDK actually sends fails this test.
           { type: "tool_use", id: "t2", name: "StructuredOutput", input: { pass: true, word: "TANGERINE" } },
         ],
       },

@@ -172,6 +172,12 @@ describe("createAgentExecutor: failures", () => {
     expect((r as { error: string }).error).toMatch(/\{\{results\.setup\}\}/);
     expect(f.calls.length).toBe(0);
   });
+  it("a schema that names draft-07 is accepted and the query is made", async () => {
+    const f = fake([init, success({ structured_output: { pass: true } })]);
+    const r = await createAgentExecutor({ query: f.query, promptsDir })(step({ promptFile: "verdict.md", schema: { ...schema, $schema: "http://json-schema.org/draft-07/schema#" } }), ctx(), recorder().emit);
+    expect(r).toEqual({ ok: true, text: "final text", verdict: { pass: true }, toolCalls: 0 });
+    expect(f.calls.length).toBe(1);
+  });
   it("a schema declaring a newer draft fails before any query", async () => {
     const f = fake([init, success()]);
     const r = await createAgentExecutor({ query: f.query, promptsDir })(step({ schema: { ...schema, $schema: "https://json-schema.org/draft/2020-12/schema" } }), ctx(), recorder().emit);

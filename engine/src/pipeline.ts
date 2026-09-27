@@ -36,6 +36,14 @@ export function orderSteps(p: Pipeline): Step[] {
       nested.add(n);
     }
   }
+  // A loop's sentinel is matched against the body's final text, and a body with a schema has no
+  // prose final text of its own — its `text` is the serialized verdict — so the sentinel would be
+  // matched against JSON. Refusing the combination at load time beats a loop that never ends.
+  for (const s of p.steps) {
+    if (s.kind === "loop" && s.body.schema !== undefined) {
+      throw new PipelineError(`loop ${JSON.stringify(s.id)}: the body carries a schema, so its final text is the serialized verdict and a prose sentinel would match substrings of the JSON; give the body no schema, or wait for an untilVerdict predicate (Plan D)`);
+    }
+  }
   // A colon in any id would collide with the runner's reserved result keys `<id>:rejection`
   // (a gate's rejection notes) and `<id>:iteration` (a loop body's iteration number).
   for (const id of [...byId.keys(), ...nested]) {

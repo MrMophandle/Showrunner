@@ -109,7 +109,10 @@ export interface LoopStep extends StepBase {
    *  body runs, and the iterations are told apart by the loop_iteration events between them. The
    *  body's id still has to be unique — it names the result key `<body-id>:iteration`. */
   body: NestedAgentStep;
-  /** The exact string whose presence in the body's final text ends the loop. */
+  /** The exact string whose presence in the body's final text ends the loop. A body with a schema
+   *  has no prose final text: its `text` is the serialized verdict, so `orderSteps` refuses a loop
+   *  whose body carries a schema; a verdict-driven loop needs an `untilVerdict` predicate, which
+   *  Plan D adds if it wants one. */
   until: string;
   maxIterations: number;
   /** Called after every iteration; its result is emitted as step_progress. Spec §6.7 wants a

@@ -3,7 +3,9 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import type { RunContext } from "./steps.js";
 
-export class TemplateError extends Error {}
+export class TemplateError extends Error {
+  override readonly name = "TemplateError";
+}
 
 /** Resolves `promptFile` inside `promptsDir`, refusing any path that escapes it, and returns the
  *  file's text with its sha256 — the hash is what agent_query records so "the prompt as it was"
@@ -61,7 +63,12 @@ export function renderPrompt(template: string, ctx: TemplateContext): string {
     if (value === null || value === undefined) return fail("value is null");
     if (typeof value === "string") return value;
     if (typeof value === "number" || typeof value === "boolean") return String(value);
-    return JSON.stringify(value, null, 2);
+    // JSON.stringify returns undefined rather than throwing for a function or a symbol, and an
+    // undefined return here would be substituted as the string "undefined" — a hole that renders
+    // as prose. Every other hole is an error, and so is this one.
+    const json = JSON.stringify(value, null, 2);
+    if (json === undefined) return fail("value is not serializable");
+    return json;
   });
   const leftover = rendered.search(LEFTOVER_BRACE);
   if (leftover !== -1) {

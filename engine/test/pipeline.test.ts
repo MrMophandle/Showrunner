@@ -59,6 +59,15 @@ describe("orderSteps", () => {
     expect(() => orderSteps({ name: "t", steps: [gate("gt", "a:b")] })).toThrow(/":"/);
     expect(() => orderSteps({ name: "t", steps: [loop("lp", "a:b")] })).toThrow(/":"/);
   });
+  it("throws when a loop body carries a schema", () => {
+    const withSchema: LoopStep = { ...loop("lp", "draft"), body: { ...agent("draft"), schema: { type: "object" } } };
+    const p: Pipeline = { name: "t", steps: [withSchema] };
+    expect(() => orderSteps(p)).toThrow(PipelineError);
+    expect(() => orderSteps(p)).toThrow(/untilVerdict/);
+  });
+  it("orders a loop whose body has no schema", () => {
+    expect(orderSteps({ name: "t", steps: [loop("lp", "draft")] }).map((s) => s.id)).toEqual(["lp"]);
+  });
   it("orders a pipeline whose nested ids are all distinct", () => {
     const p: Pipeline = {
       name: "t",
