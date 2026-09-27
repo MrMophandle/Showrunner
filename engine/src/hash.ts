@@ -1,15 +1,16 @@
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { createReadStream } from "node:fs";
 import path from "node:path";
 
 export async function hashFile(absPath: string): Promise<string | null> {
+  const hash = createHash("sha256");
   try {
-    const bytes = await readFile(absPath);
-    return createHash("sha256").update(bytes).digest("hex");
+    for await (const chunk of createReadStream(absPath)) hash.update(chunk as Buffer);
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw err;
   }
+  return hash.digest("hex");
 }
 
 export async function hashFiles(showRoot: string, relPaths: string[]): Promise<Record<string, string | null>> {
