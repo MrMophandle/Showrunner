@@ -948,14 +948,29 @@ describe("agent timeouts", () => {
 - [ ] **Step 2: Run them to verify they fail**
 
 Run: `cd ~/GitHub/Showrunner/engine && npx vitest run test/agent-timeouts.test.ts`
-Expected: the first, second and fourth tests hang until vitest's 20 s timeout and FAIL; the third passes.
+Expected: the first, second and fourth tests hang until vitest's 20 s timeout and FAIL; the third passes; the emit test fails on `query failed:`; the two new agent-step tests fail on `query failed: undefined` and `"undefined"`.
 
-- [ ] **Step 3: Replace the stream loop**
+- [ ] **Step 3: Replace the stream loop, and apply the Task 3 review's five items**
 
-In `engine/src/agent-step.ts`, replace the `try { for await ... } catch` block of step 5–7 with a bounded pump. Add above `createAgentExecutor`:
+The Task 3 review found five Minors in exactly this region, and the controller folded them into this task rather than open a fix round: (1) the `result!` assertions become a narrowed local `r`; (2) a rejected `emit` inside the stream is rethrown as `EmitFailure` and reported as `log write failed: <msg>`, the wording `script-step.ts` already uses — without the class, an emit that rejected after a result message was stored would be swallowed and the step would report success; (3) `errorMessage(err)` replaces `(err as Error).message` at both catch sites, so a non-`Error` throw no longer reads `undefined`; (4) a result message with no `subtype` fails as `result message with no subtype`; (5) the `agent_query` payload's `allowedTools` is a copy.
+
+In `engine/src/agent-step.ts`, add above `createAgentExecutor`:
 
 ```ts
+/** Thrown by `pump` when the total or the idle clock fires. Its message is the failure string. */
 class Deadline extends Error {}
+
+/** Thrown in place of a rejected `emit` so the executor tells an event-log failure apart from a
+ *  query failure — the query and the SDK stream were healthy; the run log is what broke, and
+ *  script-step.ts words the same fault `log write failed: <msg>`. The class is also what makes the
+ *  classification unconditional: the `query failed` branch only fires when no result message has
+ *  arrived, so an emit that rejected after a result was stored would otherwise be swallowed and the
+ *  step would report success. */
+class EmitFailure extends Error {}
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
 
 /** Pumps `iterable` under two clocks — a total deadline and an idle deadline reset on every
  *  message — and hands each message to `onMessage`. When a clock fires it aborts `controller`,
@@ -999,9 +1014,15 @@ async function pump(
 }
 ```
 
-and change the body to:
+Replace the `try { for await ... } catch` block and the outcome block (steps 5–8 of Task 3) with:
 
 ```ts
+    // 5–7: drive the stream under the total and idle deadlines. The executor never relies on the
+    //      iterator honouring the abort: pump races each next() against its own clocks.
+    let toolCalls = 0;
+    let sessionId: string | undefined;
+    let result: AgentMessage | undefined;
+    let failure: string | undefined;
     try {
       await pump(opts.query({ prompt, options }), abortController, { ...(step.timeoutMs !== undefined ? { timeoutMs: step.timeoutMs } : {}), ...(step.idleTimeoutMs !== undefined ? { idleTimeoutMs: step.idleTimeoutMs } : {}) }, async (m) => {
         if (m.session_id && !sessionId) sessionId = m.session_id;
@@ -1009,7 +1030,11 @@ and change the body to:
           for (const block of m.message.content) {
             if (block.type === "tool_use" && "name" in block) {
               toolCalls += 1;
-              await emit("agent_tool_call", { tool: block.name, input: block.input, toolUseId: block.id, index: toolCalls });
+              try {
+                await emit("agent_tool_call", { tool: block.name, input: block.input, toolUseId: block.id, index: toolCalls });
+              } catch (err) {
+                throw new EmitFailure(errorMessage(err));
+              }
             }
           }
         } else if (m.type === "result") {
@@ -1018,16 +1043,129 @@ and change the body to:
       });
     } catch (err) {
       if (err instanceof Deadline) { failure = err.message; result = undefined; }
-      else if (!result) failure = `query failed: ${(err as Error).message}`;
+      else if (err instanceof EmitFailure) { failure = `log write failed: ${err.message}`; result = undefined; }
+      else if (!result) failure = `query failed: ${errorMessage(err)}`;
+    }
+
+    // 8: the outcome. A deadline or a rejected emit discards the result message that raced in, so
+    //    `r` is a result only when nothing has already failed — and the total timeout therefore
+    //    wins over a result that arrived after it.
+    const r = failure !== undefined ? undefined : result;
+    let outcome: AgentOutcome;
+    if (r === undefined) {
+      outcome = { ok: false, error: failure ?? "query ended without a result message" };
+    } else if (r.subtype === undefined) {
+      outcome = { ok: false, error: "result message with no subtype" };
+    } else if (r.subtype === "success") {
+      if (step.schema && r.structured_output === undefined) {
+        outcome = { ok: false, error: "success without structured output" };
+      } else {
+        outcome = {
+          ok: true, text: r.result ?? "", toolCalls,
+          ...(step.schema ? { verdict: r.structured_output } : {}),
+        };
+      }
+    } else {
+      const errors = r.errors ?? [];
+      outcome = { ok: false, error: errors.length ? `${r.subtype}: ${errors.join("; ")}` : r.subtype };
     }
 ```
 
-A deadline discards any result that raced in late (`result = undefined`), so "the total timeout wins over a late result" holds by construction.
+and change the prompt-load `catch` to `return { ok: false, error: errorMessage(err) };` and the `agent_query` payload's `allowedTools` to `[...step.allowedTools]`.
+
+Add to `engine/test/agent-timeouts.test.ts`, inside the describe:
+
+```ts
+  it("timeoutMs aborts a query that never yields and fails the step", async () => {
+    let controller: AbortController | undefined;
+    let returned = false;
+    const query: QueryFn = (args) => {
+      controller = args.options.abortController;
+      return { [Symbol.asyncIterator]: () => ({ next: () => never(), return: async () => { returned = true; return { done: true as const, value: undefined }; } }) };
+    };
+    const rec = recorder();
+    const t0 = Date.now();
+    const r = await createAgentExecutor({ query, promptsDir })(step({ timeoutMs: 100 }), ctx(), rec.emit);
+    expect(r).toEqual({ ok: false, error: "timed out after 100 ms" });
+    expect(Date.now() - t0).toBeLessThan(2000);
+    expect(controller!.signal.aborted).toBe(true);
+    expect(returned).toBe(true);
+    expect(rec.events.at(-1)!.payload).toMatchObject({ ok: false, error: "timed out after 100 ms", toolCalls: 0 });
+  });
+
+  it("idleTimeoutMs fails a query that goes silent after its first message, and resets on every message", async () => {
+    let controller: AbortController | undefined;
+    const query: QueryFn = async function* (args) {
+      controller = args.options.abortController;
+      yield init;
+      await new Promise((r) => setTimeout(r, 60));
+      yield { type: "assistant", message: { content: [{ type: "text", text: "still here" }] } };
+      await never();
+    };
+    const r = await createAgentExecutor({ query, promptsDir })(step({ idleTimeoutMs: 100 }), ctx(), recorder().emit);
+    expect(r).toEqual({ ok: false, error: "idle for 100 ms" });
+    expect(controller!.signal.aborted).toBe(true);
+  });
+
+  it("a query that finishes inside both bounds is unaffected and leaves no timers running", async () => {
+    const query: QueryFn = async function* () {
+      yield init;
+      yield { type: "result", subtype: "success", result: "ok", session_id: "s", num_turns: 1, duration_ms: 1, total_cost_usd: 0 };
+    };
+    const t0 = Date.now();
+    const r = await createAgentExecutor({ query, promptsDir })(step({ timeoutMs: 5_000, idleTimeoutMs: 5_000 }), ctx(), recorder().emit);
+    expect(r).toEqual({ ok: true, text: "ok", toolCalls: 0 });
+    expect(Date.now() - t0).toBeLessThan(1000);
+  });
+
+  it("the total timeout wins over a result that arrives after it", async () => {
+    const query: QueryFn = async function* () {
+      yield init;
+      await new Promise((r) => setTimeout(r, 300));
+      yield { type: "result", subtype: "success", result: "late", session_id: "s", num_turns: 1, duration_ms: 1, total_cost_usd: 0 };
+    };
+    const r = await createAgentExecutor({ query, promptsDir })(step({ timeoutMs: 80 }), ctx(), recorder().emit);
+    expect(r).toEqual({ ok: false, error: "timed out after 80 ms" });
+  });
+
+  it("an emit that rejects on agent_tool_call fails the step as a log write, not a query failure", async () => {
+    const query: QueryFn = async function* () {
+      yield init;
+      yield { type: "assistant", message: { content: [{ type: "tool_use", id: "t1", name: "Read", input: { file_path: "a.md" } }] } };
+      yield { type: "result", subtype: "success", result: "ok", session_id: "s", num_turns: 1, duration_ms: 1, total_cost_usd: 0 };
+    };
+    const kinds: EventKind[] = [];
+    const emit = async (kind: EventKind, _payload: Record<string, unknown>): Promise<void> => {
+      kinds.push(kind);
+      if (kind === "agent_tool_call") throw new Error("ENOSPC: no space left on device");
+    };
+    const r = await createAgentExecutor({ query, promptsDir })(step({ allowedTools: ["Read"] }), ctx(), emit);
+    expect(r).toEqual({ ok: false, error: "log write failed: ENOSPC: no space left on device" });
+    expect(kinds).toEqual(["agent_query", "agent_tool_call", "agent_result"]);
+  });
+```
+
+and to `engine/test/agent-step.test.ts`, under the "failures" describe:
+
+```ts
+  it("a query that rejects with a non-Error value fails with that value stringified", async () => {
+    const query: QueryFn = async function* () {
+      throw { code: "ECONNRESET" };
+    };
+    const r = await createAgentExecutor({ query, promptsDir })(step(), ctx(), recorder().emit);
+    expect(r).toEqual({ ok: false, error: "query failed: [object Object]" });
+  });
+  it("a result message with no subtype fails by naming the missing subtype", async () => {
+    const f = fake([init, { type: "result", result: "t" }]);
+    const r = await createAgentExecutor({ query: f.query, promptsDir })(step(), ctx(), recorder().emit);
+    expect(r).toEqual({ ok: false, error: "result message with no subtype" });
+  });
+```
 
 - [ ] **Step 4: Run the tests and the whole suite**
 
-Run: `cd ~/GitHub/Showrunner/engine && npx vitest run test/agent-timeouts.test.ts && npx vitest run && npm run typecheck`
-Expected: PASS, 4 tests; the suite is `121 passed` across 16 files (94 + 8 + 15 + 4); typecheck prints nothing.
+Run: `cd ~/GitHub/Showrunner/engine && npx vitest run test/agent-timeouts.test.ts test/agent-step.test.ts && npx vitest run && npm run typecheck`
+Expected: PASS, 5 and 17 tests; the suite is `124 passed` across 16 files (94 + 8 + 17 + 5); typecheck prints nothing.
 
 - [ ] **Step 5: Commit**
 
@@ -1197,7 +1335,7 @@ and after the pump (whether it succeeded or not), when a session id was seen:
 - [ ] **Step 4: Run the tests and the suite**
 
 Run: `cd ~/GitHub/Showrunner/engine && npx vitest run test/agent-context.test.ts && npx vitest run && npm run typecheck`
-Expected: PASS, 5 tests; the suite is `126 passed` across 17 files; typecheck prints nothing.
+Expected: PASS, 5 tests; the suite is `129 passed` across 17 files; typecheck prints nothing.
 
 - [ ] **Step 5: Commit**
 
@@ -1339,7 +1477,7 @@ export * from "./sdk-query.js";
 - [ ] **Step 6: Run everything**
 
 Run: `cd ~/GitHub/Showrunner/engine && npx vitest run && npm run typecheck && grep -rn -i 'dead ?light' engine/ README.md ; grep -rn 'bypassPermissions' engine/src ; grep -rln 'claude-agent-sdk' engine/src`
-Expected: `126 passed | 1 skipped` across 18 files; typecheck prints nothing; the first two greps print nothing; the third prints only `engine/src/sdk-query.ts`.
+Expected: `129 passed | 1 skipped` across 18 files; typecheck prints nothing; the first two greps print nothing; the third prints only `engine/src/sdk-query.ts`.
 
 - [ ] **Step 7: Commit and push**
 
