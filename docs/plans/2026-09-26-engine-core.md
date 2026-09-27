@@ -376,7 +376,7 @@ export function compareEpisodeIds(a: EpisodeId, b: EpisodeId): number {
 - [ ] **Step 4: Run to verify it passes**
 
 Run: `npx vitest run test/ids.test.ts`
-Expected: PASS, 6 tests.
+Expected: PASS, 7 tests.
 
 - [ ] **Step 5: Commit**
 
