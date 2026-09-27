@@ -15,6 +15,20 @@ describe("parseEpisodeId", () => {
       expect(() => parseEpisodeId(bad), bad).toThrow(InvalidEpisodeId);
     }
   });
+  it("rejects ep00, because production numbers start at 1 just as aired ones do", () => {
+    expect(() => parseEpisodeId("ep00")).toThrow(InvalidEpisodeId);
+    expect(() => parseEpisodeId("ep00")).toThrow(/start at 1/);
+    expect(parseEpisodeId("ep01")).toEqual({ kind: "production", number: 1, raw: "ep01" });
+  });
+  it("rejects a non-string at runtime, not only at compile time", () => {
+    for (const bad of [undefined, null, 7, { raw: "s02e01" }]) {
+      expect(() => parseEpisodeId(bad as unknown as string), String(bad)).toThrow(InvalidEpisodeId);
+    }
+    expect(() => parseEpisodeId(null as unknown as string)).toThrow(/not a string/);
+  });
+  it("round-trips a formatted aired slot", () => {
+    expect(parseEpisodeId(formatAired(2, 1)).raw).toBe("s02e01");
+  });
 });
 
 describe("isEpisodeId", () => {
@@ -22,6 +36,8 @@ describe("isEpisodeId", () => {
     expect(isEpisodeId("s10e20")).toBe(true);
     expect(isEpisodeId("ep99")).toBe(true);
     expect(isEpisodeId("ep9")).toBe(false);
+    expect(isEpisodeId("s2e01")).toBe(false);
+    expect(isEpisodeId("ep00")).toBe(false);
   });
 });
 

@@ -13,6 +13,9 @@ const AIRED = /^s(\d{2})e(\d{2})$/;
 const PRODUCTION = /^ep(\d{2})$/;
 
 export function parseEpisodeId(raw: string): EpisodeId {
+  // A runtime guard, not only a compile-time one: this is the boundary an id crosses on its way
+  // to a filesystem path, and the caller may be handing over unvalidated JSON or argv.
+  if (typeof raw !== "string") throw new InvalidEpisodeId(String(raw), "not a string");
   const a = AIRED.exec(raw);
   if (a) {
     const season = Number(a[1]);
@@ -21,7 +24,11 @@ export function parseEpisodeId(raw: string): EpisodeId {
     return { kind: "aired", season, episode, raw };
   }
   const p = PRODUCTION.exec(raw);
-  if (p) return { kind: "production", number: Number(p[1]), raw };
+  if (p) {
+    const number = Number(p[1]);
+    if (number === 0) throw new InvalidEpisodeId(raw, "production numbers start at 1");
+    return { kind: "production", number, raw };
+  }
   throw new InvalidEpisodeId(raw, "expected sXXeYY (aired) or epNN (production)");
 }
 

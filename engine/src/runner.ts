@@ -2,6 +2,7 @@ import type { EventLog, Event } from "./events.js";
 import { orderSteps } from "./pipeline.js";
 import { deriveRunState, type GateState, type RunState } from "./state.js";
 import { hashFiles, sameHashes } from "./hash.js";
+import { parseEpisodeId } from "./ids.js";
 import type {
   AgentStep, Emit, Executors, GateStep, LoopStep, Pipeline, RunContext, ScriptStep, Step, StepId,
 } from "./steps.js";
@@ -62,6 +63,8 @@ function lastCompletion(stepId: StepId, logs: Event[][]): CachedCompletion | und
 
 export async function run(opts: RunOptions): Promise<RunResult> {
   const { pipeline, log, executors } = opts;
+  // Validate the episode id at entry: every path the run touches is built from it.
+  parseEpisodeId(opts.ctx.episodeId);
   const ordered = orderSteps(pipeline);
   const priorEvents: Event[][] = [];
   for (const pl of opts.priorLogs ?? []) priorEvents.push(await pl.read());

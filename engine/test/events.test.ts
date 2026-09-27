@@ -36,4 +36,13 @@ describe("EventLog", () => {
   it("computes the canonical log path under the show root", () => {
     expect(EventLog.logPath("/show", "s02e01", "run-7")).toBe(path.join("/show", "Production", "s02e01", "runs", "run-7.jsonl"));
   });
+
+  it("refuses to build a path from an episode id that is not an episode id", () => {
+    expect(() => EventLog.logPath("/show", "../../x", "r1")).toThrow(/invalid episode id/);
+  });
+
+  it("refuses to build a path from a run id outside the allowed alphabet", () => {
+    expect(() => EventLog.logPath("/show", "s02e01", "../x")).toThrow(/invalid run id/);
+    expect(() => EventLog.logPath("/show", "s02e01", "")).toThrow(/invalid run id/);
+  });
 });
