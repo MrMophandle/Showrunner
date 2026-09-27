@@ -24,10 +24,10 @@
 - **A loop that exhausts its iterations without its sentinel has failed** (spec §6.7 — the ep09/ep10 lesson).
 - **Progress contract:** a script prints `::progress {"done":N,"total":M,"unit":"..."}` lines; everything else is forwarded as `script_line` (spec §6.7).
 - **Milestone vocabulary, exactly** (spec §3.2): `NEEDS_IDEA DRAFT_IDEA IDEA DRAFT_OUTLINE OUTLINE DRAFT_SCRIPT SCRIPT NEEDS_REFS DRAFT_CASTING CASTING DRAFT_AUDIO AUDIO NEEDS_IMAGES DRAFT_IMAGES IMAGES DRAFT_ASSEMBLY ASSEMBLY PUBLISH_KIT DRAFT_CANON CANON COMPLETE`.
-- **Every commit ends with these two trailer lines:**
+- **Every commit ends with these two trailer lines, in ONE final paragraph** (git treats only the last paragraph as the trailer block; two separate `-m` flags split them and break co-author attribution):
   `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>`
   `Claude-Session: https://claude.ai/code/session_01K4ZqdsBoXVFn8SwDSWinC9`
-- Tests run with `cd ~/GitHub/Showrunner/engine && npx vitest run` (or one file: `npx vitest run test/<name>.test.ts`).
+- Tests run with `cd ~/GitHub/Showrunner/engine && npx vitest run` (or one file: `npx vitest run test/<name>.test.ts`). Typecheck with `npm run typecheck` from `engine/` — it runs `tsc --noEmit` over `src/` AND `tsc -p tsconfig.test.json` over `test/` and `vitest.config.ts` (added after Task 1's review found the base config never reached the tests).
 - Imports between engine source files use the `.js` extension (`NodeNext` resolution) even though the files are `.ts`.
 
 ---
@@ -41,7 +41,8 @@
   README.md
   engine/
     package.json               name "@showrunner/engine", type module, no deps
-    tsconfig.json              strict, NodeNext, ES2022, outDir dist
+    tsconfig.json              strict, NodeNext, ES2022, outDir dist (src only)
+    tsconfig.test.json         extends it; rootDir .; noEmit; includes src, test, vitest.config.ts
     vitest.config.ts
     src/
       ids.ts                   parse/validate/compare episode ids
@@ -78,12 +79,12 @@ Each source file has one responsibility. `runner.ts` is the only file that compo
 
 **Files:**
 - Create: `package.json`, `.gitignore`, `README.md`
-- Create: `engine/package.json`, `engine/tsconfig.json`, `engine/vitest.config.ts`
+- Create: `engine/package.json`, `engine/tsconfig.json`, `engine/tsconfig.test.json`, `engine/vitest.config.ts`
 - Create: `engine/src/index.ts`
 - Test: `engine/test/smoke.test.ts`
 
 **Interfaces:**
-- Produces: a workspace where `npx vitest run` and `npx tsc --noEmit` both succeed from `engine/`.
+- Produces: a workspace where `npx vitest run` and `npm run typecheck` both succeed from `engine/`.
 
 - [ ] **Step 1: Confirm the repository and untrack the stray file**
 
@@ -151,7 +152,7 @@ here from the first show at cutover).
   "types": "./dist/index.d.ts",
   "scripts": {
     "test": "vitest run",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json",
     "build": "tsc"
   },
   "devDependencies": {
@@ -179,6 +180,19 @@ here from the first show at cutover).
     "skipLibCheck": true
   },
   "include": ["src"]
+}
+```
+
+`engine/tsconfig.test.json` (the base config includes only `src/`; this one typechecks the tests and the vitest config without emitting):
+```json
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": ".",
+    "declaration": false
+  },
+  "include": ["src", "test", "vitest.config.ts"]
 }
 ```
 
@@ -217,16 +231,16 @@ describe("engine package", () => {
 
 ```bash
 cd ~/GitHub/Showrunner && npm install
-cd engine && npx vitest run && npx tsc --noEmit
+cd engine && npx vitest run && npm run typecheck
 ```
-Expected: 1 test passed; `tsc` prints nothing.
+Expected: 1 test passed; `typecheck` prints only the two `tsc` command echoes and exits 0.
 
 - [ ] **Step 6: Commit**
 
 ```bash
 cd ~/GitHub/Showrunner
 git add -A
-git commit -m "engine: bootstrap workspace, TypeScript, vitest; untrack .DS_Store" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>" -m "Claude-Session: https://claude.ai/code/session_01K4ZqdsBoXVFn8SwDSWinC9"
+git commit -m "engine: bootstrap workspace, TypeScript, vitest; untrack .DS_Store" -m $'Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\nClaude-Session: https://claude.ai/code/session_01K4ZqdsBoXVFn8SwDSWinC9'
 git push -u origin main
 ```
 
@@ -368,7 +382,7 @@ Expected: PASS, 6 tests.
 
 ```bash
 cd ~/GitHub/Showrunner && git add engine/src/ids.ts engine/test/ids.test.ts
-git commit -m "engine: episode ids — aired sXXeYY and production epNN" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>" -m "Claude-Session: https://claude.ai/code/session_01K4ZqdsBoXVFn8SwDSWinC9"
+git commit -m "engine: episode ids — aired sXXeYY and production epNN" -m $'Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\nClaude-Session: https://claude.ai/code/session_01K4ZqdsBoXVFn8SwDSWinC9'
 ```
 
 ---
@@ -583,14 +597,14 @@ export function orderSteps(p: Pipeline): Step[] {
 
 - [ ] **Step 5: Run to verify it passes**
 
-Run: `npx vitest run test/pipeline.test.ts && npx tsc --noEmit`
-Expected: PASS, 4 tests; `tsc` prints nothing.
+Run: `npx vitest run test/pipeline.test.ts && npm run typecheck`
+Expected: PASS, 4 tests; `typecheck` exits 0.
 
 - [ ] **Step 6: Commit**
 
 ```bash
 cd ~/GitHub/Showrunner && git add engine/src/steps.ts engine/src/pipeline.ts engine/test/pipeline.test.ts
-git commit -m "engine: the five step kinds, executor interfaces, dependency ordering" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>" -m "Claude-Session: https://claude.ai/code/session_01K4ZqdsBoXVFn8SwDSWinC9"
+git commit -m "engine: the five step kinds, executor interfaces, dependency ordering" -m $'Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\nClaude-Session: https://claude.ai/code/session_01K4ZqdsBoXVFn8SwDSWinC9'
 ```
 
 ---
@@ -724,7 +738,7 @@ Expected: PASS, 4 tests.
 
 ```bash
 cd ~/GitHub/Showrunner && git add engine/src/events.ts engine/test/events.test.ts
-git commit -m "engine: append-only JSONL event log" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>" -m "Claude-Session: https://claude.ai/code/session_01K4ZqdsBoXVFn8SwDSWinC9"
+git commit -m "engine: append-only JSONL event log" -m $'Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\nClaude-Session: https://claude.ai/code/session_01K4ZqdsBoXVFn8SwDSWinC9'
 ```
 
 ---
@@ -828,7 +842,7 @@ Expected: PASS, 2 tests.
 
 ```bash
 cd ~/GitHub/Showrunner && git add engine/src/hash.ts engine/test/hash.test.ts
-git commit -m "engine: sha256 file hashing for declared inputs and outputs" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>" -m "Claude-Session: https://claude.ai/code/session_01K4ZqdsBoXVFn8SwDSWinC9"
+git commit -m "engine: sha256 file hashing for declared inputs and outputs" -m $'Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\nClaude-Session: https://claude.ai/code/session_01K4ZqdsBoXVFn8SwDSWinC9'
 ```
 
 ---
@@ -1026,14 +1040,14 @@ export function deriveRunState(events: Event[]): RunState {
 
 - [ ] **Step 4: Run to verify it passes**
 
-Run: `npx vitest run test/state.test.ts && npx tsc --noEmit`
-Expected: PASS, 5 tests; `tsc` prints nothing.
+Run: `npx vitest run test/state.test.ts && npm run typecheck`
+Expected: PASS, 5 tests; `typecheck` exits 0.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 cd ~/GitHub/Showrunner && git add engine/src/state.ts engine/test/state.test.ts
-git commit -m "engine: run state derived from the event log" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>" -m "Claude-Session: https://claude.ai/code/session_01K4ZqdsBoXVFn8SwDSWinC9"
+git commit -m "engine: run state derived from the event log" -m $'Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\nClaude-Session: https://claude.ai/code/session_01K4ZqdsBoXVFn8SwDSWinC9'
 ```
 
 ---
@@ -1392,14 +1406,14 @@ async function runLoopStep(step: LoopStep, _ctx: RunContext, emit: Emit, _execut
 
 - [ ] **Step 4: Run to verify it passes**
 
-Run: `npx vitest run test/runner.test.ts && npx tsc --noEmit`
-Expected: PASS, 4 tests; `tsc` prints nothing. (The unused `_ctx`/`_executors`/`_log` parameters are named with a leading underscore so `tsc` does not complain; they are used in Tasks 9 and 10.)
+Run: `npx vitest run test/runner.test.ts && npm run typecheck`
+Expected: PASS, 4 tests; `typecheck` exits 0. (The unused `_ctx`/`_executors`/`_log` parameters are named with a leading underscore so `tsc` does not complain; they are used in Tasks 9 and 10.)
 
 - [ ] **Step 5: Commit**
 
 ```bash
 cd ~/GitHub/Showrunner && git add engine/src/runner.ts engine/test/runner.test.ts
-git commit -m "engine: the runner — ordered execution, skipped vs failed, injected executors, input-hash caching" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>" -m "Claude-Session: https://claude.ai/code/session_01K4ZqdsBoXVFn8SwDSWinC9"
+git commit -m "engine: the runner — ordered execution, skipped vs failed, injected executors, input-hash caching" -m $'Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\nClaude-Session: https://claude.ai/code/session_01K4ZqdsBoXVFn8SwDSWinC9'
 ```
 
 ---
@@ -1584,14 +1598,14 @@ export const scriptExecutor: Executors["script"] = (step: ScriptStep, ctx: RunCo
 
 - [ ] **Step 5: Run to verify it passes**
 
-Run: `npx vitest run test/script-step.test.ts && npx tsc --noEmit`
-Expected: PASS, 5 tests; `tsc` prints nothing.
+Run: `npx vitest run test/script-step.test.ts && npm run typecheck`
+Expected: PASS, 5 tests; `typecheck` exits 0.
 
 - [ ] **Step 6: Commit**
 
 ```bash
 cd ~/GitHub/Showrunner && git add engine/src/script-step.ts engine/test/script-step.test.ts engine/test/fixtures
-git commit -m "engine: script executor — argv only, streamed lines, ::progress contract, timeout" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>" -m "Claude-Session: https://claude.ai/code/session_01K4ZqdsBoXVFn8SwDSWinC9"
+git commit -m "engine: script executor — argv only, streamed lines, ::progress contract, timeout" -m $'Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\nClaude-Session: https://claude.ai/code/session_01K4ZqdsBoXVFn8SwDSWinC9'
 ```
 
 ---
@@ -1786,14 +1800,14 @@ One adjustment in `run`: a gate that was rejected leaves `state.steps[g] === "ru
 
 - [ ] **Step 4: Run to verify it passes**
 
-Run: `npx vitest run test/gate.test.ts test/runner.test.ts && npx tsc --noEmit`
-Expected: PASS, 9 tests across the two files; `tsc` prints nothing.
+Run: `npx vitest run test/gate.test.ts test/runner.test.ts && npm run typecheck`
+Expected: PASS, 9 tests across the two files; `typecheck` exits 0.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 cd ~/GitHub/Showrunner && git add engine/src/runner.ts engine/test/gate.test.ts
-git commit -m "engine: gates — open, answer, reject-and-fix with attempt cap, resume by replay" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>" -m "Claude-Session: https://claude.ai/code/session_01K4ZqdsBoXVFn8SwDSWinC9"
+git commit -m "engine: gates — open, answer, reject-and-fix with attempt cap, resume by replay" -m $'Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\nClaude-Session: https://claude.ai/code/session_01K4ZqdsBoXVFn8SwDSWinC9'
 ```
 
 ---
@@ -1891,14 +1905,14 @@ async function runLoopStep(step: LoopStep, ctx: RunContext, emit: Emit, executor
 
 - [ ] **Step 4: Run to verify it passes**
 
-Run: `npx vitest run && npx tsc --noEmit`
-Expected: every test file passes (smoke, ids, pipeline, events, hash, state, runner, script-step, gate, loop); `tsc` prints nothing.
+Run: `npx vitest run && npm run typecheck`
+Expected: every test file passes (smoke, ids, pipeline, events, hash, state, runner, script-step, gate, loop); `typecheck` exits 0.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 cd ~/GitHub/Showrunner && git add engine/src/runner.ts engine/test/loop.test.ts
-git commit -m "engine: loops — sentinel, iteration cap, exhaustion is failure, tool-call counts per iteration" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>" -m "Claude-Session: https://claude.ai/code/session_01K4ZqdsBoXVFn8SwDSWinC9"
+git commit -m "engine: loops — sentinel, iteration cap, exhaustion is failure, tool-call counts per iteration" -m $'Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\nClaude-Session: https://claude.ai/code/session_01K4ZqdsBoXVFn8SwDSWinC9'
 ```
 
 ---
@@ -2057,8 +2071,8 @@ export function deriveStage(state: RunState, map: StageMap, needs: Needs): Stage
 
 - [ ] **Step 4: Run to verify it passes**
 
-Run: `npx vitest run test/stages.test.ts && npx tsc --noEmit`
-Expected: PASS, 6 tests; `tsc` prints nothing.
+Run: `npx vitest run test/stages.test.ts && npm run typecheck`
+Expected: PASS, 6 tests; `typecheck` exits 0.
 
 - [ ] **Step 5: Export the public surface and commit**
 
@@ -2076,12 +2090,12 @@ export * from "./script-step.js";
 export * from "./stages.js";
 ```
 
-Run: `npx vitest run && npx tsc --noEmit`
-Expected: all tests pass; `tsc` prints nothing.
+Run: `npx vitest run && npm run typecheck`
+Expected: all tests pass; `typecheck` exits 0.
 
 ```bash
 cd ~/GitHub/Showrunner && git add engine/src/stages.ts engine/src/index.ts engine/test/stages.test.ts
-git commit -m "engine: milestone vocabulary and stage derivation with NEEDS_ interruption" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>" -m "Claude-Session: https://claude.ai/code/session_01K4ZqdsBoXVFn8SwDSWinC9"
+git commit -m "engine: milestone vocabulary and stage derivation with NEEDS_ interruption" -m $'Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\nClaude-Session: https://claude.ai/code/session_01K4ZqdsBoXVFn8SwDSWinC9'
 git push
 ```
 
@@ -2173,7 +2187,7 @@ Expected: all pass.
 
 ```bash
 cd ~/GitHub/Showrunner && git add engine/test/e2e.test.ts
-git commit -m "engine: end-to-end — guard, loop, gate, script, restart from the log" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>" -m "Claude-Session: https://claude.ai/code/session_01K4ZqdsBoXVFn8SwDSWinC9"
+git commit -m "engine: end-to-end — guard, loop, gate, script, restart from the log" -m $'Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\nClaude-Session: https://claude.ai/code/session_01K4ZqdsBoXVFn8SwDSWinC9'
 git push
 ```
 
