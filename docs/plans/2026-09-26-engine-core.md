@@ -24,10 +24,10 @@
 - **A loop that exhausts its iterations without its sentinel has failed** (spec §6.7 — the ep09/ep10 lesson).
 - **Progress contract:** a script prints `::progress {"done":N,"total":M,"unit":"..."}` lines; everything else is forwarded as `script_line` (spec §6.7).
 - **Milestone vocabulary, exactly** (spec §3.2): `NEEDS_IDEA DRAFT_IDEA IDEA DRAFT_OUTLINE OUTLINE DRAFT_SCRIPT SCRIPT NEEDS_REFS DRAFT_CASTING CASTING DRAFT_AUDIO AUDIO NEEDS_IMAGES DRAFT_IMAGES IMAGES DRAFT_ASSEMBLY ASSEMBLY PUBLISH_KIT DRAFT_CANON CANON COMPLETE`.
-- **Every commit ends with these two trailer lines:**
+- **Every commit ends with these two trailer lines, in ONE final paragraph** (git treats only the last paragraph as the trailer block; two separate `-m` flags split them and break co-author attribution):
   `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>`
   `Claude-Session: https://claude.ai/code/session_01K4ZqdsBoXVFn8SwDSWinC9`
-- Tests run with `cd ~/GitHub/Showrunner/engine && npx vitest run` (or one file: `npx vitest run test/<name>.test.ts`).
+- Tests run with `cd ~/GitHub/Showrunner/engine && npx vitest run` (or one file: `npx vitest run test/<name>.test.ts`). Typecheck with `npm run typecheck` from `engine/` — it runs `tsc --noEmit` over `src/` AND `tsc -p tsconfig.test.json` over `test/` and `vitest.config.ts` (added after Task 1's review found the base config never reached the tests).
 - Imports between engine source files use the `.js` extension (`NodeNext` resolution) even though the files are `.ts`.
 
 ---
@@ -41,7 +41,8 @@
   README.md
   engine/
     package.json               name "@showrunner/engine", type module, no deps
-    tsconfig.json              strict, NodeNext, ES2022, outDir dist
+    tsconfig.json              strict, NodeNext, ES2022, outDir dist (src only)
+    tsconfig.test.json         extends it; rootDir .; noEmit; includes src, test, vitest.config.ts
     vitest.config.ts
     src/
       ids.ts                   parse/validate/compare episode ids
@@ -78,12 +79,12 @@ Each source file has one responsibility. `runner.ts` is the only file that compo
 
 **Files:**
 - Create: `package.json`, `.gitignore`, `README.md`
-- Create: `engine/package.json`, `engine/tsconfig.json`, `engine/vitest.config.ts`
+- Create: `engine/package.json`, `engine/tsconfig.json`, `engine/tsconfig.test.json`, `engine/vitest.config.ts`
 - Create: `engine/src/index.ts`
 - Test: `engine/test/smoke.test.ts`
 
 **Interfaces:**
-- Produces: a workspace where `npx vitest run` and `npx tsc --noEmit` both succeed from `engine/`.
+- Produces: a workspace where `npx vitest run` and `npm run typecheck` both succeed from `engine/`.
 
 - [ ] **Step 1: Confirm the repository and untrack the stray file**
 
@@ -151,7 +152,7 @@ here from the first show at cutover).
   "types": "./dist/index.d.ts",
   "scripts": {
     "test": "vitest run",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json",
     "build": "tsc"
   },
   "devDependencies": {
@@ -179,6 +180,19 @@ here from the first show at cutover).
     "skipLibCheck": true
   },
   "include": ["src"]
+}
+```
+
+`engine/tsconfig.test.json` (the base config includes only `src/`; this one typechecks the tests and the vitest config without emitting):
+```json
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": ".",
+    "declaration": false
+  },
+  "include": ["src", "test", "vitest.config.ts"]
 }
 ```
 
@@ -217,16 +231,16 @@ describe("engine package", () => {
 
 ```bash
 cd ~/GitHub/Showrunner && npm install
-cd engine && npx vitest run && npx tsc --noEmit
+cd engine && npx vitest run && npm run typecheck
 ```
-Expected: 1 test passed; `tsc` prints nothing.
+Expected: 1 test passed; `typecheck` prints only the two `tsc` command echoes and exits 0.
 
 - [ ] **Step 6: Commit**
 
 ```bash
 cd ~/GitHub/Showrunner
 git add -A
-git commit -m "engine: bootstrap workspace, TypeScript, vitest; untrack .DS_Store" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>" -m "Claude-Session: https://claude.ai/code/session_01K4ZqdsBoXVFn8SwDSWinC9"
+git commit -m "engine: bootstrap workspace, TypeScript, vitest; untrack .DS_Store" -m $'Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\nClaude-Session: https://claude.ai/code/session_01K4ZqdsBoXVFn8SwDSWinC9'
 git push -u origin main
 ```
 
@@ -362,13 +376,13 @@ export function compareEpisodeIds(a: EpisodeId, b: EpisodeId): number {
 - [ ] **Step 4: Run to verify it passes**
 
 Run: `npx vitest run test/ids.test.ts`
-Expected: PASS, 6 tests.
+Expected: PASS, 7 tests.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 cd ~/GitHub/Showrunner && git add engine/src/ids.ts engine/test/ids.test.ts
-git commit -m "engine: episode ids — aired sXXeYY and production epNN" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>" -m "Claude-Session: https://claude.ai/code/session_01K4ZqdsBoXVFn8SwDSWinC9"
+git commit -m "engine: episode ids — aired sXXeYY and production epNN" -m $'Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\nClaude-Session: https://claude.ai/code/session_01K4ZqdsBoXVFn8SwDSWinC9'
 ```
 
 ---
@@ -415,6 +429,10 @@ describe("orderSteps", () => {
   it("returns steps in dependency order, keeping declaration order among ready steps", () => {
     const p: Pipeline = { name: "t", steps: [g("c", ["a", "b"]), g("a"), g("b", ["a"])] };
     expect(orderSteps(p).map((s) => s.id)).toEqual(["a", "b", "c"]);
+  });
+  it("prefers declaration order when several steps are ready", () => {
+    const p: Pipeline = { name: "t", steps: [g("z"), g("a"), g("m", ["z", "a"])] };
+    expect(orderSteps(p).map((s) => s.id)).toEqual(["z", "a", "m"]);
   });
   it("throws on a missing dependency", () => {
     const p: Pipeline = { name: "t", steps: [g("a", ["nope"])] };
@@ -583,14 +601,14 @@ export function orderSteps(p: Pipeline): Step[] {
 
 - [ ] **Step 5: Run to verify it passes**
 
-Run: `npx vitest run test/pipeline.test.ts && npx tsc --noEmit`
-Expected: PASS, 4 tests; `tsc` prints nothing.
+Run: `npx vitest run test/pipeline.test.ts && npm run typecheck`
+Expected: PASS, 5 tests; `typecheck` exits 0.
 
 - [ ] **Step 6: Commit**
 
 ```bash
 cd ~/GitHub/Showrunner && git add engine/src/steps.ts engine/src/pipeline.ts engine/test/pipeline.test.ts
-git commit -m "engine: the five step kinds, executor interfaces, dependency ordering" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>" -m "Claude-Session: https://claude.ai/code/session_01K4ZqdsBoXVFn8SwDSWinC9"
+git commit -m "engine: the five step kinds, executor interfaces, dependency ordering" -m $'Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\nClaude-Session: https://claude.ai/code/session_01K4ZqdsBoXVFn8SwDSWinC9'
 ```
 
 ---
@@ -724,7 +742,7 @@ Expected: PASS, 4 tests.
 
 ```bash
 cd ~/GitHub/Showrunner && git add engine/src/events.ts engine/test/events.test.ts
-git commit -m "engine: append-only JSONL event log" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>" -m "Claude-Session: https://claude.ai/code/session_01K4ZqdsBoXVFn8SwDSWinC9"
+git commit -m "engine: append-only JSONL event log" -m $'Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\nClaude-Session: https://claude.ai/code/session_01K4ZqdsBoXVFn8SwDSWinC9'
 ```
 
 ---
@@ -737,7 +755,7 @@ git commit -m "engine: append-only JSONL event log" -m "Co-Authored-By: Claude F
 
 **Interfaces:**
 - Produces:
-  - `hashFile(absPath: string): Promise<string | null>` — sha256 hex of the file's bytes; `null` if the file does not exist
+  - `hashFile(absPath: string): Promise<string | null>` — sha256 hex of the file's bytes; `null` if the file does not exist (streamed, constant memory — outputs include multi-gigabyte media)
   - `hashFiles(showRoot: string, relPaths: string[]): Promise<Record<string, string | null>>` — keyed by the relative path, in the order given
   - `sameHashes(a: Record<string, string | null>, b: Record<string, string | null>): boolean` — same keys, same values
 
@@ -785,17 +803,20 @@ Expected: FAIL — cannot find module `../src/hash.js`.
 `engine/src/hash.ts`:
 ```ts
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { createReadStream } from "node:fs";
 import path from "node:path";
 
+/** Streams the file through sha256 in constant memory — declared outputs include
+ *  full-episode WAV mixes and mastered MP4s, and `readFile` refuses files over 2 GiB. */
 export async function hashFile(absPath: string): Promise<string | null> {
+  const hash = createHash("sha256");
   try {
-    const bytes = await readFile(absPath);
-    return createHash("sha256").update(bytes).digest("hex");
+    for await (const chunk of createReadStream(absPath)) hash.update(chunk as Buffer);
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw err;
   }
+  return hash.digest("hex");
 }
 
 export async function hashFiles(showRoot: string, relPaths: string[]): Promise<Record<string, string | null>> {
@@ -828,7 +849,7 @@ Expected: PASS, 2 tests.
 
 ```bash
 cd ~/GitHub/Showrunner && git add engine/src/hash.ts engine/test/hash.test.ts
-git commit -m "engine: sha256 file hashing for declared inputs and outputs" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>" -m "Claude-Session: https://claude.ai/code/session_01K4ZqdsBoXVFn8SwDSWinC9"
+git commit -m "engine: sha256 file hashing for declared inputs and outputs" -m $'Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\nClaude-Session: https://claude.ai/code/session_01K4ZqdsBoXVFn8SwDSWinC9'
 ```
 
 ---
@@ -908,6 +929,11 @@ describe("deriveRunState", () => {
     expect(s.openGate).toBeUndefined();
     expect(s.steps).toEqual({ g: "completed" });
     expect(s.results).toEqual({ g: { approved: true, notes: "fine" } });
+
+    s = deriveRunState([...opened, ev("gate_answered", "g", { approved: false, notes: "redo" }, "t2")]);
+    expect(s.openGate).toBeUndefined();
+    expect(s.steps).toEqual({ g: "running" });
+    expect(s.results).toEqual({});
 
     s = deriveRunState([
       ...opened,
@@ -1012,6 +1038,9 @@ export function deriveRunState(events: Event[]): RunState {
             s.steps[id] = "completed";
             s.results[id] = e.payload;
           } else {
+            // A rejected gate leaves the step "running" with no open gate and no position.
+            // The runner treats "running with no position" as mid-step and re-executes the
+            // step, which for a gate runs the fix agent and reopens it (next attempt).
             s.steps[id] = "running";
           }
         }
@@ -1026,14 +1055,14 @@ export function deriveRunState(events: Event[]): RunState {
 
 - [ ] **Step 4: Run to verify it passes**
 
-Run: `npx vitest run test/state.test.ts && npx tsc --noEmit`
-Expected: PASS, 5 tests; `tsc` prints nothing.
+Run: `npx vitest run test/state.test.ts && npm run typecheck`
+Expected: PASS, 5 tests; `typecheck` exits 0.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 cd ~/GitHub/Showrunner && git add engine/src/state.ts engine/test/state.test.ts
-git commit -m "engine: run state derived from the event log" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>" -m "Claude-Session: https://claude.ai/code/session_01K4ZqdsBoXVFn8SwDSWinC9"
+git commit -m "engine: run state derived from the event log" -m $'Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\nClaude-Session: https://claude.ai/code/session_01K4ZqdsBoXVFn8SwDSWinC9'
 ```
 
 ---
@@ -1112,6 +1141,8 @@ describe("run", () => {
     ]);
     expect(events.at(-1)?.kind).toBe("run_finished");
     expect(events.at(-1)?.payload["status"]).toBe("failed");
+    expect(await run({ pipeline: p, ctx: { runId: "r1", episodeId: "s02e01", showRoot: root }, log, executors: okExecutors([]) }))
+      .toEqual({ status: "failed", stepId: "g", error: "no script.md" });
   });
 
   it("records a failing script and the agent outcome text as a result", async () => {
@@ -1164,6 +1195,37 @@ describe("run", () => {
     const ev3 = await log3.read();
     expect(ev3.some((e) => e.kind === "input_changed" && e.stepId === "s")).toBe(true);
     expect(ev3.some((e) => e.kind === "step_completed" && e.stepId === "s")).toBe(true);
+  });
+
+  it("re-runs a script step that declares outputs but no inputs, and never caches it", async () => {
+    const root = await show();
+    let runs = 0;
+    const execs: Executors = {
+      script: async (_step, ctx) => { runs++; await writeFile(path.join(ctx.showRoot, "out.txt"), "same"); return { ok: true }; },
+      agent: async () => ({ ok: true, text: "", toolCalls: 0 }),
+    };
+    const s: ScriptStep = { kind: "script", id: "s", outputs: ["out.txt"], argv: () => ["true"] };
+    const p: Pipeline = { name: "p", steps: [s] };
+    const log1 = new EventLog(EventLog.logPath(root, "s02e01", "r1"));
+    await run({ pipeline: p, ctx: { runId: "r1", episodeId: "s02e01", showRoot: root }, log: log1, executors: execs });
+    const log2 = new EventLog(EventLog.logPath(root, "s02e01", "r2"));
+    await run({ pipeline: p, ctx: { runId: "r2", episodeId: "s02e01", showRoot: root }, log: log2, executors: execs, priorLogs: [log1] });
+    expect(runs).toBe(2);
+    expect((await log2.read()).some((e) => e.kind === "step_cached")).toBe(false);
+  });
+
+  it("re-executes a step whose log shows it running with no terminal event", async () => {
+    const root = await show();
+    const calls: string[] = [];
+    const g: GuardStep = { kind: "guard", id: "g", check: () => { calls.push("g"); return { pass: true }; } };
+    const log = new EventLog(EventLog.logPath(root, "s02e01", "r1"));
+    await log.append({ runId: "r1", kind: "run_started", payload: { pipeline: "p", episodeId: "s02e01" } });
+    await log.append({ runId: "r1", stepId: "g", kind: "step_started", payload: { kind: "guard" } });
+    const res = await run({ pipeline: { name: "p", steps: [g] }, ctx: { runId: "r1", episodeId: "s02e01", showRoot: root }, log, executors: okExecutors([]) });
+    expect(res).toEqual({ status: "completed" });
+    expect(calls).toEqual(["g"]);
+    const starts = (await log.read()).filter((e) => e.kind === "step_started" && e.stepId === "g");
+    expect(starts).toHaveLength(2);
   });
 });
 ```
@@ -1238,9 +1300,19 @@ export async function run(opts: RunOptions): Promise<RunResult> {
   }
 
   const state: RunState = deriveRunState(await log.read());
-  if (state.finished) return state.status === "completed"
-    ? { status: "completed" }
-    : { status: "failed", stepId: "", error: "run already finished as failed" };
+  if (state.finished) {
+    if (state.status === "completed") return { status: "completed" };
+    const failedId = Object.entries(state.steps).find(([, v]) => v === "failed")?.[0] ?? "";
+    let error = "failed in an earlier attempt";
+    for (let i = ownEvents.length - 1; i >= 0; i--) {
+      const e = ownEvents[i];
+      if (e && e.kind === "step_failed" && e.stepId === failedId && typeof e.payload["error"] === "string") {
+        error = e.payload["error"];
+        break;
+      }
+    }
+    return { status: "failed", stepId: failedId, error };
+  }
   if (state.openGate) return { status: "waiting", gate: state.openGate };
 
   const ctx: RunContext = { ...opts.ctx, results: { ...state.results } };
@@ -1340,7 +1412,7 @@ async function runScriptStep(
   const outputs = step.outputs ?? [];
   const inputHashes = await hashFiles(ctx.showRoot, inputs);
   const prior = lastCompletion(step.id, allLogs);
-  if (prior && inputs.length + outputs.length > 0) {
+  if (prior && inputs.length > 0) {
     const outputHashesNow = await hashFiles(ctx.showRoot, outputs);
     if (sameHashes(prior.inputHashes, inputHashes) && sameHashes(prior.outputHashes, outputHashesNow)) {
       const payload: Record<string, unknown> = { inputHashes, outputHashes: outputHashesNow };
@@ -1392,14 +1464,14 @@ async function runLoopStep(step: LoopStep, _ctx: RunContext, emit: Emit, _execut
 
 - [ ] **Step 4: Run to verify it passes**
 
-Run: `npx vitest run test/runner.test.ts && npx tsc --noEmit`
-Expected: PASS, 4 tests; `tsc` prints nothing. (The unused `_ctx`/`_executors`/`_log` parameters are named with a leading underscore so `tsc` does not complain; they are used in Tasks 9 and 10.)
+Run: `npx vitest run test/runner.test.ts && npm run typecheck`
+Expected: PASS, 6 tests; `typecheck` exits 0. (The unused `_ctx`/`_executors`/`_log` parameters are named with a leading underscore so `tsc` does not complain; they are used in Tasks 9 and 10.)
 
 - [ ] **Step 5: Commit**
 
 ```bash
 cd ~/GitHub/Showrunner && git add engine/src/runner.ts engine/test/runner.test.ts
-git commit -m "engine: the runner — ordered execution, skipped vs failed, injected executors, input-hash caching" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>" -m "Claude-Session: https://claude.ai/code/session_01K4ZqdsBoXVFn8SwDSWinC9"
+git commit -m "engine: the runner — ordered execution, skipped vs failed, injected executors, input-hash caching" -m $'Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\nClaude-Session: https://claude.ai/code/session_01K4ZqdsBoXVFn8SwDSWinC9'
 ```
 
 ---
@@ -1415,7 +1487,7 @@ git commit -m "engine: the runner — ordered execution, skipped vs failed, inje
 - Consumes: `ScriptStep`, `RunContext`, `Emit`, `ScriptOutcome` from `steps.ts`.
 - Produces:
   - `parseProgressLine(line: string): { done: number; total: number; unit: string; message?: string } | null` — recognizes `::progress {json}`; returns `null` for any other line or malformed JSON
-  - `scriptExecutor: Executors["script"]` — spawns `argv[0]` with `argv.slice(1)` (never a shell), `cwd` = `step.cwd ?? ctx.showRoot`, env = process env merged with `step.env?.(ctx)`; forwards every stdout/stderr line as `script_line` (`{stream, line}`) except progress lines, which become `step_progress`; resolves `{ok:true}` on exit 0, `{ok:false, error:"exit <code>: <last stderr line>"}` otherwise; kills the process and fails with `"timeout after <ms>ms"` when `step.timeoutMs` elapses.
+  - `scriptExecutor: Executors["script"]` — spawns `argv[0]` with `argv.slice(1)` (never a shell), `cwd` = `step.cwd ?? ctx.showRoot`, env = process env merged with `step.env?.(ctx)`; forwards every stdout/stderr line as `script_line` (`{stream, line}`) except progress lines, which become `step_progress`; resolves `{ok:true}` on exit 0, `{ok:false, error:"exit <code>: <last stderr line>"}` on a non-zero code and `"signal <sig>: <last stderr line>"` on a signal; kills the child's whole process group and fails with `"timeout after <ms>ms"` when `step.timeoutMs` elapses; events are emitted strictly in order behind one chained promise, and a rejected `emit` fails the step with `"log write failed: <message>"` instead of hanging. The child is spawned detached, and the pipes are drained for at most 2 s after exit so a grandchild holding them cannot block the outcome.
 
 - [ ] **Step 1: Write the fixtures**
 
@@ -1502,6 +1574,39 @@ describe("scriptExecutor", () => {
     const out = events.filter((e) => e.kind === "script_line").map((e) => e.payload["line"]);
     expect(out).toEqual(["a; echo pwned"]);
   });
+
+  it("preserves script_line order even when the log write is slow and jittery", async () => {
+    const step: ScriptStep = { kind: "script", id: "s", argv: () => ["python3", "-c", "for i in range(300): print(i)"] };
+    const events: { kind: EventKind; payload: Record<string, unknown> }[] = [];
+    const emit = async (kind: EventKind, payload: Record<string, unknown>) => {
+      await new Promise((r) => setTimeout(r, Math.random() * 3));
+      events.push({ kind, payload });
+    };
+    const r = await scriptExecutor(step, ctx, emit);
+    expect(r).toEqual({ ok: true });
+    const lines = events.filter((e) => e.kind === "script_line").map((e) => Number(e.payload["line"]));
+    expect(lines).toEqual(Array.from({ length: 300 }, (_, i) => i));
+  });
+
+  it("fails the step, and never hangs or leaks a rejection, when the log write rejects", async () => {
+    const step: ScriptStep = { kind: "script", id: "s", argv: () => ["python3", fixture("progress.py"), "3"] };
+    let n = 0;
+    const emit = async () => { if (++n === 2) throw new Error("disk full"); };
+    const r = await scriptExecutor(step, ctx, emit);
+    expect(r).toEqual({ ok: false, error: "log write failed: disk full" });
+  });
+
+  it("times out even when a grandchild holds the stdio pipes open", async () => {
+    const step: ScriptStep = {
+      kind: "script", id: "s", timeoutMs: 300,
+      argv: () => ["python3", "-c", "import subprocess, time; subprocess.Popen(['sleep', '30']); time.sleep(30)"],
+    };
+    const { emit } = collector();
+    const started = Date.now();
+    const r = await scriptExecutor(step, ctx, emit);
+    expect(r).toEqual({ ok: false, error: "timeout after 300ms" });
+    expect(Date.now() - started).toBeLessThan(5000);
+  });
 });
 ```
 
@@ -1516,7 +1621,7 @@ Expected: FAIL — cannot find module `../src/script-step.js`.
 ```ts
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
-import type { Emit, Executors, RunContext, ScriptStep } from "./steps.js";
+import type { Emit, EventKind, Executors, RunContext, ScriptOutcome, ScriptStep } from "./steps.js";
 
 const PROGRESS_PREFIX = "::progress ";
 
@@ -1535,24 +1640,36 @@ export function parseProgressLine(line: string): ProgressLine | null {
   }
 }
 
+/** How long to wait, after the child exits, for its stdio pipes to drain before giving up on
+ *  them — a grandchild that inherited the pipes can hold them open after the child is gone. */
+const DRAIN_GRACE_MS = 2000;
+
 export const scriptExecutor: Executors["script"] = (step: ScriptStep, ctx: RunContext, emit: Emit) => {
   const argv = step.argv(ctx);
   const [cmd, ...args] = argv;
   if (!cmd) return Promise.resolve({ ok: false, error: "empty argv" });
   const env = { ...process.env, ...(step.env ? step.env(ctx) : {}) };
-  const child = spawn(cmd, args, { cwd: step.cwd ?? ctx.showRoot, env, stdio: ["ignore", "pipe", "pipe"] });
+  // detached: the child leads its own process group, so a timeout can kill the whole group,
+  // grandchildren included, rather than only the direct child.
+  const child = spawn(cmd, args, { cwd: step.cwd ?? ctx.showRoot, env, stdio: ["ignore", "pipe", "pipe"], detached: true });
 
   let lastStderr = "";
-  const pending: Promise<void>[] = [];
+  let emitError: unknown;
+  // Every event is queued behind the previous one: order is preserved, and a rejected write is
+  // caught the moment it happens instead of surfacing as an unhandled rejection.
+  let tail: Promise<void> = Promise.resolve();
+  const queue = (kind: EventKind, payload: Record<string, unknown>) => {
+    tail = tail.then(() => emit(kind, payload)).catch((e: unknown) => { emitError ??= e; });
+  };
   const wire = (stream: NodeJS.ReadableStream, name: "stdout" | "stderr") => {
     const rl = createInterface({ input: stream });
     rl.on("line", (line) => {
       const p = name === "stdout" ? parseProgressLine(line) : null;
       if (p) {
-        pending.push(emit("step_progress", { ...p }));
+        queue("step_progress", { ...p });
       } else {
         if (name === "stderr" && line.trim() !== "") lastStderr = line;
-        pending.push(emit("script_line", { stream: name, line }));
+        queue("script_line", { stream: name, line });
       }
     });
     return new Promise<void>((resolve) => rl.on("close", () => resolve()));
@@ -1560,23 +1677,42 @@ export const scriptExecutor: Executors["script"] = (step: ScriptStep, ctx: RunCo
   const outDone = wire(child.stdout, "stdout");
   const errDone = wire(child.stderr, "stderr");
 
-  return new Promise((resolve) => {
+  const killGroup = () => {
+    try {
+      if (child.pid !== undefined) process.kill(-child.pid, "SIGKILL");
+      else child.kill("SIGKILL");
+    } catch {
+      child.kill("SIGKILL");
+    }
+  };
+
+  return new Promise<ScriptOutcome>((resolve) => {
+    let settled = false;
     let timedOut = false;
     const timer = step.timeoutMs !== undefined
-      ? setTimeout(() => { timedOut = true; child.kill("SIGKILL"); }, step.timeoutMs)
+      ? setTimeout(() => { timedOut = true; killGroup(); }, step.timeoutMs)
       : undefined;
-    child.on("error", async (err) => {
+    const settle = async (outcome: ScriptOutcome) => {
+      if (settled) return;
+      settled = true;
       if (timer) clearTimeout(timer);
-      await Promise.all(pending);
-      resolve({ ok: false, error: `spawn failed: ${err.message}` });
-    });
-    child.on("close", async (code) => {
-      if (timer) clearTimeout(timer);
-      await Promise.all([outDone, errDone]);
-      await Promise.all(pending);
-      if (timedOut) return resolve({ ok: false, error: `timeout after ${step.timeoutMs}ms` });
-      if (code === 0) return resolve({ ok: true });
-      resolve({ ok: false, error: `exit ${code}: ${lastStderr}` });
+      // Drain what the pipes still hold, but never wait forever on a grandchild holding them open.
+      const grace = new Promise<void>((r) => { const t = setTimeout(r, DRAIN_GRACE_MS); t.unref(); });
+      await Promise.race([Promise.all([outDone, errDone]), grace]);
+      await tail;
+      if (emitError !== undefined && outcome.ok) {
+        const msg = emitError instanceof Error ? emitError.message : String(emitError);
+        resolve({ ok: false, error: `log write failed: ${msg}` });
+        return;
+      }
+      resolve(outcome);
+    };
+    child.on("error", (err) => { void settle({ ok: false, error: `spawn failed: ${err.message}` }); });
+    child.on("exit", (code, signal) => {
+      if (timedOut) { void settle({ ok: false, error: `timeout after ${step.timeoutMs}ms` }); return; }
+      if (code === 0) { void settle({ ok: true }); return; }
+      const shown = code === null ? `signal ${signal ?? "unknown"}` : `exit ${code}`;
+      void settle({ ok: false, error: `${shown}: ${lastStderr}` });
     });
   });
 };
@@ -1584,14 +1720,14 @@ export const scriptExecutor: Executors["script"] = (step: ScriptStep, ctx: RunCo
 
 - [ ] **Step 5: Run to verify it passes**
 
-Run: `npx vitest run test/script-step.test.ts && npx tsc --noEmit`
-Expected: PASS, 5 tests; `tsc` prints nothing.
+Run: `npx vitest run test/script-step.test.ts && npm run typecheck`
+Expected: PASS, 8 tests; `typecheck` exits 0.
 
 - [ ] **Step 6: Commit**
 
 ```bash
 cd ~/GitHub/Showrunner && git add engine/src/script-step.ts engine/test/script-step.test.ts engine/test/fixtures
-git commit -m "engine: script executor — argv only, streamed lines, ::progress contract, timeout" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>" -m "Claude-Session: https://claude.ai/code/session_01K4ZqdsBoXVFn8SwDSWinC9"
+git commit -m "engine: script executor — argv only, streamed lines, ::progress contract, timeout" -m $'Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\nClaude-Session: https://claude.ai/code/session_01K4ZqdsBoXVFn8SwDSWinC9'
 ```
 
 ---
@@ -1612,7 +1748,7 @@ git commit -m "engine: script executor — argv only, streamed lines, ::progress
 `engine/test/gate.test.ts`:
 ```ts
 import { describe, it, expect } from "vitest";
-import { mkdtemp } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { run, answerGate } from "../src/runner.js";
@@ -1696,6 +1832,38 @@ describe("gates", () => {
     await answerGate(fresh, "r1", "g", { approved: true });
     expect(await run({ pipeline, ctx, log: fresh, executors })).toEqual({ status: "completed" });
   });
+
+  it("reopens after a rejection even when the clock stepped back between open and answer", async () => {
+    const { pipeline, log, ctx, executors, fixCalls } = await setup();
+    await mkdir(path.dirname(log.path), { recursive: true });
+    const lines = [
+      { ts: "2026-01-01T10:00:00.000Z", runId: "r1", kind: "run_started", payload: { pipeline: "p", episodeId: "s02e01" } },
+      { ts: "2026-01-01T10:00:01.000Z", runId: "r1", stepId: "before", kind: "step_started", payload: { kind: "guard" } },
+      { ts: "2026-01-01T10:00:02.000Z", runId: "r1", stepId: "before", kind: "step_completed", payload: { result: null } },
+      { ts: "2026-01-01T10:00:05.000Z", runId: "r1", stepId: "g", kind: "gate_opened", payload: { attempt: 1, message: "Approve s02e01?" } },
+      { ts: "2026-01-01T10:00:03.000Z", runId: "r1", stepId: "g", kind: "gate_answered", payload: { approved: false, notes: "redo", attempt: 1, waitedMs: 0 } },
+    ];
+    await writeFile(log.path, lines.map((l) => JSON.stringify(l)).join("\n") + "\n");
+    const r = await run({ pipeline, ctx, log, executors });
+    expect(r).toMatchObject({ status: "waiting", gate: { stepId: "g", attempt: 2 } });
+    expect(fixCalls).toEqual(["fix:redo"]);
+  });
+
+  it("never opens a gate whose dependency failed", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "show-"));
+    const dep: GuardStep = { kind: "guard", id: "dep", check: () => ({ pass: false, message: "nope" }) };
+    const g: GateStep = { kind: "gate", id: "g", dependsOn: ["dep"], message: () => "Approve?" };
+    const after: GuardStep = { kind: "guard", id: "after", dependsOn: ["g"], check: () => ({ pass: true }) };
+    const log = new EventLog(EventLog.logPath(root, "s02e01", "r1"));
+    const r = await run({ pipeline: { name: "p", steps: [dep, g, after] }, ctx: { runId: "r1", episodeId: "s02e01", showRoot: root }, log, executors: { script: async () => ({ ok: true }), agent: async () => ({ ok: true, text: "", toolCalls: 0 }) } });
+    expect(r).toEqual({ status: "failed", stepId: "dep", error: "nope" });
+    const events = await log.read();
+    expect(events.some((e) => e.kind === "gate_opened")).toBe(false);
+    expect(events.filter((e) => e.kind === "step_skipped").map((e) => [e.stepId, e.payload["reason"]])).toEqual([
+      ["g", "dependency failed: dep"],
+      ["after", "dependency skipped: g"],
+    ]);
+  });
 });
 ```
 
@@ -1732,21 +1900,20 @@ async function runGateStep(step: GateStep, ctx: RunContext, emit: Emit, executor
   const attempts = state.gateAttempts[step.id] ?? 0;
   const maxAttempts = step.maxAttempts ?? 10;
 
-  // Find the latest answer for this gate, if any, and whether an attempt is already open.
-  let lastAnswer: Event | undefined;
-  let lastOpened: Event | undefined;
+  // The log is append-only, so array position is the authoritative order. Never compare timestamps.
+  let lastGate: Event | undefined;
   for (const e of events) {
-    if (e.stepId !== step.id) continue;
-    if (e.kind === "gate_opened") lastOpened = e;
-    if (e.kind === "gate_answered") lastAnswer = e;
+    if (e.stepId === step.id && (e.kind === "gate_opened" || e.kind === "gate_answered")) lastGate = e;
   }
-  const answeredCurrent = lastAnswer && lastOpened && lastAnswer.ts >= lastOpened.ts;
-
-  if (lastOpened && !answeredCurrent) {
-    return { kind: "waiting", gate: state.openGate ?? { stepId: step.id, attempt: attempts, message: String(lastOpened.payload["message"] ?? ""), openedAt: lastOpened.ts } };
+  if (lastGate?.kind === "gate_opened") {
+    return {
+      kind: "waiting",
+      gate: state.openGate ?? { stepId: step.id, attempt: attempts, message: String(lastGate.payload["message"] ?? ""), openedAt: lastGate.ts },
+    };
   }
+  const lastAnswer = lastGate?.kind === "gate_answered" ? lastGate : undefined;
 
-  if (lastAnswer && answeredCurrent) {
+  if (lastAnswer) {
     if (lastAnswer.payload["approved"] === true) {
       // deriveRunState already marks it completed; the runner loop skips completed steps, so this
       // branch is reached only when the answer arrived between state derivation and execution.
@@ -1786,14 +1953,14 @@ One adjustment in `run`: a gate that was rejected leaves `state.steps[g] === "ru
 
 - [ ] **Step 4: Run to verify it passes**
 
-Run: `npx vitest run test/gate.test.ts test/runner.test.ts && npx tsc --noEmit`
-Expected: PASS, 9 tests across the two files; `tsc` prints nothing.
+Run: `npx vitest run test/gate.test.ts test/runner.test.ts && npm run typecheck`
+Expected: PASS, 13 tests across the two files (7 gate + 6 runner); `typecheck` exits 0.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 cd ~/GitHub/Showrunner && git add engine/src/runner.ts engine/test/gate.test.ts
-git commit -m "engine: gates — open, answer, reject-and-fix with attempt cap, resume by replay" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>" -m "Claude-Session: https://claude.ai/code/session_01K4ZqdsBoXVFn8SwDSWinC9"
+git commit -m "engine: gates — open, answer, reject-and-fix with attempt cap, resume by replay" -m $'Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\nClaude-Session: https://claude.ai/code/session_01K4ZqdsBoXVFn8SwDSWinC9'
 ```
 
 ---
@@ -1891,14 +2058,14 @@ async function runLoopStep(step: LoopStep, ctx: RunContext, emit: Emit, executor
 
 - [ ] **Step 4: Run to verify it passes**
 
-Run: `npx vitest run && npx tsc --noEmit`
-Expected: every test file passes (smoke, ids, pipeline, events, hash, state, runner, script-step, gate, loop); `tsc` prints nothing.
+Run: `npx vitest run && npm run typecheck`
+Expected: every test file passes (smoke, ids, pipeline, events, hash, state, runner, script-step, gate, loop); `typecheck` exits 0.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 cd ~/GitHub/Showrunner && git add engine/src/runner.ts engine/test/loop.test.ts
-git commit -m "engine: loops — sentinel, iteration cap, exhaustion is failure, tool-call counts per iteration" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>" -m "Claude-Session: https://claude.ai/code/session_01K4ZqdsBoXVFn8SwDSWinC9"
+git commit -m "engine: loops — sentinel, iteration cap, exhaustion is failure, tool-call counts per iteration" -m $'Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\nClaude-Session: https://claude.ai/code/session_01K4ZqdsBoXVFn8SwDSWinC9'
 ```
 
 ---
@@ -2057,8 +2224,8 @@ export function deriveStage(state: RunState, map: StageMap, needs: Needs): Stage
 
 - [ ] **Step 4: Run to verify it passes**
 
-Run: `npx vitest run test/stages.test.ts && npx tsc --noEmit`
-Expected: PASS, 6 tests; `tsc` prints nothing.
+Run: `npx vitest run test/stages.test.ts && npm run typecheck`
+Expected: PASS, 6 tests; `typecheck` exits 0.
 
 - [ ] **Step 5: Export the public surface and commit**
 
@@ -2076,12 +2243,12 @@ export * from "./script-step.js";
 export * from "./stages.js";
 ```
 
-Run: `npx vitest run && npx tsc --noEmit`
-Expected: all tests pass; `tsc` prints nothing.
+Run: `npx vitest run && npm run typecheck`
+Expected: all tests pass; `typecheck` exits 0.
 
 ```bash
 cd ~/GitHub/Showrunner && git add engine/src/stages.ts engine/src/index.ts engine/test/stages.test.ts
-git commit -m "engine: milestone vocabulary and stage derivation with NEEDS_ interruption" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>" -m "Claude-Session: https://claude.ai/code/session_01K4ZqdsBoXVFn8SwDSWinC9"
+git commit -m "engine: milestone vocabulary and stage derivation with NEEDS_ interruption" -m $'Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\nClaude-Session: https://claude.ai/code/session_01K4ZqdsBoXVFn8SwDSWinC9'
 git push
 ```
 
@@ -2173,7 +2340,7 @@ Expected: all pass.
 
 ```bash
 cd ~/GitHub/Showrunner && git add engine/test/e2e.test.ts
-git commit -m "engine: end-to-end — guard, loop, gate, script, restart from the log" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>" -m "Claude-Session: https://claude.ai/code/session_01K4ZqdsBoXVFn8SwDSWinC9"
+git commit -m "engine: end-to-end — guard, loop, gate, script, restart from the log" -m $'Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\nClaude-Session: https://claude.ai/code/session_01K4ZqdsBoXVFn8SwDSWinC9'
 git push
 ```
 
