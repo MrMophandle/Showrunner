@@ -230,7 +230,7 @@ MSG
 | `{{results.<key>}}` | `ctx.results[key]`; a string as-is, a number or boolean via `String()`, an object or array as `JSON.stringify(value, null, 2)`. `<key>` runs to the next `.` or the closing braces and may contain `-` and `:` (so `{{results.outline-gate:rejection}}` and `{{results.draft:iteration}}` work). |
 | `{{results.<key>.<a>.<b>}}` | the dotted path into an object result, each segment an object key |
 
-Leading and trailing whitespace inside the braces is trimmed (`{{ results.setup }}` works); whitespace elsewhere in the expression is not (`{{results. setup}}` is an unknown variable). Anything else inside `{{ }}` — an unknown top-level name, a results key that is absent, a path through a non-object, a value that is `null` or `undefined` — throws `TemplateError` naming the variable exactly as written. A prompt with a hole is a prompt that lies to the model, so every hole is loud.
+Leading and trailing whitespace inside the braces is trimmed (`{{ results.setup }}` works); whitespace elsewhere in the expression is not (`{{results. setup}}` fails as `no result for step " setup"`). Anything else inside `{{ }}` — an unknown top-level name, a results key that is absent, a path through a non-object, a value that is `null` or `undefined` — throws `TemplateError` naming the variable exactly as written. A prompt with a hole is a prompt that lies to the model, so every hole is loud.
 
 - [ ] **Step 1: Write the fixtures**
 
