@@ -55,6 +55,11 @@ describe("deriveRunState", () => {
     expect(s.steps).toEqual({ g: "completed" });
     expect(s.results).toEqual({ g: { approved: true, notes: "fine" } });
 
+    s = deriveRunState([...opened, ev("gate_answered", "g", { approved: false, notes: "redo" }, "t2")]);
+    expect(s.openGate).toBeUndefined();
+    expect(s.steps).toEqual({ g: "running" });
+    expect(s.results).toEqual({});
+
     s = deriveRunState([
       ...opened,
       ev("gate_answered", "g", { approved: false, notes: "redo" }, "t2"),

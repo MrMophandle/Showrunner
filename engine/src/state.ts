@@ -74,6 +74,9 @@ export function deriveRunState(events: Event[]): RunState {
             s.steps[id] = "completed";
             s.results[id] = e.payload;
           } else {
+            // A rejected gate leaves the step "running" with no open gate and no position.
+            // The runner treats "running with no position" as mid-step and re-executes the
+            // step, which for a gate runs the fix agent and reopens it (next attempt).
             s.steps[id] = "running";
           }
         }
