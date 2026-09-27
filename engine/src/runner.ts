@@ -20,6 +20,21 @@ export type RunResult =
   | { status: "failed"; stepId: StepId; error: string }
   | { status: "waiting"; gate: GateState };
 
+export async function answerGate(
+  log: EventLog, runId: string, stepId: StepId,
+  answer: { approved: boolean; notes?: string; by?: string },
+): Promise<void> {
+  const state = deriveRunState(await log.read());
+  if (!state.openGate || state.openGate.stepId !== stepId) {
+    throw new Error(`gate ${JSON.stringify(stepId)} is not open on run ${runId}`);
+  }
+  const waitedMs = Date.now() - new Date(state.openGate.openedAt).getTime();
+  const payload: Record<string, unknown> = { approved: answer.approved, waitedMs, attempt: state.openGate.attempt };
+  if (answer.notes !== undefined) payload["notes"] = answer.notes;
+  if (answer.by !== undefined) payload["by"] = answer.by;
+  await log.append({ runId, stepId, kind: "gate_answered", payload });
+}
+
 type Hashes = Record<string, string | null>;
 
 interface CachedCompletion { inputHashes: Hashes; outputHashes: Hashes; result?: unknown }
@@ -206,13 +221,61 @@ async function runAgentStep(step: AgentStep, ctx: RunContext, emit: Emit, execut
   return { kind: "completed", result };
 }
 
-// Gate and loop are completed in Tasks 9 and 10. Until then they are explicit failures,
-// so a pipeline using them cannot silently pass.
-async function runGateStep(step: GateStep, _ctx: RunContext, emit: Emit, _executors: Executors, _log: EventLog): Promise<StepOutcome> {
-  await emit("step_failed", { error: `gate step ${step.id}: not implemented` });
-  return { kind: "failed", error: `gate step ${step.id}: not implemented` };
+async function runGateStep(step: GateStep, ctx: RunContext, emit: Emit, executors: Executors, log: EventLog): Promise<StepOutcome> {
+  const events = await log.read();
+  const state = deriveRunState(events);
+  const attempts = state.gateAttempts[step.id] ?? 0;
+  const maxAttempts = step.maxAttempts ?? 10;
+
+  // Find the latest answer for this gate, if any, and whether an attempt is already open.
+  let lastAnswer: Event | undefined;
+  let lastOpened: Event | undefined;
+  for (const e of events) {
+    if (e.stepId !== step.id) continue;
+    if (e.kind === "gate_opened") lastOpened = e;
+    if (e.kind === "gate_answered") lastAnswer = e;
+  }
+  const answeredCurrent = lastAnswer && lastOpened && lastAnswer.ts >= lastOpened.ts;
+
+  if (lastOpened && !answeredCurrent) {
+    return { kind: "waiting", gate: state.openGate ?? { stepId: step.id, attempt: attempts, message: String(lastOpened.payload["message"] ?? ""), openedAt: lastOpened.ts } };
+  }
+
+  if (lastAnswer && answeredCurrent) {
+    if (lastAnswer.payload["approved"] === true) {
+      // deriveRunState already marks it completed; the runner loop skips completed steps, so this
+      // branch is reached only when the answer arrived between state derivation and execution.
+      return { kind: "completed", result: lastAnswer.payload };
+    }
+    // Rejected: run the fix agent (if any), then decide whether another attempt is allowed.
+    if (attempts >= maxAttempts) {
+      const error = `rejected ${attempts} times`;
+      await emit("step_failed", { error });
+      return { kind: "failed", error };
+    }
+    if (step.onReject) {
+      const notes = lastAnswer.payload["notes"];
+      const fixCtx: RunContext = { ...ctx, results: { ...ctx.results, [`${step.id}:rejection`]: notes ?? "" } };
+      const fixEmit: Emit = async (kind, payload) => { await log.append({ runId: ctx.runId, stepId: step.onReject!.id, kind, payload }); };
+      await fixEmit("step_started", { kind: "agent", rejectionOf: step.id, attempt: attempts });
+      const r = await executors.agent(step.onReject, fixCtx, fixEmit);
+      if (!r.ok) {
+        await fixEmit("step_failed", { error: r.error });
+        await emit("step_failed", { error: `fix agent failed: ${r.error}` });
+        return { kind: "failed", error: `fix agent failed: ${r.error}` };
+      }
+      await fixEmit("step_completed", { result: r.verdict ?? r.text, toolCalls: r.toolCalls });
+    }
+  }
+
+  const attempt = attempts + 1;
+  const message = step.message(ctx);
+  await emit("gate_opened", { attempt, message });
+  return { kind: "waiting", gate: { stepId: step.id, attempt, message, openedAt: new Date().toISOString() } };
 }
 
+// The loop step is completed in Task 10. Until then it is an explicit failure,
+// so a pipeline using it cannot silently pass.
 async function runLoopStep(step: LoopStep, _ctx: RunContext, emit: Emit, _executors: Executors): Promise<StepOutcome> {
   await emit("step_failed", { error: `loop step ${step.id}: not implemented` });
   return { kind: "failed", error: `loop step ${step.id}: not implemented` };
