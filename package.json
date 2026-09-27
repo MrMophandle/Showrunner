@@ -1,0 +1,10 @@
+{
+  "name": "showrunner",
+  "private": true,
+  "workspaces": ["engine"],
+  "scripts": {
+    "test": "npm test -w engine",
+    "typecheck": "npm run typecheck -w engine"
+  },
+  "engines": { "node": ">=22" }
+}
