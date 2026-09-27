@@ -29,6 +29,10 @@ interface StepBase {
   inputs?: string[];
   /** Files (relative to showRoot) this step writes. Hashed on completion and recorded. */
   outputs?: string[];
+  /** Spec §4.3's condition. When it returns false the step is bypassed: a step_skipped with the
+   *  reason "when: false" is logged, and — unlike a step skipped by a broken dependency — the
+   *  steps that depend on it still run. */
+  when?: (ctx: RunContext) => boolean | Promise<boolean>;
   /** Wall-clock budget for the step. The script executor enforces it by killing the child's whole
    *  process group; enforcement for agent steps belongs to the agent executor. */
   timeoutMs?: number;

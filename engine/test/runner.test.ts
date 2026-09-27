@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { run } from "../src/runner.js";
 import { EventLog } from "../src/events.js";
+import { deriveRunState } from "../src/state.js";
 import type { Executors, Pipeline, GuardStep, ScriptStep, AgentStep } from "../src/steps.js";
 
 async function show(): Promise<string> {
@@ -125,6 +126,36 @@ describe("run", () => {
     await run({ pipeline: p, ctx: { runId: "r2", episodeId: "s02e01", showRoot: root }, log: log2, executors: execs, priorLogs: [log1] });
     expect(runs).toBe(2);
     expect((await log2.read()).some((e) => e.kind === "step_cached")).toBe(false);
+  });
+
+  it("bypasses a step whose `when` is false, and still runs its dependents", async () => {
+    const root = await show();
+    const calls: string[] = [];
+    const a: ScriptStep = { kind: "script", id: "a", argv: () => ["true"] };
+    const b: ScriptStep = { kind: "script", id: "b", dependsOn: ["a"], when: () => false, argv: () => ["true"] };
+    const c: ScriptStep = { kind: "script", id: "c", dependsOn: ["b"], argv: () => ["true"] };
+    const log = new EventLog(EventLog.logPath(root, "s02e01", "r1"));
+    const res = await run({ pipeline: { name: "p", steps: [a, b, c] }, ctx: { runId: "r1", episodeId: "s02e01", showRoot: root }, log, executors: okExecutors(calls) });
+
+    expect(res).toEqual({ status: "completed" });
+    expect(calls).toEqual(["script:a", "script:c"]);
+    const events = await log.read();
+    expect(events.filter((e) => e.kind === "step_skipped").map((e) => [e.stepId, e.payload["reason"]])).toEqual([["b", "when: false"]]);
+    expect(deriveRunState(events).steps).toEqual({ a: "completed", b: "bypassed", c: "completed" });
+  });
+
+  it("runs a step whose `when` is true, and hands it the run context", async () => {
+    const root = await show();
+    const calls: string[] = [];
+    const seen: string[] = [];
+    const a: ScriptStep = { kind: "script", id: "a", when: (ctx) => { seen.push(ctx.episodeId); return true; }, argv: () => ["true"] };
+    const log = new EventLog(EventLog.logPath(root, "s02e01", "r1"));
+    const res = await run({ pipeline: { name: "p", steps: [a] }, ctx: { runId: "r1", episodeId: "s02e01", showRoot: root }, log, executors: okExecutors(calls) });
+
+    expect(res).toEqual({ status: "completed" });
+    expect(calls).toEqual(["script:a"]);
+    expect(seen).toEqual(["s02e01"]);
+    expect((await log.read()).some((e) => e.kind === "step_skipped")).toBe(false);
   });
 
   it("reads its own log exactly once for the whole run", async () => {

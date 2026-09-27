@@ -1,7 +1,7 @@
 import path from "node:path";
 import type { EventLog, Event } from "./events.js";
 import { orderSteps } from "./pipeline.js";
-import { deriveRunState, type GateState, type RunState } from "./state.js";
+import { BYPASS_REASON, deriveRunState, type GateState, type RunState } from "./state.js";
 import { hashFiles, sameHashes } from "./hash.js";
 import { parseEpisodeId } from "./ids.js";
 import type {
@@ -134,9 +134,10 @@ async function execute(opts: RunOptions): Promise<RunResult> {
       await sweep(step);
       return finish({ status: "failed", stepId: step.id, error });
     }
-    if (status === "skipped") continue;
+    if (status === "skipped" || status === "bypassed") continue;
 
-    // Dependency check: failed and skipped are distinct reasons.
+    // Dependency check: failed and skipped are distinct reasons. A "bypassed" dependency counts
+    // as satisfied — its `when` said this run does not need it, which is not a broken dependency.
     let skipReason: string | undefined;
     for (const d of step.dependsOn ?? []) {
       const ds = state.steps[d] ?? "pending";
@@ -146,6 +147,14 @@ async function execute(opts: RunOptions): Promise<RunResult> {
     if (skipReason) {
       await emitFor(step.id)("step_skipped", { reason: skipReason });
       state.steps[step.id] = "skipped";
+      continue;
+    }
+
+    // The step's own condition, checked only once its dependencies are known good, so `when` can
+    // read what they wrote.
+    if (step.when && !(await step.when(ctx))) {
+      await emitFor(step.id)("step_skipped", { reason: BYPASS_REASON });
+      state.steps[step.id] = "bypassed";
       continue;
     }
 

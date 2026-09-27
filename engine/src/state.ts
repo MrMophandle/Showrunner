@@ -1,6 +1,10 @@
 import type { Event } from "./events.js";
 
-export type StepStatus = "pending" | "running" | "completed" | "failed" | "skipped" | "waiting";
+export type StepStatus = "pending" | "running" | "completed" | "failed" | "skipped" | "waiting" | "bypassed";
+
+/** The step_skipped reason that marks a step bypassed by its own `when` rather than skipped by a
+ *  broken dependency. Written by the runner, read here; the two must not drift apart. */
+export const BYPASS_REASON = "when: false";
 
 export interface GateState { stepId: string; attempt: number; message: string; openedAt: string }
 
@@ -56,7 +60,13 @@ export function deriveRunState(events: Event[]): RunState {
         if (id) { s.steps[id] = "failed"; if (s.position?.stepId === id) delete s.position; }
         break;
       case "step_skipped":
-        if (id) { s.steps[id] = "skipped"; if (s.position?.stepId === id) delete s.position; }
+        // Two different outcomes share one event kind: a step its own `when` turned off is
+        // "bypassed" and its dependents still run; a step a broken dependency took out is
+        // "skipped" and its dependents do not.
+        if (id) {
+          s.steps[id] = e.payload["reason"] === BYPASS_REASON ? "bypassed" : "skipped";
+          if (s.position?.stepId === id) delete s.position;
+        }
         break;
       case "gate_opened":
         if (id) {

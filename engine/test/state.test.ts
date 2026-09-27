@@ -70,6 +70,15 @@ describe("deriveRunState", () => {
     expect(s.steps).toEqual({ g: "waiting" });
   });
 
+  it("separates a bypassed step from a skipped one by the step_skipped reason", () => {
+    const s = deriveRunState([
+      ev("step_skipped", "a", { reason: "when: false" }, "t1"),
+      ev("step_skipped", "b", { reason: "dependency failed: x" }, "t2"),
+      ev("step_skipped", "c", {}, "t3"),
+    ]);
+    expect(s.steps).toEqual({ a: "bypassed", b: "skipped", c: "skipped" });
+  });
+
   it("treats a cached step as completed", () => {
     const s = deriveRunState([ev("step_cached", "a", { result: 5 }, "t1")]);
     expect(s.steps).toEqual({ a: "completed" });
