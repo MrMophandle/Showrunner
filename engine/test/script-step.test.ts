@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseProgressLine, scriptExecutor } from "../src/script-step.js";
+import { killLiveProcessGroups, liveProcessGroups, parseProgressLine, scriptExecutor } from "../src/script-step.js";
 import type { ScriptStep, RunContext, EventKind } from "../src/steps.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -98,6 +98,25 @@ describe("scriptExecutor", () => {
     const atResolve = events.length;
     await new Promise((done) => setTimeout(done, 500));
     expect(events.length).toBe(atResolve);
+  });
+
+  it("registers each live process group and kills them all on demand", async () => {
+    const step: ScriptStep = { kind: "script", id: "s", argv: () => ["python3", "-c", "import time; time.sleep(30)"] };
+    const { emit } = collector();
+    const pending = scriptExecutor(step, ctx, emit);
+
+    const deadline = Date.now() + 5000;
+    while (liveProcessGroups().length === 0 && Date.now() < deadline) {
+      await new Promise((done) => setTimeout(done, 10));
+    }
+    expect(liveProcessGroups()).toHaveLength(1);
+    expect(killLiveProcessGroups()).toBe(1);
+
+    const r = await pending;
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error.startsWith("signal SIGKILL")).toBe(true);
+    expect(liveProcessGroups()).toEqual([]);
   });
 
   it("times out even when a grandchild holds the stdio pipes open", async () => {
