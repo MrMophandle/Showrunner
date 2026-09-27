@@ -128,6 +128,18 @@ describe("createAgentExecutor: failures", () => {
     expect(rec.events.map((e) => e.kind)).toEqual(["agent_query", "agent_result"]);
     expect(rec.events[1]!.payload).toMatchObject({ ok: false, toolCalls: 0 });
   });
+  it("a query that rejects with a non-Error value fails with that value stringified", async () => {
+    const query: QueryFn = async function* () {
+      throw { code: "ECONNRESET" };
+    };
+    const r = await createAgentExecutor({ query, promptsDir })(step(), ctx(), recorder().emit);
+    expect(r).toEqual({ ok: false, error: "query failed: [object Object]" });
+  });
+  it("a result message with no subtype fails by naming the missing subtype", async () => {
+    const f = fake([init, { type: "result", result: "t" }]);
+    const r = await createAgentExecutor({ query: f.query, promptsDir })(step(), ctx(), recorder().emit);
+    expect(r).toEqual({ ok: false, error: "result message with no subtype" });
+  });
   it("a stream that ends without a result fails", async () => {
     const f = fake([init, text("hi")]);
     const r = await createAgentExecutor({ query: f.query, promptsDir })(step(), ctx(), recorder().emit);

@@ -55,6 +55,62 @@ export interface AgentExecutorOptions {
 
 const NEWER_DRAFTS = ["2019-09", "2020-12"];
 
+/** Thrown by `pump` when the total or the idle clock fires. Its message is the failure string. */
+class Deadline extends Error {}
+
+/** Thrown in place of a rejected `emit` so the executor tells an event-log failure apart from a
+ *  query failure — the query and the SDK stream were healthy; the run log is what broke, and
+ *  script-step.ts words the same fault `log write failed: <msg>`. The class is also what makes the
+ *  classification unconditional: the `query failed` branch only fires when no result message has
+ *  arrived, so an emit that rejected after a result was stored would otherwise be swallowed and the
+ *  step would report success. */
+class EmitFailure extends Error {}
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/** Pumps `iterable` under two clocks — a total deadline and an idle deadline reset on every
+ *  message — and hands each message to `onMessage`. When a clock fires it aborts `controller`,
+ *  asks the iterator to return without waiting for it (the SDK's iterator may not honour the
+ *  abort promptly, and a step must not hang on it), and throws Deadline with the reason. */
+async function pump(
+  iterable: AsyncIterable<AgentMessage>,
+  controller: AbortController,
+  bounds: { timeoutMs?: number; idleTimeoutMs?: number },
+  onMessage: (m: AgentMessage) => Promise<void>,
+): Promise<void> {
+  const it = iterable[Symbol.asyncIterator]();
+  let fire!: (reason: string) => void;
+  const fired = new Promise<never>((_, reject) => { fire = (reason) => reject(new Deadline(reason)); });
+  const total = bounds.timeoutMs !== undefined ? setTimeout(() => fire(`timed out after ${bounds.timeoutMs} ms`), bounds.timeoutMs) : undefined;
+  let idle: NodeJS.Timeout | undefined;
+  const armIdle = () => {
+    if (bounds.idleTimeoutMs === undefined) return;
+    if (idle) clearTimeout(idle);
+    idle = setTimeout(() => fire(`idle for ${bounds.idleTimeoutMs} ms`), bounds.idleTimeoutMs);
+  };
+  fired.catch(() => {}); // the race below observes it; this silences an unhandled-rejection report when nothing is racing
+  armIdle();
+  try {
+    while (true) {
+      const next = await Promise.race([it.next(), fired]);
+      if (next.done) return;
+      armIdle();
+      await onMessage(next.value);
+    }
+  } catch (err) {
+    if (err instanceof Deadline) {
+      controller.abort();
+      void it.return?.().catch(() => {});
+    }
+    throw err;
+  } finally {
+    if (total) clearTimeout(total);
+    if (idle) clearTimeout(idle);
+  }
+}
+
 export function createAgentExecutor(opts: AgentExecutorOptions): Executors["agent"] {
   return async (step: AgentStep, ctx: RunContext, emit: Emit): Promise<AgentOutcome> => {
     // 1–2: the prompt and the schema, checked before anything is logged or queried.
@@ -68,7 +124,7 @@ export function createAgentExecutor(opts: AgentExecutorOptions): Executors["agen
       promptPath = loaded.path;
       prompt = renderPrompt(loaded.text, ctx);
     } catch (err) {
-      return { ok: false, error: (err as Error).message };
+      return { ok: false, error: errorMessage(err) };
     }
     const declared = step.schema?.["$schema"];
     if (typeof declared === "string" && NEWER_DRAFTS.some((d) => declared.includes(d))) {
@@ -95,49 +151,60 @@ export function createAgentExecutor(opts: AgentExecutorOptions): Executors["agen
     // 4: agent_query.
     await emit("agent_query", {
       promptFile: step.promptFile, promptHash, promptPath, model, modelAlias: step.model,
-      allowedTools: step.allowedTools, context: step.context, schema: Boolean(step.schema), resumed: Boolean(options.resume),
+      allowedTools: [...step.allowedTools], context: step.context, schema: Boolean(step.schema), resumed: Boolean(options.resume),
     });
 
-    // 5–7: drive the stream.
+    // 5–7: drive the stream under the total and idle deadlines. The executor never relies on the
+    //      iterator honouring the abort: pump races each next() against its own clocks.
     let toolCalls = 0;
     let sessionId: string | undefined;
     let result: AgentMessage | undefined;
     let failure: string | undefined;
     try {
-      for await (const m of opts.query({ prompt, options })) {
+      await pump(opts.query({ prompt, options }), abortController, { ...(step.timeoutMs !== undefined ? { timeoutMs: step.timeoutMs } : {}), ...(step.idleTimeoutMs !== undefined ? { idleTimeoutMs: step.idleTimeoutMs } : {}) }, async (m) => {
         if (m.session_id && !sessionId) sessionId = m.session_id;
         if (m.type === "assistant" && m.message) {
           for (const block of m.message.content) {
             if (block.type === "tool_use" && "name" in block) {
               toolCalls += 1;
-              await emit("agent_tool_call", { tool: block.name, input: block.input, toolUseId: block.id, index: toolCalls });
+              try {
+                await emit("agent_tool_call", { tool: block.name, input: block.input, toolUseId: block.id, index: toolCalls });
+              } catch (err) {
+                throw new EmitFailure(errorMessage(err));
+              }
             }
           }
         } else if (m.type === "result") {
           result = m;
         }
-      }
+      });
     } catch (err) {
-      if (!result) failure = `query failed: ${(err as Error).message}`;
+      if (err instanceof Deadline) { failure = err.message; result = undefined; }
+      else if (err instanceof EmitFailure) { failure = `log write failed: ${err.message}`; result = undefined; }
+      else if (!result) failure = `query failed: ${errorMessage(err)}`;
     }
-    if (!result && !failure) failure = "query ended without a result message";
 
-    // 8: the outcome.
+    // 8: the outcome. A deadline or a rejected emit discards the result message that raced in, so
+    //    `r` is a result only when nothing has already failed — and the total timeout therefore
+    //    wins over a result that arrived after it.
+    const r = failure !== undefined ? undefined : result;
     let outcome: AgentOutcome;
-    if (failure) {
-      outcome = { ok: false, error: failure };
-    } else if (result!.subtype === "success") {
-      if (step.schema && result!.structured_output === undefined) {
+    if (r === undefined) {
+      outcome = { ok: false, error: failure ?? "query ended without a result message" };
+    } else if (r.subtype === undefined) {
+      outcome = { ok: false, error: "result message with no subtype" };
+    } else if (r.subtype === "success") {
+      if (step.schema && r.structured_output === undefined) {
         outcome = { ok: false, error: "success without structured output" };
       } else {
         outcome = {
-          ok: true, text: result!.result ?? "", toolCalls,
-          ...(step.schema ? { verdict: result!.structured_output } : {}),
+          ok: true, text: r.result ?? "", toolCalls,
+          ...(step.schema ? { verdict: r.structured_output } : {}),
         };
       }
     } else {
-      const errors = result!.errors ?? [];
-      outcome = { ok: false, error: errors.length ? `${result!.subtype}: ${errors.join("; ")}` : String(result!.subtype) };
+      const errors = r.errors ?? [];
+      outcome = { ok: false, error: errors.length ? `${r.subtype}: ${errors.join("; ")}` : r.subtype };
     }
 
     // 9: agent_result.
