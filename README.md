@@ -225,10 +225,15 @@ record of the discontinuity.
 
 ### The live test
 
-`engine/test/agent-live.test.ts` runs a real query — the only test that does. It reads a file with
-only `Read` allowed and checks the schema-validated verdict, the event order, and that nothing but
-`Read` was invoked. It is skipped unless `SHOWRUNNER_LIVE` is set, because it costs a few cents and
-needs credentials on the machine (`ANTHROPIC_API_KEY`, or the machine's Claude Code login):
+`engine/test/agent-live.test.ts` holds the only two tests that run a real query. The first reads a
+file with only `Read` allowed and checks the schema-validated verdict, the event order, and that
+nothing but `Read` was invoked. The second asks for `Bash` with only `Read` allowed and checks that
+the step still succeeds, that no `agent_tool_call` names `Bash`, and that the agent's verdict says
+`pass: false`. The second test is where the allowlist's mechanism shows: a tool outside
+`allowedTools` is not in the model's context at all, so the run records **zero** permission denials
+and an empty `deniedTools` — the agent reports that Bash was not offered to it, not that it was
+refused. Both are skipped unless `SHOWRUNNER_LIVE` is set, because together they cost a few cents
+and need credentials on the machine (`ANTHROPIC_API_KEY`, or the machine's Claude Code login):
 
     cd engine && SHOWRUNNER_LIVE=1 npx vitest run test/agent-live.test.ts
 

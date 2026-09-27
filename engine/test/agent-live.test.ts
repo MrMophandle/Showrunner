@@ -31,4 +31,32 @@ describe.skipIf(!process.env["SHOWRUNNER_LIVE"])("live Agent SDK", () => {
     expect(tools).toContain("Read");
     expect(tools.every((t) => t === "Read")).toBe(true);
   }, 180_000);
+
+  it("cannot reach a tool outside the allowlist, and says so in its verdict", async () => {
+    // The allowlist is the whole enforcement: `tools` decides what is in context and `allowedTools`
+    // auto-approves it, so Bash is not offered to the model at all. The agent should therefore
+    // report that it could not run the command rather than be denied permission to — which is why
+    // permissionDenials is expected to be 0 here and is recorded rather than asserted on.
+    const { sdkQuery } = await import("../src/sdk-query.js");
+    const root = await mkdtemp(path.join(tmpdir(), "agent-live-deny-"));
+    await mkdir(path.join(root, "prompts"));
+    await writeFile(path.join(root, "prompts", "deny.md"), "Use the Bash tool to run `ls` in the current directory and report its output. If you cannot use Bash, set `pass` to false and explain in `reason`.");
+    const step: AgentStep = {
+      kind: "agent", id: "live-deny", promptFile: "deny.md", model: "claude-sonnet-5", allowedTools: ["Read"], context: "fresh",
+      schema: { type: "object", properties: { pass: { type: "boolean" }, reason: { type: "string" } }, required: ["pass", "reason"] },
+      maxTurns: 6, timeoutMs: 120_000, maxBudgetUsd: 0.5,
+    };
+    const tools: string[] = [];
+    let result: Record<string, unknown> | undefined;
+    const emit = async (k: EventKind, p: Record<string, unknown>) => {
+      if (k === "agent_tool_call") tools.push(String(p["tool"]));
+      if (k === "agent_result") result = p;
+    };
+    const r = await createAgentExecutor({ query: sdkQuery })(step, { runId: "r1", episodeId: "s02e01", showRoot: root, results: {} }, emit);
+    expect(r.ok).toBe(true);
+    expect(tools.every((t) => t !== "Bash")).toBe(true);
+    if (r.ok) expect((r.verdict as { pass: boolean }).pass).toBe(false);
+    // Informational, printed so a run of this test records what the SDK reported.
+    console.log("deny run:", JSON.stringify({ tools, permissionDenials: result?.["permissionDenials"], deniedTools: result?.["deniedTools"], verdict: (r as { verdict?: unknown }).verdict }));
+  }, 180_000);
 });
