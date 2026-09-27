@@ -126,7 +126,14 @@ async function execute(opts: RunOptions): Promise<RunResult> {
   for (const step of ordered) {
     const status = state.steps[step.id] ?? "pending";
     if (status === "completed") continue;
-    if (status === "failed") return finish({ status: "failed", stepId: step.id, error: "failed in an earlier attempt" });
+    if (status === "failed") {
+      // A crash can end a run between the step_failed write and the downstream sweep, so this
+      // resume path recovers the real error from the log and completes the sweep the crashed
+      // run owed, rather than reporting a placeholder and leaving the log half-written.
+      const error = lastFailure(events, step.id);
+      await sweep(step);
+      return finish({ status: "failed", stepId: step.id, error });
+    }
     if (status === "skipped") continue;
 
     // Dependency check: failed and skipped are distinct reasons.
@@ -151,10 +158,19 @@ async function execute(opts: RunOptions): Promise<RunResult> {
     if (outcome.kind === "waiting") return { status: "waiting", gate: outcome.gate };
     // failed
     state.steps[step.id] = "failed";
-    // Skip everything downstream so the log is complete, then finish.
-    const failedId = step.id;
+    await sweep(step);
+    return finish({ status: "failed", stepId: step.id, error: outcome.error });
+  }
+  return finish({ status: "completed" });
+
+  /** Skip everything downstream of a failure so the log is complete before the run finishes. */
+  async function sweep(failedStep: Step): Promise<void> {
     for (const later of ordered) {
-      if (later === step || state.steps[later.id]) continue;
+      if (later === failedStep) continue;
+      const st = state.steps[later.id];
+      // Pending steps have no status at all; "running" and "waiting" are what a crash leaves
+      // behind, and those are swept too. A terminal status is left exactly as the log records it.
+      if (st !== undefined && st !== "running" && st !== "waiting") continue;
       const deps = later.dependsOn ?? [];
       const viaFailed = deps.find((d) => state.steps[d] === "failed");
       const viaSkipped = deps.find((d) => state.steps[d] === "skipped");
@@ -164,9 +180,7 @@ async function execute(opts: RunOptions): Promise<RunResult> {
         state.steps[later.id] = "skipped";
       }
     }
-    return finish({ status: "failed", stepId: failedId, error: outcome.error });
   }
-  return finish({ status: "completed" });
 
   async function finish(r: RunResult): Promise<RunResult> {
     await emitFor(undefined)("run_finished", { status: r.status === "completed" ? "completed" : "failed" });

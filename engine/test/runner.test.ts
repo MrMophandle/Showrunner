@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { run } from "../src/runner.js";
@@ -173,6 +173,51 @@ describe("run", () => {
 
     // The key is released when the run settles, so a later run on the same log is allowed.
     expect(await run({ pipeline, ctx, log, executors: execs })).toEqual({ status: "completed" });
+  });
+
+  it("resumes a crash after step_failed with the real error, the owed sweep, and run_finished", async () => {
+    const root = await show();
+    const a: GuardStep = { kind: "guard", id: "a", check: () => ({ pass: true }) };
+    const b: ScriptStep = { kind: "script", id: "b", dependsOn: ["a"], argv: () => ["true"] };
+    const c: ScriptStep = { kind: "script", id: "c", dependsOn: ["b"], argv: () => ["true"] };
+    const log = new EventLog(EventLog.logPath(root, "s02e01", "r1"));
+    await mkdir(path.dirname(log.path), { recursive: true });
+    await writeFile(log.path, [
+      { ts: "2026-01-01T10:00:00.000Z", runId: "r1", kind: "run_started", payload: { pipeline: "p", episodeId: "s02e01" } },
+      { ts: "2026-01-01T10:00:01.000Z", runId: "r1", stepId: "a", kind: "step_started", payload: { kind: "guard" } },
+      { ts: "2026-01-01T10:00:02.000Z", runId: "r1", stepId: "a", kind: "step_failed", payload: { error: "the real reason" } },
+    ].map((l) => JSON.stringify(l)).join("\n") + "\n");
+
+    const calls: string[] = [];
+    const res = await run({ pipeline: { name: "p", steps: [a, b, c] }, ctx: { runId: "r1", episodeId: "s02e01", showRoot: root }, log, executors: okExecutors(calls) });
+    expect(res).toEqual({ status: "failed", stepId: "a", error: "the real reason" });
+    expect(calls).toEqual([]);
+    const events = await log.read();
+    expect(events.filter((e) => e.kind === "step_skipped").map((e) => [e.stepId, e.payload["reason"]])).toEqual([
+      ["b", "dependency failed: a"],
+      ["c", "dependency skipped: b"],
+    ]);
+    expect(events.at(-1)?.kind).toBe("run_finished");
+    expect(events.at(-1)?.payload["status"]).toBe("failed");
+  });
+
+  it("sweeps a dependent the crash left running, not only the ones it never started", async () => {
+    const root = await show();
+    const a: GuardStep = { kind: "guard", id: "a", check: () => ({ pass: true }) };
+    const b: ScriptStep = { kind: "script", id: "b", dependsOn: ["a"], argv: () => ["true"] };
+    const c: ScriptStep = { kind: "script", id: "c", dependsOn: ["b"], argv: () => ["true"] };
+    const log = new EventLog(EventLog.logPath(root, "s02e01", "r1"));
+    await mkdir(path.dirname(log.path), { recursive: true });
+    await writeFile(log.path, [
+      { ts: "2026-01-01T10:00:00.000Z", runId: "r1", kind: "run_started", payload: { pipeline: "p", episodeId: "s02e01" } },
+      { ts: "2026-01-01T10:00:01.000Z", runId: "r1", stepId: "b", kind: "step_started", payload: { kind: "script" } },
+      { ts: "2026-01-01T10:00:02.000Z", runId: "r1", stepId: "a", kind: "step_failed", payload: { error: "boom" } },
+    ].map((l) => JSON.stringify(l)).join("\n") + "\n");
+
+    const res = await run({ pipeline: { name: "p", steps: [a, b, c] }, ctx: { runId: "r1", episodeId: "s02e01", showRoot: root }, log, executors: okExecutors([]) });
+    expect(res).toEqual({ status: "failed", stepId: "a", error: "boom" });
+    const events = await log.read();
+    expect(events.filter((e) => e.kind === "step_skipped").map((e) => e.stepId)).toEqual(["b", "c"]);
   });
 
   it("re-executes a step whose log shows it running with no terminal event", async () => {
