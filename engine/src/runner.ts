@@ -216,7 +216,7 @@ async function runStep(
     case "gate":
       return runGateStep(step, ctx, emit, executors, emitFor, events);
     case "loop":
-      return runLoopStep(step, ctx, emit, executors);
+      return runLoopStep(step, ctx, emit, executors, events);
   }
 }
 
@@ -325,9 +325,26 @@ async function runGateStep(
   return { kind: "waiting", gate: { stepId: step.id, attempt, message, openedAt: new Date().toISOString() } };
 }
 
-async function runLoopStep(step: LoopStep, ctx: RunContext, emit: Emit, executors: Executors): Promise<StepOutcome> {
+async function runLoopStep(
+  step: LoopStep, ctx: RunContext, emit: Emit, executors: Executors, events: Event[],
+): Promise<StepOutcome> {
+  // Resume the counter. The iterations that count are the ones logged under this step since its
+  // most recent step_started: those belong to the attempt that crashed, and the cap counts them,
+  // so the cap is per run rather than per process. This is counted before the new step_started
+  // is emitted, since that write would otherwise become "the most recent" and reset the count.
+  let lastStart = -1;
+  for (let i = 0; i < events.length; i++) {
+    const e = events[i];
+    if (e && e.stepId === step.id && e.kind === "step_started") lastStart = i;
+  }
+  let done = 0;
+  for (let i = lastStart + 1; i < events.length; i++) {
+    const e = events[i];
+    if (e && e.stepId === step.id && e.kind === "loop_iteration") done++;
+  }
+
   await emit("step_started", { kind: "loop", body: step.body.id, until: step.until, max: step.maxIterations });
-  for (let iteration = 1; iteration <= step.maxIterations; iteration++) {
+  for (let iteration = done + 1; iteration <= step.maxIterations; iteration++) {
     const iterCtx: RunContext = { ...ctx, results: { ...ctx.results, [`${step.body.id}:iteration`]: iteration } };
     const r = await executors.agent(step.body, iterCtx, emit);
     if (!r.ok) {

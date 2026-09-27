@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mkdtemp } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { run } from "../src/runner.js";
@@ -33,6 +33,30 @@ describe("loops", () => {
       { iteration: 3, max: 15, sentinel: true, toolCalls: 2 },
     ]);
     expect(events.filter((e) => e.kind === "step_completed" && e.stepId === "draft-loop")).toHaveLength(1);
+  });
+
+  it("resumes the iteration counter from the log, so the cap counts the crashed run's work", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "show-"));
+    const bodyCalls: number[] = [];
+    const executors: Executors = {
+      script: async () => ({ ok: true }),
+      agent: async (_step, ctx) => { bodyCalls.push(Number(ctx.results["draft:iteration"])); return { ok: true, text: "still drafting", toolCalls: 1 }; },
+    };
+    const loop: LoopStep = { kind: "loop", id: "draft-loop", body, until: "DRAFT_COMPLETE", maxIterations: 3 };
+    const log = new EventLog(EventLog.logPath(root, "s02e01", "r1"));
+    await mkdir(path.dirname(log.path), { recursive: true });
+    await writeFile(log.path, [
+      { ts: "2026-01-01T10:00:00.000Z", runId: "r1", kind: "run_started", payload: { pipeline: "p", episodeId: "s02e01" } },
+      { ts: "2026-01-01T10:00:01.000Z", runId: "r1", stepId: "draft-loop", kind: "step_started", payload: { kind: "loop", body: "draft", until: "DRAFT_COMPLETE", max: 3 } },
+      { ts: "2026-01-01T10:00:02.000Z", runId: "r1", stepId: "draft-loop", kind: "loop_iteration", payload: { iteration: 1, max: 3, sentinel: false, toolCalls: 4 } },
+      { ts: "2026-01-01T10:00:03.000Z", runId: "r1", stepId: "draft-loop", kind: "loop_iteration", payload: { iteration: 2, max: 3, sentinel: false, toolCalls: 2 } },
+    ].map((l) => JSON.stringify(l)).join("\n") + "\n");
+
+    const result = await run({ pipeline: { name: "p", steps: [loop] }, ctx: { runId: "r1", episodeId: "s02e01", showRoot: root }, log, executors });
+    expect(bodyCalls).toEqual([3]);
+    const iters = (await log.read()).filter((e) => e.kind === "loop_iteration").map((e) => e.payload["iteration"]);
+    expect(iters).toEqual([1, 2, 3]);
+    expect(result).toEqual({ status: "failed", stepId: "draft-loop", error: "exhausted 3 iterations without sentinel DRAFT_COMPLETE" });
   });
 
   it("fails when the cap is reached without the sentinel, and shows the dead iterations", async () => {
