@@ -1487,7 +1487,7 @@ git commit -m "engine: the runner — ordered execution, skipped vs failed, inje
 - Consumes: `ScriptStep`, `RunContext`, `Emit`, `ScriptOutcome` from `steps.ts`.
 - Produces:
   - `parseProgressLine(line: string): { done: number; total: number; unit: string; message?: string } | null` — recognizes `::progress {json}`; returns `null` for any other line or malformed JSON
-  - `scriptExecutor: Executors["script"]` — spawns `argv[0]` with `argv.slice(1)` (never a shell), `cwd` = `step.cwd ?? ctx.showRoot`, env = process env merged with `step.env?.(ctx)`; forwards every stdout/stderr line as `script_line` (`{stream, line}`) except progress lines, which become `step_progress`; resolves `{ok:true}` on exit 0, `{ok:false, error:"exit <code>: <last stderr line>"}` otherwise; kills the process and fails with `"timeout after <ms>ms"` when `step.timeoutMs` elapses.
+  - `scriptExecutor: Executors["script"]` — spawns `argv[0]` with `argv.slice(1)` (never a shell), `cwd` = `step.cwd ?? ctx.showRoot`, env = process env merged with `step.env?.(ctx)`; forwards every stdout/stderr line as `script_line` (`{stream, line}`) except progress lines, which become `step_progress`; resolves `{ok:true}` on exit 0, `{ok:false, error:"exit <code>: <last stderr line>"}` on a non-zero code and `"signal <sig>: <last stderr line>"` on a signal; kills the child's whole process group and fails with `"timeout after <ms>ms"` when `step.timeoutMs` elapses; events are emitted strictly in order behind one chained promise, and a rejected `emit` fails the step with `"log write failed: <message>"` instead of hanging. The child is spawned detached, and the pipes are drained for at most 2 s after exit so a grandchild holding them cannot block the outcome.
 
 - [ ] **Step 1: Write the fixtures**
 
@@ -1574,6 +1574,39 @@ describe("scriptExecutor", () => {
     const out = events.filter((e) => e.kind === "script_line").map((e) => e.payload["line"]);
     expect(out).toEqual(["a; echo pwned"]);
   });
+
+  it("preserves script_line order even when the log write is slow and jittery", async () => {
+    const step: ScriptStep = { kind: "script", id: "s", argv: () => ["python3", "-c", "for i in range(300): print(i)"] };
+    const events: { kind: EventKind; payload: Record<string, unknown> }[] = [];
+    const emit = async (kind: EventKind, payload: Record<string, unknown>) => {
+      await new Promise((r) => setTimeout(r, Math.random() * 3));
+      events.push({ kind, payload });
+    };
+    const r = await scriptExecutor(step, ctx, emit);
+    expect(r).toEqual({ ok: true });
+    const lines = events.filter((e) => e.kind === "script_line").map((e) => Number(e.payload["line"]));
+    expect(lines).toEqual(Array.from({ length: 300 }, (_, i) => i));
+  });
+
+  it("fails the step, and never hangs or leaks a rejection, when the log write rejects", async () => {
+    const step: ScriptStep = { kind: "script", id: "s", argv: () => ["python3", fixture("progress.py"), "3"] };
+    let n = 0;
+    const emit = async () => { if (++n === 2) throw new Error("disk full"); };
+    const r = await scriptExecutor(step, ctx, emit);
+    expect(r).toEqual({ ok: false, error: "log write failed: disk full" });
+  });
+
+  it("times out even when a grandchild holds the stdio pipes open", async () => {
+    const step: ScriptStep = {
+      kind: "script", id: "s", timeoutMs: 300,
+      argv: () => ["python3", "-c", "import subprocess, time; subprocess.Popen(['sleep', '30']); time.sleep(30)"],
+    };
+    const { emit } = collector();
+    const started = Date.now();
+    const r = await scriptExecutor(step, ctx, emit);
+    expect(r).toEqual({ ok: false, error: "timeout after 300ms" });
+    expect(Date.now() - started).toBeLessThan(5000);
+  });
 });
 ```
 
@@ -1588,7 +1621,7 @@ Expected: FAIL — cannot find module `../src/script-step.js`.
 ```ts
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
-import type { Emit, Executors, RunContext, ScriptStep } from "./steps.js";
+import type { Emit, EventKind, Executors, RunContext, ScriptOutcome, ScriptStep } from "./steps.js";
 
 const PROGRESS_PREFIX = "::progress ";
 
@@ -1607,24 +1640,36 @@ export function parseProgressLine(line: string): ProgressLine | null {
   }
 }
 
+/** How long to wait, after the child exits, for its stdio pipes to drain before giving up on
+ *  them — a grandchild that inherited the pipes can hold them open after the child is gone. */
+const DRAIN_GRACE_MS = 2000;
+
 export const scriptExecutor: Executors["script"] = (step: ScriptStep, ctx: RunContext, emit: Emit) => {
   const argv = step.argv(ctx);
   const [cmd, ...args] = argv;
   if (!cmd) return Promise.resolve({ ok: false, error: "empty argv" });
   const env = { ...process.env, ...(step.env ? step.env(ctx) : {}) };
-  const child = spawn(cmd, args, { cwd: step.cwd ?? ctx.showRoot, env, stdio: ["ignore", "pipe", "pipe"] });
+  // detached: the child leads its own process group, so a timeout can kill the whole group,
+  // grandchildren included, rather than only the direct child.
+  const child = spawn(cmd, args, { cwd: step.cwd ?? ctx.showRoot, env, stdio: ["ignore", "pipe", "pipe"], detached: true });
 
   let lastStderr = "";
-  const pending: Promise<void>[] = [];
+  let emitError: unknown;
+  // Every event is queued behind the previous one: order is preserved, and a rejected write is
+  // caught the moment it happens instead of surfacing as an unhandled rejection.
+  let tail: Promise<void> = Promise.resolve();
+  const queue = (kind: EventKind, payload: Record<string, unknown>) => {
+    tail = tail.then(() => emit(kind, payload)).catch((e: unknown) => { emitError ??= e; });
+  };
   const wire = (stream: NodeJS.ReadableStream, name: "stdout" | "stderr") => {
     const rl = createInterface({ input: stream });
     rl.on("line", (line) => {
       const p = name === "stdout" ? parseProgressLine(line) : null;
       if (p) {
-        pending.push(emit("step_progress", { ...p }));
+        queue("step_progress", { ...p });
       } else {
         if (name === "stderr" && line.trim() !== "") lastStderr = line;
-        pending.push(emit("script_line", { stream: name, line }));
+        queue("script_line", { stream: name, line });
       }
     });
     return new Promise<void>((resolve) => rl.on("close", () => resolve()));
@@ -1632,23 +1677,42 @@ export const scriptExecutor: Executors["script"] = (step: ScriptStep, ctx: RunCo
   const outDone = wire(child.stdout, "stdout");
   const errDone = wire(child.stderr, "stderr");
 
-  return new Promise((resolve) => {
+  const killGroup = () => {
+    try {
+      if (child.pid !== undefined) process.kill(-child.pid, "SIGKILL");
+      else child.kill("SIGKILL");
+    } catch {
+      child.kill("SIGKILL");
+    }
+  };
+
+  return new Promise<ScriptOutcome>((resolve) => {
+    let settled = false;
     let timedOut = false;
     const timer = step.timeoutMs !== undefined
-      ? setTimeout(() => { timedOut = true; child.kill("SIGKILL"); }, step.timeoutMs)
+      ? setTimeout(() => { timedOut = true; killGroup(); }, step.timeoutMs)
       : undefined;
-    child.on("error", async (err) => {
+    const settle = async (outcome: ScriptOutcome) => {
+      if (settled) return;
+      settled = true;
       if (timer) clearTimeout(timer);
-      await Promise.all(pending);
-      resolve({ ok: false, error: `spawn failed: ${err.message}` });
-    });
-    child.on("close", async (code) => {
-      if (timer) clearTimeout(timer);
-      await Promise.all([outDone, errDone]);
-      await Promise.all(pending);
-      if (timedOut) return resolve({ ok: false, error: `timeout after ${step.timeoutMs}ms` });
-      if (code === 0) return resolve({ ok: true });
-      resolve({ ok: false, error: `exit ${code}: ${lastStderr}` });
+      // Drain what the pipes still hold, but never wait forever on a grandchild holding them open.
+      const grace = new Promise<void>((r) => { const t = setTimeout(r, DRAIN_GRACE_MS); t.unref(); });
+      await Promise.race([Promise.all([outDone, errDone]), grace]);
+      await tail;
+      if (emitError !== undefined && outcome.ok) {
+        const msg = emitError instanceof Error ? emitError.message : String(emitError);
+        resolve({ ok: false, error: `log write failed: ${msg}` });
+        return;
+      }
+      resolve(outcome);
+    };
+    child.on("error", (err) => { void settle({ ok: false, error: `spawn failed: ${err.message}` }); });
+    child.on("exit", (code, signal) => {
+      if (timedOut) { void settle({ ok: false, error: `timeout after ${step.timeoutMs}ms` }); return; }
+      if (code === 0) { void settle({ ok: true }); return; }
+      const shown = code === null ? `signal ${signal ?? "unknown"}` : `exit ${code}`;
+      void settle({ ok: false, error: `${shown}: ${lastStderr}` });
     });
   });
 };
@@ -1657,7 +1721,7 @@ export const scriptExecutor: Executors["script"] = (step: ScriptStep, ctx: RunCo
 - [ ] **Step 5: Run to verify it passes**
 
 Run: `npx vitest run test/script-step.test.ts && npm run typecheck`
-Expected: PASS, 5 tests; `typecheck` exits 0.
+Expected: PASS, 8 tests; `typecheck` exits 0.
 
 - [ ] **Step 6: Commit**
 
