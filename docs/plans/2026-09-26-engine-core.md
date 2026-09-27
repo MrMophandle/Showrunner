@@ -1748,7 +1748,7 @@ git commit -m "engine: script executor — argv only, streamed lines, ::progress
 `engine/test/gate.test.ts`:
 ```ts
 import { describe, it, expect } from "vitest";
-import { mkdtemp } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { run, answerGate } from "../src/runner.js";
@@ -1832,6 +1832,38 @@ describe("gates", () => {
     await answerGate(fresh, "r1", "g", { approved: true });
     expect(await run({ pipeline, ctx, log: fresh, executors })).toEqual({ status: "completed" });
   });
+
+  it("reopens after a rejection even when the clock stepped back between open and answer", async () => {
+    const { pipeline, log, ctx, executors, fixCalls } = await setup();
+    await mkdir(path.dirname(log.path), { recursive: true });
+    const lines = [
+      { ts: "2026-01-01T10:00:00.000Z", runId: "r1", kind: "run_started", payload: { pipeline: "p", episodeId: "s02e01" } },
+      { ts: "2026-01-01T10:00:01.000Z", runId: "r1", stepId: "before", kind: "step_started", payload: { kind: "guard" } },
+      { ts: "2026-01-01T10:00:02.000Z", runId: "r1", stepId: "before", kind: "step_completed", payload: { result: null } },
+      { ts: "2026-01-01T10:00:05.000Z", runId: "r1", stepId: "g", kind: "gate_opened", payload: { attempt: 1, message: "Approve s02e01?" } },
+      { ts: "2026-01-01T10:00:03.000Z", runId: "r1", stepId: "g", kind: "gate_answered", payload: { approved: false, notes: "redo", attempt: 1, waitedMs: 0 } },
+    ];
+    await writeFile(log.path, lines.map((l) => JSON.stringify(l)).join("\n") + "\n");
+    const r = await run({ pipeline, ctx, log, executors });
+    expect(r).toMatchObject({ status: "waiting", gate: { stepId: "g", attempt: 2 } });
+    expect(fixCalls).toEqual(["fix:redo"]);
+  });
+
+  it("never opens a gate whose dependency failed", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "show-"));
+    const dep: GuardStep = { kind: "guard", id: "dep", check: () => ({ pass: false, message: "nope" }) };
+    const g: GateStep = { kind: "gate", id: "g", dependsOn: ["dep"], message: () => "Approve?" };
+    const after: GuardStep = { kind: "guard", id: "after", dependsOn: ["g"], check: () => ({ pass: true }) };
+    const log = new EventLog(EventLog.logPath(root, "s02e01", "r1"));
+    const r = await run({ pipeline: { name: "p", steps: [dep, g, after] }, ctx: { runId: "r1", episodeId: "s02e01", showRoot: root }, log, executors: { script: async () => ({ ok: true }), agent: async () => ({ ok: true, text: "", toolCalls: 0 }) } });
+    expect(r).toEqual({ status: "failed", stepId: "dep", error: "nope" });
+    const events = await log.read();
+    expect(events.some((e) => e.kind === "gate_opened")).toBe(false);
+    expect(events.filter((e) => e.kind === "step_skipped").map((e) => [e.stepId, e.payload["reason"]])).toEqual([
+      ["g", "dependency failed: dep"],
+      ["after", "dependency skipped: g"],
+    ]);
+  });
 });
 ```
 
@@ -1868,21 +1900,20 @@ async function runGateStep(step: GateStep, ctx: RunContext, emit: Emit, executor
   const attempts = state.gateAttempts[step.id] ?? 0;
   const maxAttempts = step.maxAttempts ?? 10;
 
-  // Find the latest answer for this gate, if any, and whether an attempt is already open.
-  let lastAnswer: Event | undefined;
-  let lastOpened: Event | undefined;
+  // The log is append-only, so array position is the authoritative order. Never compare timestamps.
+  let lastGate: Event | undefined;
   for (const e of events) {
-    if (e.stepId !== step.id) continue;
-    if (e.kind === "gate_opened") lastOpened = e;
-    if (e.kind === "gate_answered") lastAnswer = e;
+    if (e.stepId === step.id && (e.kind === "gate_opened" || e.kind === "gate_answered")) lastGate = e;
   }
-  const answeredCurrent = lastAnswer && lastOpened && lastAnswer.ts >= lastOpened.ts;
-
-  if (lastOpened && !answeredCurrent) {
-    return { kind: "waiting", gate: state.openGate ?? { stepId: step.id, attempt: attempts, message: String(lastOpened.payload["message"] ?? ""), openedAt: lastOpened.ts } };
+  if (lastGate?.kind === "gate_opened") {
+    return {
+      kind: "waiting",
+      gate: state.openGate ?? { stepId: step.id, attempt: attempts, message: String(lastGate.payload["message"] ?? ""), openedAt: lastGate.ts },
+    };
   }
+  const lastAnswer = lastGate?.kind === "gate_answered" ? lastGate : undefined;
 
-  if (lastAnswer && answeredCurrent) {
+  if (lastAnswer) {
     if (lastAnswer.payload["approved"] === true) {
       // deriveRunState already marks it completed; the runner loop skips completed steps, so this
       // branch is reached only when the answer arrived between state derivation and execution.
@@ -1923,7 +1954,7 @@ One adjustment in `run`: a gate that was rejected leaves `state.steps[g] === "ru
 - [ ] **Step 4: Run to verify it passes**
 
 Run: `npx vitest run test/gate.test.ts test/runner.test.ts && npm run typecheck`
-Expected: PASS, 11 tests across the two files; `typecheck` exits 0.
+Expected: PASS, 13 tests across the two files (7 gate + 6 runner); `typecheck` exits 0.
 
 - [ ] **Step 5: Commit**
 
