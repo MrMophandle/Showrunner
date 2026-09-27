@@ -158,6 +158,21 @@ describe("run", () => {
     expect((await log.read()).some((e) => e.kind === "step_skipped")).toBe(false);
   });
 
+  it("records the trigger on run_started when the context carries one", async () => {
+    const root = await show();
+    const g: GuardStep = { kind: "guard", id: "g", check: () => ({ pass: true }) };
+    const p: Pipeline = { name: "p", steps: [g] };
+
+    const withTrigger = new EventLog(EventLog.logPath(root, "s02e01", "r1"));
+    await run({ pipeline: p, ctx: { runId: "r1", episodeId: "s02e01", showRoot: root, trigger: "console:user" }, log: withTrigger, executors: okExecutors([]) });
+    const started = (await withTrigger.read()).find((e) => e.kind === "run_started");
+    expect(started?.payload).toEqual({ pipeline: "p", episodeId: "s02e01", trigger: "console:user" });
+
+    const without = new EventLog(EventLog.logPath(root, "s02e01", "r2"));
+    await run({ pipeline: p, ctx: { runId: "r2", episodeId: "s02e01", showRoot: root }, log: without, executors: okExecutors([]) });
+    expect((await without.read()).find((e) => e.kind === "run_started")?.payload).toEqual({ pipeline: "p", episodeId: "s02e01" });
+  });
+
   it("reads its own log exactly once for the whole run", async () => {
     const root = await show();
     const g: GuardStep = { kind: "guard", id: "g", check: () => ({ pass: true }) };

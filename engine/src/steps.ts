@@ -18,6 +18,9 @@ export interface RunContext {
   episodeId: string;
   /** Absolute path to the show repository the engine is operating on. */
   showRoot: string;
+  /** Who launched this run and from where — "console:<user>", "cron", "cli". Recorded on
+   *  run_started (spec §6.5), so the log answers "who started this" without a second source. */
+  trigger?: string;
   /** Results of completed steps, by id: a guard's message, a gate's answer, an agent's verdict. */
   results: Record<StepId, unknown>;
 }

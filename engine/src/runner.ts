@@ -105,7 +105,9 @@ async function execute(opts: RunOptions): Promise<RunResult> {
   const append = async (e: Omit<Event, "ts">): Promise<void> => { events.push(await log.append(e)); };
 
   if (events.length === 0) {
-    await append({ runId: opts.ctx.runId, kind: "run_started", payload: { pipeline: pipeline.name, episodeId: opts.ctx.episodeId } });
+    const started: Record<string, unknown> = { pipeline: pipeline.name, episodeId: opts.ctx.episodeId };
+    if (opts.ctx.trigger !== undefined) started["trigger"] = opts.ctx.trigger;
+    await append({ runId: opts.ctx.runId, kind: "run_started", payload: started });
   }
 
   const state: RunState = deriveRunState(events);
