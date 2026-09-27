@@ -88,7 +88,7 @@ README.md                      MODIFY: the agent executor section
 
 **Interfaces:**
 - Consumes: `AgentStep`, `GateStep.onReject`, `LoopStep.body`, `StepBase.timeoutMs` from Plan A.
-- Produces: `export type JsonSchema = Record<string, unknown>`; `export type NestedAgentStep = Omit<AgentStep, "when" | "dependsOn">`; `AgentStep.schema?: JsonSchema`, `AgentStep.maxTurns?: number`, `AgentStep.idleTimeoutMs?: number`, `AgentStep.maxBudgetUsd?: number`; `GateStep.onReject: NestedAgentStep`; `LoopStep.body: NestedAgentStep`.
+- Produces: `export type JsonSchema = Record<string, unknown>`; `export type NestedAgentStep = Omit<AgentStep, "when" | "dependsOn">`; `AgentStep.schema?: JsonSchema`, `AgentStep.maxTurns?: number`, `AgentStep.idleTimeoutMs?: number`, `AgentStep.maxBudgetUsd?: number`; `GateStep.onReject?: NestedAgentStep` (it stays optional: a gate without a fix agent is legal); `LoopStep.body: NestedAgentStep`.
 
 - [ ] **Step 1: Add the dependency**
 
@@ -118,7 +118,7 @@ describe("agent step types", () => {
     const withDeps: NestedAgentStep = { ...base, dependsOn: ["x"] };
     const gate: GateStep = { kind: "gate", id: "g", message: () => "?", onReject: nested };
     const loop: LoopStep = { kind: "loop", id: "l", body: nested, until: "DONE", maxIterations: 1 };
-    expect(gate.onReject.id).toBe("fix");
+    expect(gate.onReject?.id).toBe("fix");
     expect(loop.body.id).toBe("fix");
     void withWhen; void withDeps;
   });
@@ -182,7 +182,7 @@ export type NestedAgentStep = Omit<AgentStep, "when" | "dependsOn">;
 
 Then change the two nested fields, keeping their existing doc comments verbatim:
 
-- in `GateStep`: `onReject: AgentStep;` → `onReject: NestedAgentStep;`
+- in `GateStep`: `onReject?: AgentStep;` → `onReject?: NestedAgentStep;` (still optional — `pipeline.ts` and `runner.ts` are written for an absent fix agent)
 - in `LoopStep`: `body: AgentStep;` → `body: NestedAgentStep;`
 
 `runner.ts` passes `step.onReject` and `step.body` to `executors.agent`, whose parameter is `AgentStep`. A `NestedAgentStep` is assignable to `AgentStep` because the omitted fields are optional on `AgentStep`; no runner change is needed. If `tsc` disagrees, stop and report rather than widening the executor's parameter.
