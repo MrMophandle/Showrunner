@@ -57,9 +57,19 @@ export async function run(opts: RunOptions): Promise<RunResult> {
   }
 
   const state: RunState = deriveRunState(await log.read());
-  if (state.finished) return state.status === "completed"
-    ? { status: "completed" }
-    : { status: "failed", stepId: "", error: "run already finished as failed" };
+  if (state.finished) {
+    if (state.status === "completed") return { status: "completed" };
+    const failedId = Object.entries(state.steps).find(([, v]) => v === "failed")?.[0] ?? "";
+    let error = "failed in an earlier attempt";
+    for (let i = ownEvents.length - 1; i >= 0; i--) {
+      const e = ownEvents[i];
+      if (e && e.kind === "step_failed" && e.stepId === failedId && typeof e.payload["error"] === "string") {
+        error = e.payload["error"];
+        break;
+      }
+    }
+    return { status: "failed", stepId: failedId, error };
+  }
   if (state.openGate) return { status: "waiting", gate: state.openGate };
 
   const ctx: RunContext = { ...opts.ctx, results: { ...state.results } };
@@ -159,7 +169,7 @@ async function runScriptStep(
   const outputs = step.outputs ?? [];
   const inputHashes = await hashFiles(ctx.showRoot, inputs);
   const prior = lastCompletion(step.id, allLogs);
-  if (prior && inputs.length + outputs.length > 0) {
+  if (prior && inputs.length > 0) {
     const outputHashesNow = await hashFiles(ctx.showRoot, outputs);
     if (sameHashes(prior.inputHashes, inputHashes) && sameHashes(prior.outputHashes, outputHashesNow)) {
       const payload: Record<string, unknown> = { inputHashes, outputHashes: outputHashesNow };

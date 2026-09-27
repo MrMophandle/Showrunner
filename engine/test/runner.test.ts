@@ -54,6 +54,8 @@ describe("run", () => {
     ]);
     expect(events.at(-1)?.kind).toBe("run_finished");
     expect(events.at(-1)?.payload["status"]).toBe("failed");
+    expect(await run({ pipeline: p, ctx: { runId: "r1", episodeId: "s02e01", showRoot: root }, log, executors: okExecutors([]) }))
+      .toEqual({ status: "failed", stepId: "g", error: "no script.md" });
   });
 
   it("records a failing script and the agent outcome text as a result", async () => {
@@ -106,5 +108,36 @@ describe("run", () => {
     const ev3 = await log3.read();
     expect(ev3.some((e) => e.kind === "input_changed" && e.stepId === "s")).toBe(true);
     expect(ev3.some((e) => e.kind === "step_completed" && e.stepId === "s")).toBe(true);
+  });
+
+  it("re-runs a script step that declares outputs but no inputs, and never caches it", async () => {
+    const root = await show();
+    let runs = 0;
+    const execs: Executors = {
+      script: async (_step, ctx) => { runs++; await writeFile(path.join(ctx.showRoot, "out.txt"), "same"); return { ok: true }; },
+      agent: async () => ({ ok: true, text: "", toolCalls: 0 }),
+    };
+    const s: ScriptStep = { kind: "script", id: "s", outputs: ["out.txt"], argv: () => ["true"] };
+    const p: Pipeline = { name: "p", steps: [s] };
+    const log1 = new EventLog(EventLog.logPath(root, "s02e01", "r1"));
+    await run({ pipeline: p, ctx: { runId: "r1", episodeId: "s02e01", showRoot: root }, log: log1, executors: execs });
+    const log2 = new EventLog(EventLog.logPath(root, "s02e01", "r2"));
+    await run({ pipeline: p, ctx: { runId: "r2", episodeId: "s02e01", showRoot: root }, log: log2, executors: execs, priorLogs: [log1] });
+    expect(runs).toBe(2);
+    expect((await log2.read()).some((e) => e.kind === "step_cached")).toBe(false);
+  });
+
+  it("re-executes a step whose log shows it running with no terminal event", async () => {
+    const root = await show();
+    const calls: string[] = [];
+    const g: GuardStep = { kind: "guard", id: "g", check: () => { calls.push("g"); return { pass: true }; } };
+    const log = new EventLog(EventLog.logPath(root, "s02e01", "r1"));
+    await log.append({ runId: "r1", kind: "run_started", payload: { pipeline: "p", episodeId: "s02e01" } });
+    await log.append({ runId: "r1", stepId: "g", kind: "step_started", payload: { kind: "guard" } });
+    const res = await run({ pipeline: { name: "p", steps: [g] }, ctx: { runId: "r1", episodeId: "s02e01", showRoot: root }, log, executors: okExecutors([]) });
+    expect(res).toEqual({ status: "completed" });
+    expect(calls).toEqual(["g"]);
+    const starts = (await log.read()).filter((e) => e.kind === "step_started" && e.stepId === "g");
+    expect(starts).toHaveLength(2);
   });
 });
