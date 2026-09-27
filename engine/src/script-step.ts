@@ -34,6 +34,9 @@ export const scriptExecutor: Executors["script"] = (step: ScriptStep, ctx: RunCo
 
   let lastStderr = "";
   let emitError: unknown;
+  // Set when the drain grace expires: the pipes are being abandoned, so anything a grandchild
+  // writes after that point is dropped rather than logged under a step that has already settled.
+  let abandoned = false;
   // Every event is queued behind the previous one: order is preserved, and a rejected write is
   // caught the moment it happens instead of surfacing as an unhandled rejection.
   let tail: Promise<void> = Promise.resolve();
@@ -43,6 +46,7 @@ export const scriptExecutor: Executors["script"] = (step: ScriptStep, ctx: RunCo
   const wire = (stream: NodeJS.ReadableStream, name: "stdout" | "stderr") => {
     const rl = createInterface({ input: stream });
     rl.on("line", (line) => {
+      if (abandoned) return;
       const p = name === "stdout" ? parseProgressLine(line) : null;
       if (p) {
         queue("step_progress", { ...p });
@@ -75,9 +79,16 @@ export const scriptExecutor: Executors["script"] = (step: ScriptStep, ctx: RunCo
       if (settled) return;
       settled = true;
       if (timer) clearTimeout(timer);
-      // Drain what the pipes still hold, but never wait forever on a grandchild holding them open.
-      const grace = new Promise<void>((r) => { const t = setTimeout(r, DRAIN_GRACE_MS); t.unref(); });
-      await Promise.race([Promise.all([outDone, errDone]), grace]);
+      // Drain what the pipes still hold, but never wait forever on a grandchild holding them
+      // open. When the grace wins, the pipes are destroyed so the fds are released and this
+      // process is not left reading a stream nobody is waiting on.
+      const drained = Promise.all([outDone, errDone]).then(() => "drained" as const);
+      const grace = new Promise<"grace">((r) => { const t = setTimeout(() => r("grace"), DRAIN_GRACE_MS); t.unref(); });
+      if (await Promise.race([drained, grace]) === "grace") {
+        abandoned = true;
+        child.stdout?.destroy();
+        child.stderr?.destroy();
+      }
       await tail;
       if (emitError !== undefined && outcome.ok) {
         const msg = emitError instanceof Error ? emitError.message : String(emitError);

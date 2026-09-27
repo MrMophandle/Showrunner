@@ -81,6 +81,25 @@ describe("scriptExecutor", () => {
     expect(r).toEqual({ ok: false, error: "log write failed: disk full" });
   });
 
+  it("destroys the pipes and stops queuing lines once the drain grace expires", async () => {
+    // The child prints one line and exits at once; its grandchild, in its own session, keeps
+    // writing to the inherited stdout for six seconds. Without the grace the executor would
+    // never resolve; without the destroy-and-drop it would keep logging under a settled step.
+    const step: ScriptStep = { kind: "script", id: "s", argv: () => ["python3", fixture("escapee.py")] };
+    const { events, emit } = collector();
+    const started = Date.now();
+    const r = await scriptExecutor(step, ctx, emit);
+    const elapsed = Date.now() - started;
+
+    expect(r).toEqual({ ok: true });
+    expect(elapsed).toBeLessThan(3000);
+    expect(events.some((e) => e.kind === "script_line" && e.payload["line"] === "one line")).toBe(true);
+
+    const atResolve = events.length;
+    await new Promise((done) => setTimeout(done, 500));
+    expect(events.length).toBe(atResolve);
+  });
+
   it("times out even when a grandchild holds the stdio pipes open", async () => {
     const step: ScriptStep = {
       kind: "script", id: "s", timeoutMs: 300,
