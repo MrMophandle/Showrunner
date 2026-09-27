@@ -135,6 +135,17 @@ describe("createAgentExecutor: failures", () => {
     const r = await createAgentExecutor({ query, promptsDir })(step(), ctx(), recorder().emit);
     expect(r).toEqual({ ok: false, error: "query failed: [object Object]" });
   });
+  it("a throw inside the executor's own message handling fails the step, even after a result arrived", async () => {
+    // message.content is an object, not an array: the handler's for-of throws. The result message
+    // already stored must not rescue the step — the executor never finished reading the stream.
+    const malformed = { type: "assistant", message: { content: {} } } as unknown as AgentMessage;
+    const f = fake([init, success(), malformed]);
+    const rec = recorder();
+    const r = await createAgentExecutor({ query: f.query, promptsDir })(step(), ctx(), rec.emit);
+    expect(r).toMatchObject({ ok: false });
+    expect((r as { error: string }).error).toMatch(/^message handling failed: /);
+    expect(rec.events.at(-1)!.payload).toMatchObject({ ok: false });
+  });
   it("a result message with no subtype fails by naming the missing subtype", async () => {
     const f = fake([init, { type: "result", result: "t" }]);
     const r = await createAgentExecutor({ query: f.query, promptsDir })(step(), ctx(), recorder().emit);

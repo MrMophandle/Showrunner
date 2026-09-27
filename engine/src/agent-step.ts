@@ -66,6 +66,13 @@ class Deadline extends Error {}
  *  step would report success. */
 class EmitFailure extends Error {}
 
+/** Thrown in place of anything else the executor's own message handler throws — a stream whose
+ *  shape the handler did not survive, as against a query that failed or a log that failed. Without
+ *  the class such a throw would land in the `query failed` branch, which fires only when no result
+ *  message has arrived, so a handler fault after a result was stored would be swallowed and the
+ *  step would report the success it never finished reading. */
+class HandlerFailure extends Error {}
+
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
@@ -73,7 +80,11 @@ function errorMessage(err: unknown): string {
 /** Pumps `iterable` under two clocks — a total deadline and an idle deadline reset on every
  *  message — and hands each message to `onMessage`. When a clock fires it aborts `controller`,
  *  asks the iterator to return without waiting for it (the SDK's iterator may not honour the
- *  abort promptly, and a step must not hang on it), and throws Deadline with the reason. */
+ *  abort promptly, and a step must not hang on it), and throws Deadline with the reason.
+ *
+ *  Every other error out of the iterator or the handler gets the same abort-and-return treatment
+ *  before it is rethrown: a rejected emit or a handler fault abandons the iterator mid-stream, and
+ *  without the abort the SDK's child process would keep running with nobody draining it. */
 async function pump(
   iterable: AsyncIterable<AgentMessage>,
   controller: AbortController,
@@ -81,8 +92,11 @@ async function pump(
   onMessage: (m: AgentMessage) => Promise<void>,
 ): Promise<void> {
   const it = iterable[Symbol.asyncIterator]();
+  // The reason is recorded as well as rejected, because the race below cannot be trusted to
+  // observe the rejection — see the check after it.
+  let reason: string | undefined;
   let fire!: (reason: string) => void;
-  const fired = new Promise<never>((_, reject) => { fire = (reason) => reject(new Deadline(reason)); });
+  const fired = new Promise<never>((_, reject) => { fire = (why) => { reason = why; reject(new Deadline(why)); }; });
   const total = bounds.timeoutMs !== undefined ? setTimeout(() => fire(`timed out after ${bounds.timeoutMs} ms`), bounds.timeoutMs) : undefined;
   let idle: NodeJS.Timeout | undefined;
   const armIdle = () => {
@@ -95,15 +109,20 @@ async function pump(
   try {
     while (true) {
       const next = await Promise.race([it.next(), fired]);
+      // Promise.race adopts its inputs in array order when both are already settled, so an
+      // end-of-stream next() — which resolves synchronously — beats a `fired` that rejected during
+      // the previous onMessage, and the pump would return normally from a step that had already
+      // timed out. `fire` sets `reason` synchronously, so this makes "did a clock fire" a question
+      // of state rather than of scheduling. The `fired` rejection still covers a clock that fires
+      // while next() is genuinely pending.
+      if (reason !== undefined) throw new Deadline(reason);
       if (next.done) return;
       armIdle();
       await onMessage(next.value);
     }
   } catch (err) {
-    if (err instanceof Deadline) {
-      controller.abort();
-      void it.return?.().catch(() => {});
-    }
+    controller.abort();
+    void it.return?.().catch(() => {});
     throw err;
   } finally {
     if (total) clearTimeout(total);
@@ -112,6 +131,11 @@ async function pump(
 }
 
 export function createAgentExecutor(opts: AgentExecutorOptions): Executors["agent"] {
+  /** context: "shared" — session ids by `${runId}/${stepId}`, for this executor's lifetime. A
+   *  restart makes a new executor, so a resumed run's shared step starts a fresh session; the
+   *  agent_query it logs says resumed: false, which is the record of that. */
+  const sessions = new Map<string, string>();
+
   return async (step: AgentStep, ctx: RunContext, emit: Emit): Promise<AgentOutcome> => {
     // 1–2: the prompt and the schema, checked before anything is logged or queried.
     const promptsDir = opts.promptsDir ?? path.join(ctx.showRoot, "prompts");
@@ -134,6 +158,11 @@ export function createAgentExecutor(opts: AgentExecutorOptions): Executors["agen
     // 3: the options.
     const model = opts.models?.[step.model] ?? step.model;
     const abortController = new AbortController();
+    // Both the read and the write of the session map are gated on "shared", so the policy is one
+    // predicate rather than two that have to agree: a "fresh" step leaves no entry behind that a
+    // later query could resume, whatever it does with its session id.
+    const sessionKey = `${ctx.runId}/${step.id}`;
+    const resume = step.context === "shared" ? sessions.get(sessionKey) : undefined;
     const options: AgentQueryOptions = {
       cwd: ctx.showRoot,
       model,
@@ -146,6 +175,7 @@ export function createAgentExecutor(opts: AgentExecutorOptions): Executors["agen
       ...(step.schema ? { outputFormat: { type: "json_schema" as const, schema: step.schema } } : {}),
       ...(step.maxTurns !== undefined ? { maxTurns: step.maxTurns } : {}),
       ...(step.maxBudgetUsd !== undefined ? { maxBudgetUsd: step.maxBudgetUsd } : {}),
+      ...(resume !== undefined ? { resume } : {}),
     };
 
     // 4: agent_query.
@@ -162,29 +192,41 @@ export function createAgentExecutor(opts: AgentExecutorOptions): Executors["agen
     let failure: string | undefined;
     try {
       await pump(opts.query({ prompt, options }), abortController, { ...(step.timeoutMs !== undefined ? { timeoutMs: step.timeoutMs } : {}), ...(step.idleTimeoutMs !== undefined ? { idleTimeoutMs: step.idleTimeoutMs } : {}) }, async (m) => {
-        if (m.session_id && !sessionId) sessionId = m.session_id;
-        if (m.type === "assistant" && m.message) {
-          for (const block of m.message.content) {
-            if (block.type === "tool_use" && "name" in block) {
-              toolCalls += 1;
-              try {
-                await emit("agent_tool_call", { tool: block.name, input: block.input, toolUseId: block.id, index: toolCalls });
-              } catch (err) {
-                throw new EmitFailure(errorMessage(err));
+        // Every fault raised in here is classified before it leaves, so the `query failed` branch
+        // below sees only what the iterator itself threw.
+        try {
+          if (m.session_id && !sessionId) sessionId = m.session_id;
+          if (m.type === "assistant" && m.message) {
+            for (const block of m.message.content) {
+              if (block.type === "tool_use" && "name" in block) {
+                toolCalls += 1;
+                try {
+                  await emit("agent_tool_call", { tool: block.name, input: block.input, toolUseId: block.id, index: toolCalls });
+                } catch (err) {
+                  throw new EmitFailure(errorMessage(err));
+                }
               }
             }
+          } else if (m.type === "result") {
+            result = m;
           }
-        } else if (m.type === "result") {
-          result = m;
+        } catch (err) {
+          if (err instanceof EmitFailure) throw err;
+          throw new HandlerFailure(errorMessage(err));
         }
       });
     } catch (err) {
       if (err instanceof Deadline) { failure = err.message; result = undefined; }
       else if (err instanceof EmitFailure) { failure = `log write failed: ${err.message}`; result = undefined; }
+      else if (err instanceof HandlerFailure) { failure = `message handling failed: ${err.message}`; result = undefined; }
+      // What is left is the iterator's own throw. A result already stored wins over it: the SDK
+      // throws after yielding an error result, and that result classifies the failure precisely.
       else if (!result) failure = `query failed: ${errorMessage(err)}`;
     }
+    if (step.context === "shared" && sessionId !== undefined) sessions.set(sessionKey, sessionId);
 
-    // 8: the outcome. A deadline or a rejected emit discards the result message that raced in, so
+    // 8: the outcome. A deadline, a rejected emit or a handler fault discards the result that
+    //    raced in, so
     //    `r` is a result only when nothing has already failed — and the total timeout therefore
     //    wins over a result that arrived after it.
     const r = failure !== undefined ? undefined : result;
