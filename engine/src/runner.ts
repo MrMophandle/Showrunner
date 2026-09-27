@@ -227,21 +227,20 @@ async function runGateStep(step: GateStep, ctx: RunContext, emit: Emit, executor
   const attempts = state.gateAttempts[step.id] ?? 0;
   const maxAttempts = step.maxAttempts ?? 10;
 
-  // Find the latest answer for this gate, if any, and whether an attempt is already open.
-  let lastAnswer: Event | undefined;
-  let lastOpened: Event | undefined;
+  // The log is append-only, so array position is the authoritative order. Never compare timestamps.
+  let lastGate: Event | undefined;
   for (const e of events) {
-    if (e.stepId !== step.id) continue;
-    if (e.kind === "gate_opened") lastOpened = e;
-    if (e.kind === "gate_answered") lastAnswer = e;
+    if (e.stepId === step.id && (e.kind === "gate_opened" || e.kind === "gate_answered")) lastGate = e;
   }
-  const answeredCurrent = lastAnswer && lastOpened && lastAnswer.ts >= lastOpened.ts;
-
-  if (lastOpened && !answeredCurrent) {
-    return { kind: "waiting", gate: state.openGate ?? { stepId: step.id, attempt: attempts, message: String(lastOpened.payload["message"] ?? ""), openedAt: lastOpened.ts } };
+  if (lastGate?.kind === "gate_opened") {
+    return {
+      kind: "waiting",
+      gate: state.openGate ?? { stepId: step.id, attempt: attempts, message: String(lastGate.payload["message"] ?? ""), openedAt: lastGate.ts },
+    };
   }
+  const lastAnswer = lastGate?.kind === "gate_answered" ? lastGate : undefined;
 
-  if (lastAnswer && answeredCurrent) {
+  if (lastAnswer) {
     if (lastAnswer.payload["approved"] === true) {
       // deriveRunState already marks it completed; the runner loop skips completed steps, so this
       // branch is reached only when the answer arrived between state derivation and execution.

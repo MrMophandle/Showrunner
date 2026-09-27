@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mkdtemp } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { run, answerGate } from "../src/runner.js";
@@ -82,5 +82,37 @@ describe("gates", () => {
     expect(r).toMatchObject({ status: "waiting", gate: { stepId: "g", attempt: 1 } });
     await answerGate(fresh, "r1", "g", { approved: true });
     expect(await run({ pipeline, ctx, log: fresh, executors })).toEqual({ status: "completed" });
+  });
+
+  it("reopens after a rejection even when the clock stepped back between open and answer", async () => {
+    const { pipeline, log, ctx, executors, fixCalls } = await setup();
+    await mkdir(path.dirname(log.path), { recursive: true });
+    const lines = [
+      { ts: "2026-01-01T10:00:00.000Z", runId: "r1", kind: "run_started", payload: { pipeline: "p", episodeId: "s02e01" } },
+      { ts: "2026-01-01T10:00:01.000Z", runId: "r1", stepId: "before", kind: "step_started", payload: { kind: "guard" } },
+      { ts: "2026-01-01T10:00:02.000Z", runId: "r1", stepId: "before", kind: "step_completed", payload: { result: null } },
+      { ts: "2026-01-01T10:00:05.000Z", runId: "r1", stepId: "g", kind: "gate_opened", payload: { attempt: 1, message: "Approve s02e01?" } },
+      { ts: "2026-01-01T10:00:03.000Z", runId: "r1", stepId: "g", kind: "gate_answered", payload: { approved: false, notes: "redo", attempt: 1, waitedMs: 0 } },
+    ];
+    await writeFile(log.path, lines.map((l) => JSON.stringify(l)).join("\n") + "\n");
+    const r = await run({ pipeline, ctx, log, executors });
+    expect(r).toMatchObject({ status: "waiting", gate: { stepId: "g", attempt: 2 } });
+    expect(fixCalls).toEqual(["fix:redo"]);
+  });
+
+  it("never opens a gate whose dependency failed", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "show-"));
+    const dep: GuardStep = { kind: "guard", id: "dep", check: () => ({ pass: false, message: "nope" }) };
+    const g: GateStep = { kind: "gate", id: "g", dependsOn: ["dep"], message: () => "Approve?" };
+    const after: GuardStep = { kind: "guard", id: "after", dependsOn: ["g"], check: () => ({ pass: true }) };
+    const log = new EventLog(EventLog.logPath(root, "s02e01", "r1"));
+    const r = await run({ pipeline: { name: "p", steps: [dep, g, after] }, ctx: { runId: "r1", episodeId: "s02e01", showRoot: root }, log, executors: { script: async () => ({ ok: true }), agent: async () => ({ ok: true, text: "", toolCalls: 0 }) } });
+    expect(r).toEqual({ status: "failed", stepId: "dep", error: "nope" });
+    const events = await log.read();
+    expect(events.some((e) => e.kind === "gate_opened")).toBe(false);
+    expect(events.filter((e) => e.kind === "step_skipped").map((e) => [e.stepId, e.payload["reason"]])).toEqual([
+      ["g", "dependency failed: dep"],
+      ["after", "dependency skipped: g"],
+    ]);
   });
 });
