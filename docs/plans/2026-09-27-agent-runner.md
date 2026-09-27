@@ -36,7 +36,7 @@ Read from `code.claude.com/docs/en/agent-sdk/*` on 2026-09-27 against SDK `0.3.2
 - **The engine repository is `Showrunner`, at `~/GitHub/Showrunner`** (remote `MrMophandle/Showrunner`, branch `main`). This plan is executed on branch `agent-runner` in that checkout. Every path in this plan is relative to the repository root.
 - **"A script in the engine repository may not contain the name of a show."** (spec §7.4) Nothing in `engine/` mentions Dead Light, its characters, or its files. Test fixture prompts use invented names.
 - **"argv arrays, never shell strings; ids validated before they reach a process"** (spec §4.4). No `exec`, no `shell: true`. A prompt file path is resolved inside the prompts directory and refused if it escapes it.
-- **The SDK is imported in exactly one file, `engine/src/sdk-query.ts`.** Every other file talks to it through the `QueryFn` seam. Tests never import `sdk-query.ts` except the env-gated live test, and then only through a dynamic import inside the test body.
+- **The SDK is imported in exactly one source file, `engine/src/sdk-query.ts`.** Every other file talks to it through the `QueryFn` seam. No test calls the SDK except the env-gated live test, which loads the adapter through a dynamic import inside the test body. A unit test may import the adapter module to test its pure mapping (`engine/test/sdk-query.test.ts`; its `import type` of the SDK's message types is erased at compile time), because importing the SDK's module has no side effect — verified on 0.3.283: no spawn, no binary lookup, until `query()` is called.
 - **`permissionMode` is always `"dontAsk"`, `settingSources` is always `[]`, `systemPrompt` is always the `claude_code` preset.** `bypassPermissions` appears nowhere in `engine/`.
 - **Event kinds, exactly** (unchanged from Plan A): `run_started`, `run_finished`, `step_started`, `step_completed`, `step_failed`, `step_skipped`, `step_cached`, `step_progress`, `script_line`, `agent_query`, `agent_tool_call`, `agent_result`, `loop_iteration`, `gate_opened`, `gate_answered`, `input_changed`. This plan adds no kind.
 - **The agent executor's obligations** (spec §6.5, documented on `Executors` in `engine/src/steps.ts`): one `agent_query` per query, carrying the prompt file, its content hash, the model, the allowlist, and the context policy; one `agent_tool_call` per tool invocation with its arguments; one `agent_result` when the step is done, carrying the verdict JSON if the step has a schema and the final text otherwise.
@@ -71,6 +71,7 @@ engine/
     agent-step.test.ts         NEW: the executor against a fake QueryFn
     agent-timeouts.test.ts     NEW: total and idle timeouts against a stalling fake
     agent-context.test.ts      NEW: shared vs fresh sessions, and the executor composed with run() and a loop
+    sdk-query.test.ts          NEW: the adapter's pure mapping, incl. dropping the SDK's synthetic StructuredOutput call
     agent-live.test.ts         NEW: env-gated (SHOWRUNNER_LIVE=1) real query
 README.md                      MODIFY: the agent executor section
 ```
@@ -1405,18 +1406,20 @@ MSG
 - Create: `engine/src/sdk-query.ts`
 - Modify: `engine/src/index.ts`
 - Modify: `README.md`
-- Test: `engine/test/agent-live.test.ts`
+- Test: `engine/test/sdk-query.test.ts`, `engine/test/agent-live.test.ts`
 
 **Interfaces:**
 - Consumes: `query` and the message types from `@anthropic-ai/claude-agent-sdk`; `QueryFn`, `AgentMessage`, `AgentQueryOptions` from Task 3.
-- Produces: `export const sdkQuery: QueryFn`; `index.ts` exports `prompt-template.js`, `agent-step.js`, `sdk-query.js`.
+- Produces: `export const sdkQuery: QueryFn`; `export function toAgentMessage(m: SDKMessage): AgentMessage` (pure, for the adapter's own unit tests); `index.ts` exports `prompt-template.js`, `agent-step.js`, `sdk-query.js`.
+
+**What the live run found (2026-09-27, SDK 0.3.283), and the ruling.** With `outputFormat` set, the SDK delivers the verdict through a synthetic tool call named `StructuredOutput` that arrives as an ordinary `tool_use` block; the same object then arrives as `structured_output` on the result. Counted, it would inflate `toolCalls` by one on every schema step and disable spec §6.7's zero-tool-call detector for exactly those steps. The adapter drops that block; the name is pinned in `sdk-query.ts` and nowhere else. Also found: the SDK's content blocks are interfaces without index signatures, so the brief's original `Array<Record<string, unknown>>` cast was rejected (TS2352); `toBlock` is typed on the SDK's own block union instead. The `{ ...options }` spread into the SDK's `Options` was accepted unchanged.
 
 - [ ] **Step 1: Write the adapter**
 
 `engine/src/sdk-query.ts`:
 
 ```ts
-import { query, type SDKMessage } from "@anthropic-ai/claude-agent-sdk";
+import { query, type SDKAssistantMessage, type SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { AgentContentBlock, AgentMessage, AgentQueryOptions, QueryFn } from "./agent-step.js";
 
 /** The one place the engine touches the Agent SDK. Everything the executor reads is copied onto
@@ -1428,12 +1431,14 @@ export const sdkQuery: QueryFn = async function* ({ prompt, options }: { prompt:
   }
 };
 
-function toAgentMessage(m: SDKMessage): AgentMessage {
+/** Maps one SDK message onto the executor's AgentMessage. Exported for this file's own unit tests,
+ *  which build SDK-shaped messages by hand; the executor only ever reaches it through sdkQuery. */
+export function toAgentMessage(m: SDKMessage): AgentMessage {
   const out: AgentMessage = { type: m.type };
   if ("subtype" in m && typeof m.subtype === "string") out.subtype = m.subtype;
   if ("session_id" in m && typeof m.session_id === "string") out.session_id = m.session_id;
   if (m.type === "assistant") {
-    out.message = { content: (m.message.content as Array<Record<string, unknown>>).map(toBlock) };
+    out.message = { content: m.message.content.filter((b) => !isVerdictDelivery(b)).map(toBlock) };
   }
   if (m.type === "result") {
     if (typeof m.num_turns === "number") out.num_turns = m.num_turns;
@@ -1450,14 +1455,44 @@ function toAgentMessage(m: SDKMessage): AgentMessage {
   return out;
 }
 
-function toBlock(b: Record<string, unknown>): AgentContentBlock {
-  if (b["type"] === "text" && typeof b["text"] === "string") return { type: "text", text: b["text"] };
-  if (b["type"] === "tool_use" && typeof b["name"] === "string" && typeof b["id"] === "string") return { type: "tool_use", id: b["id"], name: b["name"], input: b["input"] };
-  return { type: String(b["type"]) };
+/** The SDK's own content-block union, derived from SDKAssistantMessage rather than named: the SDK
+ *  types `message` as the Anthropic Messages API's BetaMessage, whose `content` is a discriminated
+ *  union of block interfaces. Those interfaces have no index signature, so the block array is not
+ *  convertible to Record<string, unknown>; narrowing on `b.type` costs nothing and couples harder —
+ *  a block field the SDK renames is a compile error here rather than a silently dropped value. */
+type SdkContentBlock = SDKAssistantMessage["message"]["content"][number];
+
+/** The synthetic tool call the SDK delivers a schema verdict through, found on 2026-09-27 by this
+ *  plan's live test against SDK 0.3.283. A query run with `outputFormat` ends with the model calling
+ *  a tool named StructuredOutput whose input is the verdict object, and the SDK then hands that same
+ *  object back as `structured_output` on the result message — so the executor already has the
+ *  verdict, and the tool call carries nothing the log does not otherwise hold.
+ *
+ *  It is dropped rather than counted because counting it would inflate `toolCalls` by exactly one on
+ *  every step that has a schema, which would disable spec §6.7's zero-tool-call detector for exactly
+ *  those steps: a loop iteration that did nothing would report one tool call instead of none, and
+ *  that count is the ep09/ep10 failure signal.
+ *
+ *  The name is not in the SDK's type declarations — `sdk.d.ts` never mentions it, and the string
+ *  lives in the bundled Claude Code binary — so it cannot be imported, and it is pinned here and
+ *  nowhere else in the engine. If the SDK renames it, the symptom is a schema step whose `toolCalls`
+ *  is one higher than the tools it ran, and this constant is the only line to change. */
+const STRUCTURED_OUTPUT_TOOL = "StructuredOutput";
+
+function isVerdictDelivery(b: SdkContentBlock): boolean {
+  return b.type === "tool_use" && b.name === STRUCTURED_OUTPUT_TOOL;
+}
+
+function toBlock(b: SdkContentBlock): AgentContentBlock {
+  if (b.type === "text") return { type: "text", text: b.text };
+  if (b.type === "tool_use") return { type: "tool_use", id: b.id, name: b.name, input: b.input };
+  return { type: b.type };
 }
 ```
 
-The implementer types this against the installed SDK's `SDKMessage`, `SDKAssistantMessage`, and `SDKResultMessage`. Where a field named here is not on the SDK's type (the docs were read on 2026-09-27 against 0.3.283 and can drift), narrow with an `in` check as the code above does for `errors`; never cast to `any`, and never invent a field. If `options: { ...options }` is rejected because one of `AgentQueryOptions`'s field types does not match the SDK's `Options`, adjust the adapter's spread with an explicit mapping and report which field differed — the executor's `AgentQueryOptions` is not changed.
+This is typed against the installed SDK's `SDKMessage` and `SDKAssistantMessage`. Where a field named here is not on the SDK's type (the docs were read on 2026-09-27 against 0.3.283 and can drift), narrow with an `in` check as the code does for `errors`; never cast to `any`, and never invent a field. The executor's `AgentQueryOptions` is never changed to fit the SDK; the adapter is.
+
+Add `engine/test/sdk-query.test.ts` with two tests of `toAgentMessage`, building the inputs as the SDK's own types (`SDKAssistantMessage`, `SDKResultSuccess`, cast through `unknown` only for fields the adapter does not read): an assistant message carrying a `Read` tool_use and a `StructuredOutput` tool_use maps to exactly one block; a success result copies `subtype`, `session_id`, `result`, `structured_output`, `num_turns`, `duration_ms`, `total_cost_usd`, and `permission_denials` (as `{ tool_name }`).
 
 - [ ] **Step 2: Typecheck the adapter**
 
@@ -1496,6 +1531,7 @@ describe.skipIf(!process.env["SHOWRUNNER_LIVE"])("live Agent SDK", () => {
     const r = await createAgentExecutor({ query: sdkQuery })(step, { runId: "r1", episodeId: "s02e01", showRoot: root, results: {} }, emit);
     expect(r.ok).toBe(true);
     if (r.ok) expect(r.verdict).toMatchObject({ pass: true, word: "TANGERINE" });
+    if (r.ok) expect(r.toolCalls).toBe(1);
     expect(kinds[0]).toBe("agent_query");
     expect(kinds.at(-1)).toBe("agent_result");
     expect(tools).toContain("Read");
@@ -1521,17 +1557,17 @@ export * from "./agent-step.js";
 export * from "./sdk-query.js";
 ```
 
-`README.md` gains a section **"Agent steps"** after the step-kinds section, stating: an agent step is one SDK query; the executor is built with `createAgentExecutor({ query: sdkQuery, promptsDir, models })`; the prompt template syntax table from Task 2; that the query runs with `cwd` = the show root, `permissionMode: "dontAsk"`, `settingSources: []`, and the `claude_code` system prompt preset; the three events and their payload fields (as written in Task 3, step 9); the outcome shapes; the bounds (`timeoutMs`, `idleTimeoutMs`, `maxTurns`, `maxBudgetUsd`) and what each failure message says; the context policy and its restart behaviour; how to run the live test; and that `total_cost_usd` is the SDK's client-side estimate, not billing data.
+`README.md` gains a section **"Agent steps"** after the step-kinds section, stating: an agent step is one SDK query; the executor is built with `createAgentExecutor({ query: sdkQuery, promptsDir, models })`; the prompt template syntax table from Task 2; that the query runs with `cwd` = the show root, `permissionMode: "dontAsk"`, `settingSources: []`, and the `claude_code` system prompt preset; the three events and their payload fields (as written in Task 3, step 9), with `toolCalls` worded as the count of real tool invocations and one sentence that the SDK's synthetic `StructuredOutput` call is dropped in the adapter; the outcome shapes; the bounds (`timeoutMs`, `idleTimeoutMs`, `maxTurns`, `maxBudgetUsd`) and what each failure message says; the context policy and its restart behaviour; how to run the live test; and that `total_cost_usd` is the SDK's client-side estimate, not billing data.
 
 - [ ] **Step 6: Run everything**
 
 Run: `cd ~/GitHub/Showrunner/engine && npx vitest run && npm run typecheck && grep -rn -i 'dead ?light' engine/ README.md ; grep -rn 'bypassPermissions' engine/src ; grep -rln 'claude-agent-sdk' engine/src`
-Expected: `130 passed | 1 skipped` across 18 files; typecheck prints nothing; the first two greps print nothing; the third prints only `engine/src/sdk-query.ts`.
+Expected: `132 passed | 1 skipped` across 19 files; typecheck prints nothing; the first two greps print nothing; the third prints only `engine/src/sdk-query.ts`.
 
 - [ ] **Step 7: Commit and push**
 
 ```bash
-cd ~/GitHub/Showrunner && git add engine/src/sdk-query.ts engine/src/index.ts engine/test/agent-live.test.ts README.md && git commit -F - <<'MSG'
+cd ~/GitHub/Showrunner && git add engine/src/sdk-query.ts engine/src/index.ts engine/test/sdk-query.test.ts engine/test/agent-live.test.ts README.md && git commit -F - <<'MSG'
 sdk-query: the one Agent SDK import, an env-gated live test, exports, and the README's agent section
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
