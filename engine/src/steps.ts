@@ -70,12 +70,20 @@ export interface AgentStep extends StepBase {
 export interface GateStep extends StepBase {
   kind: "gate";
   message: (ctx: RunContext) => string;
+  /** The agent run when the showrunner rejects. The fix agent is a step of its own: its events
+   *  are logged under its own id, so its id shares the pipeline's id namespace (orderSteps
+   *  enforces that) and a completed run of it is visible in the log and is not repeated after a
+   *  crash. Its context carries the rejection notes as the result key `<gate-id>:rejection`. */
   onReject?: AgentStep;
   maxAttempts?: number;
 }
 
 export interface LoopStep extends StepBase {
   kind: "loop";
+  /** The agent run once per iteration. The body is not a step of its own: its events are logged
+   *  under the loop's id, so the loop is one step in the run's history however many times the
+   *  body runs, and the iterations are told apart by the loop_iteration events between them. The
+   *  body's id still has to be unique — it names the result key `<body-id>:iteration`. */
   body: AgentStep;
   /** The exact string whose presence in the body's final text ends the loop. */
   until: string;
