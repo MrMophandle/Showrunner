@@ -122,7 +122,7 @@ async function pump(
     }
   } catch (err) {
     controller.abort();
-    void it.return?.().catch(() => {});
+    try { void it.return?.().catch(() => {}); } catch { /* a return() that throws synchronously has nothing to tell us */ }
     throw err;
   } finally {
     if (total) clearTimeout(total);
@@ -131,9 +131,12 @@ async function pump(
 }
 
 export function createAgentExecutor(opts: AgentExecutorOptions): Executors["agent"] {
-  /** context: "shared" — session ids by `${runId}/${stepId}`, for this executor's lifetime. A
-   *  restart makes a new executor, so a resumed run's shared step starts a fresh session; the
-   *  agent_query it logs says resumed: false, which is the record of that. */
+  /** context: "shared" — session ids by `${episodeId}/${runId}/${stepId}`, for this executor's
+   *  lifetime. The episode id is part of the key because a run id is only unique within an episode:
+   *  two episodes could carry the same run-id string, and one long-lived executor (a console process
+   *  that runs several episodes in turn) would then resume the first episode's session inside the
+   *  second. A restart makes a new executor, so a resumed run's shared step starts a fresh session;
+   *  the agent_query it logs says resumed: false, which is the record of that. */
   const sessions = new Map<string, string>();
 
   return async (step: AgentStep, ctx: RunContext, emit: Emit): Promise<AgentOutcome> => {
@@ -161,7 +164,7 @@ export function createAgentExecutor(opts: AgentExecutorOptions): Executors["agen
     // Both the read and the write of the session map are gated on "shared", so the policy is one
     // predicate rather than two that have to agree: a "fresh" step leaves no entry behind that a
     // later query could resume, whatever it does with its session id.
-    const sessionKey = `${ctx.runId}/${step.id}`;
+    const sessionKey = `${ctx.episodeId}/${ctx.runId}/${step.id}`;
     const resume = step.context === "shared" ? sessions.get(sessionKey) : undefined;
     const options: AgentQueryOptions = {
       cwd: ctx.showRoot,
@@ -226,9 +229,8 @@ export function createAgentExecutor(opts: AgentExecutorOptions): Executors["agen
     if (step.context === "shared" && sessionId !== undefined) sessions.set(sessionKey, sessionId);
 
     // 8: the outcome. A deadline, a rejected emit or a handler fault discards the result that
-    //    raced in, so
-    //    `r` is a result only when nothing has already failed — and the total timeout therefore
-    //    wins over a result that arrived after it.
+    //    raced in, so `r` is a result only when nothing has already failed — and the total timeout
+    //    therefore wins over a result that arrived after it.
     const r = failure !== undefined ? undefined : result;
     let outcome: AgentOutcome;
     if (r === undefined) {

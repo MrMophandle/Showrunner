@@ -75,6 +75,126 @@ its own: its events are logged under its own id, and its id shares the pipeline'
 A loop's `body` is **not** a step of its own: its events are logged under the loop's id, so the
 loop stays one step in the run's history however many times the body runs.
 
+## Agent steps
+
+An agent step is **one Agent SDK query**: a prompt file, a model, a tool allowlist, a context
+policy, and an optional JSON schema go in, and a verdict or a final text comes out. The executor is
+built once, with the SDK's `query` injected, and handed to the runner as `executors.agent`:
+
+```ts
+import { createAgentExecutor, sdkQuery } from "@showrunner/engine";
+
+const agent = createAgentExecutor({ query: sdkQuery, promptsDir, models });
+```
+
+`query` is a seam, not a convenience: production passes `sdkQuery` and the tests pass a fake, so
+`engine/src/sdk-query.ts` is the only file in the engine that imports `@anthropic-ai/claude-agent-sdk`
+and the suite never touches the network. `promptsDir` is optional and defaults, per call, to
+`<showRoot>/prompts`. `models` is an alias map (`{ medium: "claude-sonnet-5" }`); a model the map
+does not name is passed to the SDK unchanged.
+
+### The prompt file
+
+A step names its prompt by a path relative to the show's prompts directory. The file is read, hashed
+with SHA-256 — the hash is what `agent_query` records, so "the prompt as it was" can be answered
+later — and rendered. A path that escapes the prompts directory is refused before anything is logged
+or queried.
+
+| Written in the prompt | Renders as |
+|---|---|
+| `{{episodeId}}` | the run's episode id |
+| `{{runId}}` | the run id |
+| `{{showRoot}}` | the absolute path of the show root |
+| `{{results.<stepId>}}` | that step's result: a string as itself, a number or boolean stringified, an object as pretty-printed JSON |
+| `{{results.<stepId>.<field>}}` | a field of that step's result object, at any depth (`{{results.review.notes.tone}}`) |
+
+**Every hole is an error.** An unknown variable, a step with no result, a path through a non-object,
+a missing key, a null value, or a surviving `{{` or `}}` throws `TemplateError` naming the variable
+as written, and the step fails before the query is made. A prompt with a hole in it lies to the
+model quietly, which is the failure this refuses to ship.
+
+### What the query runs with
+
+| Option | Value | Why |
+|---|---|---|
+| `cwd` | the show root | File tools are scoped to the show, never to the engine checkout |
+| `permissionMode` | `"dontAsk"` | Nothing outside the allowlist is approved; `bypassPermissions` appears nowhere in `engine/` |
+| `tools` / `allowedTools` | the step's `allowedTools` | `tools` decides what is in context, `allowedTools` auto-approves it; `mcp__`-prefixed names go only to `allowedTools` |
+| `settingSources` | `[]` | No user, project or local settings on the host machine leak into a step |
+| `systemPrompt` | `{ type: "preset", preset: "claude_code" }` | Omitting it would give a minimal prompt rather than Claude Code's |
+| `outputFormat` | `{ type: "json_schema", schema }` when the step has one | The SDK validates the verdict against **JSON Schema draft-07** and re-prompts on mismatch; a `$schema` naming a newer draft is refused by the executor before the query |
+| `abortController` | one per query | How a timeout stops the query |
+
+### The three events
+
+The executor owes the log exactly these three, and the runner writes `step_started`,
+`step_completed` and `step_failed` around them.
+
+| Kind | Payload |
+|---|---|
+| `agent_query` | `promptFile`, `promptHash`, `promptPath`, `model`, `modelAlias`, `allowedTools`, `context`, `schema` (whether the step has one), `resumed` (whether this query resumed a session) — one per query |
+| `agent_tool_call` | `tool`, `input`, `toolUseId`, `index` (1-based, in stream order) — one per tool invocation |
+| `agent_result` | `ok`, `toolCalls`, `permissionDenials`, `deniedTools`, and, when the query produced them, `subtype`, `numTurns`, `durationMs`, `costUsd`, `sessionId`; then `verdict` for a schema step that succeeded, `text` for a schemaless one, and `error` when it failed |
+
+`toolCalls` is the count of **real tool invocations** the agent made, and a loop's per-iteration
+count is reported on `loop_iteration` (design §6.7: an iteration with zero tool calls did nothing).
+The SDK delivers a schema verdict through a synthetic tool call named `StructuredOutput`, which
+`engine/src/sdk-query.ts` drops before the executor sees it, so that call is neither logged as an
+`agent_tool_call` nor counted — the verdict itself arrives on the result message.
+
+`costUsd` is the SDK's **client-side estimate**, not billing data. Authoritative figures come from
+the Usage and Cost API.
+
+`sessionId` is the pointer to the full conversation: the transcript lives at
+`~/.claude/projects/<encoded-cwd>/<session-id>.jsonl` on the machine that ran the step, and is not
+copied into the show repository.
+
+### The outcome
+
+A step succeeds as `{ ok: true, text, toolCalls }`, with `verdict` carrying the parsed object when
+the step declared a schema. It fails as `{ ok: false, error }`. **A success with no structured
+output is a failure** for a step with a schema: the SDK can end `subtype: "success"` without one,
+and a missing verdict is never treated as an empty one.
+
+### The bounds, and what each failure says
+
+A session never times out on its own, so the executor imposes the clocks itself and does not rely on
+the SDK's iterator honouring the abort.
+
+| Bound | Effect | The error |
+|---|---|---|
+| `timeoutMs` | Wall clock for the whole query | `timed out after <n> ms` |
+| `idleTimeoutMs` | Wall clock reset on every message from the SDK | `idle for <n> ms` |
+| `maxTurns` | The SDK stops after that many agentic turns | `error_max_turns`, plus `: <errors>` when the result carried any |
+| `maxBudgetUsd` | The SDK stops when its cost estimate reaches the cap | `error_max_budget_usd`, plus `: <errors>` when the result carried any |
+
+Other failures are worded so the log says which layer broke: `query failed: <msg>` when the SDK
+threw and no result had arrived, `log write failed: <msg>` when `emit` rejected, `message handling
+failed: <msg>` when the executor's own handler threw, `query ended without a result message`,
+`result message with no subtype`, `success without structured output`, and `schema must be JSON
+Schema draft-07, got <declared>`. A deadline, a rejected `emit` or a handler fault discards a result
+that raced in, so a timeout wins over a result that arrived after it.
+
+### The context policy
+
+`context: "fresh"` starts a new SDK session for every query. `context: "shared"` resumes: within one
+run, the second and later queries of the same step continue the session the first opened, which is
+how a loop body keeps its conversation across iterations. Sessions are held in memory by the
+executor, keyed on `<episodeId>/<runId>/<stepId>`.
+
+**A restart does not recover a session.** Resuming a run builds a new executor, so the first query of
+a shared step after a restart is fresh; its `agent_query` records `resumed: false`, which is the
+log's record of the discontinuity.
+
+### The live test
+
+`engine/test/agent-live.test.ts` runs a real query — the only test that does. It reads a file with
+only `Read` allowed and checks the schema-validated verdict, the event order, and that nothing but
+`Read` was invoked. It is skipped unless `SHOWRUNNER_LIVE` is set, because it costs a few cents and
+needs credentials on the machine (`ANTHROPIC_API_KEY`, or the machine's Claude Code login):
+
+    cd engine && SHOWRUNNER_LIVE=1 npx vitest run test/agent-live.test.ts
+
 ## Status vocabulary
 
 A step's status is derived from the log, never stamped by hand.

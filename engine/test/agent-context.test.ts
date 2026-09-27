@@ -38,12 +38,16 @@ describe("context policy", () => {
     expect(events.map((e) => e["resumed"])).toEqual([false, true]);
   });
   it("shared: a different run id, or a different step id, does not resume", async () => {
-    const f = scripted(["sess-A", "sess-B", "sess-C"], ["", "", ""]);
+    const f = scripted(["sess-A", "sess-B", "sess-C", "sess-D"], ["", "", "", ""]);
     const ex = createAgentExecutor({ query: f.query, promptsDir });
     await ex(step(), ctx("r1"), noop);
     await ex(step(), ctx("r2"), noop);
     await ex(step({ id: "other" }), ctx("r1"), noop);
-    expect(f.calls.map((c) => c.resume)).toEqual([undefined, undefined, undefined]);
+    // The same run id and the same step id under a different episode id: the session key is scoped
+    // by episode as well, so two episodes sharing a run-id string in one long-lived executor do not
+    // resume each other's sessions.
+    await ex(step(), { ...ctx("r1"), episodeId: "s02e02" }, noop);
+    expect(f.calls.map((c) => c.resume)).toEqual([undefined, undefined, undefined, undefined]);
   });
   it("fresh: nothing is resumed even within one run", async () => {
     const f = scripted(["sess-A", "sess-A"], ["", ""]);
@@ -70,7 +74,10 @@ describe("the executor inside a run", () => {
     const events = await log.read();
     const iterations = events.filter((e) => e.kind === "loop_iteration").map((e) => [e.payload["iteration"], e.payload["sentinel"], e.payload["toolCalls"]]);
     expect(iterations).toEqual([[1, false, 1], [2, true, 1]]);
-    expect(events.filter((e) => e.kind === "agent_tool_call").every((e) => e.stepId === "draft")).toBe(true);
+    const toolCalls = events.filter((e) => e.kind === "agent_tool_call");
+    // The length is asserted first so the .every below cannot pass on an empty array.
+    expect(toolCalls.length).toBe(2);
+    expect(toolCalls.every((e) => e.stepId === "draft")).toBe(true);
     expect(f.calls[1]!.resume).toBe("sess-L");
     expect(f.calls[0]!.cwd).toBe(root);
   });

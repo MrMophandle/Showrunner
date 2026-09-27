@@ -42,12 +42,13 @@ describe("agent timeouts", () => {
       await never();
     };
     const t0 = Date.now();
-    const r = await createAgentExecutor({ query, promptsDir })(step({ idleTimeoutMs: 100 }), ctx(), recorder().emit);
-    expect(r).toEqual({ ok: false, error: "idle for 100 ms" });
+    const r = await createAgentExecutor({ query, promptsDir })(step({ idleTimeoutMs: 200 }), ctx(), recorder().emit);
+    expect(r).toEqual({ ok: false, error: "idle for 200 ms" });
     expect(controller!.signal.aborted).toBe(true);
-    // The message at ~60 ms rearms the idle clock, so the fire lands at ~160 ms rather than ~100.
-    // Without the reset this elapsed time would be ~100 ms and the assertion would fail.
-    expect(Date.now() - t0).toBeGreaterThan(120);
+    // The message at ~60 ms rearms the idle clock, so the fire lands at ~260 ms rather than ~200.
+    // Without the reset the fire would land at ~200 ms and this assertion would fail; a 60 ms timer
+    // would have to overrun by 140 ms to pass it by accident, which closes the flake direction.
+    expect(Date.now() - t0).toBeGreaterThan(200);
   });
 
   it("a query that finishes inside both bounds is unaffected and leaves no timers running", async () => {
