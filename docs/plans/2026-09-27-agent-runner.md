@@ -309,6 +309,12 @@ describe("renderPrompt", () => {
     expect(() => renderPrompt("{{}}", ctx)).toThrow(TemplateError);
     expect(() => renderPrompt("{{results.nul}}", { ...ctx, results: { nul: null } })).toThrow(/nul/);
   });
+  it("refuses doubled braces left over after substitution, but not single braces in a value", () => {
+    expect(() => renderPrompt("{{results.{x}}}", ctx)).toThrow(TemplateError);
+    expect(() => renderPrompt("{{results.{x}}}", ctx)).toThrow(/unbalanced or malformed template braces near: \{\{results\.\{x\}\}\}/);
+    expect(() => renderPrompt("{{results.setup", ctx)).toThrow(/unbalanced or malformed template braces near: \{\{results\.setup/);
+    expect(renderPrompt("{{results.setup}}", { ...ctx, results: { setup: "a {b} c" } })).toBe("a {b} c");
+  });
 });
 ```
 
@@ -350,12 +356,19 @@ export async function loadPrompt(promptsDir: string, promptFile: string): Promis
 type TemplateContext = Pick<RunContext, "episodeId" | "runId" | "showRoot" | "results">;
 
 const VARIABLE = /\{\{([^{}]*)\}\}/g;
+const LEFTOVER_BRACE = /\{\{|\}\}/;
 
 /** Substitutes every `{{...}}` in `template`. Every hole is an error: an unknown name, a missing
  *  result, a path through a non-object, or a null value throws TemplateError naming the variable
- *  as written, because a prompt with a hole in it lies to the model quietly. */
+ *  as written, because a prompt with a hole in it lies to the model quietly.
+ *
+ *  A doubled brace surviving the substitution is the one hole VARIABLE cannot see — its character
+ *  class matches no brace, so `{{results.{x}}}` and an unterminated `{{results.setup` match nothing
+ *  and would otherwise pass into the prompt verbatim. So after substituting, any remaining `{{` or
+ *  `}}` is refused. Single braces are left alone. A rendered *value* that itself contains `{{` is
+ *  refused too, which is intended: a step's result is never expected to carry template syntax. */
 export function renderPrompt(template: string, ctx: TemplateContext): string {
-  return template.replace(VARIABLE, (whole, inner: string) => {
+  const rendered = template.replace(VARIABLE, (whole, inner: string) => {
     const expr = inner.trim();
     const fail = (why: string): never => { throw new TemplateError(`${whole}: ${why}`); };
     if (expr === "") return fail("empty variable");
@@ -380,13 +393,18 @@ export function renderPrompt(template: string, ctx: TemplateContext): string {
     if (typeof value === "number" || typeof value === "boolean") return String(value);
     return JSON.stringify(value, null, 2);
   });
+  const leftover = rendered.search(LEFTOVER_BRACE);
+  if (leftover !== -1) {
+    throw new TemplateError(`unbalanced or malformed template braces near: ${rendered.slice(leftover, leftover + 40)}`);
+  }
+  return rendered;
 }
 ```
 
 - [ ] **Step 5: Run the tests**
 
 Run: `cd ~/GitHub/Showrunner/engine && npx vitest run test/prompt-template.test.ts && npm run typecheck`
-Expected: PASS, 7 tests; typecheck prints nothing.
+Expected: PASS, 8 tests; typecheck prints nothing.
 
 - [ ] **Step 6: Commit**
 
@@ -1009,7 +1027,7 @@ A deadline discards any result that raced in late (`result = undefined`), so "th
 - [ ] **Step 4: Run the tests and the whole suite**
 
 Run: `cd ~/GitHub/Showrunner/engine && npx vitest run test/agent-timeouts.test.ts && npx vitest run && npm run typecheck`
-Expected: PASS, 4 tests; the suite is `120 passed` across 16 files (94 + 7 + 15 + 4); typecheck prints nothing.
+Expected: PASS, 4 tests; the suite is `121 passed` across 16 files (94 + 8 + 15 + 4); typecheck prints nothing.
 
 - [ ] **Step 5: Commit**
 
@@ -1179,7 +1197,7 @@ and after the pump (whether it succeeded or not), when a session id was seen:
 - [ ] **Step 4: Run the tests and the suite**
 
 Run: `cd ~/GitHub/Showrunner/engine && npx vitest run test/agent-context.test.ts && npx vitest run && npm run typecheck`
-Expected: PASS, 5 tests; the suite is `125 passed` across 17 files; typecheck prints nothing.
+Expected: PASS, 5 tests; the suite is `126 passed` across 17 files; typecheck prints nothing.
 
 - [ ] **Step 5: Commit**
 
@@ -1321,7 +1339,7 @@ export * from "./sdk-query.js";
 - [ ] **Step 6: Run everything**
 
 Run: `cd ~/GitHub/Showrunner/engine && npx vitest run && npm run typecheck && grep -rn -i 'dead ?light' engine/ README.md ; grep -rn 'bypassPermissions' engine/src ; grep -rln 'claude-agent-sdk' engine/src`
-Expected: `125 passed | 1 skipped` across 18 files; typecheck prints nothing; the first two greps print nothing; the third prints only `engine/src/sdk-query.ts`.
+Expected: `126 passed | 1 skipped` across 18 files; typecheck prints nothing; the first two greps print nothing; the third prints only `engine/src/sdk-query.ts`.
 
 - [ ] **Step 7: Commit and push**
 
