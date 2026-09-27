@@ -273,9 +273,24 @@ async function runGateStep(step: GateStep, ctx: RunContext, emit: Emit, executor
   return { kind: "waiting", gate: { stepId: step.id, attempt, message, openedAt: new Date().toISOString() } };
 }
 
-// The loop step is completed in Task 10. Until then it is an explicit failure,
-// so a pipeline using it cannot silently pass.
-async function runLoopStep(step: LoopStep, _ctx: RunContext, emit: Emit, _executors: Executors): Promise<StepOutcome> {
-  await emit("step_failed", { error: `loop step ${step.id}: not implemented` });
-  return { kind: "failed", error: `loop step ${step.id}: not implemented` };
+async function runLoopStep(step: LoopStep, ctx: RunContext, emit: Emit, executors: Executors): Promise<StepOutcome> {
+  await emit("step_started", { kind: "loop", body: step.body.id, until: step.until, max: step.maxIterations });
+  for (let iteration = 1; iteration <= step.maxIterations; iteration++) {
+    const iterCtx: RunContext = { ...ctx, results: { ...ctx.results, [`${step.body.id}:iteration`]: iteration } };
+    const r = await executors.agent(step.body, iterCtx, emit);
+    if (!r.ok) {
+      await emit("loop_iteration", { iteration, max: step.maxIterations, sentinel: false, toolCalls: 0, error: r.error });
+      await emit("step_failed", { error: `iteration ${iteration}: ${r.error}` });
+      return { kind: "failed", error: `iteration ${iteration}: ${r.error}` };
+    }
+    const sentinel = r.text.includes(step.until);
+    await emit("loop_iteration", { iteration, max: step.maxIterations, sentinel, toolCalls: r.toolCalls });
+    if (sentinel) {
+      await emit("step_completed", { result: r.text, iterations: iteration });
+      return { kind: "completed", result: r.text };
+    }
+  }
+  const error = `exhausted ${step.maxIterations} iterations without sentinel ${step.until}`;
+  await emit("step_failed", { error });
+  return { kind: "failed", error };
 }
