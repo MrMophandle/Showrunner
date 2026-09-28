@@ -21,8 +21,12 @@ ALREADY placed but clipped too short, and lengthens them -- so the breath lands 
 a boundary the model itself chose. Idempotent: re-running finds nothing to do.
 """
 import json, os, subprocess, sys
+from pathlib import Path
+
 import numpy as np
 import soundfile as sf
+
+from lib import showconfig as sc
 
 MAX_RUN = 8.0        # longest acceptable unbroken speech stretch (median is ~5s)
 BREATH = 0.20        # a gap at/above this already reads as a breath
@@ -77,18 +81,45 @@ def fix(path):
         sf.write(path, x, sr)
     return inserted, dur
 
+
+def resynth(ep: str) -> None:
+    """Re-render this episode's missing takes: run tts-generate.py as a child of THIS process.
+
+    Three properties matter, and all three are the point (plan ruling F-11):
+      * the child is this interpreter and the script beside this file -- not `uv run` and not a
+        show-relative path, because the engine runs a step with the SHOW root as the working
+        directory, where this repository's scripts are not;
+      * its stdout is NOT redirected, so its ::progress lines and its per-segment prints reach the
+        engine's log instead of being swallowed;
+      * it is NOT given a new session, so it stays in the process group the engine spawned and
+        kills on shutdown or timeout.
+    The episode id travels as argv: no environment variable carries it any more.
+    """
+    subprocess.run([sys.executable, str(Path(__file__).with_name("tts-generate.py")), ep],
+                   check=True)
+
+
 def main():
-    ep = os.environ.get("ARGUMENTS", "").split()[0] if os.environ.get("ARGUMENTS") else ""
-    if not ep: sys.exit("breath-qc: episode id missing (first token of ARGUMENTS)")
+    # The engine runs this with the show root as the working directory; --show-root <path> is for
+    # an operator running it from somewhere else.
+    root = sc.show_root(sys.argv)
+    os.chdir(root)
+    cfg = sc.load(root)
+    # Which speaker key carries the narration is the show's to say (audio.narratorSpeakerKey).
+    narrator = str(sc.value(cfg, "audio", "narratorSpeakerKey"))
+    ep = sys.argv[1] if len(sys.argv) > 1 else ""
+    if not ep:
+        sys.exit("breath-qc: episode id missing (usage: breath-qc.py <episode> [--show-root <path>])")
     base = f"Production/{ep}"
     doc = json.load(open(f"{base}/tts-script.json"))
     if doc.get("engine", "kokoro") != "qwen3":
         print("BREATH_QC_SKIP (kokoro)"); return
-    narr = {s["i"] for s in doc["segments"] if s["speaker"] == "narrator"}
+    narr = {s["i"] for s in doc["segments"] if s["speaker"] == narrator}
 
     touched = total = 0
-    for i in sorted(narr):
+    for pos, i in enumerate(sorted(narr), 1):
         p = f"{base}/audio/segments/{i:04d}.wav"
+        sc.progress(pos, len(narr), "segments")
         if not os.path.exists(p): continue
         got, dur = fix(p)
         if got > 0:
@@ -104,12 +135,14 @@ def main():
         # shipped that way before this was found -- 2026-09-01).
         # Same contract pace-qc keeps: whatever mutates a WAV re-measures.
         # tts-generate skips existing files, so this only rewrites the manifest.
-        subprocess.run(["uv", "run", ".archon/scripts/tts-generate.py"],
-                       env=dict(os.environ, ARGUMENTS=ep), check=True,
-                       stdout=subprocess.DEVNULL)
+        resynth(ep)
         print(f"BREATH_QC_OK ({touched} segments given breath, {total:.1f}s inserted; "
               f"manifest durations refreshed)")
     else:
-        print(f"BREATH_QC_OK (no narrator segment exceeds {MAX_RUN:.0f}s unbroken)")
+        print(f"BREATH_QC_OK (no {narrator} segment exceeds {MAX_RUN:.0f}s unbroken)")
 
-main()
+if __name__ == "__main__":
+    try:
+        main()
+    except sc.ShowConfigError as err:
+        sys.exit(f"breath-qc: {err}")

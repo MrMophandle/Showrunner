@@ -1,0 +1,36 @@
+[project]
+name = "showrunner-scripts"
+version = "0.1.0"
+description = "The engine's deterministic pipeline steps. Every script takes argv, runs with the show root as its working directory, and reads the show's showrunner.json through lib/showconfig.py."
+requires-python = ">=3.11"
+# The union of every script's inline `# /// script` dependency block, listed once. The inline
+# blocks stay in the scripts so a single script still runs standalone under `uv run`; this list is
+# what the test environment and the engine's own runs resolve.
+#   google-genai   nano-banana-generate.py
+#   kokoro-onnx    tts-generate.py (the legacy kokoro engine)
+#   mlx-audio      tts-generate.py, design-voice.py
+#   numpy          audio-mix.py, breath-qc.py, design-voice.py, image-qc.py, truncation-qc.py, tts-generate.py
+#   pillow         image-qc.py, nano-banana-generate.py
+#   soundfile      audio-mix.py, breath-qc.py, design-voice.py, pace-qc.py, truncation-qc.py, tts-generate.py
+dependencies = [
+    "google-genai",
+    "kokoro-onnx",
+    "mlx-audio",
+    "numpy",
+    "pillow",
+    "soundfile",
+]
+
+[dependency-groups]
+dev = ["pytest"]
+
+# No [build-system]: this directory is a collection of scripts, not an installable package, so uv
+# treats it as a virtual project and installs only the dependencies.
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+# Only this task's hermetic suite is collected. The eight test_*.py files copied verbatim from the
+# show repository sit beside the scripts they cover and move into tests/ with those scripts in the
+# later tasks of this plan.
+testpaths = ["tests"]

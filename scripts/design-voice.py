@@ -6,18 +6,28 @@ Voice design is NON-deterministic — each candidate is a fresh roll; the WAV yo
 IS the voice (lock it as a reference and clone from it thereafter).
 
 Usage:
-  uv run .archon/scripts/design-voice.py --instruct "A warm gruff older male voice..." \
+  design-voice.py --instruct "A warm gruff older male voice..." \
       --text "The line this voice will speak" --out Production/ep01/guest-refs/rourke \
-      [--candidates 2]
+      [--candidates 2] [--show-root <path>]
 Writes <out>-1.wav, <out>-2.wav, ... (loudness-normalized) and prints the paths."""
-import argparse, os, subprocess
+import argparse, os, subprocess, sys
 import numpy as np
 import soundfile as sf
 
-SR = 24000
+from lib import showconfig as sc
+
 MODEL = "mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-bf16"
 
 def main() -> None:
+    # The engine runs this with the show root as the working directory; --show-root <path> is for
+    # an operator running it from somewhere else. It is taken out of argv before argparse sees it.
+    root = sc.show_root(sys.argv)
+    os.chdir(root)
+    cfg = sc.load(root)
+    # A designed candidate is normalised to the show's own voice-design target, which is
+    # deliberately quieter than the mastering target a finished mix is held to.
+    sr = int(sc.value(cfg, "audio", "sampleRate"))
+    design_i = sc.value(cfg, "audio", "voiceDesignLoudnessI")
     ap = argparse.ArgumentParser()
     ap.add_argument("--instruct", required=True)
     ap.add_argument("--text", required=True)
@@ -31,11 +41,16 @@ def main() -> None:
         res = list(model.generate_voice_design(text=a.text, instruct=a.instruct, language="english"))
         audio = np.concatenate([np.asarray(r.audio, dtype=np.float32) for r in res])
         path = f"{a.out}-{n}.wav"
-        sf.write(path, audio, SR)
+        sf.write(path, audio, sr)
         tmp = path[:-4] + ".n.wav"
         subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", path,
-                        "-af", "loudnorm=I=-16:TP=-1.5", "-ar", str(SR), tmp], check=True)
+                        "-af", f"loudnorm=I={design_i}:TP=-1.5", "-ar", str(sr), tmp], check=True)
         os.replace(tmp, path)
         print(f"DESIGNED {path}")
+        sc.progress(n, a.candidates, "candidates")
 
-main()
+if __name__ == "__main__":
+    try:
+        main()
+    except sc.ShowConfigError as err:
+        sys.exit(f"design-voice: {err}")

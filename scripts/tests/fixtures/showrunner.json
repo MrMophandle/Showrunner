@@ -1,0 +1,83 @@
+{
+  "showName": "Harbor Lights",
+  "showSlug": "HarborLights",
+  "promptsDir": "prompts",
+  "canonDir": "Canon",
+  "episodesDir": "Episodes",
+  "productionDir": "Production",
+  "models": {
+    "small": "claude-haiku-4-5",
+    "medium": "claude-sonnet-5",
+    "large": "claude-opus-4-8",
+    "writer": "claude-fable-5"
+  },
+  "airMap": {
+    "ep01": [1, 1],
+    "ep02": [1, 2]
+  },
+  "output": {
+    "nasMount": "/Volumes/media",
+    "nasRoot": "/Volumes/media/HarborLights",
+    "finalFilename": "{slug} S{season:02d}E{episode:02d}.mp4",
+    "mixFilename": "{slug} S{season:02d}E{episode:02d}.wav",
+    "videoFilename": "episode.mp4"
+  },
+  "audio": {
+    "sampleRate": 24000,
+    "loudness": { "i": -14, "tp": -1.5, "lra": 11 },
+    "voiceDesignLoudnessI": -16,
+    "roomToneDb": -42,
+    "roomToneFundamentalHz": 55,
+    "tailOutSeconds": 1.0,
+    "titleCardGapSeconds": 7.0,
+    "titleCardGapMaxSeconds": 8.5,
+    "sceneTransitionGapSeconds": 3.5,
+    "sceneTransitionGapMaxSeconds": 4.0,
+    "authoredPauseRangeSeconds": [0.2, 3.5],
+    "narratorSpeakerKey": "narrator",
+    "mainCast": ["narrator", "Maeve"],
+    "voiceRefsDir": "Production/voice-refs",
+    "guestRefsDir": "Production/{episodeId}/guest-refs",
+    "voiceRegistry": "Canon/voice-registry.md"
+  },
+  "visual": {
+    "refs": "Canon/refs.json",
+    "style": "Canon/visual-style.md",
+    "auditLaws": "Canon/visual-audit-laws.md",
+    "castingPileDir": "Canon/characters",
+    "candidatesDir": "Canon/_candidates",
+    "shotFrame": [1024, 576],
+    "characterKinds": ["human", "creature", "ship"],
+    "ambientPromptScaffold": ["lamp room glass, ", "grey sea horizon, "],
+    "styleConstants": "overcast coastal realism, hand-held framing, no text, no watermark.",
+    "collectivePopulatorBans": ["the crew", "a crowd", "background figures"]
+  },
+  "video": {
+    "fps": 30,
+    "crossfadeSeconds": 1.0,
+    "compositionId": "Episode",
+    "titleCard": {
+      "text": "HARBOR LIGHTS",
+      "fontFamily": "Georgia, 'Times New Roman', serif",
+      "colors": {
+        "background": "#05070a",
+        "type": "#d4d8b8",
+        "glow": "rgba(152, 160, 96, 0.25)",
+        "stage": "#0f1004"
+      },
+      "fadeSeconds": 2.0
+    }
+  },
+  "publish": {
+    "channelName": "[YOUR NAME]",
+    "playlistUrl": "https://www.youtube.com/playlist?list=PLharborlights",
+    "playlistName": "Harbor Lights Season 1",
+    "tags": "audio drama, coastal fiction, lighthouse, narrated fiction",
+    "category": "Film & Animation",
+    "standingCopy": {
+      "weekly": "New episodes weekly. Self-contained stories on one stretch of coast.",
+      "aiDisclosure": "A human dreamed up this world and rules every frame of it. AI helps with the writing, the narration, and the art."
+    },
+    "guide": "Canon/publishing-guide.md"
+  }
+}

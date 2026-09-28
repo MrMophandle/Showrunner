@@ -14,19 +14,20 @@ import json, os, subprocess, sys, tempfile
 import numpy as np
 import soundfile as sf
 
-SR = 24000
+from lib import showconfig as sc
+
 KOKORO_MODELS = os.path.expanduser("~/Models/kokoro")
 QWEN3_MODEL = "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-bf16"
 
-def trim(a: np.ndarray) -> np.ndarray:
+def trim(a: np.ndarray, sr: int) -> np.ndarray:
     idx = np.where(np.abs(a) > 0.01)[0]  # ~-40 dBFS
     if not len(idx):
         return a
-    pad = int(SR * 0.03)
+    pad = int(sr * 0.03)
     return a[max(0, idx[0] - pad):min(len(a), idx[-1] + pad)]
 
 def make_synth(engine: str, cast: dict):
-    """Returns synth(text, cast_entry, delivery) -> np.ndarray at SR."""
+    """Returns synth(text, cast_entry, delivery) -> np.ndarray at the show sample rate."""
     if engine == "qwen3":
         from mlx_audio.tts.utils import load_model
         model = load_model(QWEN3_MODEL)
@@ -64,9 +65,15 @@ def make_synth(engine: str, cast: dict):
     return synth
 
 def main() -> None:
-    ep = os.environ.get("ARGUMENTS", "").split()[0] if os.environ.get("ARGUMENTS") else ""
+    # The engine runs this with the show root as the working directory; --show-root <path> is for
+    # an operator running it from somewhere else. Everything below is show-relative from there.
+    root = sc.show_root(sys.argv)
+    os.chdir(root)
+    cfg = sc.load(root)
+    sr = int(sc.value(cfg, "audio", "sampleRate"))
+    ep = sys.argv[1] if len(sys.argv) > 1 else ""
     if not ep:
-        sys.exit("tts-generate: episode id missing (first token of ARGUMENTS)")
+        sys.exit("tts-generate: episode id missing (usage: tts-generate.py <episode> [--show-root <path>])")
     base = f"Production/{ep}"
     with open(f"{base}/tts-script.json") as f:
         doc = json.load(f)
@@ -78,7 +85,7 @@ def main() -> None:
     synth = make_synth(engine, cast)
     print(f"engine: {engine}")
     manifest = []
-    for seg in segs:
+    for pos, seg in enumerate(segs, 1):
         i, spk = seg["i"], seg["speaker"]
         if spk not in cast:
             sys.exit(f"tts-generate: segment {i} speaker '{spk}' not in cast")
@@ -97,31 +104,38 @@ def main() -> None:
             if cutoff:
                 visible = seg["text"].rstrip('—-–" ').strip()
                 ratio = min(0.97, (len(visible) / max(1, len(synth_text))) * 1.05)
-                n = max(int(SR * 0.2), int(len(arr) * ratio))
+                n = max(int(sr * 0.2), int(len(arr) * ratio))
                 arr = arr[:n]
-                fade = min(int(SR * 0.02), len(arr))
+                fade = min(int(sr * 0.02), len(arr))
                 arr[-fade:] = arr[-fade:] * np.linspace(1.0, 0.0, fade)
             fx = seg.get("fx_override") or c.get("fx")
             if fx:
                 with tempfile.TemporaryDirectory() as td:
-                    sf.write(f"{td}/a.wav", arr, SR)
+                    sf.write(f"{td}/a.wav", arr, sr)
                     subprocess.run(
                         ["ffmpeg", "-y", "-loglevel", "error", "-i", f"{td}/a.wav", "-af", fx, f"{td}/b.wav"],
                         check=True,
                     )
                     arr, _ = sf.read(f"{td}/b.wav")
                     arr = np.asarray(arr, dtype=np.float64)
-            arr = trim(arr)
-            sf.write(out, arr, SR)
+            arr = trim(arr, sr)
+            sf.write(out, arr, sr)
         dur = sf.info(out).duration
         manifest.append({"i": i, "speaker": spk, "duration_s": round(dur, 3),
                          "gap_before": seg.get("gap_before", 0.3),
                          **({"title_card_before": True} if seg.get("title_card_before") else {})})
         print(f"[{i}/{len(segs)}] {spk} {dur:.1f}s")
+        # One unit per segment, skipped-because-rendered included: the bar measures the episode,
+        # not the work this run happened to do.
+        sc.progress(pos, len(segs), "segments")
 
     with open(f"{base}/audio/manifest.json", "w") as f:
-        json.dump({"episode": ep, "sr": SR, "segments": manifest}, f, indent=1)
+        json.dump({"episode": ep, "sr": sr, "segments": manifest}, f, indent=1)
     total = sum(m["duration_s"] + m["gap_before"] for m in manifest)
     print(f"DONE {len(manifest)} segments, ~{total/60:.1f} min of audio")
 
-main()
+if __name__ == "__main__":
+    try:
+        main()
+    except sc.ShowConfigError as err:
+        sys.exit(f"tts-generate: {err}")

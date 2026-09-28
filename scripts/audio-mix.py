@@ -7,19 +7,43 @@ import json, os, subprocess, sys, tempfile
 import numpy as np
 import soundfile as sf
 
-# The mixed WAV is named by AIR order (not production id) so a pile of proofs sent
-# to a second listener is distinguishable and matches the final video names. Kept
-# in sync with build-timeline.py and finalize-video.py. Unmapped -> episode.wav.
-AIR = {"ep01": (1, 1), "ep02": (1, 2), "ep03": (1, 3), "ep04": (1, 4), "ep05": (1, 5), "ep06": (1, 6), "ep07": (1, 7), "ep08": (1, 8), "ep09": (1, 9), "ep10": (1, 10)}  # ep98 (the dead non-canon test-bed) deliberately UNMAPPED — it held slot 9
-#   until ep09 "The Wick" was written fresh; finalize-video.py has always had this right.
-def mix_wav(ep: str) -> str:
-    s, e = AIR.get(ep, (0, 0))
-    return f"DeadLight S{s:02d}E{e:02d}.wav" if (s, e) != (0, 0) else "episode.wav"
+from lib import showconfig as sc
+
+UNMAPPED_MIX = "episode.wav"
+
+def mix_wav(cfg: dict, ep: str) -> str:
+    """The mixed WAV's name, from the show's output.mixFilename pattern.
+
+    Named by AIR slot (not production id) so a pile of proofs sent to a second listener is
+    distinguishable and matches the final video names. An id the show's airMap does not place --
+    a non-canon test bed, an episode written before its slot was settled -- is named episode.wav.
+    """
+    try:
+        season, episode = sc.season_of(cfg, ep)
+    except sc.ShowConfigError:
+        return UNMAPPED_MIX
+    return sc.format_filename(str(sc.value(cfg, "output", "mixFilename")),
+                              slug=str(sc.value(cfg, "showSlug")),
+                              season=season, episode=episode, episode_id=ep)
 
 def main() -> None:
-    ep = os.environ.get("ARGUMENTS", "").split()[0] if os.environ.get("ARGUMENTS") else ""
+    # The engine runs this with the show root as the working directory; --show-root <path> is for
+    # an operator running it from somewhere else.
+    root = sc.show_root(sys.argv)
+    os.chdir(root)
+    cfg = sc.load(root)
+    ep = sys.argv[1] if len(sys.argv) > 1 else ""
     if not ep:
-        sys.exit("audio-mix: episode id missing (first token of ARGUMENTS)")
+        sys.exit("audio-mix: episode id missing (usage: audio-mix.py <episode> [--show-root <path>])")
+    # Everything the show decides: how its room tone sounds, how long the tail runs, what it is
+    # mastered to, and at what rate it is written.
+    out_sr = str(int(sc.value(cfg, "audio", "sampleRate")))
+    tail_out_s = float(sc.value(cfg, "audio", "tailOutSeconds"))
+    room_tone_db = sc.value(cfg, "audio", "roomToneDb", default=None)
+    room_tone_hz = float(sc.value(cfg, "audio", "roomToneFundamentalHz", default=0.0))
+    narrator = str(sc.value(cfg, "audio", "narratorSpeakerKey"))
+    loud = sc.value(cfg, "audio", "loudness")
+    TARGET = dict(I=str(loud["i"]), TP=str(loud["tp"]), LRA=str(loud["lra"]))
     base = f"Production/{ep}/audio"
     with open(f"{base}/manifest.json") as f:
         man = json.load(f)
@@ -39,7 +63,9 @@ def main() -> None:
         if len(loud):
             energy[seg["speaker"]].append(float(np.sqrt((loud ** 2).mean())))
     rms = {spk: float(np.mean(v)) for spk, v in energy.items() if v}
-    target = rms.get("narrator") or float(np.median(list(rms.values())))
+    # Voices are matched to the show's narration level (audio.narratorSpeakerKey); an episode
+    # without that speaker is matched to its own median instead.
+    target = rms.get(narrator) or float(np.median(list(rms.values())))
     gain = {spk: min(2.0, max(0.5, target / r)) for spk, r in rms.items()}
     for spk, g in sorted(gain.items()):
         print(f"  gain {spk}: {g:.2f}x")
@@ -49,7 +75,8 @@ def main() -> None:
     # "title_card_before": true on the first segment AFTER the card.
     pieces = []
     env_pieces = []
-    for seg in man["segments"]:
+    for pos, seg in enumerate(man["segments"], 1):
+        sc.progress(pos, len(man["segments"]), "segments")
         gap = float(seg.get("gap_before", 0.3))
         if gap > 0:
             z = np.zeros(int(sr * gap), dtype=np.float64)
@@ -79,26 +106,26 @@ def main() -> None:
     # ("+1s tail"), so a 1.0s tail-out matches the rendered duration exactly.
     # The bed envelope is 1.0 through it, so the room tone holds and fades with
     # the file instead of snapping off behind the last word.
-    TAIL_OUT_S = 1.0
-    pieces.append(np.zeros(int(sr * TAIL_OUT_S), dtype=np.float64))
-    env_pieces.append(np.ones(int(sr * TAIL_OUT_S)))
-    print(f"  tail-out: {TAIL_OUT_S:.1f}s of room tone after the last segment")
+    # The show sets the length (audio.tailOutSeconds); build-timeline.py pads the video to match.
+    pieces.append(np.zeros(int(sr * tail_out_s), dtype=np.float64))
+    env_pieces.append(np.ones(int(sr * tail_out_s)))
+    print(f"  tail-out: {tail_out_s:.1f}s of room tone after the last segment")
 
     mix = np.concatenate(pieces)
     bed_env = np.concatenate(env_pieces)
-    # Optional room-tone bed: HUM_DB env (e.g. -42) enables a constant low
-    # ship-hum that glues voice cuts into one acoustic space.
-    hum_db = os.environ.get("HUM_DB")
-    if hum_db:
-        amp = 10 ** (float(hum_db) / 20)
+    # Optional room-tone bed: the show's audio.roomToneDb (e.g. -42) enables a constant low
+    # hum that glues voice cuts into one acoustic space, pitched at its own
+    # audio.roomToneFundamentalHz. A show without the key mixes dry.
+    if room_tone_db is not None:
+        amp = 10 ** (float(room_tone_db) / 20)
         t = np.arange(len(mix)) / sr
         rng = np.random.default_rng(42)
         noise = rng.standard_normal(len(mix))
-        # brown-ish noise + faint 55Hz engine fundamental
+        # brown-ish noise + the show's faint engine fundamental
         noise = np.cumsum(noise); noise /= (np.abs(noise).max() + 1e-9)
-        hum = amp * (0.7 * noise + 0.3 * np.sin(2 * np.pi * 55 * t))
+        hum = amp * (0.7 * noise + 0.3 * np.sin(2 * np.pi * room_tone_hz * t))
         mix = mix + hum * bed_env
-        print(f"  room tone: {hum_db} dB bed")
+        print(f"  room tone: {room_tone_db} dB bed at {room_tone_hz:.0f} Hz")
     with tempfile.TemporaryDirectory() as td:
         raw = f"{td}/raw.wav"
         sf.write(raw, mix, sr)
@@ -106,7 +133,6 @@ def main() -> None:
         # target by 1.8 dB on ep01 (-15.8 measured against I=-14), which matters because
         # YouTube normalises loud uploads DOWN but never quiet ones UP -- an undershoot
         # ships quiet next to everything around it. Pass 1 measures, pass 2 applies.
-        TARGET = dict(I="-14", TP="-1.5", LRA="11")
         # Peak-tame FIRST. The mix has a ~14 dB crest factor (a few loud transients --
         # notably the rigger, boosted 2x -- against quiet narration), so the peaks hit the
         # true-peak ceiling and loudnorm cannot raise the average: it stalled at -15.6.
@@ -116,7 +142,7 @@ def main() -> None:
         subprocess.run(
             ["ffmpeg", "-y", "-loglevel", "error", "-i", raw,
              "-af", "alimiter=limit=0.5:attack=5:release=60:level=disabled",
-             "-ar", "24000", limited],
+             "-ar", out_sr, limited],
             check=True,
         )
         raw = limited
@@ -132,12 +158,19 @@ def main() -> None:
               f":measured_I={m['input_i']}:measured_TP={m['input_tp']}"
               f":measured_LRA={m['input_lra']}:measured_thresh={m['input_thresh']}"
               f":offset={m['target_offset']}:linear=true:print_format=summary")
+        out_path = f"{base}/{mix_wav(cfg, ep)}"
         subprocess.run(
             ["ffmpeg", "-y", "-loglevel", "error", "-i", raw,
-             "-af", af, "-ar", "24000", f"{base}/{mix_wav(ep)}"],
+             "-af", af, "-ar", out_sr, out_path],
             check=True,
         )
         print(f"  loudness: measured {float(m['input_i']):.1f} LUFS -> normalised to {TARGET['I']} (two-pass)")
-    print(f"MIX_OK {len(mix)/sr/60:.1f}m {len(man['segments'])} segments -> {base}/{mix_wav(ep)}")
+    # The last line is this step's RESULT: the gate message after it reads it verbatim, so it is
+    # one line, and it carries the three facts a listener is about to check.
+    print(f"MIX_OK {len(mix)/sr:.1f}s {float(TARGET['I']):.1f} LUFS {out_path}")
 
-main()
+if __name__ == "__main__":
+    try:
+        main()
+    except sc.ShowConfigError as err:
+        sys.exit(f"audio-mix: {err}")

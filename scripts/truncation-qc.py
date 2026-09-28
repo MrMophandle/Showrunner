@@ -27,10 +27,10 @@ The tell is the shape of the ENDING, not the length, and it takes TWO measures.
 Calibrated against every qwen3 segment on disk -- 4227 of them across ep01-ep09.
 Energy alone (>0.6) flags 10, of which 8 end in a clean decay and are fine. The
 pad alone (<5ms) flags 248, far too many. Together they flag 2, both in ep08,
-both confirmed by re-rolling the same text: seg 329 "Forward, Remo flew." came
-back 25% LONGER (1.402s -> 1.758s), seg 355 came back ending in a 30ms pad
-instead of none. ep09 seg 43 -- the defect that started this -- scored 0.78 with
-a 0.0ms pad and is caught by the same rule.
+both confirmed by re-rolling the same text: seg 329 came back 25% LONGER
+(1.402s -> 1.758s), seg 355 came back ending in a 30ms pad instead of none.
+ep09 seg 43 -- the defect that started this -- scored 0.78 with a 0.0ms pad and
+is caught by the same rule.
 
 Fix is the same shape as pace-qc's: bump the pinned seed so the re-roll is a
 genuinely new take, delete the WAV, re-run tts-generate. Bounded at PASSES
@@ -40,8 +40,12 @@ a chopped word shipping quietly.
 Kokoro episodes: no-op (deterministic engine, and this is a sampling failure).
 """
 import json, os, subprocess, sys
+from pathlib import Path
+
 import numpy as np
 import soundfile as sf
+
+from lib import showconfig as sc
 
 THRESHOLD = 0.6   # final-tail RMS / speech RMS above which a take reads as cut off
 TAIL_S = 0.06     # how much of the ending to measure
@@ -120,10 +124,32 @@ def reroll(base: str, doc: dict, indices: list) -> None:
             os.remove(p)
 
 
+def resynth(ep: str) -> None:
+    """Re-render this episode's missing takes: run tts-generate.py as a child of THIS process.
+
+    Three properties matter, and all three are the point (plan ruling F-11):
+      * the child is this interpreter and the script beside this file -- not `uv run` and not a
+        show-relative path, because the engine runs a step with the SHOW root as the working
+        directory, where this repository's scripts are not;
+      * its stdout is NOT redirected, so its ::progress lines and its per-segment prints reach the
+        engine's log instead of being swallowed;
+      * it is NOT given a new session, so it stays in the process group the engine spawned and
+        kills on shutdown or timeout.
+    The episode id travels as argv: no environment variable carries it any more.
+    """
+    subprocess.run([sys.executable, str(Path(__file__).with_name("tts-generate.py")), ep],
+                   check=True)
+
+
 def main() -> None:
-    ep = os.environ.get("ARGUMENTS", "").split()[0] if os.environ.get("ARGUMENTS") else ""
+    # The engine runs this with the show root as the working directory; --show-root <path> is for
+    # an operator running it from somewhere else. This step reads no show-config key of its own --
+    # every threshold above is an engine setting -- so it takes the root and nothing else.
+    root = sc.show_root(sys.argv)
+    os.chdir(root)
+    ep = sys.argv[1] if len(sys.argv) > 1 else ""
     if not ep:
-        sys.exit("truncation-qc: episode id missing (first token of ARGUMENTS)")
+        sys.exit("truncation-qc: episode id missing (usage: truncation-qc.py <episode> [--show-root <path>])")
     base = f"Production/{ep}"
     doc = json.load(open(f"{base}/tts-script.json"))
     if doc.get("engine", "kokoro") != "qwen3":
@@ -133,6 +159,7 @@ def main() -> None:
     for rnd in range(1, PASSES + 1):
         bad = find_truncated(base, doc)
         print(f"round {rnd}: {len(bad)} segment(s) ending hot (>{THRESHOLD:.2f} of speech level) with no trim pad")
+        sc.progress(rnd, PASSES, "rounds")
         if not bad:
             print(f"TRUNCATION_QC_OK ({len(doc['segments'])} segments end in their own release)")
             return
@@ -141,9 +168,7 @@ def main() -> None:
             print(f"  seg {i:4d}: cut off -- ...{texts[i]['text'][-48:]!r}")
         reroll(base, doc, bad)
         json.dump(doc, open(f"{base}/tts-script.json", "w"), indent=1)
-        subprocess.run(["uv", "run", ".archon/scripts/tts-generate.py"],
-                       env=dict(os.environ, ARGUMENTS=ep), check=True,
-                       stdout=subprocess.DEVNULL)
+        resynth(ep)
 
     # Survivors are not a sampling fluke -- fail loudly rather than ship a
     # chopped word, and name the segments so a human can look at them.
@@ -156,4 +181,7 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except sc.ShowConfigError as err:
+        sys.exit(f"truncation-qc: {err}")
