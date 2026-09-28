@@ -1,6 +1,6 @@
 import path from "node:path";
 import { readFile } from "node:fs/promises";
-import { parseEpisodeId } from "./ids.js";
+import { parseEpisodeId, type EpisodeId } from "./ids.js";
 
 export class ShowConfigError extends Error { override readonly name = "ShowConfigError"; }
 
@@ -66,6 +66,17 @@ export async function loadShowConfig(showRoot: string): Promise<ShowConfig> {
   const airRaw = rec(parsed, "airMap", "");
   const airMap: Record<string, [number, number]> = {};
   for (const [id, v] of Object.entries(airRaw)) {
+    // The key is checked before the value: airMap answers "which season did this production id air
+    // in", so every key must be a production id and nothing else. An aired id (sXXeYY) is refused
+    // because it already carries its season in the id — seasonOf reads it off the id and never
+    // consults the map (see seasonOf below), so a mapping for one could only ever be a second,
+    // silently disagreeing answer. Anything parseEpisodeId refuses outright ("ep1") is refused here
+    // with the key named, so the operator is pointed at the line rather than at the whole file.
+    let parsedKey: EpisodeId | undefined;
+    try { parsedKey = parseEpisodeId(id); } catch { parsedKey = undefined; }
+    if (parsedKey === undefined || parsedKey.kind !== "production") {
+      throw new ShowConfigError(`${SHOW_CONFIG_FILE}: airMap.${id} must be a production id (epNN)`);
+    }
     if (!Array.isArray(v) || v.length !== 2 || !v.every((n) => Number.isInteger(n) && (n as number) > 0)) {
       throw new ShowConfigError(`${SHOW_CONFIG_FILE}: airMap.${id} must be [season, episode] with positive integers`);
     }

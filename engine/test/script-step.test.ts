@@ -163,6 +163,20 @@ describe("scriptExecutor", () => {
     expect(r).toEqual({ ok: true, result: "SUMMARY_OK" });
   });
 
+  it("fails fast when the executable does not exist", async () => {
+    // The spawn-failure path: Node reports ENOENT on the child's 'error' event, never on 'exit',
+    // so this is the one ending that reaches settle() without the child having run at all. It must
+    // still resolve — an executor that only listened for 'exit' would hang the step forever — and
+    // it must resolve with the reason, because "spawn failed: ... ENOENT" is how an operator learns
+    // a script was renamed or a tool is missing from PATH rather than that the script itself failed.
+    const step: ScriptStep = { kind: "script", id: "s", argv: () => ["no-such-binary-xyz"] };
+    const { emit } = collector();
+    const started = Date.now();
+    const r = await scriptExecutor(step, ctx, emit);
+    expect(r).toEqual({ ok: false, error: "spawn failed: spawn no-such-binary-xyz ENOENT" });
+    expect(Date.now() - started).toBeLessThan(500);
+  });
+
   it("returns no result key when the script printed only progress lines", async () => {
     // Not fixtures/progress.py: that one prints "starting" on stdout, which is a result. A script
     // whose whole stdout is progress lines has no summary line to hand the next step.

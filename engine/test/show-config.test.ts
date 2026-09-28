@@ -37,6 +37,17 @@ describe("loadShowConfig", () => {
   it("rejects a malformed airMap entry", async () => {
     await expect(loadShowConfig(await root({ ...good, airMap: { ep01: [1] } }))).rejects.toThrow(/airMap\.ep01/);
   });
+  it("rejects an airMap key that is not a production id", async () => {
+    // The air map answers "which season did this production id air in", so every key must be a
+    // production id — an epNN. A key that parseEpisodeId refuses at all ("ep1", one digit) and a
+    // key that parses as an aired id ("s01e01") are both rejected, the second because an aired id
+    // already carries its season in the id and looking it up here would let the two disagree.
+    await expect(loadShowConfig(await root({ ...good, airMap: { "ep1": [1, 1] } }))).rejects.toThrow(ShowConfigError);
+    await expect(loadShowConfig(await root({ ...good, airMap: { "ep1": [1, 1] } }))).rejects.toThrow(/airMap\.ep1\b/);
+    await expect(loadShowConfig(await root({ ...good, airMap: { "s01e01": [1, 1] } }))).rejects.toThrow(/airMap\.s01e01\b/);
+    await expect(loadShowConfig(await root({ ...good, airMap: { "s01e01": [1, 1] } }))).rejects.toThrow(/production id/);
+  });
+
   it("rejects invalid JSON with the file named", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "show-"));
     await writeFile(path.join(dir, SHOW_CONFIG_FILE), "{ not json");
