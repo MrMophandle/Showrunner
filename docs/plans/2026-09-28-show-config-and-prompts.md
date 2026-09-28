@@ -982,7 +982,7 @@ Run: `cd ~/GitHub/Showrunner/scripts && uv run pytest -q` — expected: 64 passe
 
 - [ ] **Step 2: Run and commit**
 
-Run: `cd ~/GitHub/Showrunner/scripts && uv run pytest -q` — all pass, ffmpeg-dependent tests skipped where absent. Commit: `scripts: vision, assembly and status branches config-driven; populator-check and canon-diff; no show name remains` with both trailers.
+Run: `cd ~/GitHub/Showrunner/scripts && uv run pytest -q` — expected 263 passed with ffmpeg on PATH (258 + 5 skipped without). Of the eight copied show tests: `test_status.py`, `test_check_layout.py`, `test_registry_append.py`, `test_nano_banana_generate.py` (sixty tests) and `test_truncation_qc.py` move into `tests/` adapted to the convention (five `ARGUMENTS`-precedence cases deleted, since the variable is gone; character names in fixtures scrubbed); `test_finalize_video.py`, `test_season_status.py` and `test_season_review_workflow.py` are deleted, their surviving properties re-expressed in the new tests (the first two asserted `SEASON_MAP`, `all` mode, the text parse of `finalize-video.py` and `DEADLIGHT_FINAL_DEST`, all removed; the third ran bash out of a show workflow file). `finalize-video.py` now exits non-zero on an unresolvable slot or a missing video — a failed step, not a `SKIP` — which Plan D encodes. `publish-kit.py` requires `Episodes/<ep>/publish.json`; Plan D's write pipeline creates one per new episode. `build-timeline.py`'s default staging root `render/public/` exists after Task 6. Commit: `scripts: vision, assembly and status branches config-driven; populator-check and canon-diff; no show name remains` with both trailers.
 
 ---
 
