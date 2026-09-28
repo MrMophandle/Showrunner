@@ -876,7 +876,7 @@ cd ~/GitHub/Showrunner && npm run build && node tools/dist/extract-prompts.js \
   --schema-required-add outline-canon-check=verdict,continuity-check=verdict,tone-check=verdict,flow-check=verdict,character-check=verdict,environment-check=verdict,structure-check=verdict,repetition-check=verdict
 ```
 
-Expected: 30 prompt files, 9 `*.reject.md`, 9 `*.gate.md`, 8 `*.schema.json`, `index.json`; `unmapped: 0`. Use the node ids as they appear in the YAML; if two workflows share a node id (`setup` is a bash node in each and is not extracted; check the agent ids collide nowhere — the inventory §1 lists them), the extractor prefixes the workflow's short name and the report says so.
+Expected: 30 prompt files, 9 `*.reject.md`, 9 `*.gate.md`, 8 `*.schema.json`, `index.json`; `unmapped: 0`. Use the node ids as they appear in the YAML. The extractor refuses to run when two writes would target one file (a node id shared by two workflows, or a node with both `prompt` and `loop.prompt`), naming the file and both sources; the five real workflows collide nowhere (`setup` is a bash node in each and is not extracted; the agent ids are listed in inventory §1). It also refuses a non-empty output directory unless `--force`, and reports any override or `--schema-required-add` entry that matched nothing — a typo'd node id or a truncated pattern is an error, not a silent no-op.
 
 - [ ] **Step 5: Hand-finish and check**
 
