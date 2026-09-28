@@ -129,7 +129,9 @@ export interface Pipeline {
   steps: Step[];
 }
 
-export type ScriptOutcome = { ok: true } | { ok: false; error: string };
+/** result: the script's last non-empty stdout line that was not a progress line — the one-line
+ *  summary a later step may read as `{{results.<id>}}`. */
+export type ScriptOutcome = { ok: true; result?: string } | { ok: false; error: string };
 
 export type AgentOutcome =
   | { ok: true; text: string; verdict?: unknown; toolCalls: number }

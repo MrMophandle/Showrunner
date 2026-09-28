@@ -62,6 +62,10 @@ export const scriptExecutor: Executors["script"] = (step: ScriptStep, ctx: RunCo
   const forget = () => { if (child.pid !== undefined) live.delete(child.pid); };
 
   let lastStderr = "";
+  // The step's result: the last stdout line that was neither a progress line nor blank. A script
+  // ends with a one-line summary — "MIX_OK 12.3s -14.0 LUFS" — and that line is what a later
+  // prompt reads as {{results.<id>}}.
+  let lastStdout = "";
   let emitError: unknown;
   // Set when the drain grace expires: the pipes are being abandoned, so anything a grandchild
   // writes after that point is dropped rather than logged under a step that has already settled.
@@ -76,13 +80,20 @@ export const scriptExecutor: Executors["script"] = (step: ScriptStep, ctx: RunCo
     const rl = createInterface({ input: stream });
     rl.on("line", (line) => {
       if (abandoned) return;
-      const p = name === "stdout" ? parseProgressLine(line) : null;
-      if (p) {
-        queue("step_progress", { ...p });
-      } else {
-        if (name === "stderr" && line.trim() !== "") lastStderr = line;
-        queue("script_line", { stream: name, line });
+      const progress = parseProgressLine(line);
+      if (progress !== null && name === "stdout") {
+        queue("step_progress", { ...progress });
+        return;
       }
+      // A `::progress` line on stderr is forwarded like any other stderr line, but it is never
+      // recorded as `lastStderr`. It is a unit-of-work report, not a complaint, and a script that
+      // writes its progress to stderr would otherwise fail with its own last progress line as the
+      // step's error message — hiding the real message it printed before it.
+      if (line.trim() !== "" && progress === null) {
+        if (name === "stderr") lastStderr = line;
+        else lastStdout = line;
+      }
+      queue("script_line", { stream: name, line });
     });
     return new Promise<void>((resolve) => rl.on("close", () => resolve()));
   };
@@ -98,13 +109,26 @@ export const scriptExecutor: Executors["script"] = (step: ScriptStep, ctx: RunCo
     }
   };
 
+  /** How the child ended — not what the step reports. The outcome is built from this only after
+   *  the pipes have drained, because `lastStdout` and `lastStderr` are not final until then. */
+  type Ending =
+    | { kind: "exit"; code: number | null; signal: NodeJS.Signals | null }
+    | { kind: "spawnFailed"; message: string };
+
   return new Promise<ScriptOutcome>((resolve) => {
     let settled = false;
     let timedOut = false;
     const timer = step.timeoutMs !== undefined
       ? setTimeout(() => { timedOut = true; killGroup(); }, step.timeoutMs)
       : undefined;
-    const settle = async (outcome: ScriptOutcome) => {
+    const outcomeOf = (ending: Ending): ScriptOutcome => {
+      if (ending.kind === "spawnFailed") return { ok: false, error: `spawn failed: ${ending.message}` };
+      if (timedOut) return { ok: false, error: `timeout after ${step.timeoutMs}ms` };
+      if (ending.code === 0) return { ok: true, ...(lastStdout !== "" ? { result: lastStdout } : {}) };
+      const shown = ending.code === null ? `signal ${ending.signal ?? "unknown"}` : `exit ${ending.code}`;
+      return { ok: false, error: `${shown}: ${lastStderr}` };
+    };
+    const settle = async (ending: Ending) => {
       if (settled) return;
       settled = true;
       if (timer) clearTimeout(timer);
@@ -119,6 +143,13 @@ export const scriptExecutor: Executors["script"] = (step: ScriptStep, ctx: RunCo
         child.stderr?.destroy();
       }
       await tail;
+      // Built here, after the drain, and never in the exit handler: Node emits 'exit' when the
+      // process ends, not when its stdio has been read — that is why 'close' is a separate event —
+      // so a child that printed its summary line and exited at once can still have that line
+      // unparsed when 'exit' fires. Both the result a later step reads and the last stderr line a
+      // failure is reported with are exactly the lines that arrived, which is only knowable now.
+      // `timedOut` cannot move under this await: the timer is cleared at the top of settle.
+      const outcome = outcomeOf(ending);
       if (emitError !== undefined && outcome.ok) {
         const msg = emitError instanceof Error ? emitError.message : String(emitError);
         resolve({ ok: false, error: `log write failed: ${msg}` });
@@ -126,13 +157,7 @@ export const scriptExecutor: Executors["script"] = (step: ScriptStep, ctx: RunCo
       }
       resolve(outcome);
     };
-    child.on("error", (err) => { forget(); void settle({ ok: false, error: `spawn failed: ${err.message}` }); });
-    child.on("exit", (code, signal) => {
-      forget();
-      if (timedOut) { void settle({ ok: false, error: `timeout after ${step.timeoutMs}ms` }); return; }
-      if (code === 0) { void settle({ ok: true }); return; }
-      const shown = code === null ? `signal ${signal ?? "unknown"}` : `exit ${code}`;
-      void settle({ ok: false, error: `${shown}: ${lastStderr}` });
-    });
+    child.on("error", (err) => { forget(); void settle({ kind: "spawnFailed", message: err.message }); });
+    child.on("exit", (code, signal) => { forget(); void settle({ kind: "exit", code, signal }); });
   });
 };

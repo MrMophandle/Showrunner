@@ -3,3 +3,13 @@ dist/
 *.log
 .DS_Store
 .superpowers/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# render/public/ is the per-episode staging directory build-timeline.py fills -- hundreds of
+# megabytes of stills and a mixed WAV per episode. The directory itself is tracked so the default
+# staging root exists on a fresh clone; nothing staged into it ever is.
+render/public/*
+!render/public/.gitkeep
+render/out/

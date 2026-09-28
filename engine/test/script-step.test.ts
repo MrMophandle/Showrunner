@@ -28,7 +28,8 @@ describe("scriptExecutor", () => {
     const step: ScriptStep = { kind: "script", id: "s", argv: () => ["python3", fixture("progress.py"), "3"] };
     const { events, emit } = collector();
     const r = await scriptExecutor(step, ctx, emit);
-    expect(r).toEqual({ ok: true });
+    // "starting" is the result: the last stdout line that was not a progress line.
+    expect(r).toEqual({ ok: true, result: "starting" });
     const progress = events.filter((e) => e.kind === "step_progress").map((e) => e.payload["done"]);
     expect(progress).toEqual([1, 2, 3]);
     const lines = events.filter((e) => e.kind === "script_line").map((e) => [e.payload["stream"], e.payload["line"]]);
@@ -42,6 +43,20 @@ describe("scriptExecutor", () => {
     const { emit } = collector();
     const r = await scriptExecutor(step, ctx, emit);
     expect(r).toEqual({ ok: false, error: "exit 3: the reason" });
+  });
+
+  it("does not let a progress line on stderr become the step's error", async () => {
+    // The script writes its real complaint and then a `::progress` line, both to stderr. The
+    // progress line is forwarded as a script_line like any other stderr line — stderr is never
+    // parsed for step_progress — but it is not the last stderr line, so the step fails naming the
+    // complaint the operator has to read.
+    const step: ScriptStep = { kind: "script", id: "s", argv: () => ["python3", fixture("fail-with-stderr-progress.py")] };
+    const { events, emit } = collector();
+    const r = await scriptExecutor(step, ctx, emit);
+    expect(r).toEqual({ ok: false, error: "exit 3: the reason" });
+    const lines = events.filter((e) => e.kind === "script_line").map((e) => [e.payload["stream"], e.payload["line"]]);
+    expect(lines).toContainEqual(["stderr", '::progress {"done":1,"total":1,"unit":"x"}']);
+    expect(events.filter((e) => e.kind === "step_progress")).toEqual([]);
   });
 
   it("fails on timeout", async () => {
@@ -68,7 +83,7 @@ describe("scriptExecutor", () => {
       events.push({ kind, payload });
     };
     const r = await scriptExecutor(step, ctx, emit);
-    expect(r).toEqual({ ok: true });
+    expect(r).toEqual({ ok: true, result: "299" });
     const lines = events.filter((e) => e.kind === "script_line").map((e) => Number(e.payload["line"]));
     expect(lines).toEqual(Array.from({ length: 300 }, (_, i) => i));
   });
@@ -91,7 +106,14 @@ describe("scriptExecutor", () => {
     const r = await scriptExecutor(step, ctx, emit);
     const elapsed = Date.now() - started;
 
-    expect(r).toEqual({ ok: true });
+    // The grandchild's lines are logged under this step until the grace abandons the pipes, so
+    // they are part of its stdout and the last of them is its result — "late 19" or thereabouts,
+    // depending on how many 0.1s ticks fit in the grace. The step's own line is long overtaken.
+    // This is the price of reading the result after the drain rather than at exit, and it is the
+    // right side of the trade: a script that prints a summary and exits always gets that summary,
+    // while only a grandchild that outlives its parent and keeps writing can displace one.
+    expect(r.ok).toBe(true);
+    expect(r.ok && r.result).toMatch(/^late \d+$/);
     expect(elapsed).toBeLessThan(3000);
     expect(events.some((e) => e.kind === "script_line" && e.payload["line"] === "one line")).toBe(true);
 
@@ -129,5 +151,52 @@ describe("scriptExecutor", () => {
     const r = await scriptExecutor(step, ctx, emit);
     expect(r).toEqual({ ok: false, error: "timeout after 300ms" });
     expect(Date.now() - started).toBeLessThan(5000);
+  });
+
+  it("returns the last non-progress stdout line as the result", async () => {
+    const step: ScriptStep = { kind: "script", id: "s", argv: () => ["python3", fixture("prints-result.py")] };
+    const { emit } = collector();
+    const r = await scriptExecutor(step, ctx, emit);
+    expect(r).toEqual({ ok: true, result: "MIX_OK 12.3s -14.0 LUFS" });
+  });
+
+  it("reads the result after the pipes drain, not when the child exits", async () => {
+    // Twenty thousand short lines with no flush between them, then the summary, then an immediate
+    // exit: the burst leaves stdout in flight when the child goes, and the summary is the very last
+    // line in it. Node emits 'exit' when the process ends, not when its stdio has been read — that
+    // is why 'close' is a separate event — so the result is taken after the drain, never in the
+    // exit handler. A reduced version of this program (one pipe, no detach) reads the wrong last
+    // line in 31 of 40 runs on this machine; the executor's own shape happened to win it 40 of 40,
+    // which is the point: the ordering is not ours to rely on. The trailing flush and os._exit are
+    // load-bearing — without them python's exit flush blocks on the pipe until the parent has
+    // drained it, which hides the hazard rather than exercising it.
+    const program = "import sys, os\nfor i in range(20000): sys.stdout.write('line %d\\n' % i)\nsys.stdout.flush()\nprint('SUMMARY_OK', flush=True)\nos._exit(0)";
+    const step: ScriptStep = { kind: "script", id: "s", argv: () => ["python3", "-c", program] };
+    const { emit } = collector();
+    const r = await scriptExecutor(step, ctx, emit);
+    expect(r).toEqual({ ok: true, result: "SUMMARY_OK" });
+  });
+
+  it("fails fast when the executable does not exist", async () => {
+    // The spawn-failure path: Node reports ENOENT on the child's 'error' event, never on 'exit',
+    // so this is the one ending that reaches settle() without the child having run at all. It must
+    // still resolve — an executor that only listened for 'exit' would hang the step forever — and
+    // it must resolve with the reason, because "spawn failed: ... ENOENT" is how an operator learns
+    // a script was renamed or a tool is missing from PATH rather than that the script itself failed.
+    const step: ScriptStep = { kind: "script", id: "s", argv: () => ["no-such-binary-xyz"] };
+    const { emit } = collector();
+    const started = Date.now();
+    const r = await scriptExecutor(step, ctx, emit);
+    expect(r).toEqual({ ok: false, error: "spawn failed: spawn no-such-binary-xyz ENOENT" });
+    expect(Date.now() - started).toBeLessThan(500);
+  });
+
+  it("returns no result key when the script printed only progress lines", async () => {
+    // Not fixtures/progress.py: that one prints "starting" on stdout, which is a result. A script
+    // whose whole stdout is progress lines has no summary line to hand the next step.
+    const step: ScriptStep = { kind: "script", id: "s", argv: () => ["python3", "-c", "import json\nfor i in (1, 2): print('::progress ' + json.dumps({'done': i, 'total': 2, 'unit': 'things'}), flush=True)"] };
+    const { emit } = collector();
+    const r = await scriptExecutor(step, ctx, emit);
+    expect(r).toEqual({ ok: true });
   });
 });

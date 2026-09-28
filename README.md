@@ -23,6 +23,58 @@ The orchestrator calls the other two layers through the injected `Executors` int
 (`engine/src/steps.ts`), so the engine can be tested end to end with fakes. Each executor owes
 the log a fixed set of events; those obligations are documented on the interface.
 
+## The show config
+
+**A show identifies itself in one file: `showrunner.json` at the show repository's root.** The
+engine reads it with `loadShowConfig(showRoot)` (`engine/src/show-config.ts`) and the Python steps
+read the same file with `sc.load(root)` (`scripts/lib/showconfig.py`). Both loaders require the
+same eight keys and apply the same `airMap` rules; `engine/src/show-config.ts` is the reference and
+`scripts/lib/showconfig.py` mirrors it. Each loader's source names the other as the place the set
+is mirrored, because nothing checks the two against each other at build time.
+
+**Eight keys are required**, and a config short of one is refused by name rather than failing later
+at whatever wanted it: `showName`, `showSlug`, `promptsDir`, `models.medium`, `models.large`,
+`models.writer`, `airMap`, and `output.nasRoot`. Every other key is optional; a script that reads
+one and does not find it fails naming its dotted path.
+
+| Group | Keys | Who reads it |
+|---|---|---|
+| Identity | `showName` and `showSlug` — the display name and the filename form | the scripts, for prose and for output filenames |
+| Layout | `promptsDir`, plus the optional `canonDir`, `episodesDir`, `productionDir` | the engine reads `promptsDir`; the scripts read the other three |
+| `models` | `medium`, `large`, `writer`, plus the optional `small` | the engine, as the agent executor's alias map |
+| `airMap` | one production id to its `[season, episode]` | the engine, for `{{season}}`; the scripts, through `sc.season_of` |
+| `output` | `nasRoot`, plus the optional `nasMount`, `finalFilename`, `mixFilename`, `videoFilename` | the scripts that master, finalize and publish an episode |
+| `audio` | sample rate, loudness targets, room tone, the gap lengths, the cast list, the voice registry | the TTS, mix and audio-QC scripts |
+| `visual` | the reference files, the style constants, the frame size, the casting directories, the populator bans | the image scripts |
+| `video` | `fps`, `crossfadeSeconds`, `compositionId`, and the whole `titleCard` block | `build-timeline.py` copies `fps`, `crossfadeSeconds` and `titleCard` into the timeline the renderer reads. **It does not write `compositionId`**: the composition id is passed on the render command line, because the id selects the composition whose `calculateMetadata` goes on to fetch the timeline and so has to be known first |
+| `publish` | the channel's standing answers — channel name, playlist, tags, category, standing copy, guide | `publish-kit.py` |
+
+The engine reads three of those groups and no others: `promptsDir`, `models` and `airMap`. The
+scripts read the rest.
+
+**A path in the config is relative to the show root unless it is absolute.** The engine resolves
+one with `resolveShowPath` and a script with `sc.path(cfg, …, root=root)`; both test the string for
+an absolute path first and join it to the show root otherwise.
+
+The config feeds two of the template variables listed under **Agent steps → The prompt file**
+below.
+
+- **`{{season}}`** is the episode's numeric season, unpadded, so a prompt writes
+  `Canon/season-{{season}}.md`. **An aired id (`sXXeYY`) carries its own season and `airMap` is
+  never consulted for one; a production id (`epNN`) is looked up in `airMap`.** `seasonOf` throws
+  when the map does not place a production id, and the agent step absorbs that throw rather than
+  failing the step: the season is left undefined, so an episode with no air slot still runs every
+  prompt that does not write `{{season}}`, and only a prompt that does write it fails, in the
+  renderer, with `{{season}}: season is not available`. For the same reason **both loaders refuse an
+  aired id as an `airMap` key** — the id already answers the question, so a mapping for one could
+  only ever be a second and silently disagreeing answer. `engine/src/show-config.ts` and
+  `scripts/lib/showconfig.py` each refuse it naming the key, so the rule holds whichever half of
+  the pipeline reads the config first.
+- **`{{show.<path>}}`** is a dotted path into the loaded config (`{{show.showName}}`,
+  `{{show.video.fps}}`), rendered by the same value rules as `{{results.*}}`. A bare `{{show}}`, a
+  path through a non-object, a missing key, and a `{{show.*}}` in an executor built with no show
+  config each throw `TemplateError`.
+
 ## The event log
 
 **The event log is the source of truth, and everything else is derived from it** (design §6.5).
@@ -99,6 +151,9 @@ the SDK module spawns nothing, and calling `query()` is what every test but the 
 
 `promptsDir` is optional and defaults, per call, to `<showRoot>/prompts`. `models` is an alias map
 (`{ medium: "claude-sonnet-5" }`); a model the map does not name is passed to the SDK unchanged.
+`show` is the loaded `showrunner.json` (`loadShowConfig(showRoot)`): it supplies `promptsDir` and
+`models` when those options are absent, and it is what `{{season}}` and `{{show.*}}` render from.
+An explicit `promptsDir` or `models` wins over the show config.
 
 ### The prompt file
 
@@ -114,6 +169,8 @@ or queried.
 | `{{showRoot}}` | the absolute path of the show root |
 | `{{results.<stepId>}}` | that step's result: a string as itself, a number or boolean stringified, an object as pretty-printed JSON |
 | `{{results.<stepId>.<field>}}` | a field of that step's result object, at any depth (`{{results.review.notes.tone}}`) |
+| `{{season}}` | the episode's numeric season, unpadded (`Canon/season-{{season}}.md`) — read off an aired id, or from the show config's `airMap` for a production id |
+| `{{show.<path>}}` | a dotted path into the show config (`{{show.showName}}`, `{{show.video.fps}}`), by the same value rules as `{{results.*}}` |
 
 **Every hole is an error.** An unknown variable, a step with no result, a path through a non-object,
 a missing key, a null value, or a value `JSON.stringify` cannot represent throws `TemplateError`
@@ -296,14 +353,172 @@ A run restarts by replaying its log; there is no separate state file to reconcil
 - **A run with an open gate resumes waiting at that gate**, and answering it requires the log's
   own run id.
 
+## Scripts
+
+`scripts/` holds the pipeline's deterministic steps: twenty-three Python programs the engine runs
+as argv arrays, never as shell strings. **A script belongs to the engine, and the show it is run
+for reaches it through argv and `showrunner.json`** — no script contains a show's name.
+
+Every script follows one convention, which `scripts/lib/showconfig.py`'s module docstring states.
+
+- **The working directory is the show root.** The script executor sets `cwd: ctx.showRoot`
+  (`engine/src/script-step.ts`), so `showrunner.json` is found without a flag and a show-relative
+  path such as `Production/<episodeId>/audio/` resolves from where the script stands.
+- **`--show-root <path>` and `--show-root=<path>` are both accepted**, for an operator running a
+  script by hand from somewhere else. `sc.show_root(sys.argv)` returns the path as typed, or the
+  working directory when no flag is present, and **removes the flag from `sys.argv` in place** —
+  with its value, in the two-token form — so the caller's positional arguments keep their usual
+  places and argparse never sees the flag.
+- **Everything else arrives in argv.** The episode id is `sys.argv[1]`, and no script reads a
+  *setting* from the environment; the one environment read is the `GEMINI_API_KEY` secret in
+  `nano-banana-generate.py`.
+- Those three facts are one preamble, in this order, at the top of every `main()`:
+
+      root = os.path.abspath(sc.show_root(sys.argv))
+      cfg = sc.load(root)
+      os.chdir(root)
+
+  **The order is load-bearing.** The root is made absolute first, because a relative `--show-root`
+  would otherwise mean one directory to `load()` and a different one to every path resolved after
+  the `chdir`; and `load()` runs before the `chdir`, so a wrong `--show-root` fails by naming
+  `showrunner.json` rather than by failing to enter a directory.
+- **The config is read through `lib/showconfig.py` and nowhere else.** `sc.value(cfg, *keys)`
+  returns a setting, raising `ShowConfigError` naming the dotted path when the key is absent and no
+  `default=` was given; `sc.path(cfg, *keys, root=root)` returns a path resolved against the show
+  root unless it is absolute; `sc.format_filename(pattern, slug=…, season=…, episode=…,
+  episode_id=…)` renders an output filename pattern; and `sc.season_of(cfg, episodeId)` returns
+  `(season, episode)`. `sc.season_of` raises `UnmappedEpisodeId` — its own subclass of
+  `ShowConfigError` — for a well-formed production id the `airMap` does not place, because an
+  episode written before its air slot is settled still needs a name for its outputs and a script
+  may legitimately absorb that one fault. A malformed id raises the plain `ShowConfigError`
+  instead, since that is a mistake in the argv the operator typed rather than a state an episode
+  passes through.
+- **Progress is one line per unit of work**, printed by `sc.progress(done, total, unit, message)`
+  as `::progress {…}`. The section "The progress contract" below states what the executor does
+  with such a line.
+- **A successful run's last stdout line is an uppercase sentinel and its figures** — `MIX_OK`,
+  `TIMELINE_OK`, `MANIFEST_OK`, `IMAGE_QC_OK`, `PUBLISH_KIT` — so the run's log carries what the
+  step decided without anyone opening the file it wrote.
+- **A failure exits non-zero with one line on stderr, prefixed by the script's own name.** Every
+  script closes with the same guard, which is also what keeps a config fault from reaching the
+  operator as a traceback:
+
+      if __name__ == "__main__":
+          try:
+              main()
+          except (sc.ShowConfigError, FileNotFoundError) as err:
+              sys.exit(f"<script-name>: {err}")
+
+- **Idempotency is the script's, by output-exists.** The engine makes no attempt to resume a script
+  partway — see "The resume contract" below — so a re-run skips each output already on disk:
+  `tts-generate.py` skips a segment whose WAV exists, `image-generate.py` prints
+  `skip <id> (exists)`, and `nano-banana-generate.py` records `SKIPPED-exists`.
+
+    cd scripts && uv run pytest
+
+runs the hermetic suite: twenty-one test files under `scripts/tests/`, none of which synthesizes
+audio, generates an image or renders anything. `scripts/pyproject.toml` lists the union of every
+script's inline dependency block once and sets `package = false`, so uv treats the directory as a
+virtual project and installs only the dependencies; each script keeps its own inline
+`# /// script` block, so a single script still runs standalone under `uv run`.
+
+## Tools
+
+`tools/` holds the two programs that move a show's prompts out of its Archon workflow files and
+check them afterwards. Both are hermetic: each reads only the files it is pointed at, writes only
+where it is told to, and consults no clock, network or environment, so running one twice on the
+same inputs produces byte-identical outputs.
+
+- **`extract-prompts`** reads a directory of Archon workflow YAML files and writes one `.md` per
+  agent prompt, loop body, gate message and gate rejection prompt, plus `index.json` and any output
+  schemas. **Prompt text moves verbatim**: the only change made to a body is the variable rewriting
+  of `tools/src/rewrite.ts`, which turns Archon's `$` forms into the engine's `{{…}}` syntax, so a
+  show's own name, its characters and its canon paths survive the move untouched. A file is named
+  from the node id alone, with **no prefixing by workflow**, which keeps a prompt file's name equal
+  to the step id that will read it and makes two nodes that would write the same file an error
+  naming both sources rather than a silent last-writer-wins. A name collision, an override that
+  matched nothing, a `schemaRequiredAdd` entry for a node that does not exist, a variable form no
+  rule maps, and a non-empty `--out` directory without `--force` each stop the run or come back in
+  the result.
+- **`check-prompts`** renders every `.md` in a prompts directory against a sample context and names
+  the ones with holes. It is what makes an extraction trustworthy: `renderPrompt` treats every hole
+  as an error at run time, and running the whole directory through it once turns that run-time
+  failure into a check that can be made before anything is launched. A gate message and a rejection
+  prompt are checked like any other file, because a gate message is read by the showrunner at an
+  approval and a hole in one misleads the single person the pipeline cannot afford to mislead.
+  **`README.md` is the one exception and is skipped**: it is written by a person, never by the
+  extractor, and it documents the template syntax, so it quotes forms such as `{{show.<path>}}`
+  that are deliberately not renderable.
+
+    node tools/dist/extract-prompts.js --workflows <dir> --out <show-root>/prompts \
+        [--overrides tools/show-data/<show>-overrides.json] [--force]
+    node tools/dist/check-prompts.js --prompts <show-root>/prompts \
+        --context tools/show-data/<show>-check-context.json
+
+**`tools/show-data/` is the one place under `tools/` that carries a show's name, and what it holds
+is data, not code.** Both programs are show-agnostic and take their show-specific inputs as files —
+`--overrides` for the per-node rewrite rules a particular show's workflows need, `--context` for
+the sample context `check-prompts` renders against. Those two files are the exact inputs an
+extraction was run with, so the extraction stays reproducible, and they are versioned beside the
+tool that consumes them rather than inside it. Naming each file for the show it describes is what
+makes the boundary visible in the directory listing: the constraint grep in **Develop** below
+excludes `tools/show-data/` by name, and no other source directory under `tools/`.
+
+## The render project
+
+`render/` is the engine's renderer: one Remotion composition, `Episode`, that turns an episode's
+staged stills and mixed audio into a video file. **It carries no show literal.** The frame rate,
+the frame size, the crossfade and the title card's words, font and colours all reach it through
+`Production/<episodeId>/video/timeline.json` and nothing else, and `render/src/Root.tsx` declares
+none of them on its `<Composition>` because `calculateMetadata` reads them off the timeline.
+Changing shows means changing `showrunner.json` in the show repository; nothing under `render/src`
+moves. `render/README.md` documents the timeline's keys, the two things a render needs set, and why
+`render/public/` is tracked empty.
+
+**`render/` is a standalone package, not a root workspace.** The root `package.json` lists `engine`
+and `tools` in `workspaces` and deliberately not `render`, because a workspaces entry would hoist
+Remotion's dependency tree into the root `node_modules` and rewrite the root lock file. The
+consequence is that **the root `npm test` does not run the render project's tests**:
+`npm run test:render` does, and `npm run typecheck:render` type-checks it.
+
 ## Develop
 
-    npm install
-    cd engine && npx vitest run     # the full suite
-    cd engine && npm run typecheck  # tsc over src/, then over test/
+    npm install                    # engine and tools, through the workspaces
+    npm run build                  # engine and tools, into each package's dist/ — tools/dist is
+                                   # what the Tools section's commands run
+    npm test                       # engine's suite, then tools'
+    npm run typecheck              # tsc over src/, then over test/, in each
 
-`npm test` and `npm run typecheck` at the repository root run the same two commands through the
-workspace.
+    npm run test:render            # the render project — NOT part of npm test
+    npm run typecheck:render       # tsc --noEmit over render/src
+
+    cd render && npm install       # the render project's own dependency tree
+    cd scripts && uv run pytest    # the Python steps' hermetic suite
+
+`engine` and `tools` are the root `package.json`'s two workspaces, so `npm test` and
+`npm run typecheck` at the root cover those two and nothing else. `render/` and `scripts/` install
+and test on their own, which is why the root carries a `test:render` script at all.
+
+**No show's name may appear in `engine/`, `scripts/`, `render/` or `tools/src/`.** This grep is
+what checks it, and it must print nothing:
+
+    grep -rniwE 'dead ?light|deadlight|sarn|sable|opha|cricket|remo|trent|ilvaren|coalvane|the mute|ansa|mardo' \
+      engine/ scripts/ render/ tools/ \
+      --exclude-dir=node_modules --exclude-dir=dist --exclude-dir=show-data \
+      --exclude-dir=.venv --exclude-dir=__pycache__ --exclude-dir=.pytest_cache
+
+**The word list is the first show's, and it is not the whole obligation.** It names Dead Light and
+that show's characters and places because those are the literals this engine was carved out of, and
+`-w` is what keeps `remo` from matching `remotion`. A show's character and place names beyond the
+list — a new show's, or a name this one adds later — are caught by review, not by this grep: a
+reviewer who sees a test fixture or a comment naming a real show's cast must say so, and the noun
+moves to the invented show the fixtures use.
+
+`tools/show-data/` is excluded because that directory holds a show's own data, as the **Tools**
+section above explains. This file and everything under `docs/` are allowed to name a show and are
+outside the paths the grep searches. The remaining exclusions are build and cache trees —
+`node_modules/`, `dist/`, `scripts/.venv/`, `scripts/__pycache__/` and `scripts/.pytest_cache/` —
+none of which is source.
 
 ## Documents
 

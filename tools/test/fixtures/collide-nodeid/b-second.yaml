@@ -1,0 +1,6 @@
+name: b-second
+nodes:
+  - id: shared
+    model: medium
+    prompt: |
+      The second workflow's take on $setup.output.

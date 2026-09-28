@@ -1,0 +1,23 @@
+{
+  "name": "@showrunner/render",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "studio": "remotion studio",
+    "render": "remotion render",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.487",
+    "@remotion/media": "4.0.487",
+    "react": "19.2.7",
+    "react-dom": "19.2.7",
+    "remotion": "4.0.487"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.7",
+    "typescript": "5.8.2",
+    "vitest": "^2.1.0"
+  }
+}

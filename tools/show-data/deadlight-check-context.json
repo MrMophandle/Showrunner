@@ -1,0 +1,234 @@
+{
+  "episodeId": "s02e01",
+  "runId": "check-prompts",
+  "showRoot": "/Users/ryanperkowski/GitHub/DeadLight",
+  "season": 2,
+  "show": {
+    "showName": "Dead Light",
+    "showSlug": "DeadLight",
+    "promptsDir": "prompts",
+    "canonDir": "Canon",
+    "episodesDir": "Episodes",
+    "productionDir": "Production",
+    "models": {
+      "small": "claude-haiku-4-5",
+      "medium": "claude-sonnet-5",
+      "large": "claude-opus-4-8",
+      "writer": "claude-fable-5"
+    },
+    "airMap": {
+      "ep01": [
+        1,
+        1
+      ],
+      "ep02": [
+        1,
+        2
+      ],
+      "ep03": [
+        1,
+        3
+      ],
+      "ep04": [
+        1,
+        4
+      ],
+      "ep05": [
+        1,
+        5
+      ],
+      "ep06": [
+        1,
+        6
+      ],
+      "ep07": [
+        1,
+        7
+      ],
+      "ep08": [
+        1,
+        8
+      ],
+      "ep09": [
+        1,
+        9
+      ],
+      "ep10": [
+        1,
+        10
+      ]
+    },
+    "output": {
+      "nasMount": "/Volumes/media",
+      "nasRoot": "/Volumes/media/DeadLight",
+      "finalFilename": "{slug} S{season:02d}E{episode:02d}.mp4",
+      "mixFilename": "{slug} S{season:02d}E{episode:02d}.wav",
+      "videoFilename": "episode.mp4"
+    },
+    "audio": {
+      "sampleRate": 24000,
+      "loudness": {
+        "i": -14,
+        "tp": -1.5,
+        "lra": 11
+      },
+      "voiceDesignLoudnessI": -16,
+      "roomToneDb": -42,
+      "roomToneFundamentalHz": 55,
+      "tailOutSeconds": 1.0,
+      "titleCardGapSeconds": 7.0,
+      "titleCardGapMaxSeconds": 8.5,
+      "sceneTransitionGapSeconds": 3.5,
+      "sceneTransitionGapMaxSeconds": 4.0,
+      "authoredPauseRangeSeconds": [
+        0.2,
+        3.5
+      ],
+      "narratorSpeakerKey": "narrator",
+      "mainCast": [
+        "narrator",
+        "Sarn",
+        "Sable",
+        "Trent",
+        "Opha",
+        "Cricket",
+        "Remo"
+      ],
+      "voiceRefsDir": "Production/voice-refs",
+      "guestRefsDir": "Production/{episodeId}/guest-refs",
+      "voiceRegistry": "Canon/voice-registry.md"
+    },
+    "visual": {
+      "refs": "Canon/refs.json",
+      "style": "Canon/visual-style.md",
+      "auditLaws": "Canon/visual-audit-laws.md",
+      "castingPileDir": "Canon/characters",
+      "candidatesDir": "Canon/_candidates",
+      "shotFrame": [
+        1024,
+        576
+      ],
+      "characterKinds": [
+        "human",
+        "creature",
+        "ship"
+      ],
+      "ambientPromptScaffold": [
+        "ducting overhead, ",
+        "deep teal-black starfield, ",
+        "starfield, ",
+        "low-key but clearly exposed"
+      ],
+      "styleConstants": "dark hard science fiction, low-key but clearly exposed, real shadow, film grain. The picture fills the entire frame edge to edge — full-bleed, no letterbox bars or black borders. no text, no watermark, no signature.",
+      "collectivePopulatorBans": [
+        "the crew",
+        "the others",
+        "other figures",
+        "a few figures",
+        "several figures",
+        "some figures",
+        "some people",
+        "onlookers",
+        "bystanders",
+        "patrons",
+        "a crowd",
+        "crowd of",
+        "background figures"
+      ]
+    },
+    "video": {
+      "fps": 30,
+      "crossfadeSeconds": 1.0,
+      "compositionId": "Episode",
+      "titleCard": {
+        "text": "DEAD LIGHT",
+        "fontFamily": "Georgia, 'Times New Roman', serif",
+        "colors": {
+          "background": "#000504",
+          "type": "#b8d4d0",
+          "glow": "rgba(96, 160, 152, 0.25)",
+          "stage": "#04100f"
+        },
+        "fadeSeconds": 2.0
+      }
+    },
+    "publish": {
+      "channelName": "[YOUR NAME]",
+      "playlistUrl": "https://www.youtube.com/playlist?list=PLciZ4PlFk16g",
+      "playlistName": "Dead Light Season 1",
+      "tags": "hard science fiction, sci-fi audio drama, space horror, narrated sci fi, cosmic horror, salvage crew, deep space",
+      "category": "Film & Animation",
+      "standingCopy": {
+        "weekly": "New episodes weekly. Self-contained stories in a shared universe; one long, quiet thread underneath. Best watched in order.",
+        "aiDisclosure": "An honest-to-goodness human dreamed up this world and rules every frame of it. AI helps with the writing, the narration, and the art. The story doesn't come from a machine."
+      },
+      "guide": "Canon/publishing-guide.md"
+    }
+  },
+  "results": {
+    "arc-tracker": "Arc report: the Mute's arc is on ruled beats; Sable's is one episode behind.",
+    "audio-gate:rejection": "The showrunner rejected this step: the ending does not pay off the cold open, and Opha's scale is wrong in two shots. Fix both and resubmit.",
+    "audio-mix": "MIX OK: DeadLight S02E01.wav, 00:23:41, -14.0 LUFS, room tone -42 dB.",
+    "canon-gate:rejection": "The showrunner rejected this step: the ending does not pay off the cold open, and Opha's scale is wrong in two shots. Fix both and resubmit.",
+    "casting-gate:rejection": "The showrunner rejected this step: the ending does not pay off the cold open, and Opha's scale is wrong in two shots. Fix both and resubmit.",
+    "character-check": {
+      "pass": true,
+      "verdict": "DRAFT PASSED",
+      "issues": []
+    },
+    "continuity-check": {
+      "pass": true,
+      "verdict": "DRAFT PASSED",
+      "issues": []
+    },
+    "craft-critic": "Craft notes: endings are landing; two episodes lean on the same cold open.",
+    "desk-editor": "Desk report: six proposals, three ruled, the season's spine unchanged.",
+    "desk-gate": "Approved. Enact proposals 1, 3 and 6; hold 2 for the next desk.",
+    "desk-gate:rejection": "The showrunner rejected this step: the ending does not pay off the cold open, and Opha's scale is wrong in two shots. Fix both and resubmit.",
+    "diff": "NO_CHANGES",
+    "environment-check": {
+      "pass": true,
+      "verdict": "DRAFT PASSED",
+      "issues": []
+    },
+    "final-gate:rejection": "The showrunner rejected this step: the ending does not pay off the cold open, and Opha's scale is wrong in two shots. Fix both and resubmit.",
+    "flow-check": {
+      "pass": true,
+      "verdict": "DRAFT PASSED",
+      "issues": []
+    },
+    "image-audit": "IMAGES_CLEAN: 18 shots audited, 0 defects outstanding.",
+    "image-gate:rejection": "The showrunner rejected this step: the ending does not pay off the cold open, and Opha's scale is wrong in two shots. Fix both and resubmit.",
+    "master": "MASTER OK: episode-mastered.mp4, 00:23:41, -14.0 LUFS.",
+    "nano-banana-gate:rejection": "The showrunner rejected this step: the ending does not pay off the cold open, and Opha's scale is wrong in two shots. Fix both and resubmit.",
+    "nano-banana-generate": "NANO_OK: 18 of 18 character shots generated, 0 audit failures.",
+    "outline-canon-check": {
+      "pass": true,
+      "verdict": "OUTLINE PASSED",
+      "issues": []
+    },
+    "outline-gate:rejection": "The showrunner rejected this step: the ending does not pay off the cold open, and Opha's scale is wrong in two shots. Fix both and resubmit.",
+    "propose": "Proposed canon edits: two ledger threads advanced, one character sheet amended.",
+    "repetition-check": {
+      "pass": true,
+      "verdict": "DRAFT PASSED",
+      "issues": []
+    },
+    "review-gate": "no",
+    "script-gate:rejection": "The showrunner rejected this step: the ending does not pay off the cold open, and Opha's scale is wrong in two shots. Fix both and resubmit.",
+    "season-status": "SEASON STATUS: 10 episodes, 10 finalized, 0 drafting.",
+    "structure-check": {
+      "pass": true,
+      "verdict": "DRAFT PASSED",
+      "issues": []
+    },
+    "thread-auditor": "Thread audit: eleven open threads, two overdue, none contradicted.",
+    "tone-check": {
+      "pass": true,
+      "verdict": "DRAFT PASSED",
+      "issues": []
+    },
+    "tts-script": "TTS script written: 7 speakers, 214 segments, 3 guest voices to design.",
+    "validate-manifest": "MANIFEST OK: 7 speakers, 214 segments, 0 warnings."
+  }
+}

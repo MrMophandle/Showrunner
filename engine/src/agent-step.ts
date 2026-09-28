@@ -1,6 +1,7 @@
 import path from "node:path";
 import type { AgentOutcome, AgentStep, Emit, Executors, JsonSchema, RunContext } from "./steps.js";
-import { loadPrompt, renderPrompt } from "./prompt-template.js";
+import { loadPrompt, renderPrompt, type RenderExtra } from "./prompt-template.js";
+import { resolveShowPath, seasonOf, ShowConfigError, type ShowConfig } from "./show-config.js";
 
 export type AgentContentBlock =
   | { type: "text"; text: string }
@@ -47,10 +48,14 @@ export interface AgentExecutorOptions {
   /** The query seam. Production passes `sdkQuery` from ./sdk-query.js; tests pass a fake. It is
    *  required so that importing this module never loads the SDK. */
   query: QueryFn;
-  /** Absolute path of the show's prompts directory. Default: `<showRoot>/prompts`, per call. */
+  /** Absolute path of the show's prompts directory. Default: the show config's promptsDir resolved
+   *  against the show root when a config is given, else `<showRoot>/prompts`, per call. */
   promptsDir?: string;
   /** Model alias → model id. A model not in the map is passed to the SDK unchanged. */
   models?: Record<string, string>;
+  /** The show's config; supplies promptsDir and models when the explicit options are absent, and
+   *  the {{season}}/{{show.*}} variables. */
+  show?: ShowConfig;
 }
 
 /** Thrown by `pump` when the total or the idle clock fires. Its message is the failure string. */
@@ -146,15 +151,31 @@ export function createAgentExecutor(opts: AgentExecutorOptions): Executors["agen
 
   return async (step: AgentStep, ctx: RunContext, emit: Emit): Promise<AgentOutcome> => {
     // 1–2: the prompt and the schema, checked before anything is logged or queried.
-    const promptsDir = opts.promptsDir ?? path.join(ctx.showRoot, "prompts");
+    const promptsDir = opts.promptsDir ?? (opts.show ? resolveShowPath(ctx.showRoot, opts.show.promptsDir) : path.join(ctx.showRoot, "prompts"));
     let prompt: string;
     let promptHash: string;
     let promptPath: string;
     try {
+      // The season is resolved eagerly but is not required: an id the air map does not carry
+      // leaves it undefined, and only a prompt that writes {{season}} then fails, in the renderer.
+      // A malformed episode id is an InvalidEpisodeId rather than a ShowConfigError, is not
+      // swallowed here, and fails the step before anything is logged or queried.
+      let season: number | undefined;
+      if (opts.show) {
+        try {
+          season = seasonOf(ctx.episodeId, opts.show.airMap);
+        } catch (err) {
+          if (!(err instanceof ShowConfigError)) throw err;
+        }
+      }
+      const extra: RenderExtra = {
+        ...(season !== undefined ? { season } : {}),
+        ...(opts.show ? { show: opts.show as unknown as Record<string, unknown> } : {}),
+      };
       const loaded = await loadPrompt(promptsDir, step.promptFile);
       promptHash = loaded.hash;
       promptPath = loaded.path;
-      prompt = renderPrompt(loaded.text, ctx);
+      prompt = renderPrompt(loaded.text, ctx, extra);
     } catch (err) {
       return { ok: false, error: errorMessage(err) };
     }
@@ -167,7 +188,8 @@ export function createAgentExecutor(opts: AgentExecutorOptions): Executors["agen
     }
 
     // 3: the options.
-    const model = opts.models?.[step.model] ?? step.model;
+    const models: Record<string, string | undefined> | undefined = opts.models ?? opts.show?.models;
+    const model = models?.[step.model] ?? step.model;
     const abortController = new AbortController();
     // Both the read and the write of the session map are gated on "shared", so the policy is one
     // predicate rather than two that have to agree: a "fresh" step leaves no entry behind that a
@@ -193,6 +215,7 @@ export function createAgentExecutor(opts: AgentExecutorOptions): Executors["agen
     await emit("agent_query", {
       promptFile: step.promptFile, promptHash, promptPath, model, modelAlias: step.model,
       allowedTools: [...step.allowedTools], context: step.context, schema: Boolean(step.schema), resumed: Boolean(options.resume),
+      showConfig: Boolean(opts.show),
     });
 
     // 5–7: drive the stream under the total and idle deadlines. The executor never relies on the
