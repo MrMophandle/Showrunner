@@ -13,4 +13,15 @@ describe("checkPrompts", () => {
     const errors = await checkPrompts({ promptsDir: dir, context: { episodeId: "s02e01", runId: "r", showRoot: "/s", results: { x: "1" }, season: 2, show: { showName: "H" } } });
     expect(errors).toEqual([{ file: "bad.md", error: expect.stringContaining("{{results.missing}}") }]);
   });
+
+  it("skips README.md, which documents the variable syntax rather than using it", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "chk-"));
+    await writeFile(path.join(dir, "step.md"), "ok {{episodeId}}");
+    // The prompts directory's README names the forms a prompt may write. None of them resolves
+    // against a real context, and nothing renders the README at run time, so checking it would
+    // report a hole in the one file that is supposed to contain one.
+    await writeFile(path.join(dir, "README.md"), "The variables are {{results.<stepId>}}, {{show.<path>}} and {{results.<gateId>:rejection}}.");
+    const errors = await checkPrompts({ promptsDir: dir, context: { episodeId: "s02e01", runId: "r", showRoot: "/s", results: {} } });
+    expect(errors).toEqual([]);
+  });
 });

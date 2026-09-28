@@ -10,7 +10,12 @@
  *  rejection prompt. A gate message is rendered by the same `renderPrompt` at run time and is read
  *  by the showrunner at an approval, so a hole in one misleads the one person the pipeline cannot
  *  afford to mislead. The check therefore has a single rule: every `.md` the extractor wrote must
- *  render. */
+ *  render.
+ *
+ *  `README.md` is the one exception, and it is skipped rather than checked. It is written by a
+ *  person and never by the extractor — which is why the extractor's own cleanup keeps it — and it
+ *  documents the template syntax, so it quotes forms like `{{show.<path>}}` that are deliberately
+ *  not renderable. Nothing renders it at run time, so a hole in it misleads no one. */
 
 import path from "node:path";
 import { readdir, readFile } from "node:fs/promises";
@@ -55,7 +60,7 @@ export async function checkPrompts(opts: CheckOptions): Promise<CheckError[]> {
     results: context.results,
   };
 
-  const files = (await readdir(promptsDir)).filter((n) => n.endsWith(".md")).sort();
+  const files = (await readdir(promptsDir)).filter((n) => n.endsWith(".md") && n !== "README.md").sort();
   const errors: CheckError[] = [];
   for (const file of files) {
     let text: string;
