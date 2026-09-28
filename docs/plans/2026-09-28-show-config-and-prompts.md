@@ -309,7 +309,7 @@ Add to `engine/test/runner.test.ts`:
 - [ ] **Step 2: Run them to verify they fail**
 
 Run: `cd ~/GitHub/Showrunner/engine && npx vitest run test/show-config.test.ts test/prompt-template.test.ts test/agent-step.test.ts test/script-step.test.ts test/runner.test.ts`
-Expected: `show-config` cannot resolve its module; the new template, executor, script-step and runner cases fail; every existing case passes.
+Expected: `show-config` cannot resolve its module; the new template, executor, script-step and runner cases fail; three existing script-step cases fail because their scripts now have a result (`"starting"`, `"299"`, `"one line"`) — those assertions are updated in Step 5; every other existing case passes.
 
 - [ ] **Step 3: Write `show-config.ts`**
 
