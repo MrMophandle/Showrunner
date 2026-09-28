@@ -516,7 +516,7 @@ export interface ExtractOptions { workflowsDir: string; outDir: string; override
 export interface PromptIndexEntry { file: string; kind: "agent" | "loop" | "reject" | "gate"; workflow: string; nodeId: string; gateId?: string; line: [number, number]; model?: string; context?: "fresh" | "shared"; allowedTools?: string[]; timeoutMs?: number; idleTimeoutMs?: number; until?: string; maxIterations?: number; maxAttempts?: number; dependsOn?: string[]; when?: string; schema?: string /* file */ }
 export async function extractPrompts(opts: ExtractOptions): Promise<{ index: PromptIndexEntry[]; unmapped: Array<{ file: string; nodeId: string; form: string }> }>;
 //   writes <outDir>/<nodeId>.md (agent, loop body), <outDir>/<gateId>.reject.md, <outDir>/<gateId>.gate.md, <outDir>/<nodeId>.schema.json, <outDir>/index.json
-//   context: fresh_context: false → "shared"; anything else → "fresh". timeout (ms) → timeoutMs; idle_timeout → idleTimeoutMs. Text is written verbatim after rewriting; trailing whitespace preserved as in the YAML block scalar.
+//   context: fresh_context: false → "shared"; anything else → "fresh". timeout (ms) → timeoutMs; idle_timeout → idleTimeoutMs. model: a leading "@" is stripped ("@writer" → "writer"), so the index names the show config's models keys. Text is written verbatim after rewriting; trailing whitespace preserved as in the YAML block scalar.
 //   exits non-zero (CLI) when unmapped is non-empty, listing every form with its file and node
 
 // check-prompts.ts
@@ -663,7 +663,7 @@ describe("extractPrompts", () => {
     expect(schema.required).toEqual(["pass", "issues", "verdict"]);
     const index = JSON.parse(await readFile(path.join(outDir, "index.json"), "utf8"));
     const draft = index.find((e: { nodeId: string }) => e.nodeId === "draft");
-    expect(draft).toMatchObject({ kind: "loop", model: "@writer", context: "fresh", until: "DRAFT_COMPLETE", maxIterations: 15, idleTimeoutMs: 900000, dependsOn: ["outline-gate"] });
+    expect(draft).toMatchObject({ kind: "loop", model: "writer", context: "fresh", until: "DRAFT_COMPLETE", maxIterations: 15, idleTimeoutMs: 900000, dependsOn: ["outline-gate"] });
     const check = index.find((e: { nodeId: string }) => e.nodeId === "outline-check");
     expect(check).toMatchObject({ kind: "agent", model: "medium", context: "fresh", allowedTools: ["Read", "Glob", "Grep"], schema: "outline-check.schema.json" });
     const rej = index.find((e: { file: string }) => e.file === "outline-gate.reject.md");
