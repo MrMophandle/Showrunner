@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
 import path from "node:path";
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { createAgentExecutor, type AgentMessage, type AgentQueryOptions, type QueryFn } from "../src/agent-step.js";
 import type { AgentStep, EventKind, RunContext } from "../src/steps.js";
 
@@ -68,6 +69,31 @@ describe("createAgentExecutor: options", () => {
     const c = { ...ctx(), showRoot: path.resolve(import.meta.dirname, "fixtures") };
     await createAgentExecutor({ query: f.query })(step(), c, recorder().emit);
     expect(f.calls.length).toBe(1);
+  });
+  it("takes promptsDir and models from the show config, and renders {{season}} and {{show.*}}", async () => {
+    const f = fake([init, success()]);
+    const showRoot = await mkdtemp(path.join(tmpdir(), "show-"));
+    await mkdir(path.join(showRoot, "p"));
+    await writeFile(path.join(showRoot, "p", "s.md"), "Season {{season}} of {{show.showName}} for {{episodeId}}");
+    const show = { showName: "Harbor Lights", showSlug: "HL", promptsDir: "p", models: { medium: "cfg-mid", large: "l", writer: "w" }, airMap: { ep07: [1, 7] as [number, number] }, output: { nasRoot: "/n" } };
+    const ex = createAgentExecutor({ query: f.query, show });
+    const rec = recorder();
+    await ex(step({ promptFile: "s.md" }), { ...ctx(), showRoot, episodeId: "ep07" }, rec.emit);
+    expect(f.calls[0]!.prompt).toBe("Season 1 of Harbor Lights for ep07");
+    expect(f.calls[0]!.options.model).toBe("cfg-mid");
+    expect(rec.events[0]!.payload["showConfig"]).toBe(true);
+  });
+  it("explicit promptsDir and models override the show config", async () => {
+    const f = fake([init, success()]);
+    const show = { showName: "H", showSlug: "H", promptsDir: "/nowhere", models: { medium: "cfg-mid", large: "l", writer: "w" }, airMap: {}, output: { nasRoot: "/n" } };
+    await createAgentExecutor({ query: f.query, show, promptsDir, models: { medium: "explicit" } })(step(), ctx(), recorder().emit);
+    expect(f.calls[0]!.options.model).toBe("explicit");
+  });
+  it("a production id absent from the air map only fails when the prompt uses {{season}}", async () => {
+    const f = fake([init, success()]);
+    const show = { showName: "H", showSlug: "H", promptsDir, models: { medium: "m", large: "l", writer: "w" }, airMap: {}, output: { nasRoot: "/n" } };
+    const r = await createAgentExecutor({ query: f.query, show })(step({ promptFile: "plain.md" }), { ...ctx(), episodeId: "ep99" }, recorder().emit);
+    expect(r.ok).toBe(true);
   });
 });
 

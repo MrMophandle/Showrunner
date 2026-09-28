@@ -8,6 +8,7 @@ export * from "./state.js";
 export * from "./runner.js";
 export * from "./script-step.js";
 export * from "./prompt-template.js";
+export * from "./show-config.js";
 export * from "./agent-step.js";
 export * from "./sdk-query.js";
 export * from "./stages.js";

@@ -308,4 +308,18 @@ describe("run", () => {
     const starts = (await log.read()).filter((e) => e.kind === "step_started" && e.stepId === "g");
     expect(starts).toHaveLength(2);
   });
+
+  it("a script step's result reaches ctx.results and step_completed", async () => {
+    const root = await show();
+    const executors = { script: async () => ({ ok: true as const, result: "MASTER_OK" }), agent: async () => { throw new Error("unused"); } };
+    let seen: unknown;
+    const a: ScriptStep = { kind: "script", id: "master", argv: () => ["x"] };
+    const g: GuardStep = { kind: "guard", id: "after", dependsOn: ["master"], check: (c) => { seen = c.results["master"]; return { pass: true }; } };
+    const log = new EventLog(EventLog.logPath(root, "s02e01", "r1"));
+    const r = await run({ pipeline: { name: "p", steps: [a, g] }, executors, log, ctx: { runId: "r1", episodeId: "s02e01", showRoot: root } });
+    expect(r).toEqual({ status: "completed" });
+    expect(seen).toBe("MASTER_OK");
+    const done = (await log.read()).find((e) => e.kind === "step_completed" && e.stepId === "master");
+    expect(done?.payload["result"]).toBe("MASTER_OK");
+  });
 });

@@ -68,3 +68,17 @@ describe("renderPrompt", () => {
     expect(renderPrompt("{{results.setup}}", { ...ctx, results: { setup: "a {b} c" } })).toBe("a {b} c");
   });
 });
+
+describe("renderPrompt: season and show", () => {
+  const show = { showName: "Harbor Lights", video: { fps: 24, titleCard: { text: "HARBOR LIGHTS" } }, audio: { mainCast: ["a", "b"] } };
+  it("renders {{season}} and {{show.<path>}}", () => {
+    expect(renderPrompt("S{{season}} of {{show.showName}} at {{ show.video.fps }} fps: {{show.video.titleCard.text}}", ctx, { season: 2, show })).toBe("S2 of Harbor Lights at 24 fps: HARBOR LIGHTS");
+    expect(renderPrompt("{{show.audio.mainCast}}", ctx, { show })).toBe(JSON.stringify(["a", "b"], null, 2));
+  });
+  it("throws when season or show is not available, naming the variable", () => {
+    expect(() => renderPrompt("{{season}}", ctx)).toThrow(/\{\{season\}\}/);
+    expect(() => renderPrompt("{{show.showName}}", ctx)).toThrow(/\{\{show\.showName\}\}/);
+    expect(() => renderPrompt("{{show.nope}}", ctx, { show })).toThrow(/nope/);
+    expect(() => renderPrompt("{{show}}", ctx, { show })).toThrow(TemplateError);
+  });
+});

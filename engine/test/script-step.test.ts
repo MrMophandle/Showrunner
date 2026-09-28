@@ -28,7 +28,8 @@ describe("scriptExecutor", () => {
     const step: ScriptStep = { kind: "script", id: "s", argv: () => ["python3", fixture("progress.py"), "3"] };
     const { events, emit } = collector();
     const r = await scriptExecutor(step, ctx, emit);
-    expect(r).toEqual({ ok: true });
+    // "starting" is the result: the last stdout line that was not a progress line.
+    expect(r).toEqual({ ok: true, result: "starting" });
     const progress = events.filter((e) => e.kind === "step_progress").map((e) => e.payload["done"]);
     expect(progress).toEqual([1, 2, 3]);
     const lines = events.filter((e) => e.kind === "script_line").map((e) => [e.payload["stream"], e.payload["line"]]);
@@ -68,7 +69,7 @@ describe("scriptExecutor", () => {
       events.push({ kind, payload });
     };
     const r = await scriptExecutor(step, ctx, emit);
-    expect(r).toEqual({ ok: true });
+    expect(r).toEqual({ ok: true, result: "299" });
     const lines = events.filter((e) => e.kind === "script_line").map((e) => Number(e.payload["line"]));
     expect(lines).toEqual(Array.from({ length: 300 }, (_, i) => i));
   });
@@ -91,7 +92,9 @@ describe("scriptExecutor", () => {
     const r = await scriptExecutor(step, ctx, emit);
     const elapsed = Date.now() - started;
 
-    expect(r).toEqual({ ok: true });
+    // The result is the child's own last line, fixed when the child exited: the grandchild's
+    // later lines are logged during the drain but cannot become the step's result.
+    expect(r).toEqual({ ok: true, result: "one line" });
     expect(elapsed).toBeLessThan(3000);
     expect(events.some((e) => e.kind === "script_line" && e.payload["line"] === "one line")).toBe(true);
 
@@ -129,5 +132,21 @@ describe("scriptExecutor", () => {
     const r = await scriptExecutor(step, ctx, emit);
     expect(r).toEqual({ ok: false, error: "timeout after 300ms" });
     expect(Date.now() - started).toBeLessThan(5000);
+  });
+
+  it("returns the last non-progress stdout line as the result", async () => {
+    const step: ScriptStep = { kind: "script", id: "s", argv: () => ["python3", fixture("prints-result.py")] };
+    const { emit } = collector();
+    const r = await scriptExecutor(step, ctx, emit);
+    expect(r).toEqual({ ok: true, result: "MIX_OK 12.3s -14.0 LUFS" });
+  });
+
+  it("returns no result key when the script printed only progress lines", async () => {
+    // Not fixtures/progress.py: that one prints "starting" on stdout, which is a result. A script
+    // whose whole stdout is progress lines has no summary line to hand the next step.
+    const step: ScriptStep = { kind: "script", id: "s", argv: () => ["python3", "-c", "import json\nfor i in (1, 2): print('::progress ' + json.dumps({'done': i, 'total': 2, 'unit': 'things'}), flush=True)"] };
+    const { emit } = collector();
+    const r = await scriptExecutor(step, ctx, emit);
+    expect(r).toEqual({ ok: true });
   });
 });

@@ -99,6 +99,9 @@ the SDK module spawns nothing, and calling `query()` is what every test but the 
 
 `promptsDir` is optional and defaults, per call, to `<showRoot>/prompts`. `models` is an alias map
 (`{ medium: "claude-sonnet-5" }`); a model the map does not name is passed to the SDK unchanged.
+`show` is the loaded `showrunner.json` (`loadShowConfig(showRoot)`): it supplies `promptsDir` and
+`models` when those options are absent, and it is what `{{season}}` and `{{show.*}}` render from.
+An explicit `promptsDir` or `models` wins over the show config.
 
 ### The prompt file
 
@@ -114,6 +117,8 @@ or queried.
 | `{{showRoot}}` | the absolute path of the show root |
 | `{{results.<stepId>}}` | that step's result: a string as itself, a number or boolean stringified, an object as pretty-printed JSON |
 | `{{results.<stepId>.<field>}}` | a field of that step's result object, at any depth (`{{results.review.notes.tone}}`) |
+| `{{season}}` | the episode's numeric season, unpadded (`Canon/season-{{season}}.md`) — read off an aired id, or from the show config's `airMap` for a production id |
+| `{{show.<path>}}` | a dotted path into the show config (`{{show.showName}}`, `{{show.video.fps}}`), by the same value rules as `{{results.*}}` |
 
 **Every hole is an error.** An unknown variable, a step with no result, a path through a non-object,
 a missing key, a null value, or a value `JSON.stringify` cannot represent throws `TemplateError`

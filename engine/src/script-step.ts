@@ -62,6 +62,10 @@ export const scriptExecutor: Executors["script"] = (step: ScriptStep, ctx: RunCo
   const forget = () => { if (child.pid !== undefined) live.delete(child.pid); };
 
   let lastStderr = "";
+  // The step's result: the last stdout line that was neither a progress line nor blank. A script
+  // ends with a one-line summary — "MIX_OK 12.3s -14.0 LUFS" — and that line is what a later
+  // prompt reads as {{results.<id>}}.
+  let lastStdout = "";
   let emitError: unknown;
   // Set when the drain grace expires: the pipes are being abandoned, so anything a grandchild
   // writes after that point is dropped rather than logged under a step that has already settled.
@@ -80,7 +84,10 @@ export const scriptExecutor: Executors["script"] = (step: ScriptStep, ctx: RunCo
       if (p) {
         queue("step_progress", { ...p });
       } else {
-        if (name === "stderr" && line.trim() !== "") lastStderr = line;
+        if (line.trim() !== "") {
+          if (name === "stderr") lastStderr = line;
+          else lastStdout = line;
+        }
         queue("script_line", { stream: name, line });
       }
     });
@@ -130,7 +137,7 @@ export const scriptExecutor: Executors["script"] = (step: ScriptStep, ctx: RunCo
     child.on("exit", (code, signal) => {
       forget();
       if (timedOut) { void settle({ ok: false, error: `timeout after ${step.timeoutMs}ms` }); return; }
-      if (code === 0) { void settle({ ok: true }); return; }
+      if (code === 0) { void settle({ ok: true, ...(lastStdout !== "" ? { result: lastStdout } : {}) }); return; }
       const shown = code === null ? `signal ${signal ?? "unknown"}` : `exit ${code}`;
       void settle({ ok: false, error: `${shown}: ${lastStderr}` });
     });

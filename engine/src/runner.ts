@@ -265,8 +265,8 @@ async function runScriptStep(
     return { kind: "failed", error: r.error };
   }
   const outputHashes = await hashFiles(ctx.showRoot, outputs);
-  await emit("step_completed", { inputHashes, outputHashes });
-  return { kind: "completed" };
+  await emit("step_completed", { inputHashes, outputHashes, ...(r.result !== undefined ? { result: r.result } : {}) });
+  return { kind: "completed", ...(r.result !== undefined ? { result: r.result } : {}) };
 }
 
 async function runAgentStep(step: AgentStep, ctx: RunContext, emit: Emit, executors: Executors): Promise<StepOutcome> {

@@ -30,16 +30,46 @@ type TemplateContext = Pick<RunContext, "episodeId" | "runId" | "showRoot" | "re
 const VARIABLE = /\{\{([^{}]*)\}\}/g;
 const LEFTOVER_BRACE = /\{\{|\}\}/;
 
+/** What the caller supplies beyond the run context: the episode's numeric season and the show's
+ *  config. Both are optional, and both are only ever *needed* by a template that names them —
+ *  `{{season}}` fails for an episode whose season cannot be determined, but a prompt that never
+ *  writes `{{season}}` renders for that same episode. */
+export interface RenderExtra {
+  season?: number;
+  show?: Record<string, unknown>;
+}
+
+/** Renders one resolved value as prompt text. Shared by the `results` and the `show` branches so
+ *  the rules cannot drift between them: a string goes in as itself, a number or a boolean through
+ *  String(), anything else as indented JSON, and null or undefined is a hole. */
+function renderValue(value: unknown, fail: (why: string) => never): string {
+  if (value === null || value === undefined) return fail("value is null");
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  // JSON.stringify returns undefined rather than throwing for a function or a symbol, and an
+  // undefined return here would be substituted as the string "undefined" — a hole that renders
+  // as prose. Every other hole is an error, and so is this one.
+  const json = JSON.stringify(value, null, 2);
+  if (json === undefined) return fail("value is not serializable");
+  return json;
+}
+
 /** Substitutes every `{{...}}` in `template`. Every hole is an error: an unknown name, a missing
  *  result, a path through a non-object, or a null value throws TemplateError naming the variable
  *  as written, because a prompt with a hole in it lies to the model quietly.
+ *
+ *  The variables are `{{episodeId}}`, `{{runId}}`, `{{showRoot}}`, `{{results.<stepId>[.path]}}`,
+ *  `{{season}}` (the numeric season, unpadded) and `{{show.<path>}}` (a dotted path into the show
+ *  config, so `{{show.video.fps}}`). The last two read `extra`, and each fails when the caller did
+ *  not supply what it names — `{{season}}` for an episode with no season, `{{show.*}}` for an
+ *  executor built without a show config.
  *
  *  A doubled brace surviving the substitution is the one hole VARIABLE cannot see — its character
  *  class matches no brace, so `{{results.{x}}}` and an unterminated `{{results.setup` match nothing
  *  and would otherwise pass into the prompt verbatim. So after substituting, any remaining `{{` or
  *  `}}` is refused. Single braces are left alone. A rendered *value* that itself contains `{{` is
  *  refused too, which is intended: a step's result is never expected to carry template syntax. */
-export function renderPrompt(template: string, ctx: TemplateContext): string {
+export function renderPrompt(template: string, ctx: TemplateContext, extra: RenderExtra = {}): string {
   const rendered = template.replace(VARIABLE, (whole, inner: string) => {
     const expr = inner.trim();
     const fail = (why: string): never => { throw new TemplateError(`${whole}: ${why}`); };
@@ -47,6 +77,23 @@ export function renderPrompt(template: string, ctx: TemplateContext): string {
     if (expr === "episodeId") return ctx.episodeId;
     if (expr === "runId") return ctx.runId;
     if (expr === "showRoot") return ctx.showRoot;
+    if (expr === "season") {
+      if (extra.season === undefined) return fail("season is not available");
+      return String(extra.season);
+    }
+    if (expr === "show" || expr.startsWith("show.")) {
+      if (expr === "show") return fail("show needs a key path");
+      if (extra.show === undefined) return fail("show config is not available");
+      const segments = expr.slice("show.".length).split(".");
+      if (segments.some((s) => s === "")) return fail("malformed path");
+      let value: unknown = extra.show;
+      for (const seg of segments) {
+        if (value === null || typeof value !== "object" || Array.isArray(value)) return fail(`${JSON.stringify(seg)} is not a key of a non-object`);
+        if (!Object.prototype.hasOwnProperty.call(value, seg)) return fail(`no key ${JSON.stringify(seg)}`);
+        value = (value as Record<string, unknown>)[seg];
+      }
+      return renderValue(value, fail);
+    }
     if (expr === "results" || !expr.startsWith("results.")) return fail("unknown variable");
     const rest = expr.slice("results.".length);
     const dot = rest.indexOf(".");
@@ -60,15 +107,7 @@ export function renderPrompt(template: string, ctx: TemplateContext): string {
       if (!Object.prototype.hasOwnProperty.call(value, seg)) return fail(`no key ${JSON.stringify(seg)}`);
       value = (value as Record<string, unknown>)[seg];
     }
-    if (value === null || value === undefined) return fail("value is null");
-    if (typeof value === "string") return value;
-    if (typeof value === "number" || typeof value === "boolean") return String(value);
-    // JSON.stringify returns undefined rather than throwing for a function or a symbol, and an
-    // undefined return here would be substituted as the string "undefined" — a hole that renders
-    // as prose. Every other hole is an error, and so is this one.
-    const json = JSON.stringify(value, null, 2);
-    if (json === undefined) return fail("value is not serializable");
-    return json;
+    return renderValue(value, fail);
   });
   const leftover = rendered.search(LEFTOVER_BRACE);
   if (leftover !== -1) {
