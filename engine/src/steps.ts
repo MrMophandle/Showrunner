@@ -56,16 +56,40 @@ export interface ScriptStep extends StepBase {
   cwd?: string;
 }
 
+/** A JSON Schema, draft-07. The Agent SDK validates verdicts against draft-07 and rejects a schema
+ *  that declares a newer draft, so a `$schema` key, if present, must name draft-07. */
+export type JsonSchema = Record<string, unknown>;
+
 export interface AgentStep extends StepBase {
   kind: "agent";
   /** Path of the prompt file, relative to the show's prompts directory. */
   promptFile: string;
+  /** A model alias or id. The executor resolves aliases through its `models` map and passes
+   *  anything else to the SDK unchanged. */
   model: string;
+  /** Built-in tools the agent may use, e.g. ["Read", "Glob", "Grep"]. Nothing else is in context
+   *  and nothing else is approved: the executor runs with permissionMode "dontAsk". */
   allowedTools: string[];
+  /** "fresh": every query starts a new session. "shared": within one run, later queries of this
+   *  step resume the session its first query opened (a loop body keeps its conversation across
+   *  iterations). After a restart the session is not recovered: the next query is fresh, and the
+   *  log shows it. */
   context: "fresh" | "shared";
-  /** JSON schema the agent's verdict must satisfy, when the step produces one. */
-  schema?: object;
+  /** JSON schema the agent's verdict must satisfy, when the step produces one. With a schema the
+   *  outcome carries `verdict`; a success with no verdict is a failure. */
+  schema?: JsonSchema;
+  /** Maximum agentic turns (tool-use round trips) before the SDK stops the query. */
+  maxTurns?: number;
+  /** Fail the step when no message arrives from the SDK for this long. `timeoutMs` on StepBase
+   *  bounds the whole query; this bounds the silence between messages. */
+  idleTimeoutMs?: number;
+  /** Stop the query when the SDK's client-side cost estimate reaches this many US dollars. */
+  maxBudgetUsd?: number;
 }
+
+/** An agent step nested inside a gate (`onReject`) or a loop (`body`). It has no `when` and no
+ *  `dependsOn`: it runs because its parent decided so. */
+export type NestedAgentStep = Omit<AgentStep, "when" | "dependsOn">;
 
 export interface GateStep extends StepBase {
   kind: "gate";
@@ -74,7 +98,7 @@ export interface GateStep extends StepBase {
    *  are logged under its own id, so its id shares the pipeline's id namespace (orderSteps
    *  enforces that) and a completed run of it is visible in the log and is not repeated after a
    *  crash. Its context carries the rejection notes as the result key `<gate-id>:rejection`. */
-  onReject?: AgentStep;
+  onReject?: NestedAgentStep;
   maxAttempts?: number;
 }
 
@@ -84,8 +108,11 @@ export interface LoopStep extends StepBase {
    *  under the loop's id, so the loop is one step in the run's history however many times the
    *  body runs, and the iterations are told apart by the loop_iteration events between them. The
    *  body's id still has to be unique — it names the result key `<body-id>:iteration`. */
-  body: AgentStep;
-  /** The exact string whose presence in the body's final text ends the loop. */
+  body: NestedAgentStep;
+  /** The exact string whose presence in the body's final text ends the loop. A body with a schema
+   *  has no prose final text: its `text` is the serialized verdict, so `orderSteps` refuses a loop
+   *  whose body carries a schema; a verdict-driven loop needs an `untilVerdict` predicate, which
+   *  Plan D adds if it wants one. */
   until: string;
   maxIterations: number;
   /** Called after every iteration; its result is emitted as step_progress. Spec §6.7 wants a
@@ -117,7 +144,13 @@ export type AgentOutcome =
  *  it is handed, which stamps the step id for it.
  *
  *  An implementation that emits none of these still runs, and the run still completes — the cost
- *  is paid later, by an operator who cannot see what a step did. */
+ *  is paid later, by an operator who cannot see what a step did.
+ *
+ *  An executor may throw only when the event log itself is unwritable. The script executor never
+ *  throws (every rejected emit becomes `{ ok: false, error: "log write failed: …" }`); the agent
+ *  executor guards the `agent_tool_call` emit the same way but its `agent_query` and `agent_result`
+ *  emits are unguarded and reject out of the executor. A throw leaves the step `running` with no
+ *  terminal event; §6.9's replay re-executes it on the next run. */
 export interface Executors {
   /** Obligations: one `script_line` per line of stdout or stderr that is not a progress line, in
    *  the order the lines happened, and one `step_progress` per `::progress {...}` line on stdout
@@ -126,6 +159,9 @@ export interface Executors {
   /** Obligations: one `agent_query` per query the step makes, carrying the prompt file, model,
    *  allowlist and context policy it ran with; one `agent_tool_call` per tool invocation, with
    *  its arguments; and one `agent_result` when the step is done, carrying the verdict JSON if
-   *  the step has a schema and the final text otherwise (spec §6.5). */
+   *  the step has a schema and the final text otherwise (spec §6.5).
+   *
+   *  A returned verdict is stored by reference in `ctx.results` and emitted into the log; it must
+   *  not be mutated after it is returned. */
   agent: (step: AgentStep, ctx: RunContext, emit: Emit) => Promise<AgentOutcome>;
 }
