@@ -275,12 +275,19 @@ Add to `engine/test/script-step.test.ts`:
     expect(r).toEqual({ ok: true, result: "MIX_OK 12.3s -14.0 LUFS" });
   });
   it("returns no result key when the script printed only progress lines", async () => {
-    const r = await scriptExecutor(step(["python3", fixture("progress.py")]), ctx(), recorder().emit);
+    // fixtures/progress.py prints "starting" first, so it has a result; this case uses an inline program.
+    const r = await scriptExecutor(step(["python3", "-c", "print('::progress {\"done\":1,\"total\":1,\"unit\":\"x\"}')"]), ctx(), recorder().emit);
     expect(r).toEqual({ ok: true });
+  });
+  it("reads the result after the pipes drain, so a burst before the summary cannot lose it", async () => {
+    // 20,000 unflushed lines, then the summary, then an immediate exit. Node emits 'exit' when the process
+    // ends, not when its stdio has been read; the outcome is therefore built after the drain.
+    const r = await scriptExecutor(step(["python3", "-c", "import sys,os\nfor i in range(20000): sys.stdout.write(f'line {i}\\n')\nsys.stdout.flush(); print('SUMMARY_OK', flush=True); os._exit(0)"]), ctx(), recorder().emit);
+    expect(r).toEqual({ ok: true, result: "SUMMARY_OK" });
   });
 ```
 
-(Use the file's existing helpers for `step`, `ctx`, `fixture`, `recorder`; match their names.)
+(Use the file's existing helpers for `step`, `ctx`, `fixture`, `recorder`; match their names. Three existing assertions in this file gain a `result` value — `"starting"`, `"299"`, `"one line"` — because those scripts print lines; the drain-grace `escapee.py` case's result becomes the escaped grandchild's last line (`/^late \d+$/`), which is the documented consequence of reading the result after the drain.)
 
 Add to `engine/test/runner.test.ts`:
 
@@ -461,7 +468,7 @@ and factor the value rendering (string / number / boolean / JSON / null / non-se
 
 `engine/src/steps.ts`: `export type ScriptOutcome = { ok: true; result?: string } | { ok: false; error: string };` with the comment "result: the script's last non-empty stdout line that was not a progress line — the one-line summary a later step may read as `{{results.<id>}}`".
 
-`engine/src/script-step.ts`: keep `let lastStdout = ""`; in the stdout line handler, for a line that is not a progress line and is not blank, set `lastStdout = line`; on exit code 0 settle `{ ok: true, ...(lastStdout !== "" ? { result: lastStdout } : {}) }`.
+`engine/src/script-step.ts`: keep `let lastStdout = ""`; in the stdout line handler, for a line that is not a progress line and is not blank, set `lastStdout = line`. **The outcome is built after the drain**, not in the `exit` handler: `settle` takes an `Ending` (`{ kind: "exit"; code; signal }` or `{ kind: "spawnFailed"; message }`) and an `outcomeOf(ending)` runs once the readline closes or the grace has completed, so both `lastStdout` and `lastStderr` reflect every line that arrived. Exit 0 → `{ ok: true, ...(lastStdout !== "" ? { result: lastStdout } : {}) }`; every failure message string stays byte-identical to Plan A's. (Node emits `exit` when the process ends, not when its stdio has been read — the pre-existing `lastStderr` snapshot had the same hazard; a probe on this machine lost the race 31 times in 40 with stdout piped alone, and 0 in 40 in the executor's detached shape, so the test is a guard on the invariant, not a reproduction.)
 
 `engine/src/runner.ts`, in `runScriptStep`: after the executor returns ok, `await emit("step_completed", { inputHashes, outputHashes, ...(r.result !== undefined ? { result: r.result } : {}) }); return { kind: "completed", ...(r.result !== undefined ? { result: r.result } : {}) };`. The cache path already carries `prior.result`; confirm `lastCompletion` reads `result` off `step_completed` (it does for guards) so a cached script serves its result too. `runner.ts` is otherwise untouched.
 
@@ -470,12 +477,12 @@ and factor the value rendering (string / number / boolean / JSON / null / non-se
 - [ ] **Step 6: Run everything**
 
 Run: `cd ~/GitHub/Showrunner/engine && npx vitest run && npm run typecheck`
-Expected: the suite grows by 8 (show-config) + 2 (template) + 3 (executor) + 2 (script-step) + 1 (runner) = 16 → `155 passed | 2 skipped` across 20 files; typecheck silent.
+Expected: the suite grows by 9 (show-config) + 2 (template) + 3 (executor) + 3 (script-step) + 1 (runner) = 18 → `157 passed | 2 skipped` across 20 files; typecheck silent.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-cd ~/GitHub/Showrunner && git add engine && git commit -F - <<'MSG'
+cd ~/GitHub/Showrunner && git add engine README.md && git commit -F - <<'MSG'
 engine: show config loader, {{season}} and {{show.*}}, and a script's result line
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
@@ -731,7 +738,7 @@ Expected: three files fail to resolve their modules.
 - [ ] **Step 5: Run the tools tests and typecheck, then the root scripts**
 
 Run: `cd ~/GetHub/Showrunner && npm run build -w engine && npm test && npm run typecheck`
-Expected: engine `155 passed | 2 skipped`; tools 3 files, 9 tests passing; both typechecks silent. (The `GetHub` above is a typo in this plan; the path is `~/GitHub/Showrunner`.)
+Expected: engine `157 passed | 2 skipped`; tools 3 files, 9 tests passing; both typechecks silent. (The `GetHub` above is a typo in this plan; the path is `~/GitHub/Showrunner`.)
 
 - [ ] **Step 6: Commit**
 
