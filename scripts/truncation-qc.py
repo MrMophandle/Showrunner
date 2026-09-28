@@ -143,9 +143,11 @@ def resynth(ep: str) -> None:
 
 def main() -> None:
     # The engine runs this with the show root as the working directory; --show-root <path> is for
-    # an operator running it from somewhere else. This step reads no show-config key of its own --
-    # every threshold above is an engine setting -- so it takes the root and nothing else.
-    root = sc.show_root(sys.argv)
+    # an operator running it from somewhere else. This step reads no show-config KEY of its own --
+    # every threshold above is an engine setting -- but it still loads the config, so a wrong
+    # --show-root fails here by naming showrunner.json instead of failing three lines later.
+    root = os.path.abspath(sc.show_root(sys.argv))
+    sc.load(root)
     os.chdir(root)
     ep = sys.argv[1] if len(sys.argv) > 1 else ""
     if not ep:
@@ -161,6 +163,9 @@ def main() -> None:
         print(f"round {rnd}: {len(bad)} segment(s) ending hot (>{THRESHOLD:.2f} of speech level) with no trim pad")
         sc.progress(rnd, PASSES, "rounds")
         if not bad:
+            # The rounds are over, however few it took: report the bar full before the result line
+            # so a console never shows this step finishing at 1 of 2.
+            sc.progress(PASSES, PASSES, "rounds")
             print(f"TRUNCATION_QC_OK ({len(doc['segments'])} segments end in their own release)")
             return
         texts = {s["i"]: s for s in doc["segments"]}
@@ -183,5 +188,5 @@ def main() -> None:
 if __name__ == "__main__":
     try:
         main()
-    except sc.ShowConfigError as err:
+    except (sc.ShowConfigError, FileNotFoundError) as err:
         sys.exit(f"truncation-qc: {err}")

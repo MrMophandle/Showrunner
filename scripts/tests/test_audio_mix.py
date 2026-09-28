@@ -12,11 +12,19 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import pytest
 import soundfile as sf
-from conftest import SCRIPTS_DIR, needs_ffmpeg
+from conftest import SCRIPTS_DIR, load_script, needs_ffmpeg
 
 SCRIPT = SCRIPTS_DIR / "audio-mix.py"
 SR = 24000
+
+
+def _naming(show_root: Path):
+    """The audio-mix module and a loaded fixture config, for the pure naming assertions."""
+    from lib import showconfig as sc
+
+    return load_script("audio-mix.py"), sc.load(str(show_root))
 
 
 def _episode(show_root: Path, episode_id: str) -> Path:
@@ -70,7 +78,12 @@ def test_the_last_line_is_the_result_the_gate_reads(show_root: Path) -> None:
     assert result.startswith("MIX_OK "), result
     duration, lufs, unit, path = result[len("MIX_OK "):].split(" ", 3)
     assert duration.endswith("s") and float(duration[:-1]) > 1.0
-    assert (float(lufs), unit) == (-14.0, "LUFS")
+    assert unit == "LUFS"
+    # The figure is what the mix MEASURED after normalisation, not the target read back: a real
+    # loudness lands somewhere below 0 and above -30, and the (target) marker says when the
+    # summary could not be parsed.
+    assert -30.0 < float(lufs) < 0.0, result
+    assert "(target)" not in result, result
     assert path.endswith("HarborLights S01E01.wav")
 
 
@@ -87,16 +100,32 @@ def test_it_reports_progress_in_segments(show_root: Path) -> None:
 
 def test_an_episode_the_air_map_does_not_place_is_named_episode_wav(show_root: Path) -> None:
     """No ffmpeg needed: the naming rule is a pure function of the show config."""
-    sys.path.insert(0, str(SCRIPTS_DIR))
-    from conftest import load_script
-
-    from lib import showconfig as sc
-
-    mix = load_script("audio-mix.py")
-    cfg = sc.load(str(show_root))
+    mix, cfg = _naming(show_root)
     assert mix.mix_wav(cfg, "ep01") == "HarborLights S01E01.wav"
     assert mix.mix_wav(cfg, "s02e03") == "HarborLights S02E03.wav"
     assert mix.mix_wav(cfg, "ep98") == "episode.wav"
+
+
+def test_a_config_fault_is_never_named_over_as_episode_wav(show_root: Path) -> None:
+    """Only an unmapped id falls back; a broken config must reach the operator."""
+    from lib import showconfig as sc
+
+    mix, cfg = _naming(show_root)
+
+    broken_slot = json.loads(json.dumps(cfg))
+    broken_slot["airMap"]["ep03"] = [1]
+    with pytest.raises(sc.ShowConfigError):
+        mix.mix_wav(broken_slot, "ep03")
+
+    no_pattern = json.loads(json.dumps(cfg))
+    del no_pattern["output"]["mixFilename"]
+    with pytest.raises(sc.ShowConfigError):
+        mix.mix_wav(no_pattern, "ep01")
+
+    no_map = json.loads(json.dumps(cfg))
+    del no_map["airMap"]
+    with pytest.raises(sc.ShowConfigError):
+        mix.mix_wav(no_map, "ep01")
 
 
 def test_a_missing_episode_id_is_refused(show_root: Path) -> None:

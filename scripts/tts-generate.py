@@ -67,9 +67,9 @@ def make_synth(engine: str, cast: dict):
 def main() -> None:
     # The engine runs this with the show root as the working directory; --show-root <path> is for
     # an operator running it from somewhere else. Everything below is show-relative from there.
-    root = sc.show_root(sys.argv)
-    os.chdir(root)
+    root = os.path.abspath(sc.show_root(sys.argv))
     cfg = sc.load(root)
+    os.chdir(root)
     sr = int(sc.value(cfg, "audio", "sampleRate"))
     ep = sys.argv[1] if len(sys.argv) > 1 else ""
     if not ep:
@@ -137,5 +137,5 @@ def main() -> None:
 if __name__ == "__main__":
     try:
         main()
-    except sc.ShowConfigError as err:
+    except (sc.ShowConfigError, FileNotFoundError) as err:
         sys.exit(f"tts-generate: {err}")

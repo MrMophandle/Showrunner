@@ -153,6 +153,42 @@ def test_show_root_can_be_given_from_elsewhere(show_root: Path, tmp_path: Path) 
     assert _result(done.stdout).startswith("MANIFEST_OK ")
 
 
+def test_a_relative_show_root_resolves_before_the_chdir(show_root: Path) -> None:
+    """The root is made absolute first, so ".." still means the show root after the chdir."""
+    _episode(show_root, GOOD, ("narrator", "Maeve"))
+    elsewhere = show_root / "elsewhere"
+    elsewhere.mkdir()
+    done = subprocess.run(
+        [sys.executable, str(SCRIPT), "ep01", "--show-root", ".."],
+        cwd=elsewhere, capture_output=True, text=True,
+    )
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert _result(done.stdout).startswith("MANIFEST_OK ")
+
+
+def test_the_equals_form_of_show_root_works_too(show_root: Path) -> None:
+    _episode(show_root, GOOD, ("narrator", "Maeve"))
+    elsewhere = show_root / "elsewhere"
+    elsewhere.mkdir()
+    done = subprocess.run(
+        [sys.executable, str(SCRIPT), "ep01", f"--show-root={show_root}"],
+        cwd=elsewhere, capture_output=True, text=True,
+    )
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert _result(done.stdout).startswith("MANIFEST_OK ")
+
+
+def test_a_show_root_that_does_not_exist_is_one_line_on_stderr(show_root: Path) -> None:
+    done = subprocess.run(
+        [sys.executable, str(SCRIPT), "ep01", "--show-root", str(show_root / "no-such-show")],
+        cwd=show_root, capture_output=True, text=True,
+    )
+    assert done.returncode == 1
+    stderr = done.stderr.strip().splitlines()
+    assert len(stderr) == 1, done.stderr
+    assert stderr[0].startswith("validate-manifest: showrunner.json could not be read")
+
+
 def test_a_missing_episode_id_is_refused(show_root: Path) -> None:
     done = _run(show_root)
     assert done.returncode != 0

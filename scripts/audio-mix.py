@@ -3,7 +3,7 @@
 # ///
 """audio-mix: trimmed segments + manifest gaps -> single loudness-normalized episode WAV.
 Registry mixing conventions #2 (designed gaps come from the manifest) and #3 (-14 LUFS)."""
-import json, os, subprocess, sys, tempfile
+import json, os, re, subprocess, sys, tempfile
 import numpy as np
 import soundfile as sf
 
@@ -20,7 +20,9 @@ def mix_wav(cfg: dict, ep: str) -> str:
     """
     try:
         season, episode = sc.season_of(cfg, ep)
-    except sc.ShowConfigError:
+    except sc.UnmappedEpisodeId:
+        # ONLY an id the airMap does not place falls back. A malformed airMap entry, a missing
+        # pattern or a bad id is a config fault and must reach the operator, not be named over.
         return UNMAPPED_MIX
     return sc.format_filename(str(sc.value(cfg, "output", "mixFilename")),
                               slug=str(sc.value(cfg, "showSlug")),
@@ -29,9 +31,9 @@ def mix_wav(cfg: dict, ep: str) -> str:
 def main() -> None:
     # The engine runs this with the show root as the working directory; --show-root <path> is for
     # an operator running it from somewhere else.
-    root = sc.show_root(sys.argv)
-    os.chdir(root)
+    root = os.path.abspath(sc.show_root(sys.argv))
     cfg = sc.load(root)
+    os.chdir(root)
     ep = sys.argv[1] if len(sys.argv) > 1 else ""
     if not ep:
         sys.exit("audio-mix: episode id missing (usage: audio-mix.py <episode> [--show-root <path>])")
@@ -40,10 +42,13 @@ def main() -> None:
     out_sr = str(int(sc.value(cfg, "audio", "sampleRate")))
     tail_out_s = float(sc.value(cfg, "audio", "tailOutSeconds"))
     room_tone_db = sc.value(cfg, "audio", "roomToneDb", default=None)
-    room_tone_hz = float(sc.value(cfg, "audio", "roomToneFundamentalHz", default=0.0))
+    # A show that asks for a room-tone bed must say what it is pitched at: no silent default.
+    room_tone_hz = (float(sc.value(cfg, "audio", "roomToneFundamentalHz"))
+                    if room_tone_db is not None else 0.0)
     narrator = str(sc.value(cfg, "audio", "narratorSpeakerKey"))
-    loud = sc.value(cfg, "audio", "loudness")
-    TARGET = dict(I=str(loud["i"]), TP=str(loud["tp"]), LRA=str(loud["lra"]))
+    TARGET = dict(I=str(sc.value(cfg, "audio", "loudness", "i")),
+                  TP=str(sc.value(cfg, "audio", "loudness", "tp")),
+                  LRA=str(sc.value(cfg, "audio", "loudness", "lra")))
     base = f"Production/{ep}/audio"
     with open(f"{base}/manifest.json") as f:
         man = json.load(f)
@@ -159,18 +164,26 @@ def main() -> None:
               f":measured_LRA={m['input_lra']}:measured_thresh={m['input_thresh']}"
               f":offset={m['target_offset']}:linear=true:print_format=summary")
         out_path = f"{base}/{mix_wav(cfg, ep)}"
-        subprocess.run(
-            ["ffmpeg", "-y", "-loglevel", "error", "-i", raw,
+        # `print_format=summary` on the apply pass makes ffmpeg report what it ACHIEVED, at info
+        # level on stderr -- which is the number the result line must carry. Measuring the input
+        # again (pass 1) would only repeat what the file was before this pass corrected it.
+        applied = subprocess.run(
+            ["ffmpeg", "-y", "-loglevel", "info", "-nostdin", "-i", raw,
              "-af", af, "-ar", out_sr, out_path],
-            check=True,
+            capture_output=True, text=True, check=True,
         )
+        achieved = re.search(r"Output Integrated:\s*(-?[\d.]+)\s*LUFS", applied.stderr)
         print(f"  loudness: measured {float(m['input_i']):.1f} LUFS -> normalised to {TARGET['I']} (two-pass)")
     # The last line is this step's RESULT: the gate message after it reads it verbatim, so it is
-    # one line, and it carries the three facts a listener is about to check.
-    print(f"MIX_OK {len(mix)/sr:.1f}s {float(TARGET['I']):.1f} LUFS {out_path}")
+    # one line, and it carries the three facts a listener is about to check. The LUFS figure is
+    # what the mix MEASURED after normalisation; when ffmpeg's summary cannot be parsed the line
+    # says so with a (target) marker rather than passing the target off as a measurement.
+    lufs = float(achieved.group(1)) if achieved else float(TARGET["I"])
+    marker = "" if achieved else " (target)"
+    print(f"MIX_OK {len(mix)/sr:.1f}s {lufs:.1f} LUFS {out_path}{marker}")
 
 if __name__ == "__main__":
     try:
         main()
-    except sc.ShowConfigError as err:
+    except (sc.ShowConfigError, FileNotFoundError) as err:
         sys.exit(f"audio-mix: {err}")

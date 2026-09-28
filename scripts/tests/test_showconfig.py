@@ -60,9 +60,25 @@ def test_show_root_without_the_flag_is_the_working_directory(tmp_path: Path, mon
     assert argv == ["audio-mix.py", "ep01"]
 
 
+def test_show_root_accepts_the_equals_form() -> None:
+    argv = ["validate-manifest.py", "ep01", "--show-root=/tmp/show", "--verbose"]
+    assert sc.show_root(argv) == "/tmp/show"
+    assert argv == ["validate-manifest.py", "ep01", "--verbose"]
+
+
+def test_show_root_accepts_a_relative_path_as_typed() -> None:
+    argv = ["audio-mix.py", "ep01", "--show-root", "../show"]
+    assert sc.show_root(argv) == "../show"
+
+
 def test_show_root_without_a_path_is_an_error() -> None:
     with pytest.raises(sc.ShowConfigError):
         sc.show_root(["pace-qc.py", "ep01", "--show-root"])
+
+
+def test_show_root_with_an_empty_equals_value_is_an_error() -> None:
+    with pytest.raises(sc.ShowConfigError):
+        sc.show_root(["pace-qc.py", "ep01", "--show-root="])
 
 
 def test_path_joins_a_relative_value_to_the_root(show_root: Path) -> None:
@@ -111,9 +127,20 @@ def test_season_of_reads_a_production_id_from_the_air_map(show_root: Path) -> No
 
 def test_season_of_fails_on_an_unmapped_id(show_root: Path) -> None:
     cfg = sc.load(str(show_root))
-    with pytest.raises(sc.ShowConfigError) as err:
+    with pytest.raises(sc.UnmappedEpisodeId) as err:
         sc.season_of(cfg, "ep99")
     assert "ep99" in str(err.value)
+    assert isinstance(err.value, sc.ShowConfigError)
+
+
+def test_a_malformed_air_map_entry_is_not_an_unmapped_id(show_root: Path) -> None:
+    """A broken slot is a config fault a caller must not absorb as "no slot"."""
+    cfg = sc.load(str(show_root))
+    cfg["airMap"]["ep03"] = [1]
+    with pytest.raises(sc.ShowConfigError) as err:
+        sc.season_of(cfg, "ep03")
+    assert not isinstance(err.value, sc.UnmappedEpisodeId)
+    assert "airMap.ep03" in str(err.value)
 
 
 def test_progress_prints_the_contract_line(capsys) -> None:

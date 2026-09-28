@@ -38,9 +38,9 @@ def resynth(ep: str) -> None:
 def main() -> None:
     # The engine runs this with the show root as the working directory; --show-root <path> is for
     # an operator running it from somewhere else.
-    root = sc.show_root(sys.argv)
-    os.chdir(root)
+    root = os.path.abspath(sc.show_root(sys.argv))
     cfg = sc.load(root)
+    os.chdir(root)
     # Which speaker key carries the narration, and at what rate the show's audio runs, are the
     # show's to say (audio.narratorSpeakerKey, audio.sampleRate).
     narrator = str(sc.value(cfg, "audio", "narratorSpeakerKey"))
@@ -71,6 +71,9 @@ def main() -> None:
         print(f"round {rnd}: median {med:.0f} wpm, {len(outliers)} outliers beyond ±{int(BAND*100)}%")
         sc.progress(rnd, PASSES, "rounds")
         if not outliers:
+            # The rounds are over, however few it took: report the bar full before the result line
+            # so a console never shows this step finishing at 1 of 3.
+            sc.progress(PASSES, PASSES, "rounds")
             print(f"PACE_QC_OK ({len(rows)} {narrator} segments within band)")
             return
         for i in outliers:
@@ -103,5 +106,5 @@ def main() -> None:
 if __name__ == "__main__":
     try:
         main()
-    except sc.ShowConfigError as err:
+    except (sc.ShowConfigError, FileNotFoundError) as err:
         sys.exit(f"pace-qc: {err}")

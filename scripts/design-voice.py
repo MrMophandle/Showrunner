@@ -21,9 +21,9 @@ MODEL = "mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-bf16"
 def main() -> None:
     # The engine runs this with the show root as the working directory; --show-root <path> is for
     # an operator running it from somewhere else. It is taken out of argv before argparse sees it.
-    root = sc.show_root(sys.argv)
-    os.chdir(root)
+    root = os.path.abspath(sc.show_root(sys.argv))
     cfg = sc.load(root)
+    os.chdir(root)
     # A designed candidate is normalised to the show's own voice-design target, which is
     # deliberately quieter than the mastering target a finished mix is held to.
     sr = int(sc.value(cfg, "audio", "sampleRate"))
@@ -52,5 +52,5 @@ def main() -> None:
 if __name__ == "__main__":
     try:
         main()
-    except sc.ShowConfigError as err:
+    except (sc.ShowConfigError, FileNotFoundError) as err:
         sys.exit(f"design-voice: {err}")

@@ -5,9 +5,14 @@ One convention, for every script in this directory:
     import sys
     from lib import showconfig as sc
 
-    root = sc.show_root(sys.argv)     # strips "--show-root <path>"; else the working directory
-    os.chdir(root)                    # show-relative paths (Production/<ep>/...) resolve from here
+    root = os.path.abspath(sc.show_root(sys.argv))   # strips --show-root; else the working dir
     cfg = sc.load(root)               # <root>/showrunner.json, required keys checked
+    os.chdir(root)                    # show-relative paths (Production/<ep>/...) resolve from here
+
+The root is made absolute BEFORE anything else, because a relative --show-root would otherwise mean
+one directory to load() and a different one to every path resolved after the chdir. load() runs
+BEFORE the chdir, so a wrong --show-root fails by naming showrunner.json rather than by failing to
+enter a directory.
 
 The engine runs a script step with the show root as the working directory (`cwd: ctx.showRoot` in
 `engine/src/script-step.ts`), so `showrunner.json` is found without a flag; `--show-root <path>`
@@ -33,6 +38,15 @@ SHOW_ROOT_FLAG = "--show-root"
 
 class ShowConfigError(Exception):
     """A show config that cannot be read, parsed, or trusted to hold a key a script needs."""
+
+
+class UnmappedEpisodeId(ShowConfigError):
+    """A production id the show's airMap does not place in a season.
+
+    Its own class because it is the one config fault a script may legitimately absorb: an episode
+    written before its air slot was settled still needs a name for its outputs. Every other
+    ShowConfigError means the config is wrong and must reach the operator.
+    """
 
 
 # The keys every show config must carry, as dotted paths. Mirrors engine/src/show-config.ts.
@@ -83,20 +97,29 @@ def load(show_root: str | None = None) -> dict:
 
 
 def show_root(argv: list[str]) -> str:
-    """Take "--show-root <path>" out of argv and return the path; else return the working directory.
+    """Take the --show-root flag out of argv and return its path; else the working directory.
 
-    The flag and its value are REMOVED from the list in place, so the caller's positional arguments
-    keep their usual places (sys.argv[1] stays the episode id) and argparse never sees the flag.
+    Both spellings are accepted -- "--show-root <path>" and "--show-root=<path>" -- because an
+    operator types whichever one their shell history has. The flag (and, in the two-token form, its
+    value) is REMOVED from the list in place, so the caller's positional arguments keep their usual
+    places (sys.argv[1] stays the episode id) and argparse never sees the flag.
+
+    The path is returned as typed; the caller makes it absolute before using it.
     """
-    try:
-        at = argv.index(SHOW_ROOT_FLAG)
-    except ValueError:
-        return os.getcwd()
-    if at + 1 >= len(argv):
-        raise ShowConfigError(f"{SHOW_ROOT_FLAG} needs a path")
-    root = argv[at + 1]
-    del argv[at : at + 2]
-    return root
+    for at, token in enumerate(argv):
+        if token == SHOW_ROOT_FLAG:
+            if at + 1 >= len(argv):
+                raise ShowConfigError(f"{SHOW_ROOT_FLAG} needs a path")
+            root = argv[at + 1]
+            del argv[at : at + 2]
+            return root
+        if token.startswith(SHOW_ROOT_FLAG + "="):
+            root = token[len(SHOW_ROOT_FLAG) + 1 :]
+            if root == "":
+                raise ShowConfigError(f"{SHOW_ROOT_FLAG} needs a path")
+            del argv[at]
+            return root
+    return os.getcwd()
 
 
 _MISSING = object()
@@ -144,8 +167,9 @@ def season_of(cfg: dict, episode_id: str) -> tuple[int, int]:
     """The (season, episode) an id airs in.
 
     An aired id (sXXeYY) carries the answer and airMap is never consulted for one; a production id
-    (epNN) is looked up in airMap. Raises ShowConfigError naming the id when neither applies, so no
-    script ever names an output file from a guessed slot.
+    (epNN) is looked up in airMap. A production id the map does not place raises UnmappedEpisodeId
+    (a ShowConfigError), which a caller may absorb; every other fault raises a plain
+    ShowConfigError, so no script ever names an output file from a guessed slot.
     """
     if not isinstance(episode_id, str) or episode_id == "":
         raise ShowConfigError(f"no season for episode id {episode_id!r}: it is not a string")
@@ -158,9 +182,11 @@ def season_of(cfg: dict, episode_id: str) -> tuple[int, int]:
             )
         return season, episode
     air_map = cfg.get("airMap")
-    slot = air_map.get(episode_id) if isinstance(air_map, dict) else None
+    if not isinstance(air_map, dict):
+        raise ShowConfigError(f"{SHOW_CONFIG_FILE}: airMap is missing or is not an object")
+    slot = air_map.get(episode_id)
     if slot is None:
-        raise ShowConfigError(
+        raise UnmappedEpisodeId(
             f"no season for episode id {episode_id!r}: it is not an aired id (sXXeYY) "
             f"and it is not in airMap"
         )

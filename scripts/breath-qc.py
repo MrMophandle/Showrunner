@@ -102,9 +102,9 @@ def resynth(ep: str) -> None:
 def main():
     # The engine runs this with the show root as the working directory; --show-root <path> is for
     # an operator running it from somewhere else.
-    root = sc.show_root(sys.argv)
-    os.chdir(root)
+    root = os.path.abspath(sc.show_root(sys.argv))
     cfg = sc.load(root)
+    os.chdir(root)
     # Which speaker key carries the narration is the show's to say (audio.narratorSpeakerKey).
     narrator = str(sc.value(cfg, "audio", "narratorSpeakerKey"))
     ep = sys.argv[1] if len(sys.argv) > 1 else ""
@@ -144,5 +144,5 @@ def main():
 if __name__ == "__main__":
     try:
         main()
-    except sc.ShowConfigError as err:
+    except (sc.ShowConfigError, FileNotFoundError) as err:
         sys.exit(f"breath-qc: {err}")
