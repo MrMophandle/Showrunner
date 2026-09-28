@@ -902,7 +902,7 @@ DeadLight (`plan-c-show-data`): `git add showrunner.json prompts Episodes/*/publ
 
 **Files:**
 - Create: `scripts/pyproject.toml`, `scripts/lib/__init__.py`, `scripts/lib/showconfig.py`, `scripts/tests/conftest.py`, `scripts/tests/test_showconfig.py`, `scripts/tests/test_validate_manifest.py`, `scripts/tests/test_audio_mix.py`, `scripts/tests/test_qc_spawn.py`, `scripts/tests/fixtures/showrunner.json` (an invented show)
-- Copy (verbatim, first commit): every file in `~/GitHub/DeadLight/.archon/scripts/` into `~/GitHub/Showrunner/scripts/` (21 files)
+- Copy (verbatim, first commit): every `.py` file in `~/GitHub/DeadLight/.archon/scripts/` into `~/GitHub/Showrunner/scripts/` (29 files: the 21 step scripts and the show's 8 `test_*.py` files, which travel with them; `[tool.pytest.ini_options] testpaths = ["tests"]` keeps `uv run pytest` on Task 4's hermetic suite, and the copied `test_truncation_qc.py` is run by hand once after the edit)
 - Modify (second commit): `scripts/tts-generate.py`, `scripts/validate-manifest.py`, `scripts/truncation-qc.py`, `scripts/pace-qc.py`, `scripts/breath-qc.py`, `scripts/audio-mix.py`, `scripts/design-voice.py`
 
 **Interfaces:**
@@ -918,9 +918,10 @@ def path(cfg: dict, *keys: str, root: str) -> str:        # cfg["a"]["b"] joined
 def format_filename(pattern: str, *, slug: str, season: int, episode: int, episode_id: str = "") -> str   # str.format with those names
 def season_of(cfg: dict, episode_id: str) -> tuple[int, int]   # (season, episode): from sXXeYY, or airMap[episode_id]; raises ShowConfigError when neither
 def progress(done: int, total: int, unit: str, message: str | None = None) -> None   # prints the ::progress line, flush=True
+def value(cfg: dict, *keys: str) -> object                # cfg walked through keys; raises ShowConfigError naming the dotted path when absent — every non-path config read goes through it
 ```
 
-**The convention every script follows after this task:** `import sys; from lib import showconfig as sc; root = sc.show_root(sys.argv); cfg = sc.load(root)`; positional arguments as before, `--show-root` optional; no `ARGUMENTS`; every `subprocess` call an argv list; `sc.progress(...)` once per unit in the main loop; the last stdout line a one-line summary when a later step reads it.
+**The convention every script follows after this task:** `import sys; from lib import showconfig as sc; root = sc.show_root(sys.argv); cfg = sc.load(root); os.chdir(root)` (so `--show-root` relocates the show and the script's relative paths follow); positional arguments as before, `--show-root` optional; no `ARGUMENTS`; every `subprocess` call an argv list; `sc.progress(...)` once per unit in the main loop; the last stdout line a one-line summary when a later step reads it; a `ShowConfigError` is caught in the `__main__` block and exits with one line; every script has an `if __name__ == "__main__": main()` guard so tests can import it.
 
 - [ ] **Step 1: Copy the scripts verbatim and commit**
 
@@ -942,15 +943,15 @@ The verbatim commit exists so every later change is a reviewable diff against th
 - [ ] **Step 3: The audio branch, script by script** (inventory §4.1 gives the line numbers; the changes are)
 
 - `tts-generate.py`: argv-only (`<episode>` positional); `audio.sampleRate` from config; `sc.progress(i, n, "segments")` after each segment in the main loop (skipped segments count as done); no other behaviour change. Hermetic test: not possible (needs the model); the test asserts the argv parsing and that `--show-root` is honoured by running the script with `--help`-style dry mode if it has one, else no test and the report says so.
-- `validate-manifest.py`: argv-only; the gap ceilings (`titleCardGapMaxSeconds`, `sceneTransitionGapMaxSeconds`), the authored-pause range and `mainCast` from config; its last stdout line is the one-line summary the gate message reads (`{{results.validate-manifest}}`). Test: a tiny manifest with one bad gap fails with the ceiling named; a good one prints a summary line last.
+- `validate-manifest.py`: argv-only; the gap ceilings (`titleCardGapMaxSeconds`, `sceneTransitionGapMaxSeconds`), the authored-pause range, `mainCast` and `voiceRegistry` (through `sc.path`) from config; its last stdout line is the one-line summary the gate message reads (`{{results.validate-manifest}}`). Test: a tiny manifest with one bad gap fails with the ceiling named; a good one prints a summary line last.
 - `truncation-qc.py`, `pace-qc.py`, `breath-qc.py`: argv-only; the `tts-generate.py` child is spawned as `[sys.executable, str(Path(__file__).with_name("tts-generate.py")), ...]` (not `uv run` with a show-relative path) with **no** `stdout=DEVNULL` and **no** `start_new_session`, so its progress lines flow through and it stays in the parent's process group (F-11); `sc.progress(round, max_rounds, "rounds")` per pass; loudness/narrator key from config. Test (`test_qc_spawn.py`): monkeypatch `subprocess.run` and assert the argv list's shape and that `stdout` is not redirected and `start_new_session` is absent.
-- `audio-mix.py`: argv-only; `airMap`, `mixFilename`, `showSlug`, `loudness`, `roomToneDb` (replaces the `HUM_DB` env var), `roomToneFundamentalHz`, `tailOutSeconds` from config; `sc.progress` per segment placed; the last line printed is `MIX_OK <duration>s <lufs> LUFS <path>` (the gate reads it). Test: two 0.5 s synthetic WAVs mixed if `ffmpeg` is on `PATH` (`pytest.importorskip`-style skip otherwise) — assert the output filename follows the pattern and the last line starts with `MIX_OK`.
+- `audio-mix.py`: argv-only; `airMap`, `mixFilename`, `showSlug`, `loudness`, `roomToneDb` (replaces the `HUM_DB` env var), `roomToneFundamentalHz`, `tailOutSeconds`, `sampleRate`, `narratorSpeakerKey` from config; `sc.progress` per segment placed; the last line printed is `MIX_OK <duration>s <lufs> LUFS <path>` (the gate reads it). Test: two 0.5 s synthetic WAVs mixed if `ffmpeg` is on `PATH` (`pytest.importorskip`-style skip otherwise) — assert the output filename follows the pattern and the last line starts with `MIX_OK`.
 - `design-voice.py`: argv-only; `audio.voiceDesignLoudnessI` and `sampleRate` from config. No hermetic test (needs the model).
-- Grep gate for this commit: `grep -niE 'dead[ -]?light|DEADLIGHT_' scripts/tts-generate.py scripts/validate-manifest.py scripts/*-qc.py scripts/audio-mix.py scripts/design-voice.py scripts/lib/*.py` prints nothing.
+- Grep gate for this commit: `grep -niwE 'dead ?light|deadlight|DEADLIGHT_|sarn|sable|opha|cricket|remo|trent|ilvaren' scripts/lib scripts/tts-generate.py scripts/validate-manifest.py scripts/truncation-qc.py scripts/pace-qc.py scripts/breath-qc.py scripts/audio-mix.py scripts/design-voice.py` prints nothing (`image-qc.py` is Task 5's, so it is named out of this gate). `breath-qc.py`'s progress line is per segment (its round bound lives inside `fix()`), not per round.
 
 - [ ] **Step 4: Run and commit**
 
-Run: `cd ~/GitHub/Showrunner/scripts && uv run pytest -q` — expected: all tests pass, ffmpeg-dependent ones skipped where absent. Commit: `scripts: showconfig helper; the audio branch argv-only, config-driven, progress-reporting` with both trailers.
+Run: `cd ~/GitHub/Showrunner/scripts && uv run pytest -q` — expected: 54 passed with ffmpeg on PATH (18 showconfig, 21 qc-spawn, 10 validate-manifest, 5 audio-mix), 51 passed and 3 skipped without it. Commit: `scripts: showconfig helper; the audio branch argv-only, config-driven, progress-reporting` with both trailers.
 
 ---
 
