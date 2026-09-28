@@ -27,10 +27,10 @@ the log a fixed set of events; those obligations are documented on the interface
 
 **A show identifies itself in one file: `showrunner.json` at the show repository's root.** The
 engine reads it with `loadShowConfig(showRoot)` (`engine/src/show-config.ts`) and the Python steps
-read the same file with `sc.load(root)` (`scripts/lib/showconfig.py`). The two loaders enforce the
-same required set, so a config that satisfies one satisfies the other. Each loader's source names
-the other as the place the set is mirrored, because nothing checks the two against each other at
-build time.
+read the same file with `sc.load(root)` (`scripts/lib/showconfig.py`). Both loaders require the
+same eight keys and apply the same `airMap` rules; `engine/src/show-config.ts` is the reference and
+`scripts/lib/showconfig.py` mirrors it. Each loader's source names the other as the place the set
+is mirrored, because nothing checks the two against each other at build time.
 
 **Eight keys are required**, and a config short of one is refused by name rather than failing later
 at whatever wanted it: `showName`, `showSlug`, `promptsDir`, `models.medium`, `models.large`,
@@ -46,7 +46,7 @@ one and does not find it fails naming its dotted path.
 | `output` | `nasRoot`, plus the optional `nasMount`, `finalFilename`, `mixFilename`, `videoFilename` | the scripts that master, finalize and publish an episode |
 | `audio` | sample rate, loudness targets, room tone, the gap lengths, the cast list, the voice registry | the TTS, mix and audio-QC scripts |
 | `visual` | the reference files, the style constants, the frame size, the casting directories, the populator bans | the image scripts |
-| `video` | `fps`, `crossfadeSeconds`, `compositionId`, and the whole `titleCard` block | `build-timeline.py`, which copies them into the timeline the renderer reads |
+| `video` | `fps`, `crossfadeSeconds`, `compositionId`, and the whole `titleCard` block | `build-timeline.py` copies `fps`, `crossfadeSeconds` and `titleCard` into the timeline the renderer reads. **It does not write `compositionId`**: the composition id is passed on the render command line, because the id selects the composition whose `calculateMetadata` goes on to fetch the timeline and so has to be known first |
 | `publish` | the channel's standing answers — channel name, playlist, tags, category, standing copy, guide | `publish-kit.py` |
 
 The engine reads three of those groups and no others: `promptsDir`, `models` and `airMap`. The
@@ -65,9 +65,11 @@ below.
   when the map does not place a production id, and the agent step absorbs that throw rather than
   failing the step: the season is left undefined, so an episode with no air slot still runs every
   prompt that does not write `{{season}}`, and only a prompt that does write it fails, in the
-  renderer, with `{{season}}: season is not available`. For the same reason the loader refuses an
-  aired id as an `airMap` **key** — the id already answers the question, so a mapping for one could
-  only ever be a second and silently disagreeing answer.
+  renderer, with `{{season}}: season is not available`. For the same reason **both loaders refuse an
+  aired id as an `airMap` key** — the id already answers the question, so a mapping for one could
+  only ever be a second and silently disagreeing answer. `engine/src/show-config.ts` and
+  `scripts/lib/showconfig.py` each refuse it naming the key, so the rule holds whichever half of
+  the pipeline reads the config first.
 - **`{{show.<path>}}`** is a dotted path into the loaded config (`{{show.showName}}`,
   `{{show.video.fps}}`), rendered by the same value rules as `{{results.*}}`. A bare `{{show}}`, a
   path through a non-object, a missing key, and a `{{show.*}}` in an executor built with no show
@@ -368,7 +370,8 @@ Every script follows one convention, which `scripts/lib/showconfig.py`'s module 
   with its value, in the two-token form — so the caller's positional arguments keep their usual
   places and argparse never sees the flag.
 - **Everything else arrives in argv.** The episode id is `sys.argv[1]`, and no script reads a
-  setting out of the environment.
+  *setting* from the environment; the one environment read is the `GEMINI_API_KEY` secret in
+  `nano-banana-generate.py`.
 - Those three facts are one preamble, in this order, at the top of every `main()`:
 
       root = os.path.abspath(sc.show_root(sys.argv))
@@ -481,6 +484,8 @@ consequence is that **the root `npm test` does not run the render project's test
 ## Develop
 
     npm install                    # engine and tools, through the workspaces
+    npm run build                  # engine and tools, into each package's dist/ — tools/dist is
+                                   # what the Tools section's commands run
     npm test                       # engine's suite, then tools'
     npm run typecheck              # tsc over src/, then over test/, in each
 
@@ -497,9 +502,17 @@ and test on their own, which is why the root carries a `test:render` script at a
 **No show's name may appear in `engine/`, `scripts/`, `render/` or `tools/src/`.** This grep is
 what checks it, and it must print nothing:
 
-    grep -rniE '\b(dead[ -]?light|deadlight)\b' engine/ scripts/ render/ tools/ \
+    grep -rniwE 'dead ?light|deadlight|sarn|sable|opha|cricket|remo|trent|ilvaren|coalvane|the mute|ansa|mardo' \
+      engine/ scripts/ render/ tools/ \
       --exclude-dir=node_modules --exclude-dir=dist --exclude-dir=show-data \
       --exclude-dir=.venv --exclude-dir=__pycache__ --exclude-dir=.pytest_cache
+
+**The word list is the first show's, and it is not the whole obligation.** It names Dead Light and
+that show's characters and places because those are the literals this engine was carved out of, and
+`-w` is what keeps `remo` from matching `remotion`. A show's character and place names beyond the
+list — a new show's, or a name this one adds later — are caught by review, not by this grep: a
+reviewer who sees a test fixture or a comment naming a real show's cast must say so, and the noun
+moves to the invented show the fixtures use.
 
 `tools/show-data/` is excluded because that directory holds a show's own data, as the **Tools**
 section above explains. This file and everything under `docs/` are allowed to name a show and are
