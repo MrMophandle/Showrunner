@@ -9,31 +9,19 @@ import {
   useVideoConfig,
 } from "remotion";
 
-export type Shot = {
-  src: string;
-  from: number;
-  durationInFrames: number;
-  id: string;
-};
+import { Shot, TitleCard, Timeline } from "./timeline";
 
-export type TitleCard = {
-  from: number;
-  durationInFrames: number;
-  fadeFrames: number;
-};
+/**
+ * The letterbox colour for an episode that has no title card.
+ *
+ * The stage colour travels with the card's other colours (`title.colors.stage`), because a show
+ * picks them together. An episode whose manifest marks no title-card gap has no `title` object at
+ * all, so there is nothing to read; black is the engine's own neutral ground, not a show's choice.
+ */
+const NO_STAGE_COLOUR = "black";
 
-export type Timeline = {
-  fps: number;
-  width: number;
-  height: number;
-  audio: string;
-  durationInFrames: number;
-  crossfadeFrames: number;
-  shots: Shot[];
-  title?: TitleCard;
-};
-
-// Series title card: opaque black, quiet type, fades out with the ship hum.
+// Series title card: opaque ground, quiet type, fades out with the room tone. Every value it
+// draws with -- the words, the font, the three colours -- comes from the timeline.
 const SeriesTitle: React.FC<{ title: TitleCard }> = ({ title }) => {
   const frame = useCurrentFrame(); // local to the Sequence
   const d = title.durationInFrames;
@@ -46,7 +34,7 @@ const SeriesTitle: React.FC<{ title: TitleCard }> = ({ title }) => {
   return (
     <AbsoluteFill
       style={{
-        backgroundColor: "#000504",
+        backgroundColor: title.colors.background,
         opacity,
         justifyContent: "center",
         alignItems: "center",
@@ -54,16 +42,16 @@ const SeriesTitle: React.FC<{ title: TitleCard }> = ({ title }) => {
     >
       <div
         style={{
-          color: "#b8d4d0",
-          fontFamily: "Georgia, 'Times New Roman', serif",
+          color: title.colors.type,
+          fontFamily: title.fontFamily,
           fontSize: 64,
           letterSpacing: "0.45em",
           textIndent: "0.45em", // recenters letterspaced text
           fontWeight: 400,
-          textShadow: "0 0 24px rgba(96, 160, 152, 0.25)",
+          textShadow: `0 0 24px ${title.colors.glow}`,
         }}
       >
-        DEAD LIGHT
+        {title.text}
       </div>
     </AbsoluteFill>
   );
@@ -73,7 +61,8 @@ const KenBurnsShot: React.FC<{
   shot: Shot;
   index: number;
   crossfadeFrames: number;
-}> = ({ shot, index, crossfadeFrames }) => {
+  stage: string;
+}> = ({ shot, index, crossfadeFrames, stage }) => {
   const frame = useCurrentFrame(); // local to the Sequence
   const d = shot.durationInFrames;
   const { fps } = useVideoConfig();
@@ -103,7 +92,7 @@ const KenBurnsShot: React.FC<{
   );
 
   return (
-    <AbsoluteFill style={{ opacity, backgroundColor: "#04100f" }}>
+    <AbsoluteFill style={{ opacity, backgroundColor: stage }}>
       <Img
         src={staticFile(shot.src)}
         style={{
@@ -121,10 +110,11 @@ export const Episode: React.FC<{ timeline: Timeline | null; ep: string }> = ({
   timeline,
 }) => {
   if (!timeline) {
-    return <AbsoluteFill style={{ backgroundColor: "#04100f" }} />;
+    return <AbsoluteFill style={{ backgroundColor: NO_STAGE_COLOUR }} />;
   }
+  const stage = timeline.title?.colors.stage ?? NO_STAGE_COLOUR;
   return (
-    <AbsoluteFill style={{ backgroundColor: "#04100f" }}>
+    <AbsoluteFill style={{ backgroundColor: stage }}>
       {timeline.shots.map((shot, i) => (
         <Sequence
           key={shot.id}
@@ -132,7 +122,12 @@ export const Episode: React.FC<{ timeline: Timeline | null; ep: string }> = ({
           durationInFrames={shot.durationInFrames}
           layout="none"
         >
-          <KenBurnsShot shot={shot} index={i} crossfadeFrames={timeline.crossfadeFrames} />
+          <KenBurnsShot
+            shot={shot}
+            index={i}
+            crossfadeFrames={timeline.crossfadeFrames}
+            stage={stage}
+          />
         </Sequence>
       ))}
       {timeline.title && (
