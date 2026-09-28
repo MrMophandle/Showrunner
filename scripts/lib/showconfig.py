@@ -21,8 +21,8 @@ relative to the show root unless they begin with "/", which is what `path()` imp
 
 The required-key set here is the same one the engine's loader enforces in
 `engine/src/show-config.ts`: showName, showSlug, promptsDir, models.medium, models.large,
-models.writer, airMap, output.nasRoot. Both loaders read the same file, so a config that satisfies
-one satisfies the other.
+models.writer, airMap, output.nasRoot. Both loaders enforce the same required keys and the same
+airMap rules; the engine's `show-config.ts` is the reference, and this module mirrors it.
 """
 
 from __future__ import annotations
@@ -61,6 +61,12 @@ _REQUIRED: tuple[tuple[str, ...], ...] = (
     ("output", "nasRoot"),
 )
 
+# The seven required keys whose value must be a non-empty string. `airMap` is the eighth required
+# key and is checked by its own rules in load(). Mirrors the `str()` calls in show-config.ts.
+_REQUIRED_STRINGS: frozenset[tuple[str, ...]] = frozenset(
+    keys for keys in _REQUIRED if keys != ("airMap",)
+)
+
 # The engine's id grammar, mirrored from engine/src/ids.ts: an aired id carries its own season, a
 # production id does not and must be looked up in airMap. An id matching NEITHER is malformed
 # ("EP01", "ep1", "episode-4"), which is a different fault from a well-formed production id the
@@ -74,6 +80,12 @@ def load(show_root: str | None = None) -> dict:
 
     Raises ShowConfigError naming the file when it cannot be read or parsed, and naming the first
     missing required key by its dotted path when the file is short of one.
+
+    The checks past presence are the engine loader's, mirrored: each required string key must hold
+    a non-empty string, every airMap key must be a production id, and every airMap value must be
+    [season, episode] with positive integers. A config the engine refuses is refused here with the
+    same key named, so an operator never gets a config that one half of the pipeline accepts and
+    the other half rejects hours later.
     """
     root = os.getcwd() if show_root is None else show_root
     file = os.path.join(root, SHOW_CONFIG_FILE)
@@ -96,7 +108,41 @@ def load(show_root: str | None = None) -> dict:
                     f"{SHOW_CONFIG_FILE} at {file} is missing required key {'.'.join(keys)}"
                 )
             node = node[key]
+        if keys in _REQUIRED_STRINGS and (not isinstance(node, str) or node == ""):
+            raise ShowConfigError(
+                f"{SHOW_CONFIG_FILE}: {'.'.join(keys)} must be a non-empty string"
+            )
+    _check_air_map(cfg["airMap"])
     return cfg
+
+
+def _check_air_map(air_map: object) -> None:
+    """Refuse an airMap the engine's loader would refuse, naming the entry rather than the file.
+
+    The key is checked before the value, exactly as `show-config.ts` does it: airMap answers "which
+    season did this production id air in", so an aired id (sXXeYY) is refused as a key even though
+    it is a well-formed episode id -- it already carries its season, and a mapping for one could
+    only ever be a second, silently disagreeing answer.
+    """
+    if not isinstance(air_map, dict):
+        raise ShowConfigError(f"{SHOW_CONFIG_FILE}: airMap must be an object")
+    for episode_id, slot in air_map.items():
+        production = _PRODUCTION_ID.match(episode_id) if isinstance(episode_id, str) else None
+        if production is None or int(production.group(1)) == 0:
+            raise ShowConfigError(
+                f"{SHOW_CONFIG_FILE}: airMap.{episode_id} must be a production id (epNN)"
+            )
+        # `isinstance(True, int)` is true in Python and `Number.isInteger(true)` is false in the
+        # engine, so a boolean is excluded here to keep the two loaders answering the same way.
+        if (
+            not isinstance(slot, list)
+            or len(slot) != 2
+            or not all(isinstance(n, int) and not isinstance(n, bool) and n > 0 for n in slot)
+        ):
+            raise ShowConfigError(
+                f"{SHOW_CONFIG_FILE}: airMap.{episode_id} must be "
+                f"[season, episode] with positive integers"
+            )
 
 
 def show_root(argv: list[str]) -> str:

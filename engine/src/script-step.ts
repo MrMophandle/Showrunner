@@ -80,16 +80,20 @@ export const scriptExecutor: Executors["script"] = (step: ScriptStep, ctx: RunCo
     const rl = createInterface({ input: stream });
     rl.on("line", (line) => {
       if (abandoned) return;
-      const p = name === "stdout" ? parseProgressLine(line) : null;
-      if (p) {
-        queue("step_progress", { ...p });
-      } else {
-        if (line.trim() !== "") {
-          if (name === "stderr") lastStderr = line;
-          else lastStdout = line;
-        }
-        queue("script_line", { stream: name, line });
+      const progress = parseProgressLine(line);
+      if (progress !== null && name === "stdout") {
+        queue("step_progress", { ...progress });
+        return;
       }
+      // A `::progress` line on stderr is forwarded like any other stderr line, but it is never
+      // recorded as `lastStderr`. It is a unit-of-work report, not a complaint, and a script that
+      // writes its progress to stderr would otherwise fail with its own last progress line as the
+      // step's error message — hiding the real message it printed before it.
+      if (line.trim() !== "" && progress === null) {
+        if (name === "stderr") lastStderr = line;
+        else lastStdout = line;
+      }
+      queue("script_line", { stream: name, line });
     });
     return new Promise<void>((resolve) => rl.on("close", () => resolve()));
   };
