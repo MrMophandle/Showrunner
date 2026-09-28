@@ -227,13 +227,18 @@ Trent, Cricket), canon file paths (`Canon/style-guide.md`, `Canon/season-1.md`,
 entry`. That line hardcodes Season 1 inside an otherwise season-agnostic prompt, and is item 6 of
 the process map's §9 audit
 (`/Users/ryanperkowski/GitHub/Showrunner/docs/specs/2026-09-25-pipeline-process-map.md:474`).
-`deadlight-season-review.yaml` does the same eleven times over — `Canon/season-1.md` appears in
-the three lens prompts (:55, :83, :111), the desk editor's prompt (:158, :175, :182, :201), the
-`desk-gate` rejection prompt (:234), the `apply` prompt (:274), and the commit bash node (:284,
-:289) — which is why that workflow's `setup` node refuses any season but `s1` outright, naming
-that exact reason (`deadlight-season-review.yaml:31–33`). Plan C must
-decide whether the season file name becomes a template variable or a show-config-derived string
-the prompt receives; section 7 proposes the config key, section 9 records the question as F-07.
+`deadlight-season-review.yaml` does the same twelve times over — `Canon/season-1.md` appears in
+the `setup` bash node (:32), the three lens prompts (:55, :83, :111), the desk editor's prompt
+(:158, :175, :182, :201), the `desk-gate` rejection prompt (:234), the `apply` prompt (:274), and
+the commit bash node (:284, :289). **Thirteen sites in all, across the two workflows.** The `:32`
+site is the `setup` node's own refusal message, which is why that workflow refuses any season but
+`s1` outright, naming that exact reason (`deadlight-season-review.yaml:31–33`). **Three of the
+thirteen — `:32`, `:284` and `:289` — sit in bash nodes and are therefore not extracted bodies**:
+the extractor writes a file only for an agent prompt, a loop body, a gate message and a gate
+rejection prompt, so those three literals stay in the workflow and become Plan D's guard and script
+steps rather than prompt text. Plan C must decide whether the season file name becomes a template
+variable or a show-config-derived string the prompt receives; section 7 proposes the config key,
+section 9 records the question as F-07.
 
 ### 3.3 Show-specific references inside a **script** (these must move)
 
@@ -832,7 +837,7 @@ workflows — it is defined and unused.
 | `publish.tags` | string | the seven-tag list | `publish-kit.py:49` |
 | `publish.category` | string | `Film & Animation` | `publish-kit.py:143` |
 | `publish.standingCopy` | prose | the "New episodes weekly" line and the AI-disclosure paragraph | `publish-kit.py:107`, `:113` |
-| `publish.guide` | path | `Canon/publishing-guide.md` | `publish-kit.py:13`, `:118` |
+| `publish.guide` | path | `Canon/publishing-guide.md` | `publish-kit.py:13`, `:119` |
 | **`loglines`** | **per-episode data, not config** | ten multi-paragraph teasers | **`publish-kit.py:25–48` — spec §7.4 rules these become "per-episode publish data in the show repository"** |
 
 **Counting the keys**: 8 layout + 5 models + 7 identity/seasons + 4 milestones + 5 destinations +
@@ -997,13 +1002,14 @@ be done by reading, not by regex substitution: a naive rewrite of `\$(\w+)\.outp
 consume the sentence period. **Question: is the extraction hand-checked prompt by prompt, or does
 the extraction script get an explicit list of the four sites?**
 
-**F-07 — `Canon/season-1.md` is named literally in twelve places across two workflows, and
+**F-07 — `Canon/season-1.md` is named literally in thirteen places across two workflows, and
 `deadlight-season-review.yaml` refuses any other season because of it.** The literal appears once
-in `deadlight-write-episode.yaml:168` (the outline canon pre-check's rubric) and eleven times in
-`deadlight-season-review.yaml` — at :55, :83, :111, :158, :175, :182, :201, :234, :274, :284 and
-:289, spanning the three lens prompts, the desk editor, the `desk-gate` rejection prompt, the
-`apply` prompt and the commit bash node. The season-review `setup` node exits with a paragraph
-explaining exactly this at `:31–33`. Meanwhile `Canon/season-2.md` already exists on disk and,
+in `deadlight-write-episode.yaml:168` (the outline canon pre-check's rubric) and twelve times in
+`deadlight-season-review.yaml` — at :32, :55, :83, :111, :158, :175, :182, :201, :234, :274, :284
+and :289, spanning the `setup` node's refusal message, the three lens prompts, the desk editor, the
+`desk-gate` rejection prompt, the `apply` prompt and the commit bash node. The season-review
+`setup` node exits with a paragraph explaining exactly this at `:31–33`, and `:32` is the line of
+that paragraph which names the file. Meanwhile `Canon/season-2.md` already exists on disk and,
 as of 2026-09-25, carries three `**RULED**` rows. **Question: does a prompt
 receive the season file path as a rendered variable — which requires a `{{...}}` form the engine
 does not have, since `season` is neither an episode id nor a step result — or does show config

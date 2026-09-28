@@ -55,16 +55,35 @@ Two things must be set before a render, and the project supplies a default for n
 ```
 cd render
 npm install
-REMOTION_EPISODE=<episode> npx remotion render Episode ../Production/<episode>/video/episode.mp4 --log=error
+REMOTION_EPISODE=<episode> npx remotion render Episode \
+  <show-root>/Production/<episode>/video/episode.mp4 --log=error
 ```
+
+**The output path belongs to the show, not to the engine.** `<show-root>` is the show repository
+this render is being made for, and `episode.mp4` is that show's `output.videoFilename`; a relative
+`../Production/<episode>/video/episode.mp4` would resolve inside the engine checkout, which is not
+where an episode's video belongs. `master-video.py` and `finalize-video.py` read the file back from
+`<show-root>/Production/<episode>/video/`, so a render written anywhere else is one the rest of the
+pipeline cannot find.
 
 A full-length render takes hours. `npm run studio` opens the same composition for inspection.
 
+## A standalone package, not a root workspace
+
+**`render/` installs and tests on its own.** The engine repository's root `package.json` lists
+`engine` and `tools` in `workspaces` and deliberately not `render`, because a workspaces entry
+would hoist Remotion's dependency tree into the root `node_modules` and rewrite the root lock file.
+`npm install` therefore has to be run inside `render/` before anything here will run.
+
+**The root `npm test` does not run this package's tests.** `npm run test:render` does — it is
+`npm test --prefix render` — and `npm run typecheck:render` is the matching typecheck.
+
 ## Tests
 
-`npm test` runs the timeline parser's tests under vitest, and `npm run typecheck` runs
-`tsc --noEmit` over `src`. Neither renders anything: a real render needs a staged episode and
-hours of wall-clock, so it is exercised by the assemble pipeline, not by this package's tests.
+From inside `render/`, `npm test` runs the timeline parser's tests under vitest and
+`npm run typecheck` runs `tsc --noEmit` over `src`. Neither renders anything: a real render needs a
+staged episode and hours of wall-clock, so it is exercised by the assemble pipeline, not by this
+package's tests.
 
 ## `public/` is empty on purpose
 

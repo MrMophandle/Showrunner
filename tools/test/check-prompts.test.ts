@@ -14,14 +14,19 @@ describe("checkPrompts", () => {
     expect(errors).toEqual([{ file: "bad.md", error: expect.stringContaining("{{results.missing}}") }]);
   });
 
-  it("skips README.md, which documents the variable syntax rather than using it", async () => {
+  it("skips README.md and nothing else, so the exemption cannot hide a real hole", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "chk-"));
     await writeFile(path.join(dir, "step.md"), "ok {{episodeId}}");
     // The prompts directory's README names the forms a prompt may write. None of them resolves
     // against a real context, and nothing renders the README at run time, so checking it would
     // report a hole in the one file that is supposed to contain one.
     await writeFile(path.join(dir, "README.md"), "The variables are {{results.<stepId>}}, {{show.<path>}} and {{results.<gateId>:rejection}}.");
+    // bad.md is the control. It sits beside the README with a hole of exactly the kind the README
+    // is excused for, so the assertion below proves the skip is narrow: a skip keyed on anything
+    // looser than the name "README.md" would swallow this file's error too, and the test would
+    // still pass if it only asserted that the README goes unreported.
+    await writeFile(path.join(dir, "bad.md"), "{{results.missing}}");
     const errors = await checkPrompts({ promptsDir: dir, context: { episodeId: "s02e01", runId: "r", showRoot: "/s", results: {} } });
-    expect(errors).toEqual([]);
+    expect(errors).toEqual([{ file: "bad.md", error: expect.stringContaining("{{results.missing}}") }]);
   });
 });
