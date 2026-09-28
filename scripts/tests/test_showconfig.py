@@ -133,6 +133,35 @@ def test_season_of_fails_on_an_unmapped_id(show_root: Path) -> None:
     assert isinstance(err.value, sc.ShowConfigError)
 
 
+@pytest.mark.parametrize("bad_id", ["EP01", "ep1", "ep001", "episode-4", "S01E01", "s1e1", ""])
+def test_an_id_matching_neither_grammar_is_a_plain_error(show_root: Path, bad_id: str) -> None:
+    """The two faults want different handling, so they are different exceptions.
+
+    "ep11 is not placed yet" is a normal state an episode passes through, and a caller may
+    absorb it. "EP01 is not an episode id" is a mistake in the argv the operator typed, and no
+    caller may name an output file over it. The grammar mirrors engine/src/ids.ts.
+    """
+    cfg = sc.load(str(show_root))
+    with pytest.raises(sc.ShowConfigError) as err:
+        sc.season_of(cfg, bad_id)
+    assert not isinstance(err.value, sc.UnmappedEpisodeId)
+
+
+def test_a_well_formed_but_unplaced_id_is_the_absorbable_one(show_root: Path) -> None:
+    """ep98 is spelled correctly and simply has no slot; that is UnmappedEpisodeId."""
+    cfg = sc.load(str(show_root))
+    with pytest.raises(sc.UnmappedEpisodeId):
+        sc.season_of(cfg, "ep98")
+
+
+def test_production_number_zero_is_refused(show_root: Path) -> None:
+    cfg = sc.load(str(show_root))
+    with pytest.raises(sc.ShowConfigError) as err:
+        sc.season_of(cfg, "ep00")
+    assert not isinstance(err.value, sc.UnmappedEpisodeId)
+    assert "production numbers start at 1" in str(err.value)
+
+
 def test_a_malformed_air_map_entry_is_not_an_unmapped_id(show_root: Path) -> None:
     """A broken slot is a config fault a caller must not absorb as "no slot"."""
     cfg = sc.load(str(show_root))

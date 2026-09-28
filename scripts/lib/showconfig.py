@@ -62,8 +62,11 @@ _REQUIRED: tuple[tuple[str, ...], ...] = (
 )
 
 # The engine's id grammar, mirrored from engine/src/ids.ts: an aired id carries its own season, a
-# production id does not and must be looked up in airMap.
+# production id does not and must be looked up in airMap. An id matching NEITHER is malformed
+# ("EP01", "ep1", "episode-4"), which is a different fault from a well-formed production id the
+# show has not yet placed -- see season_of.
 _AIRED_ID = re.compile(r"^s(\d{2})e(\d{2})$")
+_PRODUCTION_ID = re.compile(r"^ep(\d{2})$")
 
 
 def load(show_root: str | None = None) -> dict:
@@ -166,10 +169,15 @@ def format_filename(
 def season_of(cfg: dict, episode_id: str) -> tuple[int, int]:
     """The (season, episode) an id airs in.
 
-    An aired id (sXXeYY) carries the answer and airMap is never consulted for one; a production id
-    (epNN) is looked up in airMap. A production id the map does not place raises UnmappedEpisodeId
-    (a ShowConfigError), which a caller may absorb; every other fault raises a plain
-    ShowConfigError, so no script ever names an output file from a guessed slot.
+    An aired id (sXXeYY) carries the answer and airMap is never consulted for one; a WELL-FORMED
+    production id (epNN) is looked up in airMap. A well-formed production id the map does not place
+    raises UnmappedEpisodeId (a ShowConfigError), which a caller may absorb; every other fault --
+    including an id matching NEITHER grammar ("EP01", "ep1") -- raises a plain ShowConfigError, so
+    no script ever names an output file from a guessed slot or from a typo.
+
+    The id grammar is validated here rather than left to airMap membership because the two faults
+    want different handling: "ep11 is not placed yet" is a normal state an episode passes through,
+    while "EP01 is not an episode id" is a mistake in the argv the operator typed.
     """
     if not isinstance(episode_id, str) or episode_id == "":
         raise ShowConfigError(f"no season for episode id {episode_id!r}: it is not a string")
@@ -181,6 +189,15 @@ def season_of(cfg: dict, episode_id: str) -> tuple[int, int]:
                 f"no season for episode id {episode_id!r}: season and episode start at 1"
             )
         return season, episode
+    production = _PRODUCTION_ID.match(episode_id)
+    if not production:
+        raise ShowConfigError(
+            f"no season for episode id {episode_id!r}: expected sXXeYY (aired) or epNN (production)"
+        )
+    if int(production.group(1)) == 0:
+        raise ShowConfigError(
+            f"no season for episode id {episode_id!r}: production numbers start at 1"
+        )
     air_map = cfg.get("airMap")
     if not isinstance(air_map, dict):
         raise ShowConfigError(f"{SHOW_CONFIG_FILE}: airMap is missing or is not an object")

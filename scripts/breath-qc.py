@@ -112,9 +112,13 @@ def main():
         sys.exit("breath-qc: episode id missing (usage: breath-qc.py <episode> [--show-root <path>])")
     base = f"Production/{ep}"
     doc = json.load(open(f"{base}/tts-script.json"))
-    if doc.get("engine", "kokoro") != "qwen3":
-        print("BREATH_QC_SKIP (kokoro)"); return
     narr = {s["i"] for s in doc["segments"] if s["speaker"] == narrator}
+    if doc.get("engine", "kokoro") != "qwen3":
+        # A skipped pass is a FINISHED pass: report the bar full before the result line, so a
+        # console does not leave this step showing 0 of N segments forever. `narr` is counted
+        # above the skip for exactly this reason -- the total is real even when the work is none.
+        sc.progress(len(narr), len(narr), "segments")
+        print("BREATH_QC_SKIP (kokoro)"); return
 
     touched = total = 0
     for pos, i in enumerate(sorted(narr), 1):

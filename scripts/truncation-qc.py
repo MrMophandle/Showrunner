@@ -155,6 +155,9 @@ def main() -> None:
     base = f"Production/{ep}"
     doc = json.load(open(f"{base}/tts-script.json"))
     if doc.get("engine", "kokoro") != "qwen3":
+        # A skipped pass is a FINISHED pass: report the bar full before the result line, so a
+        # console does not leave this step showing 0 of 2 rounds forever.
+        sc.progress(PASSES, PASSES, "rounds")
         print("TRUNCATION_QC_SKIP (kokoro engine is deterministic)")
         return
 

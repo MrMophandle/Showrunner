@@ -30,7 +30,7 @@ dev = ["pytest"]
 package = false
 
 [tool.pytest.ini_options]
-# Only this task's hermetic suite is collected. The eight test_*.py files copied verbatim from the
-# show repository sit beside the scripts they cover and move into tests/ with those scripts in the
-# later tasks of this plan.
+# The whole hermetic suite lives in tests/. The eight test_*.py files copied verbatim from the
+# show repository have all been resolved: five moved here with the scripts they cover, and three
+# deleted because the mechanisms they asserted no longer exist (see the Plan C Task 5 report).
 testpaths = ["tests"]

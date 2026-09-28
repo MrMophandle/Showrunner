@@ -5,17 +5,25 @@
 
 For each type:"character" shot in Production/<ep>/images/prompts.json missing
 its PNG: condition on the subject's locked reference sheet + the 2 newest
-approved pile stills (Canon/characters/<Name>/), generate at 2K 16:9, vision-
-audit via Claude headless, retry with corrective notes (<=3 attempts). A shot
-whose PNG exists is skipped — a hand-made shot always wins (delete a PNG or use
---only to re-roll). See docs/superpowers/specs/2026-07-27-nano-banana-generate-design.md.
+approved pile stills (the show's visual.castingPileDir), generate at 2K 16:9,
+vision-audit via Claude headless, retry with corrective notes (<=3 attempts). A
+shot whose PNG exists is skipped — a hand-made shot always wins (delete a PNG or
+use --only to re-roll).
+
+Everything that makes a frame THIS show's frame comes from the show's config and
+canon, never from this file: the reference index (visual.refs), the photographic
+look (visual.styleConstants), the audit laws (the file at visual.auditLaws), the
+style authority cited in a refusal (visual.style), and the banned collective
+phrases (visual.collectivePopulatorBans, read by lib/populators.py).
 
 Usage:
-  ARGUMENTS=ep04 uv run .archon/scripts/nano-banana-generate.py
-  ... nano-banana-generate.py ep04 --only s03-opha-still-corner --notes "smaller"
-  Flags: --only id[,id...]   --notes "text"   --no-audit
+  nano-banana-generate.py <episode> [--only id,id] [--notes "text"] [--no-audit]
+                                    [--show-root <path>]
 """
 import base64, json, os, re, subprocess, sys, tempfile, time
+
+from lib import populators
+from lib import showconfig as sc
 
 MODEL = "gemini-3-pro-image"          # Nano Banana Pro (verified live docs, Task 2)
 ASPECT_RATIO = "16:9"                  # response_format: cinematic frame
@@ -30,15 +38,12 @@ MAX_CALLS = 60                         # hard cost cap per run (~$8)
 STILLS_PER_SUBJECT = 2                 # newest pile stills fed per character
 MAX_IMAGES = 8                         # total reference images per API call
 
-# NO "Cinematic 16:9 frame" here. The aspect ratio is set properly via the API's
-# response_format.aspect_ratio; saying "cinematic frame" in the prompt made the
-# model PAINT letterbox bars into the picture as a style choice (ep04 pilot:
-# 24px top / 189px bottom baked in). The full-bleed line below replaces it.
-STYLE_CONSTANTS = ("dark hard science fiction, low-key but clearly exposed, "
-                   "real shadow, film grain. "
-                   "The picture fills the entire frame edge to edge — "
-                   "full-bleed, no letterbox bars or black borders. "
-                   "no text, no watermark, no signature.")
+# The show's photographic look is visual.styleConstants in showrunner.json, appended to every
+# brief by compose_prompt. One standing warning for whoever edits that key: do NOT put
+# "Cinematic 16:9 frame" in it. The aspect ratio is set properly via the API's
+# response_format.aspect_ratio, and saying "cinematic frame" in the prompt made the model PAINT
+# letterbox bars into the picture as a style choice (ep04 pilot: 24px top / 189px bottom baked
+# in). A full-bleed sentence is what belongs there instead.
 
 KEY_SETUP = """GEMINI_API_KEY is not set. One-time setup (5 min):
   1. https://aistudio.google.com/apikey -> Create API key (enable billing on the
@@ -48,11 +53,12 @@ KEY_SETUP = """GEMINI_API_KEY is not set. One-time setup (5 min):
 
 
 def normalize_key(ref: str) -> str:
-    """'Trent' -> 'trent'; 'relic (style-token...)' -> 'relic'."""
+    """A ref string to its bible key: 'Mara' -> 'mara'; 'relic (style-token...)' -> 'relic'."""
     return re.split(r"[\s(]", ref.strip(), 1)[0].lower()
 
 
-def load_bible(path: str = "Canon/refs.json") -> dict:
+def load_bible(path: str) -> dict:
+    """The show's reference index (visual.refs), minus its own metadata keys."""
     d = json.load(open(path))
     return {k: v for k, v in d.items() if not k.startswith("_")}
 
@@ -117,8 +123,10 @@ def assemble_refs(shot: dict, bible: dict, max_images: int = MAX_IMAGES):
     return sheet_paths + stills_deduped[:room], identities, missing
 
 
-def compose_prompt(shot: dict, identity_lines: list[str], notes: str = "") -> str:
-    parts = list(identity_lines) + [shot["brief"], STYLE_CONSTANTS]
+def compose_prompt(shot: dict, identity_lines: list[str], style_constants: str,
+                   notes: str = "") -> str:
+    """The brief the model is given: who is in frame, what happens, and the show's look."""
+    parts = list(identity_lines) + [shot["brief"], style_constants]
     if notes:
         parts.append(f"PREVIOUS ATTEMPT REJECTED: {notes}. Fix exactly this.")
     return "\n\n".join(parts)
@@ -292,25 +300,18 @@ def generate_image(prompt, image_paths, out_path, call_counter):
     return f"error:{_redact(last)}"
 
 
-AUDIT_LAWS = """Audit laws (Canon/visual-style.md — verify ALL):
-1. HEADCOUNT: exactly the characters the brief names — no invented/extra figures.
-2. ANATOMY: humans have EXACTLY TWO arms and two hands, no mangled fingers;
-   Remo the Vesk has EXACTLY SIX limbs (insectoid, not a spider/xenomorph);
-   Opha the Sethin is a SMALL segmented grub — about 1.5 ft long and under 1 ft
-   tall, large-housecat scale, NOT dog-sized — always wearing her translator
-   muzzle-mask over her mouth parts (never a spider or alien-movie
-   creature).
-3. CANON SCALE: any shard/relic fragment reads SMALL — thumb-sized, pinchable.
-4. WATERMARK: scan all four corners and edges for any visible logo/text/AI
-   badge/sparkle mark.
-5. IDENTITY: each subject plausibly matches its identity description.
-6. EXPOSURE: legible, real midtones — not black-on-black.
-7. RENDER DEFECTS: garbled dominant text, duplicated structures, cream border.
-8. FULL BLEED: baked-in black bars along any edge — letterbox, pillarbox or a
-   matte border — are a DEFECT; the picture must fill the frame edge to edge.
-   A few pixels of near-black at an edge from the scene's own lighting is fine.
-   What fails is a solid black BAND, especially an asymmetric one (e.g. a thin
-   bar at top and a thick one at the bottom)."""
+def load_audit_laws(path: str) -> str:
+    """The show's audit laws, read verbatim from the file at visual.auditLaws.
+
+    They live in the show's canon rather than in this script because they are statements about
+    THIS show's anatomy, scale and house style -- how many limbs a given species has, how big a
+    given relic reads. The file is read once per run and inserted into the audit prompt whole.
+    """
+    with open(path, encoding="utf-8") as fh:
+        laws = fh.read().strip()
+    if not laws:
+        raise sc.ShowConfigError(f"the audit laws file at {path} is empty")
+    return laws
 
 
 def _audit_call(prompt: str) -> str:
@@ -329,12 +330,12 @@ def _audit_call(prompt: str) -> str:
     return r.stdout
 
 
-def audit_image(shot, png_path):
-    prompt = (f"You are the image auditor for the sci-fi series Dead Light. "
+def audit_image(shot, png_path, audit_laws: str, show_name: str):
+    prompt = (f"You are the image auditor for the series {show_name}. "
               f"Read (view) the image at {png_path} .\n"
               f"It was generated for this brief:\n---\n{shot['brief']}\n---\n"
               f"Named cast: {', '.join(shot.get('refs', [])) or 'none'}\n\n"
-              f"{AUDIT_LAWS}\n\n"
+              f"{audit_laws}\n\n"
               f"Reply with ONLY this JSON on the last line, nothing after it: "
               f'{{"pass": true|false, "notes": "<one concrete sentence if fail>"}}')
     try:
@@ -377,97 +378,45 @@ def audit_image(shot, png_path):
     return (bool(v.get("pass")), str(v.get("notes", "")))
 
 
-# "both" is a definite headcount of two and belongs here: ep10's s03/s09
-# briefs said "rim separation on both figures" with both people named and
-# in refs, and the guard refused to spend on it.
-_COUNT_WORD = r"(?:\d+|one|two|three|four|five|six|both|exactly)"
-# The capping idiom is not always "no figures" — it is usually "no OTHER
-# figures in the frame", which is the strongest possible statement of the
-# very rule this guard enforces. Allow one qualifier between.
-_NO_ESCAPE = r"\bno\s+(?:other|more|additional|further\s+)?\s*$"
-
-# Unconditional collective-populator phrases (case-insensitive substring match).
-# A brief containing one of these makes Nano Banana INVENT uncredited
-# characters — see Canon/visual-style.md, "No collective populators in a
-# character brief." The one exception is the house-style CAPPING idiom this
-# same law recommends — "no other figures anywhere in the frame" — which
-# NEGATES extras rather than inventing them, so a match directly preceded by
-# "no " is not a violation.
-_ALWAYS_FAIL_PHRASES = [
-    "the crew", "the others", "other figures", "a few figures",
-    "several figures", "some figures", "some people", "onlookers",
-    "bystanders", "patrons", "a crowd", "crowd of", "background figures",
-]
-
-# Bare nouns (and "crew members") only violate the law when NOT preceded by an
-# explicit headcount — "three people:", "six crew members" name a fixed cast
-# size and are exactly what the law wants (see s03-mardo-table-scene: "sit
-# three people: TRENT ... and SABLE"). Checked separately from the phrases
-# above so that headcount-qualified uses of "people"/"figures" pass.
-_QUALIFIABLE_WORDS = ["crew members", "people", "figures"]
-
-
-def find_collective_populators(brief: str) -> list[str]:
-    """-> matched offending substrings of `brief` (verbatim, original case).
-
-    Empty list means the brief is clean. See Canon/visual-style.md, "No
-    collective populators in a character brief."
-    """
-    hits, covered = [], []
-
-    def _overlaps(a, b):
-        return not (a[1] <= b[0] or b[1] <= a[0])
-
-    for phrase in _ALWAYS_FAIL_PHRASES:
-        for m in re.finditer(re.escape(phrase), brief, re.IGNORECASE):
-            covered.append((m.start(), m.end()))
-            prefix = brief[:m.start()]
-            if re.search(_NO_ESCAPE, prefix, re.IGNORECASE):
-                continue                      # "no other figures..." — the capping idiom
-            hits.append(brief[m.start():m.end()])
-
-    for phrase in _QUALIFIABLE_WORDS:
-        for m in re.finditer(re.escape(phrase), brief, re.IGNORECASE):
-            span = (m.start(), m.end())
-            if any(_overlaps(span, c) for c in covered):
-                continue                      # already judged above (e.g. "the crew members")
-            prefix = brief[:m.start()]
-            if re.search(rf"\b{_COUNT_WORD}\s*$", prefix, re.IGNORECASE):
-                continue                      # "three people:", "six crew members"
-            if re.search(_NO_ESCAPE, prefix, re.IGNORECASE):
-                continue                      # "no ... figures"
-            hits.append(brief[m.start():m.end()])
-
-    return hits
-
-
-def check_no_collective_populators(shots: list[dict]) -> None:
-    """Pre-flight law enforcement (Ryan-ruled, ep04 s04-opha-uneasy incident):
+def check_no_collective_populators(shots: list[dict], phrases, style_path: str) -> None:
+    """Pre-flight law enforcement (showrunner-ruled after one shot's extras incident):
     a brief with a collective populator ("the crew", "a few figures", ...)
-    makes Nano Banana invent uncredited extras — wrong headcount, and once a
+    makes the model invent uncredited extras — wrong headcount, and once a
     real-world flag patch on an invented figure. This must run BEFORE the
     .bak backup step and before any API call: nothing generated, nothing
-    backed up, nothing spent, on ANY violation in the in-scope shot list."""
-    violations = [(s["id"], find_collective_populators(s.get("brief", "")))
-                  for s in shots]
-    violations = [(sid, hits) for sid, hits in violations if hits]
-    if not violations:
+    backed up, nothing spent, on ANY violation in the in-scope shot list.
+
+    The banned phrases are the show's (visual.collectivePopulatorBans) and the
+    authority named in the refusal is the show's style document (visual.style);
+    the grammar that reads them lives in lib/populators.py."""
+    found = populators.violations(shots, phrases)
+    if not found:
         return
-    lines = [f"  {sid}: matched {', '.join(sorted(set(hits)))}"
-             for sid, hits in violations]
     sys.exit(
         "COLLECTIVE POPULATOR(S) in character brief(s) — refusing to spend "
-        "(Canon/visual-style.md, \"No collective populators\"):\n"
-        + "\n".join(lines) + "\n"
+        f"({style_path}, \"No collective populators\"):\n"
+        + "\n".join(populators.report_lines(found)) + "\n"
         "Every person in frame must be named and present in refs — "
         "name them or cap the headcount, then re-run."
     )
 
 
-def run(ep, only=None, notes="", no_audit=False):
+def run(ep, cfg, root, only=None, notes="", no_audit=False):
+    """Generate every missing character shot for one episode. `cfg` is the show's config and
+    `root` its absolute directory, from which every show path in the config is resolved."""
+    # Everything the SHOW decides about a frame, read once: where its reference index lives, how
+    # its photography reads, which laws the audit applies, which document a refusal cites, and
+    # which collective phrases are banned in a brief.
+    bible_path = sc.path(cfg, "visual", "refs", root=root)
+    style_constants = str(sc.value(cfg, "visual", "styleConstants"))
+    audit_laws = load_audit_laws(sc.path(cfg, "visual", "auditLaws", root=root))
+    style_path = str(sc.value(cfg, "visual", "style"))
+    bans = list(sc.value(cfg, "visual", "collectivePopulatorBans"))
+    show_name = str(sc.value(cfg, "showName"))
+
     base = f"Production/{ep}/images"
     doc = json.load(open(f"{base}/prompts.json"))
-    bible = load_bible()
+    bible = load_bible(bible_path)
     shots = [s for s in doc["shots"] if s.get("type") == "character"]
 
     if only:
@@ -480,9 +429,9 @@ def run(ep, only=None, notes="", no_audit=False):
 
     # Mechanical pre-flight: fail the whole run before any money is spent if
     # ANY in-scope shot's brief has a collective populator. Must run before
-    # the .bak backup step and before any API call (showrunner ruling,
-    # s04-opha-uneasy incident).
-    check_no_collective_populators(shots)
+    # the .bak backup step and before any API call (showrunner ruling, after a brief that
+    # said "the crew" put an uncredited figure in a paid frame).
+    check_no_collective_populators(shots, bans, style_path)
 
     # --only re-roll: back a pre-existing PNG up (never delete it outright) so
     # a hand-made image can be restored if generation doesn't fully succeed.
@@ -515,8 +464,11 @@ def run(ep, only=None, notes="", no_audit=False):
     counter, results = {"calls": 0}, {}
     rc = 1
     try:
-        for s in shots:
+        for pos, s in enumerate(shots, 1):
             sid = s["id"]
+            # One unit of work per shot, reported before the work rather than after, because a
+            # single shot can run three attempts and several minutes.
+            sc.progress(pos, len(shots), "shots")
             out = f"{base}/{sid}.png"
             if os.path.exists(out):
                 results[sid] = "SKIPPED-exists"
@@ -527,14 +479,16 @@ def run(ep, only=None, notes="", no_audit=False):
                 else:
                     state, fb = "FAILED-AUDIT", notes
                     for attempt in range(1, MAX_ATTEMPTS + 1):
-                        ret = generate_image(compose_prompt(s, identities, fb), imgs, out, counter)
+                        ret = generate_image(
+                            compose_prompt(s, identities, style_constants, fb),
+                            imgs, out, counter)
                         if ret == "refused":
                             state = "REFUSED"; break
                         if ret.startswith("error:"):
                             state = f"ERROR ({ret})"; break   # transport dead, not a content refusal
                         if no_audit:
                             state = f"OK attempt-{attempt} (unaudited)"; break
-                        ok, audit_notes = audit_image(s, out)
+                        ok, audit_notes = audit_image(s, out, audit_laws, show_name)
                         if ok:
                             state = f"OK attempt-{attempt}"; break
                         # Print the rejection AS IT HAPPENS — previously this
@@ -590,13 +544,15 @@ def run(ep, only=None, notes="", no_audit=False):
 
 
 def main():
-    usage = "usage: nano-banana-generate <ep> [--only id,id] [--notes t] [--no-audit]"
-    # argv WINS over $ARGUMENTS. The Archon bash node passes $ARGUMENTS with no
-    # argv; a human (or the image-gate reject loop) passes argv with $ARGUMENTS
-    # often still exported in the shell. Reading the env first silently ate
-    # --only/--notes and re-ran the whole episode.
-    argv = sys.argv[1:]
-    args = argv if argv else os.environ.get("ARGUMENTS", "").split()
+    usage = ("usage: nano-banana-generate.py <episode> [--only id,id] [--notes t] "
+             "[--no-audit] [--show-root <path>]")
+    # The engine runs this with the show root as the working directory; --show-root <path> is for
+    # an operator running it from somewhere else. The root is absolute before load(), so a
+    # relative --show-root means one directory to the config and to every path after the chdir.
+    root = os.path.abspath(sc.show_root(sys.argv))
+    cfg = sc.load(root)
+    os.chdir(root)
+    args = sys.argv[1:]
     if not args:
         sys.exit(usage)
     ep, only, notes, no_audit = args[0], None, "", False
@@ -614,8 +570,11 @@ def main():
             no_audit = True; i += 1
         else:
             sys.exit(f"unknown flag {args[i]}")
-    sys.exit(run(ep, only, notes, no_audit))
+    sys.exit(run(ep, cfg, root, only, notes, no_audit))
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except (sc.ShowConfigError, FileNotFoundError) as err:
+        sys.exit(f"nano-banana-generate: {err}")

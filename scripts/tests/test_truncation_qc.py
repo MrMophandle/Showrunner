@@ -1,15 +1,13 @@
-import importlib.util, json, os
+import json, os
 import numpy as np
 import soundfile as sf
+from conftest import load_script
 
 
 def _load():
-    here = os.path.dirname(os.path.abspath(__file__))
-    spec = importlib.util.spec_from_file_location(
-        "truncation_qc", os.path.join(here, "truncation-qc.py"))
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
+    # The scripts live one directory up, beside lib/; conftest resolves them and puts that
+    # directory on sys.path so `from lib import showconfig` works from here.
+    return load_script("truncation-qc.py")
 
 
 tq = _load()
@@ -113,7 +111,7 @@ def test_deliberate_cutoff_segments_are_never_flagged(tmp_path):
     """Interruptions are SUPPOSED to stop mid-word -- tts-generate slices them
     on purpose. Flagging them would re-roll them forever."""
     rng = np.random.default_rng(2)
-    segs = [{"i": 1, "speaker": "Sarn", "text": "But I never--", "cutoff": True,
+    segs = [{"i": 1, "speaker": "Idris", "text": "But I never--", "cutoff": True,
              "tts_text_full": "But I never got the chance."}]
     base = _episode(tmp_path, segs, {1: _speech(3.0, rng)})
 
@@ -123,7 +121,7 @@ def test_deliberate_cutoff_segments_are_never_flagged(tmp_path):
 def test_flags_any_speaker_not_just_the_narrator(tmp_path):
     """Unlike breath-qc, truncation is a synthesis failure and hits every voice."""
     rng = np.random.default_rng(3)
-    segs = [{"i": 1, "speaker": "Opha", "text": "Why are we in the medbay?"}]
+    segs = [{"i": 1, "speaker": "Pell", "text": "Why are we in the medbay?"}]
     base = _episode(tmp_path, segs, {1: _speech(3.0, rng)})
 
     assert tq.find_truncated(base, {"segments": segs}) == [1]

@@ -21,8 +21,10 @@ def mix_wav(cfg: dict, ep: str) -> str:
     try:
         season, episode = sc.season_of(cfg, ep)
     except sc.UnmappedEpisodeId:
-        # ONLY an id the airMap does not place falls back. A malformed airMap entry, a missing
-        # pattern or a bad id is a config fault and must reach the operator, not be named over.
+        # ONLY a WELL-FORMED production id the airMap does not place falls back. A malformed airMap
+        # entry, a missing pattern, or an id matching neither grammar ("EP01", "ep1") raises a plain
+        # ShowConfigError out of season_of: those are config or argv faults and must reach the
+        # operator, not be named over as episode.wav.
         return UNMAPPED_MIX
     return sc.format_filename(str(sc.value(cfg, "output", "mixFilename")),
                               slug=str(sc.value(cfg, "showSlug")),
@@ -167,11 +169,20 @@ def main() -> None:
         # `print_format=summary` on the apply pass makes ffmpeg report what it ACHIEVED, at info
         # level on stderr -- which is the number the result line must carry. Measuring the input
         # again (pass 1) would only repeat what the file was before this pass corrected it.
-        applied = subprocess.run(
-            ["ffmpeg", "-y", "-loglevel", "info", "-nostdin", "-i", raw,
-             "-af", af, "-ar", out_sr, out_path],
-            capture_output=True, text=True, check=True,
-        )
+        try:
+            applied = subprocess.run(
+                ["ffmpeg", "-y", "-loglevel", "info", "-nostdin", "-i", raw,
+                 "-af", af, "-ar", out_sr, out_path],
+                capture_output=True, text=True, check=True,
+            )
+        except subprocess.CalledProcessError as err:
+            # The apply pass is the one that writes the episode. When ffmpeg refuses it (an
+            # unwritable output directory, a filter the build does not carry), its reason is the
+            # last few lines of stderr; without them the operator sees only an exit code.
+            tail = (err.stderr or "").strip().splitlines()[-10:]
+            for line in tail:
+                print(f"  ffmpeg: {line}", file=sys.stderr)
+            sys.exit(f"audio-mix: ffmpeg failed to write {out_path} (exit {err.returncode})")
         achieved = re.search(r"Output Integrated:\s*(-?[\d.]+)\s*LUFS", applied.stderr)
         print(f"  loudness: measured {float(m['input_i']):.1f} LUFS -> normalised to {TARGET['I']} (two-pass)")
     # The last line is this step's RESULT: the gate message after it reads it verbatim, so it is

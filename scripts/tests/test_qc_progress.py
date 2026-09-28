@@ -89,3 +89,54 @@ def test_a_clean_truncation_pass_ends_at_the_last_round(
         "done": truncation.PASSES, "total": truncation.PASSES, "unit": "rounds"
     }
     assert _result(out).startswith("TRUNCATION_QC_OK ")
+
+
+# --- the engine-skip path: a skipped pass is a FINISHED pass ---------------------------------
+
+def _kokoro_script(show_root: Path, segments: list[dict]) -> None:
+    """A tts-script from the legacy deterministic engine, which every QC pass declines to run."""
+    out = show_root / "Production/ep01/tts-script.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps({"engine": "kokoro", "cast": {}, "segments": segments}),
+                   encoding="utf-8")
+
+
+@pytest.mark.parametrize("script,result", [
+    ("truncation-qc.py", "TRUNCATION_QC_SKIP"),
+    ("pace-qc.py", "PACE_QC_SKIP"),
+])
+def test_a_skipped_round_pass_reports_its_bar_full(script, result, show_root: Path,
+                                                   monkeypatch, capsys, restore_cwd) -> None:
+    """Without this a console shows the step finishing at 0 of N for ever."""
+    mod = load_script(script)
+    _kokoro_script(show_root, [{"i": 1, "speaker": "narrator", "text": "one"}])
+    monkeypatch.setattr(mod.sys, "argv", [script, "ep01", "--show-root", str(show_root)])
+    mod.main()
+
+    out = capsys.readouterr().out
+    progress = _progress(out)
+    assert progress, "the skip path emitted no progress line at all"
+    assert progress[-1] == {"done": mod.PASSES, "total": mod.PASSES, "unit": "rounds"}
+    # The result line stays last: a progress line is not a result.
+    assert [l for l in out.strip().splitlines()
+            if not l.startswith("::progress")][-1].startswith(result)
+
+
+def test_a_skipped_breath_pass_reports_its_bar_full(show_root: Path, monkeypatch, capsys,
+                                                    restore_cwd) -> None:
+    """breath-qc counts segments, not rounds, so its total is the narrator segment count —
+    counted ABOVE the skip so the total is real even when the work is none."""
+    mod = load_script("breath-qc.py")
+    _kokoro_script(show_root, [
+        {"i": 1, "speaker": "narrator", "text": "one"},
+        {"i": 2, "speaker": "narrator", "text": "two"},
+        {"i": 3, "speaker": "Maeve", "text": "three"},
+    ])
+    monkeypatch.setattr(mod.sys, "argv",
+                        ["breath-qc.py", "ep01", "--show-root", str(show_root)])
+    mod.main()
+
+    out = capsys.readouterr().out
+    assert _progress(out)[-1] == {"done": 2, "total": 2, "unit": "segments"}
+    assert [l for l in out.strip().splitlines()
+            if not l.startswith("::progress")][-1].startswith("BREATH_QC_SKIP")

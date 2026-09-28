@@ -3,24 +3,29 @@
 # ///
 """season-status: the Season Desk's deterministic board.
 
-Derives every fact mechanically — ruled episode list from Canon/season-{N}.md,
-air->production mapping from finalize-video.py's SEASON_MAP, per-episode progress
-from Episodes/*/STATUS.md + Production/*/images, finals from the NAS. No model
-involvement: facts must be unhallucinatable. Read-only; prints markdown + a
-SEASON_STATUS_OK / SEASON_STATUS_PARTIAL trailer (exit 0 either way).
+Derives every fact mechanically — the ruled episode list from the show's season document,
+the air->production mapping from the show's airMap, per-episode progress from each episode's
+STATUS.md and rendered stills, finals from the NAS. No model involvement: facts must be
+unhallucinatable. Read-only; prints markdown + a SEASON_STATUS_OK / SEASON_STATUS_PARTIAL
+trailer (exit 0 either way).
 
-Usage: uv run .archon/scripts/season-status.py [sN] [--json]
-       sN selects the season (default s1 -> Canon/season-1.md); a season
-       exists iff that file exists (console-operating-layer contract).
-       DEADLIGHT_FINAL_DEST=/path override for the NAS directory."""
+The air map used to be regex-parsed out of finalize-video.py's source, so the board and the
+finalizer could disagree about which rows existed (inventory F-14). Both now read the one
+airMap key in showrunner.json.
+
+Usage: season-status.py [sN] [--json] [--show-root <path>]
+       sN selects the season (default s1 -> <canonDir>/season-1.md); a season
+       exists iff that file exists."""
 import json, os, re, sys
+
+from lib import showconfig as sc
 
 MILESTONES = ["beats", "outline", "script", "canon", "casting", "audio",
               "images", "assembled", "finalized"]
 
 
 def parse_season_table(text):
-    """Rows like `| 5 | **RULED** | **"Dead Quiet"** — ...` -> [{'air':5,'title':'Dead Quiet'}].
+    """Rows like `| 5 | **RULED** | **"A Title"** — ...` -> [{'air':5,'title':'A Title'}].
     The pilot row has no quoted title -> '(pilot)'.
 
     The status cell may carry its OWN ruling history and still count as ruled
@@ -39,13 +44,25 @@ def parse_season_table(text):
     return rows
 
 
-def parse_air_map(finalize_text, season=1):
-    """SEASON_MAP entries `"ep98": (1, 9)` -> {9: 'ep98'} (for the given season)."""
+def air_map_for_season(cfg, season=1):
+    """The show's airMap, inverted for one season: {air slot: production id}.
+
+    Reads the one airMap key every script shares, rather than regex-parsing another script's
+    source for a dict literal (inventory F-14). A malformed entry is skipped rather than fatal:
+    this board is read-only and reports problems instead of refusing to draw.
+    """
     out = {}
-    for m in re.finditer(r'"(ep\d+)":\s*\((\d+),\s*(\d+)\)', finalize_text):
-        prod, s, ep = m.group(1), int(m.group(2)), int(m.group(3))
-        if s == season:
-            out[ep] = prod
+    entries = cfg.get("airMap")
+    if not isinstance(entries, dict):
+        return out
+    for prod, slot in entries.items():
+        if isinstance(slot, (list, tuple)) and len(slot) == 2:
+            try:
+                s, ep = int(slot[0]), int(slot[1])
+            except (TypeError, ValueError):
+                continue
+            if s == season:
+                out[ep] = prod
     return out
 
 
@@ -57,8 +74,8 @@ def episode_milestones(status_text):
     return set(re.findall(r'^- \d{4}-\d{2}-\d{2} (\w+):', status_text, re.M))
 
 
-def _image_counts(root, prod):
-    p = os.path.join(root, f"Production/{prod}/images/prompts.json")
+def _image_counts(root, prod, production_dir="Production"):
+    p = os.path.join(root, production_dir, prod, "images", "prompts.json")
     if not os.path.exists(p):
         return None
     try:
@@ -70,7 +87,8 @@ def _image_counts(root, prod):
             if not isinstance(s, dict) or "id" not in s:
                 bad = True
                 continue
-            if os.path.exists(os.path.join(root, f"Production/{prod}/images/{s['id']}.png")):
+            if os.path.exists(os.path.join(root, production_dir, prod, "images",
+                                           f"{s['id']}.png")):
                 have += 1
         if bad:
             return "bad"
@@ -109,7 +127,7 @@ STATE_ENUM = {"ruled/unstarted": "ruled-unstarted",
               "unknown (NAS unmounted)": "unknown-nas-unmounted"}
 
 
-def board_rows(root=".", nas_dest=None, season=1):
+def board_rows(cfg, root=".", nas_dest=None, season=1):
     """The row-building core shared by board() and board_json().
 
     Returns (rows, ok, problems). Each row is:
@@ -120,32 +138,27 @@ def board_rows(root=".", nas_dest=None, season=1):
     labels ARE already their own stable enum values. 'images' is
     None / 'bad' / {'have': h, 'total': t}. 'milestones' is a sorted list.
 
-    `season` selects Canon/season-{season}.md and the NAS filename's SxxEyy
-    (default 1, matching prior behavior byte-for-byte).
+    `season` selects <canonDir>/season-{season}.md and the NAS filename's SxxEyy
+    (default 1).
 
-    Returns rows=None when Canon/season-{season}.md itself is unreadable —
-    board() renders that as a wholly empty "" (no header), matching prior
-    behavior; board_json() treats None as an empty episode list.
+    Returns rows=None when the season document itself is unreadable — board()
+    renders that as a wholly empty "" (no header); board_json() treats None as
+    an empty episode list.
     """
-    nas = nas_dest or os.environ.get("DEADLIGHT_FINAL_DEST", "/Volumes/media/DeadLight")
+    canon_dir = str(sc.value(cfg, "canonDir"))
+    episodes_dir = str(sc.value(cfg, "episodesDir"))
+    production_dir = str(sc.value(cfg, "productionDir"))
+    nas = nas_dest or str(sc.value(cfg, "output", "nasRoot"))
     problems = []
-    season_doc_path = f"Canon/season-{season}.md"
+    season_doc_path = os.path.join(canon_dir, f"season-{season}.md")
 
-    # Try to read Canon/season-{season}.md
     try:
         season_doc = open(os.path.join(root, season_doc_path)).read()
     except (FileNotFoundError, OSError):
         problems.append(f"{season_doc_path} unreadable — cannot build board")
         return None, False, problems
 
-    # Try to read finalize-video.py
-    fin_text = None
-    try:
-        fin_text = open(os.path.join(root, ".archon/scripts/finalize-video.py")).read()
-    except (FileNotFoundError, OSError):
-        problems.append("finalize-video.py unreadable — air/production mapping unavailable")
-
-    air_map = parse_air_map(fin_text, season) if fin_text else {}
+    air_map = air_map_for_season(cfg, season)
     nas_up = os.path.isdir(nas)
     if not nas_up:
         problems.append("NAS unmounted — final states unknown")
@@ -157,8 +170,8 @@ def board_rows(root=".", nas_dest=None, season=1):
     for row in season_rows:
         air, title = row["air"], row["title"]
         prod = prod_id_for(air, air_map)
-        ep_dir = os.path.join(root, f"Episodes/{prod}")
-        imgs = _image_counts(root, prod)
+        ep_dir = os.path.join(root, episodes_dir, prod)
+        imgs = _image_counts(root, prod, production_dir)
         if imgs == "bad":
             images_field = "bad"
             problems.append(f"{prod}: prompts.json unreadable")
@@ -174,7 +187,10 @@ def board_rows(root=".", nas_dest=None, season=1):
             sp = os.path.join(ep_dir, "STATUS.md")
             ms = episode_milestones(open(sp).read()) if os.path.exists(sp) else set()
             if "finalized" in ms:
-                nas_file = os.path.join(nas, f"DeadLight S{season:02d}E{air:02d}.mp4")
+                nas_file = os.path.join(nas, sc.format_filename(
+                    str(sc.value(cfg, "output", "finalFilename")),
+                    slug=str(sc.value(cfg, "showSlug")),
+                    season=season, episode=air, episode_id=prod))
                 if not nas_up:
                     state = "unknown (NAS unmounted)"
                 elif os.path.exists(nas_file):
@@ -197,8 +213,8 @@ def board_rows(root=".", nas_dest=None, season=1):
     return rows, not problems, problems
 
 
-def board(root=".", nas_dest=None, season=1):
-    rows, ok, problems = board_rows(root, nas_dest, season)
+def board(cfg, root=".", nas_dest=None, season=1):
+    rows, ok, problems = board_rows(cfg, root, nas_dest, season)
     if rows is None:
         return "", ok, problems
     lines = ["| Air | Prod | Title | State | Images | Next action |",
@@ -215,8 +231,8 @@ def board(root=".", nas_dest=None, season=1):
     return "\n".join(lines), ok, problems
 
 
-def board_json(root=".", nas_dest=None, season=1):
-    rows, ok, problems = board_rows(root, nas_dest, season)
+def board_json(cfg, root=".", nas_dest=None, season=1):
+    rows, ok, problems = board_rows(cfg, root, nas_dest, season)
     return {"episodes": rows or [], "ok": ok, "problems": problems}
 
 
@@ -230,16 +246,19 @@ def season_from_tokens(tokens):
 
 
 def main():
-    # argv wins; ARGUMENTS is the Archon-bash-node fallback. Recognized
-    # tokens from either: an `sN` season selector (default s1) and --json.
-    argv = sys.argv[1:]
-    tokens = argv if argv else os.environ.get("ARGUMENTS", "").split()
+    # The engine runs this with the show root as the working directory; --show-root <path> is for
+    # an operator running it from somewhere else.
+    root = os.path.abspath(sc.show_root(sys.argv))
+    cfg = sc.load(root)
+    os.chdir(root)
+    # Recognized tokens: an `sN` season selector (default s1) and --json.
+    tokens = sys.argv[1:]
     season = season_from_tokens(tokens)
     if "--json" in tokens:
         # --json: stdout is the WHOLE JSON object, nothing else.
-        print(json.dumps(board_json(season=season)))
+        print(json.dumps(board_json(cfg, season=season)))
         return
-    md, ok, problems = board(season=season)
+    md, ok, problems = board(cfg, season=season)
     print(md)
     if ok:
         print("SEASON_STATUS_OK")
@@ -250,4 +269,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except (sc.ShowConfigError, FileNotFoundError) as err:
+        sys.exit(f"season-status: {err}")

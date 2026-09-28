@@ -2,14 +2,17 @@
 # dependencies = []
 # ///
 """registry-append: copy an episode's APPROVED character shots into each
-character's canon pile (Canon/characters/<Name>/<ep>-<shot-id>.png) — the
+subject's canon pile (<visual.castingPileDir>/<Name>/<ep>-<shot-id>.png) — the
 casting registry grows itself; the generator conditions on the newest stills.
 
+Which kinds of subject are castable is the show's to say (visual.characterKinds):
+a prop or a location has an entry in the reference index but no pile.
+
 Run AFTER the image gate (only approved shots on disk). Idempotent.
-Usage: ARGUMENTS=ep04 uv run .archon/scripts/registry-append.py"""
+Usage: registry-append.py <episode> [--show-root <path>]"""
 import json, os, re, shutil, sys
 
-CHARACTER_KINDS = {"human", "creature", "ship"}
+from lib import showconfig as sc
 
 
 def normalize_key(ref: str) -> str:
@@ -45,11 +48,15 @@ def find_matching_folder(key: str, characters_root: str) -> tuple:
         return None, 0
 
 
-def append(ep, prompts_path, bible, characters_root="Canon/characters"):
+def append(ep, prompts_path, bible, characters_root, character_kinds):
+    """Copy every approved character still into its subjects' piles. -> the paths written."""
+    kinds = set(character_kinds)
     doc = json.load(open(prompts_path))
     ep_dir = os.path.dirname(prompts_path)
     copied = []
-    for s in doc["shots"]:
+    shots = doc["shots"]
+    for pos, s in enumerate(shots, 1):
+        sc.progress(pos, len(shots), "shots")
         if s.get("type") != "character":
             continue
         src = os.path.join(ep_dir, f"{s['id']}.png")
@@ -59,7 +66,7 @@ def append(ep, prompts_path, bible, characters_root="Canon/characters"):
             key = normalize_key(raw)
             entry = bible.get(key)
             if entry:
-                if entry.get("kind") not in CHARACTER_KINDS:
+                if entry.get("kind") not in kinds:
                     continue                          # props/locations/other non-cast kinds
                 folder = os.path.dirname(entry["ref"])
             else:
@@ -98,22 +105,28 @@ def append(ep, prompts_path, bible, characters_root="Canon/characters"):
 
 
 def main():
-    # argv WINS over $ARGUMENTS — identical precedence to nano-banana-generate's
-    # main() (commit 9f29802). ARGUMENTS stays exported in a shell across
-    # invocations, so a human passing argv (e.g. `registry-append.py ep05`)
-    # must not have it silently overridden by a stale ARGUMENTS=ep04.
-    argv = sys.argv[1:]
-    args = argv if argv else os.environ.get("ARGUMENTS", "").split()
-    if not args:
-        sys.exit("usage: registry-append <ep>")
-    ep = args[0]
+    # The engine runs this with the show root as the working directory; --show-root <path> is for
+    # an operator running it from somewhere else.
+    root = os.path.abspath(sc.show_root(sys.argv))
+    cfg = sc.load(root)
+    os.chdir(root)
+    ep = sys.argv[1] if len(sys.argv) > 1 else ""
+    if not ep:
+        sys.exit("registry-append: episode id missing "
+                 "(usage: registry-append.py <episode> [--show-root <path>])")
+    refs_path = sc.path(cfg, "visual", "refs", root=root)
+    casting_root = sc.path(cfg, "visual", "castingPileDir", root=root)
+    kinds = sc.value(cfg, "visual", "characterKinds")
     bible = {k: v for k, v in
-             json.load(open("Canon/refs.json")).items() if not k.startswith("_")}
-    copied = append(ep, f"Production/{ep}/images/prompts.json", bible)
+             json.load(open(refs_path)).items() if not k.startswith("_")}
+    copied = append(ep, f"Production/{ep}/images/prompts.json", bible, casting_root, kinds)
     for p in copied:
         print(f"  + {p}")
     print(f"REGISTRY_OK {len(copied)} still(s) appended")
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except (sc.ShowConfigError, FileNotFoundError) as err:
+        sys.exit(f"registry-append: {err}")

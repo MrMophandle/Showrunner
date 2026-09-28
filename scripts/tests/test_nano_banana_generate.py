@@ -1,46 +1,80 @@
-import importlib.util, json, os, time
+import json, os, shutil, time
+from conftest import FIXTURES_DIR, load_script
+from lib import populators
 
 def _load(name="nano-banana-generate"):
-    here = os.path.dirname(os.path.abspath(__file__))
-    spec = importlib.util.spec_from_file_location(
-        name.replace("-", "_"), os.path.join(here, f"{name}.py"))
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)          # safe: script guards main()
-    return mod
+    return load_script(f"{name}.py")      # safe: every script guards main()
 
 nbg = _load()
 
+# What the SHOW supplies, now that none of it is a literal in the script under test. These are
+# the fixture show's values, read from the same showrunner.json every other test suite uses, so
+# a change to the fixture cannot leave these tests asserting against a stale copy.
+FIXTURE_CFG = json.loads((FIXTURES_DIR / "showrunner.json").read_text())
+BANS = FIXTURE_CFG["visual"]["collectivePopulatorBans"]
+STYLE = FIXTURE_CFG["visual"]["styleConstants"]
+STYLE_DOC = FIXTURE_CFG["visual"]["style"]
+SHOW_NAME = FIXTURE_CFG["showName"]
+
+# The audit laws are a FILE in the show's canon now (visual.auditLaws), not a string constant.
+# This is a miniature stand-in carrying the one law the letterbox regression pins.
+LAWS = """Audit laws (verify ALL):
+1. HEADCOUNT: exactly the characters the brief names.
+8. FULL BLEED: baked-in black bars along any edge — letterbox, pillarbox or a
+   matte border — are a DEFECT; the picture must fill the frame edge to edge.
+   What fails is a solid black BAND, especially an asymmetric one."""
+
+
+def _find(brief):
+    """find_collective_populators moved to lib/populators.py and takes the show's ban list."""
+    return populators.find_collective_populators(brief, BANS)
+
+
+def _show(tmp_path):
+    """Write the fixture show's config and audit-laws file into a temp root; -> (cfg, root).
+
+    run() reads visual.refs, visual.styleConstants, visual.auditLaws, visual.style and
+    visual.collectivePopulatorBans through the config, so a test that calls run() needs a real
+    show root rather than a bare directory.
+    """
+    shutil.copy(FIXTURES_DIR / "showrunner.json", tmp_path / "showrunner.json")
+    canon = tmp_path / "Canon"
+    canon.mkdir(exist_ok=True)
+    (canon / "visual-audit-laws.md").write_text(LAWS)
+    (canon / "refs.json").write_text(json.dumps({}))
+    return json.loads((tmp_path / "showrunner.json").read_text()), str(tmp_path)
+
 def test_normalize_key():
-    assert nbg.normalize_key("Trent") == "trent"
+    assert nbg.normalize_key("Maeve") == "maeve"
     assert nbg.normalize_key("relic (style-token, at CANON shard scale)") == "relic"
     assert nbg.normalize_key("  Ansa ") == "ansa"
 
 def _mk_bible(tmp_path):
-    (tmp_path / "Canon/characters/Trent").mkdir(parents=True)
-    sheet = tmp_path / "Canon/characters/Trent/Trent Reference.png"
+    (tmp_path / "Canon/characters/Maeve").mkdir(parents=True)
+    sheet = tmp_path / "Canon/characters/Maeve/Maeve Reference.png"
     sheet.write_bytes(b"png")
-    old = tmp_path / "Canon/characters/Trent/ep03-a.png"; old.write_bytes(b"a")
-    mid = tmp_path / "Canon/characters/Trent/ep04-b.png"; mid.write_bytes(b"b")
-    new = tmp_path / "Canon/characters/Trent/ep04-c.png"; new.write_bytes(b"c")
+    old = tmp_path / "Canon/characters/Maeve/ep03-a.png"; old.write_bytes(b"a")
+    mid = tmp_path / "Canon/characters/Maeve/ep04-b.png"; mid.write_bytes(b"b")
+    new = tmp_path / "Canon/characters/Maeve/ep04-c.png"; new.write_bytes(b"c")
     now = time.time()
     os.utime(old, (now - 300, now - 300)); os.utime(mid, (now - 200, now - 200))
     os.utime(new, (now - 100, now - 100))
-    bible = {"trent": {"identity": "Trent, ~28, fresh-faced", "kind": "human",
+    bible = {"maeve": {"identity": "Maeve, ~28, fresh-faced", "kind": "human",
                        "ref": str(sheet)}}
     return bible
 
 def test_assemble_refs_sheet_plus_two_newest(tmp_path):
     bible = _mk_bible(tmp_path)
-    shot = {"id": "s1-x", "refs": ["Trent"], "brief": "b"}
+    shot = {"id": "s1-x", "refs": ["Maeve"], "brief": "b"}
     imgs, ids, missing = nbg.assemble_refs(shot, bible)
     assert missing == []
-    assert imgs[0].endswith("Trent Reference.png")          # sheet first
+    assert imgs[0].endswith("Maeve Reference.png")          # sheet first
     assert [os.path.basename(p) for p in imgs[1:]] == ["ep04-c.png", "ep04-b.png"]
-    assert ids == ["TRENT (must match the attached reference images): Trent, ~28, fresh-faced"]
+    assert ids == ["MAEVE (must match the attached reference images): Maeve, ~28, fresh-faced"]
 
 def test_assemble_refs_missing_key_flags_and_continues(tmp_path):
     bible = _mk_bible(tmp_path)
-    shot = {"id": "s1-x", "refs": ["Trent", "mardo"], "brief": "b"}
+    shot = {"id": "s1-x", "refs": ["Maeve", "mardo"], "brief": "b"}
     imgs, ids, missing = nbg.assemble_refs(shot, bible)
     assert missing == ["mardo"] and len(imgs) == 3
 
@@ -62,15 +96,19 @@ def test_assemble_refs_caps_at_8_dropping_stills_not_sheets(tmp_path):
     assert len(sheets) == 4               # all sheets survive; stills dropped
 
 def test_compose_prompt_layers():
-    shot = {"id": "s1-x", "brief": "OPHA gone completely still.", "refs": ["opha"]}
-    p = nbg.compose_prompt(shot, ["OPHA (must match…): a dog-sized grub"], notes="too large")
-    assert p.index("OPHA (must match") < p.index("OPHA gone completely still.")
-    assert "low-key but clearly exposed" in p and "no text, no watermark" in p
+    shot = {"id": "s1-x", "brief": "PELL gone completely still.", "refs": ["pell"]}
+    p = nbg.compose_prompt(shot, ["PELL (must match…): a dog-sized grub"], STYLE,
+                           notes="too large")
+    assert p.index("PELL (must match") < p.index("PELL gone completely still.")
+    # The look is the show's (visual.styleConstants), so what this pins is that it reaches the
+    # prompt whole and in the right place — after the identity lines and the brief.
+    assert STYLE in p
+    assert p.index("PELL gone completely still.") < p.index(STYLE)
     assert p.rstrip().endswith("PREVIOUS ATTEMPT REJECTED: too large. Fix exactly this.")
-    # ep04 pilot: "Cinematic 16:9 frame" made the model PAINT letterbox bars in.
-    # The ratio comes from response_format.aspect_ratio, not from prose.
+    # The pilot's lesson, now a standing warning over the key rather than over a constant:
+    # "Cinematic 16:9 frame" made the model PAINT letterbox bars in, and the ratio comes from
+    # response_format.aspect_ratio, not from prose.
     assert "Cinematic 16:9 frame" not in p, "the phrase that caused baked-in bars is back"
-    assert "fills the entire frame edge to edge" in p and "full-bleed" in p
 
 def test_assemble_refs_caps_at_8_with_many_sheets_prints_warning(tmp_path, capsys):
     """Regression test for FINDING 1: >8 sheets must cap at 8, dropping sheets defensively, with warning."""
@@ -90,14 +128,14 @@ def test_assemble_refs_caps_at_8_with_many_sheets_prints_warning(tmp_path, capsy
 def test_assemble_refs_dedupes_by_normalized_key(tmp_path):
     """Regression test for FINDING 2: duplicate refs by different case should dedupe."""
     bible = _mk_bible(tmp_path)
-    shot = {"id": "s1-x", "refs": ["Trent", "trent", "TRENT"], "brief": "b"}
+    shot = {"id": "s1-x", "refs": ["Maeve", "maeve", "MAEVE"], "brief": "b"}
     imgs, ids, missing = nbg.assemble_refs(shot, bible)
     assert missing == []
     # Should have 1 sheet + 2 stills = 3 images, not 3×3 = 9
     assert len(imgs) == 3, f"Expected 3 images (1 sheet + 2 stills), got {len(imgs)}"
     # Should have 1 identity line, not 3
     assert len(ids) == 1, f"Expected 1 identity line, got {len(ids)}"
-    assert ids[0] == "TRENT (must match the attached reference images): Trent, ~28, fresh-faced"
+    assert ids[0] == "MAEVE (must match the attached reference images): Maeve, ~28, fresh-faced"
 
 def test_assemble_refs_dedupes_stills_by_basename_across_folders(tmp_path):
     """I3 regression: registry-append fans one group shot out into every
@@ -107,14 +145,14 @@ def test_assemble_refs_dedupes_stills_by_basename_across_folders(tmp_path):
     displaces a genuinely distinct still and wastes conditioning budget for
     no benefit."""
     bible = {}
-    for name in ("remo", "trent"):
+    for name in ("kestrel", "maeve"):
         d = tmp_path / f"Canon/characters/{name.title()}"; d.mkdir(parents=True)
         sheet = d / f"{name.title()} Reference.png"; sheet.write_bytes(b"s")
         # The SAME group shot, fanned out into both folders under the same
         # basename — exactly what registry-append produces.
         (d / "ep04-s04-cabin-tension-crew.png").write_bytes(b"group-shot")
         bible[name] = {"identity": name, "kind": "human", "ref": str(sheet)}
-    shot = {"id": "s1-x", "refs": ["remo", "trent"], "brief": "b"}
+    shot = {"id": "s1-x", "refs": ["kestrel", "maeve"], "brief": "b"}
     imgs, ids, missing = nbg.assemble_refs(shot, bible)
     assert missing == []
     group_shot_hits = [p for p in imgs if os.path.basename(p) == "ep04-s04-cabin-tension-crew.png"]
@@ -245,42 +283,44 @@ def test_transport_failures_do_bill_each_attempt(tmp_path, monkeypatch):
 def test_audit_parses_pass(monkeypatch):
     monkeypatch.setattr(nbg, "_audit_call",
         lambda prompt: 'Verdict: {"pass": true, "notes": ""}')
-    ok, notes = nbg.audit_image({"id": "x", "brief": "b", "refs": ["trent"]}, "p.png")
+    ok, notes = nbg.audit_image({"id": "x", "brief": "b", "refs": ["maeve"]}, "p.png", LAWS, SHOW_NAME)
     assert ok is True and notes == ""
 
 def test_audit_parses_fail_with_notes(monkeypatch):
     monkeypatch.setattr(nbg, "_audit_call",
-        lambda prompt: '{"pass": false, "notes": "three arms on Sable"}')
-    ok, notes = nbg.audit_image({"id": "x", "brief": "b", "refs": []}, "p.png")
+        lambda prompt: '{"pass": false, "notes": "three arms on Bryn"}')
+    ok, notes = nbg.audit_image({"id": "x", "brief": "b", "refs": []}, "p.png", LAWS, SHOW_NAME)
     assert ok is False and "three arms" in notes
 
 def test_audit_unparseable_is_fail(monkeypatch):
     monkeypatch.setattr(nbg, "_audit_call", lambda prompt: "I looked at it, seems nice")
-    ok, notes = nbg.audit_image({"id": "x", "brief": "b", "refs": []}, "p.png")
+    ok, notes = nbg.audit_image({"id": "x", "brief": "b", "refs": []}, "p.png", LAWS, SHOW_NAME)
     assert ok is False and "unparseable" in notes
 
 def test_audit_prompt_contains_laws_and_brief(monkeypatch):
     seen = {}
     def spy(prompt): seen["p"] = prompt; return '{"pass": true, "notes": ""}'
     monkeypatch.setattr(nbg, "_audit_call", spy)
-    nbg.audit_image({"id": "x", "brief": "OPHA still in the corner", "refs": ["opha"]},
-                    "some/path.png")
+    nbg.audit_image({"id": "x", "brief": "PELL still in the corner", "refs": ["pell"]}, "some/path.png", LAWS, SHOW_NAME)
     p = seen["p"]
-    assert "OPHA still in the corner" in p and "some/path.png" in p
-    assert "EXACTLY TWO arms" in p and "watermark" in p.lower() and "thumb" in p
+    assert "PELL still in the corner" in p and "some/path.png" in p
+    # The laws are a file in the show's canon now (visual.auditLaws). What this pins is that
+    # the file's contents reach the auditor whole, not that any one show's anatomy does.
+    assert LAWS in p
+    assert SHOW_NAME in p
 
 def test_audit_last_match_wins_over_early_agree(monkeypatch):
     """Regression test: when multiple verdicts agree, last-match uses the last."""
     monkeypatch.setattr(nbg, "_audit_call",
         lambda prompt: '{"pass": true, "notes": "early"}\n{"pass": true, "notes": "final"}')
-    ok, notes = nbg.audit_image({"id": "x", "brief": "b", "refs": []}, "p.png")
+    ok, notes = nbg.audit_image({"id": "x", "brief": "b", "refs": []}, "p.png", LAWS, SHOW_NAME)
     assert ok is True and notes == "final", "last-match should pick the last verdict's notes"
 
 def test_audit_disagreement_fails_closed(monkeypatch):
     """Regression test: if multiple verdicts disagree on pass/fail, treat as fail."""
     monkeypatch.setattr(nbg, "_audit_call",
         lambda prompt: '{"pass": false, "notes": "first"}\n{"pass": true, "notes": "second"}')
-    ok, notes = nbg.audit_image({"id": "x", "brief": "b", "refs": []}, "p.png")
+    ok, notes = nbg.audit_image({"id": "x", "brief": "b", "refs": []}, "p.png", LAWS, SHOW_NAME)
     assert ok is False and "disagree" in notes
 
 def test_audit_timeout_fails_closed(monkeypatch):
@@ -289,7 +329,7 @@ def test_audit_timeout_fails_closed(monkeypatch):
         import subprocess
         raise subprocess.TimeoutExpired(["claude"], timeout=300)
     monkeypatch.setattr(nbg, "_audit_call", boom_timeout)
-    ok, notes = nbg.audit_image({"id": "x", "brief": "b", "refs": []}, "p.png")
+    ok, notes = nbg.audit_image({"id": "x", "brief": "b", "refs": []}, "p.png", LAWS, SHOW_NAME)
     assert ok is False and "timed out" in notes
 
 def test_audit_call_surfaces_stderr_on_broken_invocation(monkeypatch):
@@ -318,22 +358,22 @@ def test_audit_call_returns_stdout_when_stderr_empty(monkeypatch):
 def test_audit_missing_binary_fails_closed(monkeypatch):
     """Regression test: missing claude binary must not escape; fail-closed instead."""
     monkeypatch.setattr(nbg, "_audit_call", lambda prompt: (_ for _ in ()).throw(FileNotFoundError("claude not found")))
-    ok, notes = nbg.audit_image({"id": "x", "brief": "b", "refs": []}, "p.png")
+    ok, notes = nbg.audit_image({"id": "x", "brief": "b", "refs": []}, "p.png", LAWS, SHOW_NAME)
     assert ok is False and "not found" in notes
 
 
 def _mk_episode(tmp_path, bible_dirs=True):
     ep = tmp_path / "Production/ep99/images"; ep.mkdir(parents=True)
-    canon = tmp_path / "Canon/characters/Opha"; canon.mkdir(parents=True)
-    sheet = canon / "Opha Reference.png"; sheet.write_bytes(b"s")
+    canon = tmp_path / "Canon/characters/Pell"; canon.mkdir(parents=True)
+    sheet = canon / "Pell Reference.png"; sheet.write_bytes(b"s")
     prompts = {"episode": "ep99", "shots": [
         {"id": "s1-amb", "type": "ambient", "prompt": "x", "seed": 1},
-        {"id": "s2-opha", "type": "character", "refs": ["opha"], "brief": "OPHA still."},
-        {"id": "s3-done", "type": "character", "refs": ["opha"], "brief": "done"},
+        {"id": "s2-pell", "type": "character", "refs": ["pell"], "brief": "PELL still."},
+        {"id": "s3-done", "type": "character", "refs": ["pell"], "brief": "done"},
         {"id": "s4-ghost", "type": "character", "refs": ["nobody"], "brief": "g"}]}
     (ep / "prompts.json").write_text(json.dumps(prompts))
     (ep / "s3-done.png").write_bytes(b"handmade")
-    bible = {"opha": {"identity": "dog-sized grub", "kind": "creature",
+    bible = {"pell": {"identity": "dog-sized grub", "kind": "creature",
                       "ref": str(sheet)}}
     return ep, bible
 
@@ -343,10 +383,10 @@ def test_run_states_and_partial(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(nbg, "load_bible", lambda path="x": bible)
     monkeypatch.setattr(nbg, "generate_image",
         lambda p, i, o, c: (open(o, "wb").write(b"g") and None) or "ok")
-    monkeypatch.setattr(nbg, "audit_image", lambda s, p: (True, ""))
-    rc = nbg.run("ep99", only=None, notes="", no_audit=False)
+    monkeypatch.setattr(nbg, "audit_image", lambda s, p, laws, name: (True, ""))
+    rc = nbg.run("ep99", *_show(tmp_path), only=None, notes="", no_audit=False)
     out = capsys.readouterr().out
-    assert "s2-opha  OK" in out and "s3-done  SKIPPED-exists" in out
+    assert "s2-pell  OK" in out and "s3-done  SKIPPED-exists" in out
     assert "s4-ghost  SKIPPED-no-ref" in out
     assert "NANO_PARTIAL 1/2" in out and rc == 1   # ghost counts, s3 skip doesn't
 
@@ -358,13 +398,13 @@ def test_run_retry_then_failed_audit_keeps_last(tmp_path, monkeypatch, capsys):
     def gen(p, i, o, c):
         prompts_seen.append(p); open(o, "wb").write(b"bad"); return "ok"
     monkeypatch.setattr(nbg, "generate_image", gen)
-    monkeypatch.setattr(nbg, "audit_image", lambda s, p: (False, "three arms"))
-    rc = nbg.run("ep99", only=["s2-opha"], notes="", no_audit=False)
+    monkeypatch.setattr(nbg, "audit_image", lambda s, p, laws, name: (False, "three arms"))
+    rc = nbg.run("ep99", *_show(tmp_path), only=["s2-pell"], notes="", no_audit=False)
     out = capsys.readouterr().out
     assert len(prompts_seen) == 3                       # MAX_ATTEMPTS
     assert "PREVIOUS ATTEMPT REJECTED: three arms" in prompts_seen[1]
-    assert "s2-opha  FAILED-AUDIT" in out and rc == 1
-    assert (tmp_path / "Production/ep99/images/s2-opha.png").exists()  # last kept
+    assert "s2-pell  FAILED-AUDIT" in out and rc == 1
+    assert (tmp_path / "Production/ep99/images/s2-pell.png").exists()  # last kept
 
 def test_run_prints_audit_rejection_notes_as_they_happen(tmp_path, monkeypatch, capsys):
     """I5 regression: audit rejection notes were never printed, so an operator
@@ -375,11 +415,11 @@ def test_run_prints_audit_rejection_notes_as_they_happen(tmp_path, monkeypatch, 
     monkeypatch.setattr(nbg, "load_bible", lambda path="x": bible)
     monkeypatch.setattr(nbg, "generate_image",
         lambda p, i, o, c: (open(o, "wb").write(b"bad") and None) or "ok")
-    monkeypatch.setattr(nbg, "audit_image", lambda s, p: (False, "three arms on Sable"))
-    nbg.run("ep99", only=["s2-opha"], notes="", no_audit=False)
+    monkeypatch.setattr(nbg, "audit_image", lambda s, p, laws, name: (False, "three arms on Bryn"))
+    nbg.run("ep99", *_show(tmp_path), only=["s2-pell"], notes="", no_audit=False)
     out = capsys.readouterr().out
-    assert "attempt-1 REJECTED: three arms on Sable" in out
-    assert "attempt-2 REJECTED: three arms on Sable" in out
+    assert "attempt-1 REJECTED: three arms on Bryn" in out
+    assert "attempt-2 REJECTED: three arms on Bryn" in out
 
 def test_only_deletes_and_regenerates_named_shot(tmp_path, monkeypatch, capsys):
     ep, bible = _mk_episode(tmp_path)
@@ -387,8 +427,8 @@ def test_only_deletes_and_regenerates_named_shot(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(nbg, "load_bible", lambda path="x": bible)
     monkeypatch.setattr(nbg, "generate_image",
         lambda p, i, o, c: (open(o, "wb").write(b"new") and None) or "ok")
-    monkeypatch.setattr(nbg, "audit_image", lambda s, p: (True, ""))
-    rc = nbg.run("ep99", only=["s3-done"], notes="less grime", no_audit=False)
+    monkeypatch.setattr(nbg, "audit_image", lambda s, p, laws, name: (True, ""))
+    rc = nbg.run("ep99", *_show(tmp_path), only=["s3-done"], notes="less grime", no_audit=False)
     assert (tmp_path / "Production/ep99/images/s3-done.png").read_bytes() == b"new"
     out = capsys.readouterr().out
     assert rc == 0 and "NANO_OK 1/1" in out
@@ -408,8 +448,8 @@ def test_refused_is_terminal_no_retry(tmp_path, monkeypatch, capsys):
     n = {"gen": 0}
     def gen(p, i, o, c): n["gen"] += 1; return "refused"
     monkeypatch.setattr(nbg, "generate_image", gen)
-    rc = nbg.run("ep99", only=["s2-opha"], notes="", no_audit=False)
-    assert n["gen"] == 1 and "s2-opha  REFUSED" in capsys.readouterr().out and rc == 1
+    rc = nbg.run("ep99", *_show(tmp_path), only=["s2-pell"], notes="", no_audit=False)
+    assert n["gen"] == 1 and "s2-pell  REFUSED" in capsys.readouterr().out and rc == 1
 
 
 def test_only_backup_restored_on_generation_failure(tmp_path, monkeypatch, capsys):
@@ -421,8 +461,8 @@ def test_only_backup_restored_on_generation_failure(tmp_path, monkeypatch, capsy
     monkeypatch.setattr(nbg, "load_bible", lambda path="x": bible)
     monkeypatch.setattr(nbg, "generate_image",
         lambda p, i, o, c: (open(o, "wb").write(b"new-but-bad") and None) or "ok")
-    monkeypatch.setattr(nbg, "audit_image", lambda s, p: (False, "three arms"))
-    rc = nbg.run("ep99", only=["s3-done"], notes="", no_audit=False)
+    monkeypatch.setattr(nbg, "audit_image", lambda s, p, laws, name: (False, "three arms"))
+    rc = nbg.run("ep99", *_show(tmp_path), only=["s3-done"], notes="", no_audit=False)
     out = capsys.readouterr().out
     png = tmp_path / "Production/ep99/images/s3-done.png"
     bak = tmp_path / "Production/ep99/images/.s3-done.png.bak"
@@ -448,11 +488,11 @@ def test_cost_cap_systemexit_mid_run_prints_summary_and_restores_backup(tmp_path
             open(o, "wb").write(b"g"); return "ok"
         raise SystemExit("COST CAP: 60 API calls reached — aborting.")
     monkeypatch.setattr(nbg, "generate_image", gen)
-    monkeypatch.setattr(nbg, "audit_image", lambda s, p: (True, ""))
+    monkeypatch.setattr(nbg, "audit_image", lambda s, p, laws, name: (True, ""))
     with pytest.raises(SystemExit):
-        nbg.run("ep99", only=["s2-opha", "s3-done"], notes="", no_audit=False)
+        nbg.run("ep99", *_show(tmp_path), only=["s2-pell", "s3-done"], notes="", no_audit=False)
     out = capsys.readouterr().out
-    assert "s2-opha  OK" in out, "shots resolved before the abort must still be reported"
+    assert "s2-pell  OK" in out, "shots resolved before the abort must still be reported"
     assert "api calls:" in out, "spend line must print even when the run aborts"
     assert "NANO_" in out, "NANO_* tag must print even when the run aborts"
     png = tmp_path / "Production/ep99/images/s3-done.png"
@@ -471,8 +511,8 @@ def test_notes_merged_with_audit_feedback_across_retries(tmp_path, monkeypatch, 
     def gen(p, i, o, c):
         prompts_seen.append(p); open(o, "wb").write(b"bad"); return "ok"
     monkeypatch.setattr(nbg, "generate_image", gen)
-    monkeypatch.setattr(nbg, "audit_image", lambda s, p: (False, "three arms"))
-    nbg.run("ep99", only=["s2-opha"], notes="make it darker", no_audit=False)
+    monkeypatch.setattr(nbg, "audit_image", lambda s, p, laws, name: (False, "three arms"))
+    nbg.run("ep99", *_show(tmp_path), only=["s2-pell"], notes="make it darker", no_audit=False)
     assert len(prompts_seen) == 3
     assert "make it darker" in prompts_seen[1], "operator notes lost on retry"
     assert "three arms" in prompts_seen[1], "audit feedback missing on retry"
@@ -489,10 +529,10 @@ def test_only_unknown_id_exits_without_touching_files(tmp_path, monkeypatch):
     monkeypatch.setattr(nbg, "load_bible", lambda path="x": bible)
     done_before = (tmp_path / "Production/ep99/images/s3-done.png").read_bytes()
     with pytest.raises(SystemExit) as exc:
-        nbg.run("ep99", only=["s2-opha", "nope-not-a-shot"], notes="", no_audit=False)
+        nbg.run("ep99", *_show(tmp_path), only=["s2-pell", "nope-not-a-shot"], notes="", no_audit=False)
     assert "nope-not-a-shot" in str(exc.value)
     assert (tmp_path / "Production/ep99/images/s3-done.png").read_bytes() == done_before
-    assert not (tmp_path / "Production/ep99/images/s2-opha.png").exists()
+    assert not (tmp_path / "Production/ep99/images/s2-pell.png").exists()
     assert not (tmp_path / "Production/ep99/images/.s3-done.png.bak").exists()
 
 
@@ -511,7 +551,7 @@ def test_only_refuses_to_clobber_a_pre_existing_backup(tmp_path, monkeypatch):
     bak.write_bytes(b"true-original-from-a-killed-run")
     png_before, bak_before = png.read_bytes(), bak.read_bytes()
     with pytest.raises(SystemExit) as exc:
-        nbg.run("ep99", only=["s3-done"], notes="", no_audit=False)
+        nbg.run("ep99", *_show(tmp_path), only=["s3-done"], notes="", no_audit=False)
     msg = str(exc.value)
     assert "s3-done" in msg and ".s3-done.png.bak" in msg
     assert png.read_bytes() == png_before, "current PNG must be untouched"
@@ -531,14 +571,14 @@ def test_error_state_is_reported_distinctly_and_run_continues(tmp_path, monkeypa
         n["gen"] += 1
         return "error:503 from host"
     monkeypatch.setattr(nbg, "generate_image", gen)
-    monkeypatch.setattr(nbg, "audit_image", lambda s, p: (True, ""))
+    monkeypatch.setattr(nbg, "audit_image", lambda s, p, laws, name: (True, ""))
     # s4-ghost has an unresolvable ref, so it is skipped without ever calling
-    # generate_image — that skip, happening AFTER the s2-opha ERROR, is what
+    # generate_image — that skip, happening AFTER the s2-pell ERROR, is what
     # proves the run kept going past the terminal-per-shot ERROR.
-    rc = nbg.run("ep99", only=["s2-opha", "s4-ghost"], notes="", no_audit=False)
+    rc = nbg.run("ep99", *_show(tmp_path), only=["s2-pell", "s4-ghost"], notes="", no_audit=False)
     out = capsys.readouterr().out
     assert n["gen"] == 1
-    assert "s2-opha  ERROR (error:503 from host)" in out
+    assert "s2-pell  ERROR (error:503 from host)" in out
     assert "REFUSED" not in out
     assert "s4-ghost  SKIPPED-no-ref" in out, "run must continue past the ERROR shot"
     assert rc == 1
@@ -559,12 +599,12 @@ def test_run_no_audit_end_to_end_skips_the_audit_safety_net(tmp_path, monkeypatc
         audit_calls["n"] += 1
         return (True, "")
     monkeypatch.setattr(nbg, "audit_image", spy_audit)
-    rc = nbg.run("ep99", only=["s2-opha"], notes="", no_audit=True)
+    rc = nbg.run("ep99", *_show(tmp_path), only=["s2-pell"], notes="", no_audit=True)
     out = capsys.readouterr().out
     assert audit_calls["n"] == 0, "audit_image must never be called when no_audit=True"
-    assert "s2-opha  OK attempt-1 (unaudited)" in out
+    assert "s2-pell  OK attempt-1 (unaudited)" in out
     assert rc == 0
-    assert (tmp_path / "Production/ep99/images/s2-opha.png").read_bytes() == b"unaudited-bytes"
+    assert (tmp_path / "Production/ep99/images/s2-pell.png").read_bytes() == b"unaudited-bytes"
 
 
 def test_plain_run_leaves_existing_png_byte_for_byte_untouched(tmp_path, monkeypatch):
@@ -585,8 +625,8 @@ def test_plain_run_leaves_existing_png_byte_for_byte_untouched(tmp_path, monkeyp
         open(o, "wb").write(b"freshly-generated")
         return "ok"
     monkeypatch.setattr(nbg, "generate_image", gen)
-    monkeypatch.setattr(nbg, "audit_image", lambda s, p: (True, ""))
-    nbg.run("ep99", only=None, notes="", no_audit=False)
+    monkeypatch.setattr(nbg, "audit_image", lambda s, p, laws, name: (True, ""))
+    nbg.run("ep99", *_show(tmp_path), only=None, notes="", no_audit=False)
     assert str(png) not in touched, (
         "generate_image must never be called for a shot with an existing PNG")
     assert png.read_bytes() == before_bytes, "hand-made PNG bytes must be untouched"
@@ -601,9 +641,9 @@ def test_nano_ok_bare_when_nothing_to_do(tmp_path, monkeypatch, capsys):
     ep, bible = _mk_episode(tmp_path)
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(nbg, "load_bible", lambda path="x": bible)
-    (ep / "s2-opha.png").write_bytes(b"already-there")
+    (ep / "s2-pell.png").write_bytes(b"already-there")
     (ep / "s4-ghost.png").write_bytes(b"already-there-too")
-    rc = nbg.run("ep99", only=None, notes="", no_audit=False)
+    rc = nbg.run("ep99", *_show(tmp_path), only=None, notes="", no_audit=False)
     out = capsys.readouterr().out
     assert "NANO_OK" in out and "NANO_OK 0/0" not in out
     lines = [ln.strip() for ln in out.splitlines()]
@@ -726,37 +766,6 @@ def _capture_run(monkeypatch):
     return seen
 
 
-def test_main_prefers_argv_over_arguments_env(monkeypatch):
-    """FIX 2: $ARGUMENTS used to win, silently discarding --only/--notes and
-    re-running the whole episode. That is the exact path the image-gate reject
-    loop drives, so a re-roll would have regenerated every shot."""
-    import sys as _sys, pytest
-    seen = _capture_run(monkeypatch)
-    monkeypatch.setenv("ARGUMENTS", "ep04")
-    monkeypatch.setattr(_sys, "argv", ["nano-banana-generate.py", "ep04",
-                                       "--only", "s03-opha-still-corner",
-                                       "--notes", "smaller grub"])
-    with pytest.raises(SystemExit) as e:
-        nbg.main()
-    assert e.value.code == 0
-    assert seen["ep"] == "ep04"
-    assert seen["only"] == ["s03-opha-still-corner"], "--only was dropped"
-    assert seen["notes"] == "smaller grub", "--notes was dropped"
-
-
-def test_main_falls_back_to_arguments_env_when_argv_empty(monkeypatch):
-    """FIX 2, other side: the Archon bash node passes $ARGUMENTS and no argv.
-    That invocation style must keep working."""
-    import sys as _sys, pytest
-    seen = _capture_run(monkeypatch)
-    monkeypatch.setenv("ARGUMENTS", "ep04 --no-audit")
-    monkeypatch.setattr(_sys, "argv", ["nano-banana-generate.py"])
-    with pytest.raises(SystemExit) as e:
-        nbg.main()
-    assert e.value.code == 0
-    assert seen["ep"] == "ep04" and seen["only"] is None and seen["no_audit"] is True
-
-
 # --- ep04 pilot 2: baked-in letterbox + file mode --------------------------
 
 def test_audit_laws_include_the_full_bleed_law(monkeypatch):
@@ -768,14 +777,14 @@ def test_audit_laws_include_the_full_bleed_law(monkeypatch):
         seen["p"] = prompt
         return '{"pass": true, "notes": ""}'
     monkeypatch.setattr(nbg, "_audit_call", spy)
-    nbg.audit_image({"id": "s1", "brief": "b", "refs": ["opha"]}, "/tmp/x.png")
+    nbg.audit_image({"id": "s1", "brief": "b", "refs": ["pell"]}, "/tmp/x.png", LAWS, SHOW_NAME)
     p = seen["p"]
     assert "8. FULL BLEED" in p
     assert "letterbox" in p and "asymmetric" in p
     assert "fill the frame edge to edge" in p
 
 
-# --- collective-populator pre-flight (showrunner ruling, s04-opha-uneasy) ---
+# --- collective-populator pre-flight (showrunner ruling, s04-pell-uneasy) ---
 # The law lived only in prose (Canon/visual-style.md, "No collective
 # populators in a character brief") until a live shot ("while the crew works
 # on around her, unaware") invented four or five uncredited humans, one
@@ -786,10 +795,10 @@ _REAL_MARDO_BRIEF = (
     "Cinematic 16:9 shot, dark hard science fiction, a low cramped dockside "
     "bar off the rim of a worn salvage station, one low warm light fixture "
     "as the key (low-key but clearly exposed, real shadow, cargo-noise "
-    "atmosphere). At a scarred table sit three people: TRENT — the fit, "
+    "atmosphere). At a scarred table sit three people: MAEVE — the fit, "
     "fresh-faced, clean-cut young man of about 28 from his locked reference "
     "sheet, deliberately unworn and clean among a grimy crew, listening with "
-    "a faint easy grin — and SABLE — the weathered, practical woman of "
+    "a faint easy grin — and BRYN — the weathered, practical woman of "
     "about sixty, grey hair, worn denim work clothes and a tool belt from "
     "her locked reference sheet, quiet, listening without judgment. Across "
     "from them sits MARDO, a NEW guest character with no existing reference "
@@ -805,8 +814,8 @@ _REAL_MARDO_BRIEF = (
 
 
 def test_find_collective_populators_the_crew_fails():
-    hits = nbg.find_collective_populators(
-        "OPHA is drawn tight while the crew works on around her, unaware.")
+    hits = _find(
+        "PELL is drawn tight while the crew works on around her, unaware.")
     assert any("the crew" in h.lower() for h in hits)
 
 
@@ -814,18 +823,21 @@ def test_find_collective_populators_real_mardo_brief_passes():
     """The already-approved s03-mardo-table-scene brief is a HEADCOUNT
     ('three people:') followed by named characters — exactly what the law
     wants — and must NOT trip the gate."""
-    assert nbg.find_collective_populators(_REAL_MARDO_BRIEF) == []
+    assert _find(_REAL_MARDO_BRIEF) == []
 
 
 def test_find_collective_populators_headcount_qualified_people_passes():
-    assert nbg.find_collective_populators(
+    assert _find(
         "At the table sit three people: A and B and C.") == []
 
 
 def test_find_collective_populators_a_few_figures_fails():
-    hits = nbg.find_collective_populators(
-        "In the background, a few figures move past unnoticed.")
-    assert any("a few figures" in h.lower() for h in hits)
+    """A banned phrase from the show's OWN list. "a few figures" is on the show repository's
+    list and not on the fixture's, which is the point: the vocabulary is the show's."""
+    hits = _find("In the background, background figures move past unnoticed.")
+    assert any("background figures" in h.lower() for h in hits)
+    assert populators.find_collective_populators(
+        "In the background, a few figures move past unnoticed.", ["a few figures"])
 
 
 def test_find_collective_populators_capping_idiom_passes():
@@ -833,14 +845,14 @@ def test_find_collective_populators_capping_idiom_passes():
     the recommended fix, not a violation: it negates extras rather than
     inventing them (used verbatim in s02-galley-table-numbers and
     s04-cabin-tension-crew)."""
-    assert nbg.find_collective_populators(
+    assert _find(
         "EXACTLY these three at the table — no other figures anywhere "
         "in the frame.") == []
 
 
 def test_check_no_collective_populators_passes_silently_when_clean():
     nbg.check_no_collective_populators(
-        [{"id": "s1-x", "brief": "TRENT alone at his station."}])  # no raise
+        [{"id": "s1-x", "brief": "MAEVE alone at his station."}], BANS, STYLE_DOC)  # no raise
 
 
 def test_run_fails_preflight_before_backup_or_api_call(tmp_path, monkeypatch, capsys):
@@ -852,8 +864,8 @@ def test_run_fails_preflight_before_backup_or_api_call(tmp_path, monkeypatch, ca
     doc_path = ep / "prompts.json"
     doc = json.loads(doc_path.read_text())
     for s in doc["shots"]:
-        if s["id"] == "s2-opha":
-            s["brief"] = "OPHA still, while the crew works on around her, unaware."
+        if s["id"] == "s2-pell":
+            s["brief"] = "PELL still, while the crew works on around her, unaware."
     doc_path.write_text(json.dumps(doc))
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(nbg, "load_bible", lambda path="x": bible)
@@ -861,9 +873,9 @@ def test_run_fails_preflight_before_backup_or_api_call(tmp_path, monkeypatch, ca
     monkeypatch.setattr(nbg, "generate_image",
         lambda p, i, o, c: calls.__setitem__("n", calls["n"] + 1) or "ok")
     with pytest.raises(SystemExit) as exc:
-        nbg.run("ep99", only=None, notes="", no_audit=False)
+        nbg.run("ep99", *_show(tmp_path), only=None, notes="", no_audit=False)
     msg = str(exc.value)
-    assert "s2-opha" in msg
+    assert "s2-pell" in msg
     assert "the crew" in msg.lower()
     assert "named" in msg.lower() and "refs" in msg.lower()
     assert calls["n"] == 0, "API call must not happen once the pre-flight fails"
@@ -889,11 +901,11 @@ def test_capping_idioms_are_not_violations():
     were too narrow: "both" was not a count word, and the "no ..." escape
     required `no` immediately before the noun, so "no OTHER figures" missed it."""
     ok = ("Strong directional key light, bright rim separation on both figures, "
-          "visible midtones, film grain. Two figures: Remo and Sarn, no other "
+          "visible midtones, film grain. Two figures: Kestrel and Idris, no other "
           "figures in the frame.")
-    assert nbg.find_collective_populators(ok) == []
+    assert _find(ok) == []
 
 def test_a_real_collective_populator_is_still_caught():
     """The widened carve-outs must not open the door the guard exists to shut."""
     bad = "The crew works the deck while a few figures move in the background."
-    assert nbg.find_collective_populators(bad) != []
+    assert _find(bad) != []

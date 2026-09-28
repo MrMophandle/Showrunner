@@ -1,145 +1,177 @@
 # /// script
 # dependencies = []
 # ///
-"""finalize-video: collect a mastered episode into Finalized/ under its air name.
+"""finalize-video: resolve an episode's air slot and copy its mastered MP4 to the NAS.
 
-Production IDs (ep01, ep98) are NOT air order — this maps them to season/episode
-and copies the mastered MP4 to `Finalized/DeadLight SxxEyy.mp4`, the naming Ryan
-uses before moving finals to his NFS. Copies (not links) so the final is a frozen
-snapshot that survives a re-render of the source.
+Production ids (ep01, ep98) are NOT air order. The slot is resolved in two steps, and the second
+must survive because the first is hand-maintained:
 
-SEASON_MAP is the legacy, explicit fallback (still authoritative for the episodes
-listed in it, including overrides like ep98 -> S1E9). An episode NOT in the map
-is resolved via season_slot(): it scans every Canon/season-N.md for a RULED row
-whose DEFAULT production id (ep{air:02d}) equals the episode — i.e. an episode
-that was never given an explicit override just airs where its own number says.
-A single episode id therefore only ever needs SEASON_MAP when its production id
-diverges from its air slot; ordinary ids resolve straight from the season doc.
-If an id's default matches RULED rows in MORE THAN ONE season doc, season_slot()
-refuses (exits, nothing written) and names every candidate rather than guess —
-add an explicit SEASON_MAP entry to break the tie.
+1. The show's airMap (showrunner.json) is authoritative for every id it lists, including an id
+   whose production number deliberately differs from its air slot.
+2. An id the map does not list falls back to season_slot(), which scans the show's season
+   documents for a RULED row whose DEFAULT production id (ep{air:02d}) equals the episode -- i.e.
+   an episode that was never given an explicit override just airs where its own number says. An
+   episode ruled into a season document before anyone edited airMap still finalizes.
 
-Only an episode with a resolved slot AND a mastered video is finalized. 'all'
-mode still iterates SEASON_MAP only (see season_slot()'s docstring for why
-season-doc-only ids are not swept in automatically).
+If an id's default matches RULED rows in MORE THAN ONE season document, season_slot() refuses
+(exits, nothing written) and names every candidate rather than guess -- add an airMap entry to
+break the tie.
 
-Usage:
-  ARGUMENTS="ep02" uv run .archon/scripts/finalize-video.py     # one episode
-  ARGUMENTS="all"  uv run .archon/scripts/finalize-video.py     # every mapped+ready episode
+Only an episode with a resolved slot AND a mastered video is finalized; episode-mastered.mp4 is
+preferred over the raw render when both are present. Copies (not links), so the final is a frozen
+snapshot that survives a re-render of the source, and never to local disk -- a finished episode is
+~900 MB, and the mount guard below refuses rather than filling the working drive.
+
+Usage: finalize-video.py <episode> [--show-root <path>]
 """
 import glob, os, re, shutil, sys
 
-# production id -> (season, episode). Air order, NOT production order.
-SEASON_MAP = {
-    "ep01": (1, 1),
-    "ep02": (1, 2),
-    "ep03": (1, 3),
-    "ep04": (1, 4),
-    "ep05": (1, 5),
-    "ep09": (1, 9),   # "The Wick" — Ryan-ruled 2026-07-28: the STORY is canon and keeps E9,
-                      # but it re-enters production as ep09 once re-run through the modern
-                      # process. Episodes/ep98/script.md is its DRAFT SOURCE only.
-    "ep10": (1, 10),  # "The Working Day, Part Two" — the S1 finale.
-    # ep98: NON-CANON test-bed production (Kokoro-era audio, zero Nano-Banana character
-    #   shots, 3 pre-hard-line ambients). Ruled 2026-07-28; supplanted by ep09. Not mapped.
-    # ep99: RETIRED 2026-07-20 (proof-of-concept, no air slot). See Episodes/_retired/ep99/.
-}
+from lib import showconfig as sc
 
-# Finals live on Ryan's NAS, NOT local disk (a finished episode is ~900 MB and local
-# space is tight). The repo's `Finalized` symlink points here too, for browsing.
-# Override with DEADLIGHT_FINAL_DEST if the mount path changes.
-MOUNT = os.environ.get("DEADLIGHT_FINAL_MOUNT", "/Volumes/media")
-DEST  = os.environ.get("DEADLIGHT_FINAL_DEST", "/Volumes/media/DeadLight")
+MASTERED_FILENAME = "episode-mastered.mp4"
 
-def ensure_mounted():
+# The season table's row grammar. The status cell may carry its OWN ruling history and still
+# count as ruled -- "**RULED — REWRITTEN 2026-08-27**" is one, and pinning this to exactly
+# "**RULED**" silently dropped an episode from every board with no error raised anywhere. The
+# bold markers stay REQUIRED: losing them is real format drift and must parse to nothing.
+# Not config: Plan F retires this parse entirely when ids carry their own season.
+RULED_ROW = re.compile(r'^\|\s*(\d+)\s*\|\s*\*\*RULED\b[^|]*\*\*\s*\|', re.M)
+
+
+def ensure_mounted(mount: str, dest: str) -> None:
     # Guard: never write finals to local disk by accident if the NAS is offline.
-    if not (os.path.ismount(MOUNT) and os.path.isdir(DEST)):
-        sys.exit(f"finalize-video: NAS not mounted at {MOUNT} (or {DEST} missing). "
+    if not (os.path.ismount(mount) and os.path.isdir(dest)):
+        sys.exit(f"finalize-video: NAS not mounted at {mount} (or {dest} missing). "
                  f"Connect to the media share, then re-run. Nothing written.")
 
-def find_video(ep):
-    hits = sorted(glob.glob(f"Production/{ep}/video/episode*.mp4"))
-    return hits[0] if hits else None
 
-def _season_docs():
-    """Canon/season-N.md paths as (N, path), sorted NUMERICALLY by N -- never
-    by the glob's lexicographic path order, under which "season-10.md" would
-    sort before "season-2.md" as plain strings."""
+def find_video(ep: str, video_filename: str):
+    """The file to finalize: the mastered MP4 when master-video.py has written one, else the
+    raw render. Explicit rather than a glob's sort order, because which of the two ships is a
+    decision (F-09), not an alphabetical accident."""
+    mastered = f"Production/{ep}/video/{MASTERED_FILENAME}"
+    if os.path.exists(mastered):
+        return mastered
+    raw = f"Production/{ep}/video/{video_filename}"
+    return raw if os.path.exists(raw) else None
+
+
+def _season_docs(canon_dir: str):
+    """season-N.md paths as (N, path), sorted NUMERICALLY by N -- never by the glob's
+    lexicographic path order, under which "season-10.md" would sort before "season-2.md"."""
     docs = []
-    for path in glob.glob("Canon/season-*.md"):
+    for path in glob.glob(os.path.join(canon_dir, "season-*.md")):
         m = re.search(r'season-(\d+)\.md$', os.path.basename(path))
         if m:
             docs.append((int(m.group(1)), path))
     return sorted(docs)
 
-def season_slot(ep):
-    """For an episode NOT in SEASON_MAP: find (season, air) by matching it
-    against a RULED row's DEFAULT production id (ep{air:02d}) in any
-    Canon/season-N.md. Only that default naming is matched — an episode with
-    an explicit SEASON_MAP override (e.g. ep98, which airs at row 9 but is
-    NOT ep09) is never matched here, by design: SEASON_MAP.get(ep) is always
-    checked first in finalize(), so this function is only reached for ids
-    with no override, and it must not invent one.
 
-    A RULED row's default id is only guaranteed unique WITHIN one season
-    doc, not necessarily across multiple season docs. This collects EVERY
-    matching (season, air) across every season doc and REFUSES outright
-    (sys.exit, same as ensure_mounted()'s hard stop) if more than one
-    distinct match turns up, naming every candidate -- a wrong name silently
-    written to the NAS is a far worse failure than a human resolving a
-    collision in seconds by adding an explicit SEASON_MAP entry.
+def season_slot(ep: str, canon_dir: str):
+    """For an episode NOT in the show's airMap: find (season, air) by matching it against a
+    RULED row's DEFAULT production id (ep{air:02d}) in any season document.
 
-    Not used by 'all' mode: 'all' stays scoped to SEASON_MAP's explicit,
-    hand-curated list; only a single explicit invocation (ARGUMENTS="ep07")
-    goes through this resolution path."""
+    Only that default naming is matched. An episode with an explicit airMap entry (one that airs
+    at a row its own number does not name) is never matched here, by design: the map is always
+    consulted first in finalize(), so this function is only reached for ids with no entry, and it
+    must not invent one.
+
+    A RULED row's default id is only guaranteed unique WITHIN one season document, not across
+    several. This collects EVERY matching (season, air) and REFUSES outright if more than one
+    distinct match turns up, naming every candidate -- a wrong name silently written to the NAS is
+    a far worse failure than a human resolving a collision in seconds with an airMap entry.
+    """
     candidates = []
-    for season, path in _season_docs():
+    for season, path in _season_docs(canon_dir):
         try:
-            text = open(path).read()
+            text = open(path, encoding="utf-8").read()
         except OSError:
             continue
-        for row in re.finditer(r'^\|\s*(\d+)\s*\|\s*\*\*RULED\*\*\s*\|', text, re.M):
+        for row in RULED_ROW.finditer(text):
             air = int(row.group(1))
             if f"ep{air:02d}" == ep:
                 candidates.append((season, air))
     if not candidates:
         return None
-    if len(candidates) > 1:
-        named = ", ".join(f"S{s:02d}E{a:02d} (Canon/season-{s}.md)" for s, a in candidates)
+    distinct = sorted(set(candidates))
+    if len(distinct) > 1:
+        named = ", ".join(f"S{s:02d}E{a:02d} (season-{s}.md)" for s, a in distinct)
         sys.exit(f"finalize-video: {ep} matches RULED-row defaults in more than one "
-                 f"season doc ({named}). Add an explicit SEASON_MAP entry for {ep} to "
-                 f"resolve the collision, then re-run. Nothing written.")
-    return candidates[0]
+                 f"season document ({named}). Add an airMap entry for {ep} to resolve the "
+                 f"collision, then re-run. Nothing written.")
+    return distinct[0]
 
-def finalize(ep):
-    slot = SEASON_MAP.get(ep) or season_slot(ep)
+
+def resolve_slot(cfg: dict, ep: str, canon_dir: str):
+    """The airMap first, the season documents second. -> (season, episode) or None.
+
+    The fallback is what lets an episode ruled into a season document but not yet registered in
+    airMap still finalize; registering an air slot takes several hand edits and nothing
+    cross-checks them.
+    """
+    try:
+        return sc.season_of(cfg, ep)
+    except sc.UnmappedEpisodeId:
+        # ONLY a well-formed production id the map does not place reaches the season documents.
+        # A malformed id, or a malformed airMap entry, is a fault and must reach the operator.
+        return season_slot(ep, canon_dir)
+
+
+def finalize(cfg: dict, ep: str, *, dest: str, canon_dir: str, video_filename: str) -> bool:
+    slot = resolve_slot(cfg, ep, canon_dir)
     if not slot:
-        print(f"  SKIP {ep}: no air slot in SEASON_MAP or any Canon/season-N.md")
-        return False
-    src = find_video(ep)
+        # Under the engine this script finalizes ONE episode, so "nothing resolved" is a failure
+        # of that step, not a row skipped in a sweep. The old sweep printed SKIP and still ended
+        # on FINALIZE_OK, which read as success to anything parsing the result line.
+        sys.exit(f"finalize-video: {ep} has no air slot — it is not in airMap, and no RULED row "
+                 f"in any season document under {canon_dir}/ defaults to it. Add an airMap entry "
+                 f"for {ep}, then re-run. Nothing written.")
+    src = find_video(ep, video_filename)
     if not src:
-        print(f"  SKIP {ep}: no mastered video under Production/{ep}/video/")
-        return False
-    s, e = slot
-    name = f"DeadLight S{s:02d}E{e:02d}.mp4"
-    dst = os.path.join(DEST, name)
+        sys.exit(f"finalize-video: no video to finalize for {ep} — expected "
+                 f"Production/{ep}/video/{MASTERED_FILENAME} or "
+                 f"Production/{ep}/video/{video_filename}. Nothing written.")
+    season, episode = slot
+    name = sc.format_filename(str(sc.value(cfg, "output", "finalFilename")),
+                              slug=str(sc.value(cfg, "showSlug")),
+                              season=season, episode=episode, episode_id=ep)
+    dst = os.path.join(dest, name)
     if os.path.exists(dst) and os.path.getmtime(dst) >= os.path.getmtime(src):
-        print(f"  up-to-date  {name}  (<- {ep})")
+        print(f"  up-to-date  {name}  (<- {src})")
         return True
     shutil.copy2(src, dst)
     mb = os.path.getsize(dst) / 1e6
-    print(f"  finalized   {name}  ({mb:.0f} MB, <- {ep})")
+    print(f"  finalized   {name}  ({mb:.0f} MB, <- {src})")
     return True
 
-def main():
-    arg = os.environ.get("ARGUMENTS", "").split()
-    which = arg[0] if arg else ""
-    if not which:
-        sys.exit("finalize-video: ARGUMENTS needs an episode id or 'all'")
-    ensure_mounted()
-    eps = sorted(SEASON_MAP) if which == "all" else [which]
-    n = sum(finalize(ep) for ep in eps)
-    print(f"FINALIZE_OK {n} episode(s) in {DEST}/")
+
+def main() -> None:
+    # The engine runs this with the show root as the working directory; --show-root <path> is for
+    # an operator running it from somewhere else.
+    root = os.path.abspath(sc.show_root(sys.argv))
+    cfg = sc.load(root)
+    os.chdir(root)
+    # One episode per invocation. The old 'all' mode swept the hand-curated map and never reached
+    # the season-document fallback; the engine runs one episode per step, so explicit ids are the
+    # whole interface.
+    ep = sys.argv[1] if len(sys.argv) > 1 else ""
+    if not ep:
+        sys.exit("finalize-video: episode id missing "
+                 "(usage: finalize-video.py <episode> [--show-root <path>])")
+    mount = sc.path(cfg, "output", "nasMount", root=root)
+    dest = sc.path(cfg, "output", "nasRoot", root=root)
+    canon_dir = str(sc.value(cfg, "canonDir"))
+    video_filename = str(sc.value(cfg, "output", "videoFilename"))
+
+    ensure_mounted(mount, dest)
+    sc.progress(0, 1, "episodes")
+    n = int(finalize(cfg, ep, dest=dest, canon_dir=canon_dir, video_filename=video_filename))
+    sc.progress(1, 1, "episodes")
+    print(f"FINALIZE_OK {n} episode(s) in {dest}/")
+
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except (sc.ShowConfigError, FileNotFoundError) as err:
+        sys.exit(f"finalize-video: {err}")

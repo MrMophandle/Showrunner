@@ -4,49 +4,46 @@
 """publish-kit: per-episode YouTube upload sheet, generated from data we already have.
 
 Writes Production/<ep>/publish/:
-  - upload.md    : ONE self-contained sheet — every upload-page field with the Dead
-                   Light answer, in page order, description (with chapters) inline.
-                   Work top to bottom while uploading.
+  - upload.md    : ONE self-contained sheet — every upload-page field with this
+                   show's answer, in page order, description (with chapters)
+                   inline. Work top to bottom while uploading.
   - captions.srt : exact captions from the audio manifest (spells the invented words
                    right; auto-captions won't). Upload this in the Subtitles section.
 
-Standing choices and the reasoning behind them live in Canon/publishing-guide.md.
-Set CHANNEL below once and every episode fills in.
+Every standing answer is the show's (the publish.* block of showrunner.json) and every
+per-episode answer is the episode's: the teaser comes from Episodes/<ep>/publish.json,
+which the showrunner writes, not from a dictionary in this file.
+
+Usage: publish-kit.py <episode> [--show-root <path>]
 """
 import json, os, re, sys
 
-# ── set these once ────────────────────────────────────────────────────────────
-CHANNEL = {
-    "name": "[YOUR NAME]",          # the written/directed-by credit
-    "playlist_url": "https://www.youtube.com/playlist?list=PLciZ4PlFk16g",
-}
-AIR = {"ep01": (1, 1), "ep02": (1, 2), "ep03": (1, 3), "ep04": (1, 4), "ep05": (1, 5), "ep06": (1, 6), "ep07": (1, 7), "ep08": (1, 8), "ep09": (1, 9), "ep10": (1, 10)}  # ep98 (the dead non-canon test-bed) deliberately UNMAPPED — it held slot 9
-#   until ep09 "The Wick" was written fresh; finalize-video.py has always had this right.
-LOGLINE = {
- "ep01": "A salvage crew works the ruins of a vanished civilization. The dark has never once cared whether they get home.",
- "ep02": "A wreck is a number before it's a place. Two crews, one claim, and a margin that won't hold.",
- "ep03": "A crew comes home short a man. One of them carries his kit the long way — by hand — to whoever's left to take it.",
- "ep04": "A dead ship deep in a well, falling slow — worth a season's margin for exactly one pass. The arithmetic says where to stop. The job keeps asking for one more deck.",
- "ep05": """A clean claim, for once: an ore-tug adrift two years, honest paper, her crew long since walked off alive. Every instrument on the board agrees there is nothing out there. The only thing aboard that says otherwise is Opha — and she can't say what, or why. So the captain does the arithmetic on a feeling, orders the ship dark, and the crew works an entire shift in silence — for a danger with no name, no reading, and no proof it was ever there.
+from lib import showconfig as sc
 
-Almost no proof.""",
- "ep06": """A transport adrift off the lanes, lit end to end, holding her station on a dead man's autopilot. Full holds, no distress call, no damage anywhere — and every soul aboard dead where they sat. A meal half eaten. A hand of cards still fanned. No wounds, no decompression, no fear, and not one of them stood up.
 
-The crew that boards her spends the day proving it was equipment. It wasn't equipment.""",
- "ep07": """A charted nowhere two days off the lanes, a room of frightened spacers dressed for a funeral, and a man selling the only thing a scared galaxy wants to buy: safety. Surrender your salvage as tribute, he says, and the ones who are coming back will pass your hull by.
+def load_logline(path: str) -> str:
+    """The episode's teaser, from its own publish.json.
 
-The Dead Light is only the hired transport. Nobody aboard bought a word of it — and before the night is out, they can prove it was a lie. Being right turns out to cost more than anyone counted.""",
- "ep08": """A distress beacon so weak it barely reads, out where the border goes quiet. On the other end: an Iss-kar troop transport, drives dead, rations gone, carrying civilians off a settlement that officially does not exist — and a captain whose own people will not answer him, because answering would mean admitting he is there.
+    A missing file is an error naming it rather than a placeholder paragraph in the description:
+    ten episodes shipped with the old placeholder because nothing stopped the upload sheet from
+    being written without one.
+    """
+    try:
+        with open(path, encoding="utf-8") as fh:
+            doc = json.load(fh)
+    except OSError as err:
+        raise sc.ShowConfigError(
+            f"{path} could not be read ({err}) — it carries this episode's logline "
+            f"(3-5 sentences, sell the dread, spoil nothing). Write it, then re-run.") from err
+    except ValueError as err:
+        raise sc.ShowConfigError(f"{path} is not valid JSON: {err}") from err
+    logline = doc.get("logline") if isinstance(doc, dict) else None
+    if not isinstance(logline, str) or not logline.strip():
+        raise sc.ShowConfigError(
+            f"{path} is missing its \"logline\" — the description's teaser slot. "
+            f"Write it, then re-run.")
+    return logline.strip()
 
-The Dead Light's crew are the last thing an Iss-kar would ever ask for help. They go anyway. What the survivors tell them, days later over supper, is the reason a whole species stopped making noise.""",
- "ep09": """An ordinary job. A cloud of dead ships drifted together by their own gravity, one good hull down near the middle of it, and a haul that has to come out by skiff or not at all. The captain will not ask anyone to fly that, so he goes himself, and takes the pilot with him — and hands the ship to the crewmate who has never in her life given an order out loud.
-
-Nothing is hunting them. Nothing is out there. The dark does not need a monster to take something from you and never give it back.""",
- "ep10": """A salvage crew comes home from an ordinary week with a crushed arm, a bill that eats the profit, and one frame of camera footage nobody can explain: a hooded figure standing in their own passage, holding something small up to the lens. Their own records show no one came aboard, and no one left.
-
-This is that same working day, told a second time, from the only vantage that can account for it. You will see everything the crew could not. They never will.""",
-}
-TAGS = "hard science fiction, sci-fi audio drama, space horror, narrated sci fi, cosmic horror, salvage crew, deep space"
 
 def ts(sec, comma=True):
     h = int(sec // 3600); m = int((sec % 3600) // 60); s = int(sec % 60); ms = int((sec - int(sec)) * 1000)
@@ -54,13 +51,14 @@ def ts(sec, comma=True):
 
 def _norm(x): return re.sub(r"[^a-z0-9 ]", "", x.lower())
 
-def ep_title(ep):
-    m = re.search(r'"([^"]+)"', open(f"Episodes/{ep}/script.md").read().splitlines()[0])
+def ep_title(script_path):
+    """The episode's own title, from the quoted name on its script's first line."""
+    m = re.search(r'"([^"]+)"', open(script_path).read().splitlines()[0])
     return m.group(1) if m else ""
 
-def scene_chapters(ep, txt, segs, starts):
+def scene_chapters(script_path, txt, segs, starts):
     """[(stamp, label)] by matching each ## header to its segment start time."""
-    paras = [p.strip() for p in open(f"Episodes/{ep}/script.md").read().split("\n\n") if p.strip()]
+    paras = [p.strip() for p in open(script_path).read().split("\n\n") if p.strip()]
     titles, probes, expect = [], [], False
     for p in paras:
         if p.startswith("## "): titles.append(p[3:].strip()); expect = True; continue
@@ -77,16 +75,42 @@ def scene_chapters(ep, txt, segs, starts):
     return out
 
 def main():
-    ep = os.environ.get("ARGUMENTS", "").split()[0] if os.environ.get("ARGUMENTS") else ""
-    if not ep: sys.exit("publish-kit: episode id missing")
+    # The engine runs this with the show root as the working directory; --show-root <path> is for
+    # an operator running it from somewhere else.
+    root = os.path.abspath(sc.show_root(sys.argv))
+    cfg = sc.load(root)
+    os.chdir(root)
+    ep = sys.argv[1] if len(sys.argv) > 1 else ""
+    if not ep:
+        sys.exit("publish-kit: episode id missing "
+                 "(usage: publish-kit.py <episode> [--show-root <path>])")
+
+    # Everything standing about how this show publishes.
+    show_name = str(sc.value(cfg, "showName"))
+    channel_name = str(sc.value(cfg, "publish", "channelName"))
+    playlist_url = str(sc.value(cfg, "publish", "playlistUrl"))
+    playlist_name = str(sc.value(cfg, "publish", "playlistName"))
+    tags = str(sc.value(cfg, "publish", "tags"))
+    category = str(sc.value(cfg, "publish", "category"))
+    weekly_copy = str(sc.value(cfg, "publish", "standingCopy", "weekly"))
+    ai_disclosure = str(sc.value(cfg, "publish", "standingCopy", "aiDisclosure"))
+    guide = str(sc.value(cfg, "publish", "guide"))
+    episodes_dir = str(sc.value(cfg, "episodesDir"))
+
+    script_path = f"{episodes_dir}/{ep}/script.md"
+    logline = load_logline(f"{episodes_dir}/{ep}/publish.json")
+
     man = json.load(open(f"Production/{ep}/audio/manifest.json"))
     doc = json.load(open(f"Production/{ep}/tts-script.json"))
     txt = {s["i"]: s["text"] for s in doc["segments"]}
-    s, e = AIR.get(ep, (0, 0)); slug = f"S{s:02d}E{e:02d}"
+    season, episode = sc.season_of(cfg, ep)
+    slug = f"S{season:02d}E{episode:02d}"
     out = f"Production/{ep}/publish"; os.makedirs(out, exist_ok=True)
-    title_str = ep_title(ep)
-    # pilot is named the same as the show; don't repeat it
-    title_line = f"Dead Light — {slug}" if title_str.lower() in ("dead light", "") else f"Dead Light — {slug}: {title_str}"
+    title_str = ep_title(script_path)
+    # the pilot is often named the same as the show; don't repeat it
+    title_line = (f"{show_name} — {slug}"
+                  if title_str.lower() in (show_name.lower(), "")
+                  else f"{show_name} — {slug}: {title_str}")
 
     t = 0.0; starts = {}
     for m in man["segments"]:
@@ -98,25 +122,25 @@ def main():
            for n, m in enumerate(man["segments"], 1)]
     open(f"{out}/captions.srt", "w").write("\n".join(srt))
 
-    chapters = scene_chapters(ep, txt, doc["segments"], starts)
+    chapters = scene_chapters(script_path, txt, doc["segments"], starts)
     chap_block = "\n".join(f"{stamp} {label}" for stamp, label in chapters)
     description = f"""{title_line}
 
-{LOGLINE.get(ep) or f'[WRITE THE TEASER — {ep} has no LOGLINE entry in publish-kit.py. 3-5 sentences, sell the dread, spoil nothing. The description is the episode summary/teaser slot (Ryan-ruled 2026-08-02); do not upload with this placeholder.]'}
+{logline}
 
-New episodes weekly. Self-contained stories in a shared universe; one long, quiet thread underneath. Best watched in order.
+{weekly_copy}
 
 CHAPTERS
 {chap_block}
 
 —
-An honest-to-goodness human dreamed up this world and rules every frame of it. AI helps with the writing, the narration, and the art. The story doesn't come from a machine.
+{ai_disclosure}
 
-Season 1 playlist: {CHANNEL['playlist_url']}"""
+{playlist_name} playlist: {playlist_url}"""
 
     sheet = f"""# {title_line} — YouTube upload sheet
 Work top to bottom; this follows the upload page. Reasoning for the standing
-choices is in Canon/publishing-guide.md. Runtime {ts(total, comma=False)}.
+choices is in {guide}. Runtime {ts(total, comma=False)}.
 
 ## Title  (required)
 {title_line}
@@ -127,10 +151,10 @@ choices is in Canon/publishing-guide.md. Runtime {ts(total, comma=False)}.
 ```
 
 ## Thumbnail
-Make one (frame + "DEAD LIGHT" title treatment). Not derivable from data.
+Make one (frame + the show's title treatment). Not derivable from data.
 
 ## Playlist
-Dead Light Season 1
+{playlist_name}
 
 ## Audience — made for kids?
 No, it's not made for kids.
@@ -140,14 +164,14 @@ No.  (Fully fictional — no real people/places/events; the fantastical carve-ou
 Selecting Yes is also fine and costs nothing — see the guide.)
 
 ## Category
-Film & Animation
+{category}
 
 ## Video language & captions
 Language: English.
 Then in the Subtitles section, upload:  {out}/captions.srt
 
 ## Tags
-{TAGS}
+{tags}
 
 ## Toggles / settings
 - Paid promotion: OFF (no sponsor)
@@ -171,8 +195,17 @@ Then in the Subtitles section, upload:  {out}/captions.srt
         p = f"{out}/{stale}"
         if os.path.exists(p): os.remove(p)
 
-    filled = CHANNEL["name"] != "[YOUR NAME]" and CHANNEL["playlist_url"] != "[PLAYLIST URL]"
+    # F-17: the credit name is carried in config as the placeholder it has always been, and the
+    # reminder still fires until somebody sets publish.channelName.
+    filled = channel_name != "[YOUR NAME]" and playlist_url != "[PLAYLIST URL]"
+    print(f"  {len(chapters)} chapters" + ("" if filled else "  |  NOTE: set publish.channelName + publish.playlistUrl in showrunner.json once, then all episodes fill in"))
+    # The last line is this step's RESULT: the gate message after it reads it verbatim, so the
+    # reminder above it stays an ordinary script_line rather than displacing the result.
     print(f"PUBLISH_KIT {slug} -> {out}/upload.md  (+ captions.srt, {len(man['segments'])} cues, {ts(total, comma=False)})")
-    print(f"  {len(chapters)} chapters" + ("" if filled else "  |  NOTE: set CHANNEL name + playlist_url once, then all episodes fill in"))
 
-main()
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (sc.ShowConfigError, FileNotFoundError) as err:
+        sys.exit(f"publish-kit: {err}")

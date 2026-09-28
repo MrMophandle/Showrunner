@@ -7,24 +7,52 @@ The showrunner's shot list at a glance: every image, who renders it (the local
 engine vs Nano Banana), whether it's in place yet, and — for the Nano Banana
 shots — a clean brief to paste into Nano Banana. Standard artifact per episode.
 
-Usage: uv run .archon/scripts/image-sheet.py   (ARGUMENTS or argv = episode id)
+Usage: image-sheet.py <episode> [--show-root <path>]
 Writes Production/<ep>/images/IMAGE-SHEET.md.
 """
 import json, os, re, sys
 
-# strip the standard scaffolding so an ambient shot shows just its subject
-_PREFIX = re.compile(r"^.*?(?:ducting overhead, |deep teal-black starfield, |starfield, )", re.S)
-_SUFFIX = re.compile(r",?\s*low-key but clearly exposed.*$", re.S)
+from lib import showconfig as sc
 
-def subject(prompt):
-    s = _PREFIX.sub("", prompt or "")
-    s = _SUFFIX.sub("", s).strip().rstrip(",")
+
+def scaffold_patterns(scaffold):
+    """-> (prefix regex, suffix regex) that strip the show's ambient prompt scaffolding.
+
+    Every ambient prompt this show writes opens with one of a few standing phrases and closes
+    with a standing exposure clause (visual.ambientPromptScaffold). The sheet shows what a shot is
+    OF, so the scaffolding is stripped: the leading entries are matched as opening phrases, the
+    last as the closing clause. A show whose list holds one entry gets a suffix rule only.
+    """
+    phrases = [str(p) for p in scaffold if str(p)]
+    if not phrases:
+        return None, None
+    *prefixes, suffix = phrases
+    pre = (re.compile(r"^.*?(?:" + "|".join(re.escape(p) for p in prefixes) + ")", re.S)
+           if prefixes else None)
+    post = re.compile(r",?\s*" + re.escape(suffix.strip()) + r".*$", re.S)
+    return pre, post
+
+
+def subject(prompt, pre=None, post=None):
+    """One ambient prompt, with the show's standing scaffolding stripped off both ends."""
+    s = pre.sub("", prompt or "") if pre else (prompt or "")
+    s = post.sub("", s) if post else s
+    s = s.strip().rstrip(",")
     return (s[:1].upper() + s[1:]) if s else (prompt or "")[:120]
 
 def main():
-    ep = os.environ.get("ARGUMENTS", "").split()[0] if os.environ.get("ARGUMENTS") else (sys.argv[1] if len(sys.argv) > 1 else "")
+    # The engine runs this with the show root as the working directory; --show-root <path> is for
+    # an operator running it from somewhere else.
+    root = os.path.abspath(sc.show_root(sys.argv))
+    cfg = sc.load(root)
+    os.chdir(root)
+    ep = sys.argv[1] if len(sys.argv) > 1 else ""
     if not ep:
-        sys.exit("image-sheet: episode id missing")
+        sys.exit("image-sheet: episode id missing "
+                 "(usage: image-sheet.py <episode> [--show-root <path>])")
+    pre, post = scaffold_patterns(sc.value(cfg, "visual", "ambientPromptScaffold", default=[]))
+    casting_dir = str(sc.value(cfg, "visual", "castingPileDir"))
+    style_doc = os.path.basename(str(sc.value(cfg, "visual", "style")))
     base = f"Production/{ep}/images"
     doc = json.load(open(f"{base}/prompts.json"))
     shots = doc["shots"]
@@ -41,7 +69,7 @@ def main():
     L.append(f"**{len(shots)} images total** — "
              f"**{len(nano)} by you** (Nano Banana), **{len(local)} by the engine** (local Z-Image).")
     L.append("")
-    L.append("Rule (visual-style.md): the local engine renders environments, props, and "
+    L.append(f"Rule ({style_doc}): the local engine renders environments, props, and "
              "faceless human extras only — **never a named character or any alien**. "
              "Everything with an identity is a Nano Banana shot.")
     L.append("")
@@ -53,7 +81,7 @@ def main():
     L.append(f"## 🎨 Your shots — Nano Banana  ({n_done}/{len(nano)} in place)")
     L.append("")
     L.append("Make each in Nano Banana using the named reference sheet(s) from "
-             "`Canon/characters/` (they carry the likeness — the brief describes the "
+             f"`{casting_dir}/` (they carry the likeness — the brief describes the "
              f"shot). Save as **exactly** the filename shown into `Production/{ep}/images/`.")
     L.append("")
     L.append(f"### To make  ({len(todo)})")
@@ -84,11 +112,16 @@ def main():
     L.append("|---|------|---------|")
     for s in local:
         mark = "✅" if present(s["id"]) else "⬜"
-        L.append(f"| {mark} | `{s['id']}.png` | {subject(s.get('prompt',''))[:110]} |")
+        L.append(f"| {mark} | `{s['id']}.png` | {subject(s.get('prompt',''), pre, post)[:110]} |")
     L.append("")
 
     out = f"{base}/IMAGE-SHEET.md"
     open(out, "w").write("\n".join(L) + "\n")
     print(f"IMAGE_SHEET {ep}: {out}  ({len(nano)} nano [{n_done} done], {len(local)} local [{l_done} done])")
 
-main()
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (sc.ShowConfigError, FileNotFoundError) as err:
+        sys.exit(f"image-sheet: {err}")

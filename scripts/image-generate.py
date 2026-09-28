@@ -7,20 +7,23 @@ TWO paths, chosen per shot (the tiered "hero routing" ruled 2026-07-19):
   * AMBIENT (default): Z-Image-Turbo, seeded, ~2.4 min/img. Establishing wides,
     backgrounds, one-off subjects, suited figures at distance.
   * HERO: a shot tagged "hero": ["<subject-key>", ...] is conditioned on the
-    locked baseline reference(s) for those subjects (the Visual Bible,
-    Canon/characters/) via Qwen-Image-Edit (Apache-2.0, commercial-safe;
+    locked baseline reference(s) for those subjects (the show's visual.refs
+    index) via Qwen-Image-Edit (Apache-2.0, commercial-safe;
     ~11 min/img, 38 GB peak). This carries a recurring character's/ship's IDENTITY
     across shots instead of re-rolling a fresh look each time.
 
 A hero shot whose baseline is NOT yet locked falls back to the ambient path with a
 warning, so the pipeline works before the bible is complete.
 
-Idempotent: skips shots whose PNG already exists (delete a PNG to re-roll it)."""
+Idempotent: skips shots whose PNG already exists (delete a PNG to re-roll it).
+
+Usage: image-generate.py <episode> [--show-root <path>]"""
 import json, os, shutil, subprocess, sys
+
+from lib import showconfig as sc
 
 Z_BINARY   = "mflux-generate-z-image-turbo"    # ambient workhorse
 EDIT_BINARY = "mflux-generate-qwen-edit"       # hero / identity tool (Apache 2.0)
-BIBLE = "Canon/refs.json"
 
 def find_bin(name: str) -> str:
     for cand in (shutil.which(name),
@@ -30,10 +33,11 @@ def find_bin(name: str) -> str:
             return cand
     sys.exit(f"image-generate: {name} not found on PATH")
 
-def load_bible() -> dict:
-    if not os.path.exists(BIBLE):
+def load_bible(path: str) -> dict:
+    """The show's reference index (visual.refs); an absent file means nothing is locked yet."""
+    if not os.path.exists(path):
         return {}
-    d = json.load(open(BIBLE))
+    d = json.load(open(path))
     # skip metadata keys (_doc, _ruled); only subjects whose ref exists are "locked"
     return {k: v for k, v in d.items()
             if not k.startswith("_") and isinstance(v, dict)
@@ -53,19 +57,29 @@ def hero_refs(shot, bible):
     return refs, missing
 
 def main() -> None:
-    ep = os.environ.get("ARGUMENTS", "").split()[0] if os.environ.get("ARGUMENTS") else ""
+    # The engine runs this with the show root as the working directory; --show-root <path> is for
+    # an operator running it from somewhere else.
+    root = os.path.abspath(sc.show_root(sys.argv))
+    cfg = sc.load(root)
+    os.chdir(root)
+    ep = sys.argv[1] if len(sys.argv) > 1 else ""
     if not ep:
-        sys.exit("image-generate: episode id missing (first token of ARGUMENTS)")
+        sys.exit("image-generate: episode id missing "
+                 "(usage: image-generate.py <episode> [--show-root <path>])")
+    # The show says where its reference index lives and what shape a frame is; a shot may still
+    # override the frame per image.
+    frame = list(sc.value(cfg, "visual", "shotFrame"))
     base = f"Production/{ep}/images"
     doc = json.load(open(f"{base}/prompts.json"))
     shots = doc["shots"]
-    bible = load_bible()
+    bible = load_bible(sc.path(cfg, "visual", "refs", root=root))
 
     z_bin = find_bin(Z_BINARY)
     edit_bin = None                      # resolve lazily; only if a hero shot needs it
     done = hero = 0
 
-    for shot in shots:
+    for pos, shot in enumerate(shots, 1):
+        sc.progress(pos, len(shots), "shots")
         out = f"{base}/{shot['id']}.png"
         if shot.get("type") == "character":
             # generated in Nano Banana by the showrunner (faces); skip locally.
@@ -80,7 +94,7 @@ def main() -> None:
             continue
 
         refs, missing = hero_refs(shot, bible)
-        w, h = str(shot.get("width", 1024)), str(shot.get("height", 576))
+        w, h = str(shot.get("width", frame[0])), str(shot.get("height", frame[1]))
 
         if refs:
             if missing:
@@ -113,4 +127,9 @@ def main() -> None:
 
     print(f"IMG_OK {done} shots -> {base}/  ({hero} hero via Qwen-Edit, {done - hero} ambient)")
 
-main()
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (sc.ShowConfigError, FileNotFoundError) as err:
+        sys.exit(f"image-generate: {err}")

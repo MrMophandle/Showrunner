@@ -13,12 +13,11 @@ render will use.
 
 Writes Production/<ep>/images/SHOT-SHEET.md
 
-Usage:  ARGUMENTS=ep08 uv run .archon/scripts/shot-sheet.py
+Usage:  shot-sheet.py <episode> [--show-root <path>]
 """
 import json, os, re, sys
 
-FPS = 30
-CROSSFADE_S = 1.0
+from lib import showconfig as sc
 
 
 def norm(x: str) -> str:
@@ -31,9 +30,20 @@ def ts(sec: float) -> str:
 
 
 def main() -> None:
-    ep = os.environ.get("ARGUMENTS", "").split()[0] if os.environ.get("ARGUMENTS") else ""
+    # The engine runs this with the show root as the working directory; --show-root <path> is for
+    # an operator running it from somewhere else.
+    root = os.path.abspath(sc.show_root(sys.argv))
+    cfg = sc.load(root)
+    os.chdir(root)
+    ep = sys.argv[1] if len(sys.argv) > 1 else ""
     if not ep:
-        sys.exit("shot-sheet: episode id missing (first token of ARGUMENTS)")
+        sys.exit("shot-sheet: episode id missing "
+                 "(usage: shot-sheet.py <episode> [--show-root <path>])")
+    # Read for the same reason build-timeline.py reads them: this sheet replicates that script's
+    # placement maths, and the two must agree on the show's clock or the times printed here are
+    # not the times the render will use.
+    fps = int(sc.value(cfg, "video", "fps"))
+    crossfade_s = float(sc.value(cfg, "video", "crossfadeSeconds"))
     base = f"Production/{ep}"
     for need in (f"{base}/audio/manifest.json", f"{base}/tts-script.json",
                  f"{base}/images/prompts.json", f"Episodes/{ep}/script.md"):
@@ -90,13 +100,15 @@ def main() -> None:
 
     placed = []
     scene_indices = sorted(by_scene)
-    for pos, sc in enumerate(scene_indices):
+    # `scene`, not `sc`: `sc` is the show-config module every script imports, and shadowing it
+    # here made main() raise UnboundLocalError before it read a single argument.
+    for pos, scene in enumerate(scene_indices):
         s0 = starts[pos] if pos < len(starts) else total_s * pos / len(scene_indices)
         s1 = starts[pos + 1] if pos + 1 < len(starts) else total_s
-        group = by_scene[sc]
+        group = by_scene[scene]
         span = max(1.0, s1 - s0)
         each = span / len(group)
-        scene_title = titles[pos] if pos < len(titles) else f"scene {sc}"
+        scene_title = titles[pos] if pos < len(titles) else f"scene {scene}"
         for j, shot in enumerate(group):
             a = s0 + j * each
             b = a + each
@@ -171,8 +183,12 @@ def main() -> None:
 
     out = f"{base}/images/SHOT-SHEET.md"
     open(out, "w").write("\n".join(L))
-    print(f"SHOT_SHEET {ep}: {out}  ({len(placed)} stills, runtime {ts(total_s)})")
+    print(f"SHOT_SHEET {ep}: {out}  ({len(placed)} stills, runtime {ts(total_s)}, "
+          f"{fps} fps, {crossfade_s:.1f}s crossfade)")
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except (sc.ShowConfigError, FileNotFoundError) as err:
+        sys.exit(f"shot-sheet: {err}")
