@@ -506,7 +506,7 @@ MSG
 ```ts
 // rewrite.ts (pure)
 export interface RewriteContext { nodeId: string; gateId?: string /* for on_reject prompts */ }
-export interface Override { nodeId: string; pattern: string; replacement: string }   // literal pattern, applied before the rules; nodeId "*" applies to every prompt in every workflow
+export interface Override { nodeId?: string; pattern: string; replacement: string }   // literal pattern, applied before the rules; nodeId "*" or absent applies to every prompt in every workflow
 export function rewriteVariables(text: string, ctx: RewriteContext, overrides: Override[]): { text: string; unmapped: string[] };   // applies the overrides whose nodeId is ctx.nodeId or "*"
 //   rules, in order:
 //   1. overrides (literal, longest first);
@@ -523,7 +523,7 @@ export interface ExtractOptions { workflowsDir: string; outDir: string; override
 export interface PromptIndexEntry { file: string; kind: "agent" | "loop" | "reject" | "gate"; workflow: string; nodeId: string; gateId?: string; line: [number, number]; model?: string; context?: "fresh" | "shared"; allowedTools?: string[]; timeoutMs?: number; idleTimeoutMs?: number; until?: string; maxIterations?: number; maxAttempts?: number; dependsOn?: string[]; when?: string; schema?: string /* file */ }
 export async function extractPrompts(opts: ExtractOptions): Promise<{ index: PromptIndexEntry[]; unmapped: Array<{ file: string; nodeId: string; form: string }> }>;
 //   writes <outDir>/<nodeId>.md (agent, loop body), <outDir>/<gateId>.reject.md, <outDir>/<gateId>.gate.md, <outDir>/<nodeId>.schema.json, <outDir>/index.json
-//   context: fresh_context: false → "shared"; anything else → "fresh". timeout (ms) → timeoutMs; idle_timeout → idleTimeoutMs. model: a leading "@" is stripped ("@writer" → "writer"), so the index names the show config's models keys. Text is written verbatim after rewriting; trailing whitespace preserved as in the YAML block scalar.
+//   context: recorded only where the YAML declares it — `context: fresh` or `fresh_context: true` → "fresh", `fresh_context: false` → "shared", nothing declared → absent (Plan D chooses the default; the index does not invent one). timeout (ms) → timeoutMs; idle_timeout → idleTimeoutMs. model: a node with no `model` inherits the workflow's top-level `model`; a leading "@" is stripped ("@writer" → "writer"), so the index names the show config's models keys. index.json carries one row per written file, schemas included (a schema row carries its node's kind), sorted so a node's .md row precedes its schema row. Text is written verbatim after rewriting; trailing whitespace preserved as in the YAML block scalar.
 //   exits non-zero (CLI) when unmapped is non-empty, listing every form with its file and node
 
 // check-prompts.ts
@@ -738,7 +738,7 @@ Expected: three files fail to resolve their modules.
 - [ ] **Step 5: Run the tools tests and typecheck, then the root scripts**
 
 Run: `cd ~/GetHub/Showrunner && npm run build -w engine && npm test && npm run typecheck`
-Expected: engine `157 passed | 2 skipped`; tools 3 files, 9 tests passing; both typechecks silent. (The `GetHub` above is a typo in this plan; the path is `~/GitHub/Showrunner`.)
+Expected: engine `159 passed | 2 skipped` (157 + the two Task 1 review items folded into this task: the spawn-failure path pinned, air-map keys validated as production ids); tools 3 files, 9 tests passing; both typechecks silent. (The `GetHub` above is a typo in this plan; the path is `~/GitHub/Showrunner`.)
 
 - [ ] **Step 6: Commit**
 
