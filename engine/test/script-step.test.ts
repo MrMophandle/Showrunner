@@ -45,6 +45,20 @@ describe("scriptExecutor", () => {
     expect(r).toEqual({ ok: false, error: "exit 3: the reason" });
   });
 
+  it("does not let a progress line on stderr become the step's error", async () => {
+    // The script writes its real complaint and then a `::progress` line, both to stderr. The
+    // progress line is forwarded as a script_line like any other stderr line — stderr is never
+    // parsed for step_progress — but it is not the last stderr line, so the step fails naming the
+    // complaint the operator has to read.
+    const step: ScriptStep = { kind: "script", id: "s", argv: () => ["python3", fixture("fail-with-stderr-progress.py")] };
+    const { events, emit } = collector();
+    const r = await scriptExecutor(step, ctx, emit);
+    expect(r).toEqual({ ok: false, error: "exit 3: the reason" });
+    const lines = events.filter((e) => e.kind === "script_line").map((e) => [e.payload["stream"], e.payload["line"]]);
+    expect(lines).toContainEqual(["stderr", '::progress {"done":1,"total":1,"unit":"x"}']);
+    expect(events.filter((e) => e.kind === "step_progress")).toEqual([]);
+  });
+
   it("fails on timeout", async () => {
     const step: ScriptStep = { kind: "script", id: "s", timeoutMs: 200, argv: () => ["python3", "-c", "import time; time.sleep(5)"] };
     const { emit } = collector();

@@ -35,24 +35,24 @@ def test_append_copies_only_characters_not_props(tmp_path, monkeypatch):
     assert dest.read_bytes() == b"one"
 
 def test_append_ship_kind_copied_but_location_kind_still_skipped(tmp_path, monkeypatch):
-    """The Harbor Lights is identity-cast (Ryan-ruled 2026-07-28): a kind:"ship"
-    bible entry now gets its approved shot copied into her pile, just like a
-    human/creature cast member. This must widen CHARACTER_KINDS by exactly
-    one kind, not into an allow-all — a kind:"location" entry (e.g. Coalvane)
-    must still be skipped."""
+    """The Harbor Lights is identity-cast: a kind:"ship" bible entry now gets
+    its approved shot copied into her pile, just like a human/creature cast
+    member. This must widen CHARACTER_KINDS by exactly one kind, not into an
+    allow-all — a kind:"location" entry (e.g. Harbor Quay) must still be
+    skipped."""
     img = tmp_path / "Production/ep99/images"; img.mkdir(parents=True)
     ship_dir = tmp_path / "Canon/locations/Harbor Lights"; ship_dir.mkdir(parents=True)
     ship_sheet = ship_dir / "Harbor Lights Reference.png"; ship_sheet.write_bytes(b"s")
-    loc_dir = tmp_path / "Canon/locations/Coalvane Station"; loc_dir.mkdir(parents=True)
-    loc_sheet = loc_dir / "Coalvane Reference.png"; loc_sheet.write_bytes(b"s")
+    loc_dir = tmp_path / "Canon/locations/Harbor Quay Station"; loc_dir.mkdir(parents=True)
+    loc_sheet = loc_dir / "Harbor Quay Reference.png"; loc_sheet.write_bytes(b"s")
     prompts = {"shots": [
         {"id": "s1-ship", "type": "character", "refs": ["harbor-lights"]},
-        {"id": "s2-loc", "type": "character", "refs": ["coalvane"]}]}
+        {"id": "s2-loc", "type": "character", "refs": ["harbor-quay"]}]}
     (img / "prompts.json").write_text(json.dumps(prompts))
     (img / "s1-ship.png").write_bytes(b"ship-still")
     (img / "s2-loc.png").write_bytes(b"loc-still")
     bible = {"harbor-lights": {"kind": "ship", "ref": str(ship_sheet), "identity": "the Harbor Lights"},
-             "coalvane": {"kind": "location", "ref": str(loc_sheet), "identity": "Coalvane Station"}}
+             "harbor-quay": {"kind": "location", "ref": str(loc_sheet), "identity": "Harbor Quay Station"}}
     copied = ra.append("ep99", str(img / "prompts.json"), bible,
                        str(tmp_path / "Canon/characters"), KINDS)
     names = [os.path.basename(p) for p in copied]
@@ -80,20 +80,20 @@ def test_append_unknown_key_matches_existing_folder_by_normalization(tmp_path, m
     """When an unknown key (no bible entry) normalizes to an existing folder,
     use the existing folder instead of creating a new one with punctuation drift."""
     img = tmp_path / "Production/ep99/images"; img.mkdir(parents=True)
-    # Existing folder is "The Mute" (space), key will be "the-mute" (hyphen)
-    existing = tmp_path / "Canon/characters/The Mute"; existing.mkdir(parents=True)
-    sheet = existing / "The Mute Reference.png"; sheet.write_bytes(b"s")
+    # Existing folder is "The Keeper" (space), key will be "the-keeper" (hyphen)
+    existing = tmp_path / "Canon/characters/The Keeper"; existing.mkdir(parents=True)
+    sheet = existing / "The Keeper Reference.png"; sheet.write_bytes(b"s")
     prompts = {"shots": [
-        {"id": "s1-mute", "type": "character", "refs": ["the-mute"]}]}
+        {"id": "s1-keeper", "type": "character", "refs": ["the-keeper"]}]}
     (img / "prompts.json").write_text(json.dumps(prompts))
-    (img / "s1-mute.png").write_bytes(b"one")
+    (img / "s1-keeper.png").write_bytes(b"one")
     bible = {}
     root = str(tmp_path / "Canon/characters")
     copied = ra.append("ep99", str(img / "prompts.json"), bible, root, KINDS)
     # Image should land in existing folder
-    assert (existing / "ep99-s1-mute.png").read_bytes() == b"one"
-    # No new "The-Mute" folder should be created
-    assert not (tmp_path / "Canon/characters/The-Mute").exists()
+    assert (existing / "ep99-s1-keeper.png").read_bytes() == b"one"
+    # No new "The-Keeper" folder should be created
+    assert not (tmp_path / "Canon/characters/The-Keeper").exists()
     # Should print a note about matching
     assert "matched existing folder" in capsys.readouterr().out
 
@@ -121,24 +121,24 @@ def test_append_multiple_matching_folders_skips_and_warns(tmp_path, monkeypatch,
     """When multiple existing folders normalize to the same key (fragmented state),
     skip that ref and warn with candidate names; do not deepen the split."""
     img = tmp_path / "Production/ep99/images"; img.mkdir(parents=True)
-    # Create two folders that normalize to the same key (both become "themute")
-    folder1 = tmp_path / "Canon/characters/The Mute"; folder1.mkdir(parents=True)
-    folder2 = tmp_path / "Canon/characters/TheMute"; folder2.mkdir(parents=True)
+    # Create two folders that normalize to the same key (both become "thekeeper")
+    folder1 = tmp_path / "Canon/characters/The Keeper"; folder1.mkdir(parents=True)
+    folder2 = tmp_path / "Canon/characters/TheKeeper"; folder2.mkdir(parents=True)
     prompts = {"shots": [
-        {"id": "s1-mute", "type": "character", "refs": ["the-mute"]}]}
+        {"id": "s1-keeper", "type": "character", "refs": ["the-keeper"]}]}
     (img / "prompts.json").write_text(json.dumps(prompts))
-    (img / "s1-mute.png").write_bytes(b"one")
+    (img / "s1-keeper.png").write_bytes(b"one")
     bible = {}
     root = str(tmp_path / "Canon/characters")
     copied = ra.append("ep99", str(img / "prompts.json"), bible, root, KINDS)
     # Nothing should be copied
     assert copied == []
     # No new folder created
-    assert not (tmp_path / "Canon/characters/The-Mute").exists()
+    assert not (tmp_path / "Canon/characters/The-Keeper").exists()
     # Should warn about multiple matches
     output = capsys.readouterr().out
     assert "matches multiple folders" in output
-    assert "The Mute" in output or "TheMute" in output  # candidate names mentioned
+    assert "The Keeper" in output or "TheKeeper" in output  # candidate names mentioned
 
 def test_append_existing_dst_identical_bytes_skips_silently(tmp_path, monkeypatch, capsys):
     """I4 regression: a pile copy whose bytes already match the source is

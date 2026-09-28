@@ -47,6 +47,64 @@ def test_a_missing_required_key_is_named(show_root: Path) -> None:
     assert "models.writer" in str(err.value)
 
 
+def _write(show_root, cfg) -> None:
+    (show_root / "showrunner.json").write_text(json.dumps(cfg), encoding="utf-8")
+
+
+def _config(show_root):
+    return json.loads((show_root / "showrunner.json").read_text(encoding="utf-8"))
+
+
+# The four probes below are `engine/test/show-config.test.ts`'s, run against the same real-config
+# -style fixture every other suite here loads. Each one is a config the engine's loader refuses;
+# before this parity work each was accepted by load() and refused by the engine, which is the one
+# disagreement about showrunner.json the pipeline cannot survive.
+
+
+def test_an_aired_id_is_refused_as_an_air_map_key(show_root: Path) -> None:
+    """airMap answers "which season did this production id air in".
+
+    An aired id already carries its season, so a mapping for one could only ever be a second and
+    silently disagreeing answer; the engine refuses it and so does this loader.
+    """
+    cfg = _config(show_root)
+    cfg["airMap"]["s01e05"] = [1, 5]
+    _write(show_root, cfg)
+    with pytest.raises(sc.ShowConfigError) as err:
+        sc.load(str(show_root))
+    assert "airMap.s01e05" in str(err.value)
+    assert "production id" in str(err.value)
+
+
+def test_an_air_map_slot_with_a_zero_is_refused(show_root: Path) -> None:
+    """Seasons and episodes start at 1, so [0, 1] is a typo, not a slot."""
+    cfg = _config(show_root)
+    cfg["airMap"]["ep01"] = [0, 1]
+    _write(show_root, cfg)
+    with pytest.raises(sc.ShowConfigError) as err:
+        sc.load(str(show_root))
+    assert "airMap.ep01" in str(err.value)
+    assert "positive integers" in str(err.value)
+
+
+def test_an_empty_required_string_is_refused(show_root: Path) -> None:
+    cfg = _config(show_root)
+    cfg["showName"] = ""
+    _write(show_root, cfg)
+    with pytest.raises(sc.ShowConfigError) as err:
+        sc.load(str(show_root))
+    assert "showName must be a non-empty string" in str(err.value)
+
+
+def test_a_required_string_that_is_not_a_string_is_refused(show_root: Path) -> None:
+    cfg = _config(show_root)
+    cfg["models"]["writer"] = 7
+    _write(show_root, cfg)
+    with pytest.raises(sc.ShowConfigError) as err:
+        sc.load(str(show_root))
+    assert "models.writer must be a non-empty string" in str(err.value)
+
+
 def test_show_root_strips_the_flag_and_leaves_other_args() -> None:
     argv = ["validate-manifest.py", "ep01", "--show-root", "/tmp/show", "--verbose"]
     assert sc.show_root(argv) == "/tmp/show"

@@ -47,7 +47,7 @@ def _show(tmp_path):
 def test_normalize_key():
     assert nbg.normalize_key("Maeve") == "maeve"
     assert nbg.normalize_key("relic (style-token, at CANON shard scale)") == "relic"
-    assert nbg.normalize_key("  Ansa ") == "ansa"
+    assert nbg.normalize_key("  Maeve ") == "maeve"
 
 def _mk_bible(tmp_path):
     (tmp_path / "Canon/characters/Maeve").mkdir(parents=True)
@@ -74,9 +74,9 @@ def test_assemble_refs_sheet_plus_two_newest(tmp_path):
 
 def test_assemble_refs_missing_key_flags_and_continues(tmp_path):
     bible = _mk_bible(tmp_path)
-    shot = {"id": "s1-x", "refs": ["Maeve", "mardo"], "brief": "b"}
+    shot = {"id": "s1-x", "refs": ["Maeve", "rook"], "brief": "b"}
     imgs, ids, missing = nbg.assemble_refs(shot, bible)
-    assert missing == ["mardo"] and len(imgs) == 3
+    assert missing == ["rook"] and len(imgs) == 3
 
 def test_assemble_refs_caps_at_8_dropping_stills_not_sheets(tmp_path):
     bible = {}
@@ -791,7 +791,7 @@ def test_audit_laws_include_the_full_bleed_law(monkeypatch):
 # carrying a real-world flag patch. These tests pin the mechanical gate that
 # now fails the run BEFORE any money is spent.
 
-_REAL_MARDO_BRIEF = (
+_REAL_ROOK_BRIEF = (
     "Cinematic 16:9 shot, dark hard science fiction, a low cramped dockside "
     "bar off the rim of a worn salvage station, one low warm light fixture "
     "as the key (low-key but clearly exposed, real shadow, cargo-noise "
@@ -801,12 +801,12 @@ _REAL_MARDO_BRIEF = (
     "a faint easy grin — and BRYN — the weathered, practical woman of "
     "about sixty, grey hair, worn denim work clothes and a tool belt from "
     "her locked reference sheet, quiet, listening without judgment. Across "
-    "from them sits MARDO, a NEW guest character with no existing reference "
+    "from them sits ROOK, a NEW guest character with no existing reference "
     "sheet: a worn dockside loading-floor worker, sober, gentle, unhurried, "
     "sincere without a trace of crank in him, turning a plain cup in his "
     "hands that he never drinks from, mid-way through telling them a "
     "secondhand story about a recovered ship where none of the dead had "
-    "moved. The table has gone quiet around his telling. Design Mardo fresh "
+    "moved. The table has gone quiet around his telling. Design Rook fresh "
     "from this description — an ordinary worn rim worker, weathered, "
     "plain-dressed, calm-faced. Low-key but clearly exposed, film grain, "
     "no text."
@@ -819,11 +819,11 @@ def test_find_collective_populators_the_crew_fails():
     assert any("the crew" in h.lower() for h in hits)
 
 
-def test_find_collective_populators_real_mardo_brief_passes():
-    """The already-approved s03-mardo-table-scene brief is a HEADCOUNT
+def test_find_collective_populators_real_rook_brief_passes():
+    """The already-approved s03-rook-table-scene brief is a HEADCOUNT
     ('three people:') followed by named characters — exactly what the law
     wants — and must NOT trip the gate."""
-    assert _find(_REAL_MARDO_BRIEF) == []
+    assert _find(_REAL_ROOK_BRIEF) == []
 
 
 def test_find_collective_populators_headcount_qualified_people_passes():
