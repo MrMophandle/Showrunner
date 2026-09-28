@@ -55,7 +55,7 @@ def _config(show_root):
     return json.loads((show_root / "showrunner.json").read_text(encoding="utf-8"))
 
 
-# The four probes below are `engine/test/show-config.test.ts`'s, run against the same real-config
+# The four probes below are the whole-branch review's against the engine loader (one of them is also in `engine/test/show-config.test.ts`), run against the same real-config
 # -style fixture every other suite here loads. Each one is a config the engine's loader refuses;
 # before this parity work each was accepted by load() and refused by the engine, which is the one
 # disagreement about showrunner.json the pipeline cannot survive.
