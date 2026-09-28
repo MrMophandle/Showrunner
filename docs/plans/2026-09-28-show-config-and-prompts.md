@@ -861,8 +861,8 @@ Verify it loads: from `~/GitHub/Showrunner/engine`, `node -e "import('./dist/ind
 |---|---|---|
 | `outline` (write-episode:48–50) | the three lines from `The full request is: $ARGUMENTS` through the sentence explaining that the first token is the episode id | `The premise for this episode is in Episodes/{{episodeId}}/premise.md. Read it first; it is the request.` |
 | `*` | `Canon/season-1.md` | `Canon/season-{{season}}.md` (twelve sites, inventory §3.2) |
-| `propose-gate` or whichever node holds canon-update:115 | `$diff.output` | `{{results.diff}} — the full diff is in Production/{{episodeId}}/canon-diff.patch; read that file, not this summary.` |
-| `visual-direction` (produce-assets:440–456) | the embedded `uv run python -c "..."` program and its explanatory paragraph | `The pipeline runs the collective-populator check (populator-check.py) after this step and stops the line if a brief describes a crowd without naming its members. Do not run Python yourself; write briefs that name every populator.` |
+| `canon-gate` (canon-update:115, the gate's message) | `$diff.output` | `{{results.diff}} — the full diff is in Production/{{episodeId}}/canon-diff.patch; read that file, not this summary.` |
+| `visual-direction` (produce-assets:437–460) | the lead-in "After writing prompts.json, run the project's own guard…", the embedded `uv run python -c "..."` program, its explanatory paragraph, and the closing bullet asking for "the guard's violation count (must be 0)" — through the end of the prompt body | `The pipeline runs the collective-populator check (populator-check.py) after this step and stops the line if a brief describes a crowd without naming its members. Do not run Python yourself; write briefs that name every populator.` |
 
 Every other `$` form is handled by the rules (`$setup.output` and its period case, `$EP`, `$EP_ID`, `$REJECTION_REASON`, the eleven `$<agent>.output` forms, the five script-stdout forms, the three guard forms, `$desk-gate.output`). The extractor must report **zero** unmapped forms; if it reports one, the override table above is missing a site and the implementer adds it and records it in the report.
 
@@ -886,7 +886,7 @@ Read every extracted file once against its source block. The only differences al
 node tools/dist/check-prompts.js --prompts /Users/ryanperkowski/GitHub/DeadLight/prompts --context tools/show-data/deadlight-check-context.json
 ```
 
-Expected: no errors. A `TemplateError` here is a hole the extraction left; fix the override, re-extract, re-check.
+Expected: no errors. A `TemplateError` here is a hole the extraction left; fix the override, re-extract, re-check. `check-prompts` skips `README.md` (the one non-prompt file the directory holds, whose examples carry literal braces); run the check again after Step 6 writes it, on the final state.
 
 - [ ] **Step 6: Per-episode publish data and the audit laws**
 
