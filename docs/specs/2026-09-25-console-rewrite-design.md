@@ -219,8 +219,23 @@ Stays in `DeadLight`: `Canon/`, `Episodes/`, `Production/` (including the run lo
 
 ---
 
+## 9 · The new-show setup (Plan G), scoped 2026-09-28 and deferred
+
+**Ruled by Ryan on 2026-09-28.** Dead Light Season 2 on the new engine comes first; the new-show setup is built after Plans C–F, and its first user is Ryan, on this machine, making a second show from his own loose ideas. Friends on their own machines come later still, and nothing in Plans C–F changes for either.
+
+**9.1 What it is.** A setup phase that names the show, names the repository, creates the repository locally and on GitHub in the house layout (`Canon/`, `Episodes/`, `Production/`, `prompts/`, the show config at the root), connects the engine to it by path, and produces the first bible.
+
+**9.2 How the bible is produced: an interview that writes the author's words, not its own.** A blank scaffold was rejected because the engine's prompts read the bible files by name, so an author who does not know what `style-guide.md` or `episode-formula.md` must contain discovers the gap at the first episode, not at setup. A model that drafts the world from a paragraph was rejected because it produces a generic world, which §0's rule "it does not invent the show" exists to prevent. The interview asks the questions each bible file needs answered, in the order the pipeline needs them, and writes each file from the author's answers; the model supplies structure and the house format, never content. Each file is a gate with the engine's existing gate shape: approve, or reject with notes. An author who answers "I will write this one myself" receives that file's template, so the scaffold is the interview's degenerate case rather than a separate product. This is the pattern that produced the two Season 2 specs and `Canon/season-2.md` by hand.
+
+**9.3 What the interview cannot produce.** Voice references and visual references are audio files and images. The interview records who the recurring cast are; the `NEEDS_REFS` stage stops the first episode until the author casts each voice by ear and supplies a reference sheet, exactly as it does for Dead Light.
+
+**9.4 Where it sits.** The substance is a command-line `init` that runs the interview in the terminal and can exist before the console does; Plan E's console puts a "New show" surface over it. Packaging for a machine that is not Ryan's — Apple Silicon for voice synthesis, a local GPU for ambient images, a Gemini key, an Anthropic API key (Anthropic's Agent SDK policy does not allow third-party products to offer claude.ai login) — is a later plan again.
+
+**9.5 Open, to be decided when Plan G is written.** The exact question list per bible file; whether the interview can cite Dead Light's files as worked examples (a friend's show should not inherit its register); whether the GitHub step uses `gh` or a token; the id scheme a new show starts with (`sXXeYY` from the first aired episode, `epNN` for tests, per §5).
+
 ## 8 · Change log
 
 - **2026-09-25 — created** from the first rewrite conversation. Rulings §1–§5 recorded; §6 lists what remains.
 - **2026-09-26 — core model accepted; observability ruled in.** §6 records the step model, the event log as source of truth, progress as a per-step contract, and restart by replay.
 - **2026-09-26 — scoped, completed, self-reviewed.** §0 gains the first-build scope (desk deferred, canon update kept). §7 records the panel, the console's four surfaces, the two-repository split Ryan ruled, what moves in which direction, and the cutover sequence. Self-review fixes: `NEEDS_REFS` added to the §3.2 table (it was described in §3.4 and missing from the vocabulary); "nine gates" corrected to eight for the first build, since the idea is supplied by hand; §2.3 hand-edit detection changed from a git diff to the content hashes the event log already records; §4.6 and §6 updated so the scripts' relocation and the prompts' home in the show repository are stated where they are first mentioned. No open items remain for the first build.
+- **2026-09-28 — §9 added.** The new-show setup (Plan G) scoped and deferred: interview-driven, author's words, after Plans C–F, Ryan as first user.
