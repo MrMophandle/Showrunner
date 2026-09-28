@@ -1,0 +1,4 @@
+[
+  { "nodeId": "outline", "pattern": "The full request is: $ARGUMENTS", "replacement": "The premise is in Episodes/{{episodeId}}/premise.md; read it first." },
+  { "nodeId": "outline", "pattern": "Canon/season-1.md", "replacement": "Canon/season-{{season}}.md" }
+]

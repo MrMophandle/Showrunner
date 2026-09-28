@@ -1,0 +1,49 @@
+name: harbor-write
+nodes:
+  - id: setup
+    type: bash
+    command: echo "$ARGUMENTS" | cut -d' ' -f1
+  - id: outline
+    depends_on: [setup]
+    model: "@writer"
+    allowed_tools: [Read, Write, Glob, Grep]
+    timeout: 30000
+    prompt: |
+      You are the architect for *Harbor Lights*. The episode is $setup.output.
+      The full request is: $ARGUMENTS
+      Read Canon/season-1.md and Episodes/$setup.output/premise.md. Write the outline for $setup.output.
+  - id: outline-check
+    depends_on: [outline]
+    model: medium
+    context: fresh
+    allowed_tools: [Read, Glob, Grep]
+    output_format:
+      type: object
+      properties:
+        pass: { type: boolean }
+        verdict: { type: string, enum: [OUTLINE PASSED, OUTLINE FAILED] }
+        issues: { type: array, items: { type: string } }
+      required: [pass, issues]
+    prompt: |
+      Audit Episodes/$setup.output/outline.md against the season file.
+  - id: outline-gate
+    depends_on: [outline-check]
+    approval:
+      message: |
+        Outline ready: Episodes/$setup.output/outline.md
+        Canon pre-check: $outline-check.output.verdict
+      capture_response: true
+      on_reject:
+        prompt: |
+          Revise the outline for $setup.output per: $REJECTION_REASON
+        max_attempts: 3
+  - id: draft
+    depends_on: [outline-gate]
+    model: "@writer"
+    idle_timeout: 900000
+    loop:
+      prompt: |
+        Write one scene of $setup.output. Verdict so far: $outline-check.output
+      fresh_context: true
+      until: DRAFT_COMPLETE
+      max_iterations: 15
