@@ -1,0 +1,621 @@
+# /// script
+# dependencies = ["google-genai", "pillow"]
+# ///
+"""nano-banana-generate: character shots via the Gemini API (Nano Banana Pro).
+
+For each type:"character" shot in Production/<ep>/images/prompts.json missing
+its PNG: condition on the subject's locked reference sheet + the 2 newest
+approved pile stills (Canon/characters/<Name>/), generate at 2K 16:9, vision-
+audit via Claude headless, retry with corrective notes (<=3 attempts). A shot
+whose PNG exists is skipped — a hand-made shot always wins (delete a PNG or use
+--only to re-roll). See docs/superpowers/specs/2026-07-27-nano-banana-generate-design.md.
+
+Usage:
+  ARGUMENTS=ep04 uv run .archon/scripts/nano-banana-generate.py
+  ... nano-banana-generate.py ep04 --only s03-opha-still-corner --notes "smaller"
+  Flags: --only id[,id...]   --notes "text"   --no-audit
+"""
+import base64, json, os, re, subprocess, sys, tempfile, time
+
+MODEL = "gemini-3-pro-image"          # Nano Banana Pro (verified live docs, Task 2)
+ASPECT_RATIO = "16:9"                  # response_format: cinematic frame
+IMAGE_SIZE = "2K"                      # response_format: uppercase K per docs
+# The docs list image/png as valid, but the live validator rejects it with a
+# hard 400 naming image/jpeg as the ONLY supported value (ep04 pilot,
+# 2026-07-27). The API is ground truth. We request JPEG and transcode to PNG on
+# the way out — see _jpeg_to_png. Do not "fix" this back to image/png.
+OUTPUT_MIME = "image/jpeg"
+MAX_ATTEMPTS = 3                       # audit-failure retries per shot
+MAX_CALLS = 60                         # hard cost cap per run (~$8)
+STILLS_PER_SUBJECT = 2                 # newest pile stills fed per character
+MAX_IMAGES = 8                         # total reference images per API call
+
+# NO "Cinematic 16:9 frame" here. The aspect ratio is set properly via the API's
+# response_format.aspect_ratio; saying "cinematic frame" in the prompt made the
+# model PAINT letterbox bars into the picture as a style choice (ep04 pilot:
+# 24px top / 189px bottom baked in). The full-bleed line below replaces it.
+STYLE_CONSTANTS = ("dark hard science fiction, low-key but clearly exposed, "
+                   "real shadow, film grain. "
+                   "The picture fills the entire frame edge to edge — "
+                   "full-bleed, no letterbox bars or black borders. "
+                   "no text, no watermark, no signature.")
+
+KEY_SETUP = """GEMINI_API_KEY is not set. One-time setup (5 min):
+  1. https://aistudio.google.com/apikey -> Create API key (enable billing on the
+     project: paid tier = no visible watermark + real rate limits).
+  2. Add to ~/.zshenv:  export GEMINI_API_KEY="<key>"
+  3. Open a new terminal (or `source ~/.zshenv`) and re-run."""
+
+
+def normalize_key(ref: str) -> str:
+    """'Trent' -> 'trent'; 'relic (style-token...)' -> 'relic'."""
+    return re.split(r"[\s(]", ref.strip(), 1)[0].lower()
+
+
+def load_bible(path: str = "Canon/refs.json") -> dict:
+    d = json.load(open(path))
+    return {k: v for k, v in d.items() if not k.startswith("_")}
+
+
+def _pile_stills(sheet_path: str) -> list[str]:
+    """Newest-first approved stills from the character's folder (sheet excluded)."""
+    folder = os.path.dirname(sheet_path)
+    pngs = [os.path.join(folder, f) for f in os.listdir(folder)
+            if f.endswith(".png") and os.path.join(folder, f) != sheet_path]
+    return sorted(pngs, key=os.path.getmtime, reverse=True)[:STILLS_PER_SUBJECT]
+
+
+def assemble_refs(shot: dict, bible: dict, max_images: int = MAX_IMAGES):
+    """-> (image_paths, identity_lines, missing_keys). Sheets first; stills
+    dropped (never sheets) to respect max_images. Dedupes by normalized key."""
+    seen_keys = set()
+    sheets, stills, identities, missing, dropped_sheets = [], [], [], [], []
+
+    for raw in shot.get("refs", []):
+        key = normalize_key(raw)
+        if key in seen_keys:  # Skip duplicate keys
+            continue
+        seen_keys.add(key)
+
+        entry = bible.get(key)
+        if not entry or not os.path.exists(entry.get("ref", "")):
+            missing.append(key)
+            continue
+        sheets.append((key, entry["ref"]))
+        identities.append(f"{key.upper()} (must match the attached reference "
+                          f"images): {entry['identity']}")
+        stills.extend(_pile_stills(entry["ref"]))
+
+    # Extract sheet paths and dedupe stills BY BASENAME, not full path.
+    # registry-append fans one group shot out into every ref'd character's
+    # folder, so the identical still lives at N different paths (one per
+    # subject). Deduping by path lets all N copies survive here, burning
+    # reference-image slots on N copies of one photo and displacing a
+    # genuinely distinct still of another subject — worse conditioning for
+    # the same $ cost. Keep the first occurrence, preserve order.
+    sheet_paths = [path for _, path in sheets]
+    stills_deduped = []
+    seen_stills = set()
+    for still in stills:
+        base = os.path.basename(still)
+        if base not in seen_stills:
+            stills_deduped.append(still)
+            seen_stills.add(base)
+
+    # Handle cap: if sheets exceed max_images, drop excess sheets and warn
+    if len(sheet_paths) > max_images:
+        dropped_keys = [key for key, _ in sheets[max_images:]]
+        dropped_sheets = sheet_paths[max_images:]
+        sheet_paths = sheet_paths[:max_images]
+        identities = identities[:max_images]
+        print(f"WARNING: shot {shot.get('id')} exceeded {max_images}-image cap; "
+              f"dropped reference sheets for: {', '.join(dropped_keys)}")
+        return sheet_paths, identities, missing
+
+    # Normal case: sheets fit, cap stills to remaining space
+    room = max(0, max_images - len(sheet_paths))
+    return sheet_paths + stills_deduped[:room], identities, missing
+
+
+def compose_prompt(shot: dict, identity_lines: list[str], notes: str = "") -> str:
+    parts = list(identity_lines) + [shot["brief"], STYLE_CONSTANTS]
+    if notes:
+        parts.append(f"PREVIOUS ATTEMPT REJECTED: {notes}. Fix exactly this.")
+    return "\n\n".join(parts)
+
+
+def _redact(text) -> str:
+    """Strip the API key out of anything we return, print or log.
+
+    Some Google transports carry the key as a ?key= query param, so an
+    exception's str() can embed it — and these strings get printed by the
+    orchestrator. Never let one reach a log."""
+    s = str(text)
+    key = os.environ.get("GEMINI_API_KEY")
+    return s.replace(key, "<redacted>") if key else s
+
+
+def _client():
+    if not os.environ.get("GEMINI_API_KEY"):
+        sys.exit(KEY_SETUP)
+    from google import genai
+    return genai.Client()                        # reads GEMINI_API_KEY
+
+
+def _encode_refs(image_paths: list[str]) -> list[dict]:
+    """Read + b64-encode the reference images. Local I/O only — NO network.
+
+    Kept out of _api_call so a local failure (a ref deleted between assembly
+    and generation) can't burn a call against the cost cap."""
+    parts = []
+    for p in image_paths:
+        with open(p, "rb") as f:
+            parts.append({"type": "image",
+                          "data": base64.b64encode(f.read()).decode(),
+                          "mime_type": "image/png"})
+    return parts
+
+
+def _jpeg_to_png(data: bytes) -> bytes:
+    """Transcode the API's JPEG output to PNG bytes.
+
+    The model will only emit image/jpeg, but the entire pipeline addresses a
+    shot as <shot-id>.png — prompts.json ids, image-audit, registry-append,
+    build-timeline, the Remotion render, IMAGE-SHEET.md. Converting at this one
+    boundary keeps every consumer unchanged. No extra quality loss: the server
+    already did the only lossy step."""
+    from io import BytesIO
+    from PIL import Image
+    buf = BytesIO()
+    Image.open(BytesIO(data)).convert("RGB").save(buf, format="PNG")
+    return buf.getvalue()
+
+
+# Deterministic failures: the request itself is wrong, so every retry produces
+# the identical 4xx while still billing a call against MAX_CALLS.
+CLIENT_ERROR_TOKENS = ("invalid_request", "invalid_argument", "permission_denied",
+                       "unauthenticated", "not_found", "api key not valid")
+
+
+def _is_client_error(exc) -> bool:
+    """True for a deterministic 4xx (malformed request / auth / not found).
+
+    Retrying one can never succeed: the ep04 pilot burned 3 of 60 budgeted
+    calls re-sending the same rejected payload. 5xx and raw network faults are
+    NOT client errors — those keep their exponential-backoff retries."""
+    for attr in ("status_code", "code", "status"):
+        v = getattr(exc, attr, None)
+        if isinstance(v, int) and 400 <= v < 500:
+            return True
+    v = getattr(getattr(exc, "response", None), "status_code", None)
+    if isinstance(v, int) and 400 <= v < 500:
+        return True
+    s = str(exc).lower()
+    if re.search(r"error code: 4\d\d\b", s):
+        return True
+    return any(tok in s for tok in CLIENT_ERROR_TOKENS)
+
+
+def _refusal_diagnostic(interaction) -> str:
+    """One line describing an output-less response, so the first live run can
+    confirm the real safety-block shape (the docs never showed one). Shape
+    only — type + attribute names, never the payload."""
+    attrs = ", ".join(sorted(a for a in dir(interaction)
+                             if not a.startswith("_")))
+    return _redact(f"REFUSED (no output_image): response type="
+                   f"{type(interaction).__name__} attrs=[{attrs}]")
+
+
+def _write_atomic(out_path: str, data: bytes) -> None:
+    """Write via temp file + os.replace so out_path only ever exists complete.
+
+    The pipeline skips any shot whose PNG exists; a half-written file would be
+    silently treated as finished and could ship in an episode."""
+    folder = os.path.dirname(os.path.abspath(out_path))
+    fd, tmp = tempfile.mkstemp(dir=folder, prefix=".nbg-", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+        os.chmod(tmp, 0o644)                     # mkstemp makes 0600; os.replace
+                                                 # keeps it. Every other image in
+                                                 # the folder is 0644 — match it.
+        os.replace(tmp, out_path)                # atomic within a filesystem
+    except Exception:
+        try:
+            os.unlink(tmp)                       # never leave a stray temp
+        except OSError:
+            pass
+        raise
+
+
+def _api_call(prompt: str, image_parts: list[dict]):
+    """One Gemini call. -> ('ok', png_bytes) | ('refused', None).
+
+    Requests JPEG (the only mime_type this model accepts) and returns PNG bytes
+    so callers — and the files on disk — stay PNG throughout.
+
+    Takes ALREADY-ENCODED image parts (see _encode_refs) so this function is
+    purely network. Raises on transport errors (caller retries). EXACT call
+    shape per the Interactions API documented at
+    https://ai.google.dev/gemini-api/docs/image-generation (verified Task 2,
+    Step 1) — adjust here only.
+    """
+    client = _client()
+    content = [{"type": "text", "text": prompt}] + list(image_parts)
+    interaction = client.interactions.create(
+        model=MODEL,
+        input=content,
+        response_format={"type": "image", "mime_type": OUTPUT_MIME,
+                         "aspect_ratio": ASPECT_RATIO, "image_size": IMAGE_SIZE},
+    )
+    img = getattr(interaction, "output_image", None)
+    if img is None or not getattr(img, "data", None):
+        print(_refusal_diagnostic(interaction))  # safety decline / empty output
+        return ("refused", None)
+    return ("ok", _jpeg_to_png(base64.b64decode(img.data)))
+
+
+def generate_image(prompt, image_paths, out_path, call_counter):
+    """-> 'ok' | 'refused' | 'error:<msg>'. Writes out_path only on 'ok'."""
+    if call_counter["calls"] >= MAX_CALLS:
+        sys.exit(f"COST CAP: {MAX_CALLS} API calls reached — aborting. "
+                 f"Re-run to continue (idempotent).")
+    try:
+        image_parts = _encode_refs(image_paths)   # local: must not bill a call
+    except Exception as e:
+        return f"error:{_redact(e)}"
+
+    last = None
+    for attempt in range(3):                      # transport retries
+        try:
+            call_counter["calls"] += 1            # an API call is now happening
+            status, data = _api_call(prompt, image_parts)
+        except SystemExit:
+            raise
+        except Exception as e:                    # network/5xx/etc
+            last = e
+            if _is_client_error(e):               # 4xx: identical every time
+                return f"error:{_redact(e)}"      # fail fast, bill exactly one
+            time.sleep(2 ** attempt)
+            continue
+        if status == "refused":
+            return "refused"
+        # The paid call already succeeded — that's billed no matter what
+        # happens next. A LOCAL write failure (full/read-only volume) can't
+        # possibly turn out differently on retry, so it must not re-enter this
+        # loop and bill two more calls for the same zero output.
+        try:
+            _write_atomic(out_path, data)
+        except Exception as e:
+            return f"error:{_redact(e)}"
+        return "ok"
+    return f"error:{_redact(last)}"
+
+
+AUDIT_LAWS = """Audit laws (Canon/visual-style.md — verify ALL):
+1. HEADCOUNT: exactly the characters the brief names — no invented/extra figures.
+2. ANATOMY: humans have EXACTLY TWO arms and two hands, no mangled fingers;
+   Remo the Vesk has EXACTLY SIX limbs (insectoid, not a spider/xenomorph);
+   Opha the Sethin is a SMALL segmented grub — about 1.5 ft long and under 1 ft
+   tall, large-housecat scale, NOT dog-sized — always wearing her translator
+   muzzle-mask over her mouth parts (never a spider or alien-movie
+   creature).
+3. CANON SCALE: any shard/relic fragment reads SMALL — thumb-sized, pinchable.
+4. WATERMARK: scan all four corners and edges for any visible logo/text/AI
+   badge/sparkle mark.
+5. IDENTITY: each subject plausibly matches its identity description.
+6. EXPOSURE: legible, real midtones — not black-on-black.
+7. RENDER DEFECTS: garbled dominant text, duplicated structures, cream border.
+8. FULL BLEED: baked-in black bars along any edge — letterbox, pillarbox or a
+   matte border — are a DEFECT; the picture must fill the frame edge to edge.
+   A few pixels of near-black at an edge from the scene's own lighting is fine.
+   What fails is a solid black BAND, especially an asymmetric one (e.g. a thin
+   bar at top and a thick one at the bottom)."""
+
+
+def _audit_call(prompt: str) -> str:
+    r = subprocess.run(
+        ["claude", "-p", prompt, "--allowedTools", "Read"],
+        capture_output=True, text=True, timeout=300)
+    if not r.stdout.strip() and r.stderr.strip():
+        # A structurally broken `claude` invocation (bad auth, crashed CLI,
+        # not on PATH under the login shell Archon runs in) prints nothing to
+        # stdout. Without this, that's indistinguishable from a model that
+        # just replied in prose — both fail-closed as "unparseable", and the
+        # real cause (an auth/config problem, not an image problem) never
+        # surfaces while 3 PAID generations burn per shot regardless. Surface
+        # the real error instead of discarding it.
+        return f"CLAUDE STDERR: {r.stderr.strip()}"
+    return r.stdout
+
+
+def audit_image(shot, png_path):
+    prompt = (f"You are the image auditor for the sci-fi series Dead Light. "
+              f"Read (view) the image at {png_path} .\n"
+              f"It was generated for this brief:\n---\n{shot['brief']}\n---\n"
+              f"Named cast: {', '.join(shot.get('refs', [])) or 'none'}\n\n"
+              f"{AUDIT_LAWS}\n\n"
+              f"Reply with ONLY this JSON on the last line, nothing after it: "
+              f'{{"pass": true|false, "notes": "<one concrete sentence if fail>"}}')
+    try:
+        out = _audit_call(prompt)
+    except subprocess.TimeoutExpired:
+        return (False, "audit timed out after 300s — treating as fail")
+    except FileNotFoundError:
+        return (False, "claude binary not found — treating as fail")
+
+    m = re.findall(r'\{[^{}]*"pass"[^{}]*\}', out)
+    if not m:
+        # Fold the raw output into the note (not just the static label) so a
+        # structurally broken `claude` invocation's real error — now routed
+        # through _audit_call's stderr capture above — reaches the operator
+        # via the attempt-N REJECTED print in run(), instead of vanishing.
+        detail = out.strip()
+        return (False, "audit output unparseable — treating as fail"
+                       + (f": {detail[:300]}" if detail else " (no output at all)"))
+
+    # Parse all matches and check for disagreement
+    verdicts = []
+    for match in m:
+        try:
+            v = json.loads(match)
+            verdicts.append(v)
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    if not verdicts:
+        return (False, "audit output unparseable — treating as fail")
+
+    # Check if multiple verdicts disagree on the boolean
+    if len(verdicts) > 1:
+        passes = [bool(v.get("pass")) for v in verdicts]
+        if len(set(passes)) > 1:  # verdicts disagree
+            return (False, "audit verdicts disagree — treating as fail")
+
+    # All verdicts agree; use the last one (brief's specification)
+    v = verdicts[-1]
+    return (bool(v.get("pass")), str(v.get("notes", "")))
+
+
+# "both" is a definite headcount of two and belongs here: ep10's s03/s09
+# briefs said "rim separation on both figures" with both people named and
+# in refs, and the guard refused to spend on it.
+_COUNT_WORD = r"(?:\d+|one|two|three|four|five|six|both|exactly)"
+# The capping idiom is not always "no figures" — it is usually "no OTHER
+# figures in the frame", which is the strongest possible statement of the
+# very rule this guard enforces. Allow one qualifier between.
+_NO_ESCAPE = r"\bno\s+(?:other|more|additional|further\s+)?\s*$"
+
+# Unconditional collective-populator phrases (case-insensitive substring match).
+# A brief containing one of these makes Nano Banana INVENT uncredited
+# characters — see Canon/visual-style.md, "No collective populators in a
+# character brief." The one exception is the house-style CAPPING idiom this
+# same law recommends — "no other figures anywhere in the frame" — which
+# NEGATES extras rather than inventing them, so a match directly preceded by
+# "no " is not a violation.
+_ALWAYS_FAIL_PHRASES = [
+    "the crew", "the others", "other figures", "a few figures",
+    "several figures", "some figures", "some people", "onlookers",
+    "bystanders", "patrons", "a crowd", "crowd of", "background figures",
+]
+
+# Bare nouns (and "crew members") only violate the law when NOT preceded by an
+# explicit headcount — "three people:", "six crew members" name a fixed cast
+# size and are exactly what the law wants (see s03-mardo-table-scene: "sit
+# three people: TRENT ... and SABLE"). Checked separately from the phrases
+# above so that headcount-qualified uses of "people"/"figures" pass.
+_QUALIFIABLE_WORDS = ["crew members", "people", "figures"]
+
+
+def find_collective_populators(brief: str) -> list[str]:
+    """-> matched offending substrings of `brief` (verbatim, original case).
+
+    Empty list means the brief is clean. See Canon/visual-style.md, "No
+    collective populators in a character brief."
+    """
+    hits, covered = [], []
+
+    def _overlaps(a, b):
+        return not (a[1] <= b[0] or b[1] <= a[0])
+
+    for phrase in _ALWAYS_FAIL_PHRASES:
+        for m in re.finditer(re.escape(phrase), brief, re.IGNORECASE):
+            covered.append((m.start(), m.end()))
+            prefix = brief[:m.start()]
+            if re.search(_NO_ESCAPE, prefix, re.IGNORECASE):
+                continue                      # "no other figures..." — the capping idiom
+            hits.append(brief[m.start():m.end()])
+
+    for phrase in _QUALIFIABLE_WORDS:
+        for m in re.finditer(re.escape(phrase), brief, re.IGNORECASE):
+            span = (m.start(), m.end())
+            if any(_overlaps(span, c) for c in covered):
+                continue                      # already judged above (e.g. "the crew members")
+            prefix = brief[:m.start()]
+            if re.search(rf"\b{_COUNT_WORD}\s*$", prefix, re.IGNORECASE):
+                continue                      # "three people:", "six crew members"
+            if re.search(_NO_ESCAPE, prefix, re.IGNORECASE):
+                continue                      # "no ... figures"
+            hits.append(brief[m.start():m.end()])
+
+    return hits
+
+
+def check_no_collective_populators(shots: list[dict]) -> None:
+    """Pre-flight law enforcement (Ryan-ruled, ep04 s04-opha-uneasy incident):
+    a brief with a collective populator ("the crew", "a few figures", ...)
+    makes Nano Banana invent uncredited extras — wrong headcount, and once a
+    real-world flag patch on an invented figure. This must run BEFORE the
+    .bak backup step and before any API call: nothing generated, nothing
+    backed up, nothing spent, on ANY violation in the in-scope shot list."""
+    violations = [(s["id"], find_collective_populators(s.get("brief", "")))
+                  for s in shots]
+    violations = [(sid, hits) for sid, hits in violations if hits]
+    if not violations:
+        return
+    lines = [f"  {sid}: matched {', '.join(sorted(set(hits)))}"
+             for sid, hits in violations]
+    sys.exit(
+        "COLLECTIVE POPULATOR(S) in character brief(s) — refusing to spend "
+        "(Canon/visual-style.md, \"No collective populators\"):\n"
+        + "\n".join(lines) + "\n"
+        "Every person in frame must be named and present in refs — "
+        "name them or cap the headcount, then re-run."
+    )
+
+
+def run(ep, only=None, notes="", no_audit=False):
+    base = f"Production/{ep}/images"
+    doc = json.load(open(f"{base}/prompts.json"))
+    bible = load_bible()
+    shots = [s for s in doc["shots"] if s.get("type") == "character"]
+
+    if only:
+        valid_ids = {s["id"] for s in shots}
+        unknown = [oid for oid in only if oid not in valid_ids]
+        if unknown:                                   # validate BEFORE touching anything
+            sys.exit(f"unknown --only id(s): {', '.join(unknown)}. "
+                     f"Valid character-shot ids: {', '.join(sorted(valid_ids)) or '(none)'}")
+        shots = [s for s in shots if s["id"] in only]
+
+    # Mechanical pre-flight: fail the whole run before any money is spent if
+    # ANY in-scope shot's brief has a collective populator. Must run before
+    # the .bak backup step and before any API call (showrunner ruling,
+    # s04-opha-uneasy incident).
+    check_no_collective_populators(shots)
+
+    # --only re-roll: back a pre-existing PNG up (never delete it outright) so
+    # a hand-made image can be restored if generation doesn't fully succeed.
+    backups = {}
+    if only:
+        # Refuse to clobber a pre-existing .bak: it may be the TRUE original
+        # left behind by an earlier --only run that was killed hard enough to
+        # skip even the finally sweep (kill -9, power loss, OOM). Only a human
+        # can tell which of the two files is real, so validate every
+        # requested shot BEFORE moving anything — same ordering rule as the
+        # unknown-id check above, so a conflict aborts cleanly with nothing
+        # half-moved.
+        conflicts = [(s["id"], f"{base}/.{s['id']}.png.bak") for s in shots
+                     if os.path.exists(f"{base}/.{s['id']}.png.bak")]
+        if conflicts:
+            listing = "; ".join(f"{sid} -> {bak}" for sid, bak in conflicts)
+            sys.exit(
+                "refusing to run --only: found pre-existing backup file(s) "
+                f"not made by this run — {listing}. A previous --only run "
+                "may have been interrupted before it could restore the "
+                "original. Inspect each .bak by hand, then either restore it "
+                "over the current PNG or delete it, before re-running.")
+        for s in shots:
+            p = f"{base}/{s['id']}.png"
+            if os.path.exists(p):
+                bak = f"{base}/.{s['id']}.png.bak"
+                os.replace(p, bak)
+                backups[s["id"]] = bak
+
+    counter, results = {"calls": 0}, {}
+    rc = 1
+    try:
+        for s in shots:
+            sid = s["id"]
+            out = f"{base}/{sid}.png"
+            if os.path.exists(out):
+                results[sid] = "SKIPPED-exists"
+            else:
+                imgs, identities, missing = assemble_refs(s, bible)
+                if missing:
+                    results[sid] = f"SKIPPED-no-ref ({','.join(missing)})"
+                else:
+                    state, fb = "FAILED-AUDIT", notes
+                    for attempt in range(1, MAX_ATTEMPTS + 1):
+                        ret = generate_image(compose_prompt(s, identities, fb), imgs, out, counter)
+                        if ret == "refused":
+                            state = "REFUSED"; break
+                        if ret.startswith("error:"):
+                            state = f"ERROR ({ret})"; break   # transport dead, not a content refusal
+                        if no_audit:
+                            state = f"OK attempt-{attempt} (unaudited)"; break
+                        ok, audit_notes = audit_image(s, out)
+                        if ok:
+                            state = f"OK attempt-{attempt}"; break
+                        # Print the rejection AS IT HAPPENS — previously this
+                        # was silent, so an operator watching a run burn all
+                        # 3 attempts (and the cost cap, across many shots) had
+                        # no idea which canon law was failing, or that the
+                        # "unparseable" verdicts were really an auth/config
+                        # problem in the `claude` binary rather than the image.
+                        print(f"    attempt-{attempt} REJECTED: {audit_notes}")
+                        # merge, don't clobber: the operator's --notes must survive every retry
+                        fb = f"{notes}. {audit_notes}" if notes else audit_notes
+                        if attempt < MAX_ATTEMPTS and os.path.exists(out):
+                            os.remove(out)             # keep only the LAST candidate
+                    results[sid] = state
+
+                # resolve this shot's --only backup now, while we know its outcome
+                if sid in backups:
+                    bak = backups.pop(sid)
+                    if results[sid].startswith("OK"):
+                        os.remove(bak)                 # regeneration succeeded: drop the backup
+                        # Say so. The restore path below has always announced
+                        # itself, so silence here read as "did it take?" to the
+                        # showrunner watching the console's streamed log — the
+                        # one place the kept-vs-restored outcome actually gets
+                        # decided. Symmetry is the whole point.
+                        results[sid] += " (new image kept)"
+                    else:
+                        os.replace(bak, out)           # preserve the human's work over any candidate
+                        results[sid] += " (original restored)"
+    finally:
+        # any backup still outstanding here means the run stopped before that
+        # shot was resolved (e.g. the cost-cap SystemExit) — restore it so a
+        # hand-made image is never left missing.
+        for sid, bak in list(backups.items()):
+            os.replace(bak, f"{base}/{sid}.png")
+            backups.pop(sid, None)
+
+        for sid, st in results.items():
+            print(f"  {sid}  {st}")
+        print(f"  api calls: {counter['calls']}  (~${counter['calls'] * 0.134:.2f})")
+
+        ok_n = sum(1 for v in results.values() if v.startswith("OK"))
+        active = [k for k, v in results.items() if v != "SKIPPED-exists"]
+        if not active:
+            tag = "NANO_OK"                           # nothing to do = success
+            print(tag)
+        else:
+            tag = "NANO_OK" if ok_n == len(active) else "NANO_PARTIAL"
+            print(f"{tag} {ok_n}/{len(active)}")
+        rc = 0 if tag == "NANO_OK" else 1
+
+    return rc
+
+
+def main():
+    usage = "usage: nano-banana-generate <ep> [--only id,id] [--notes t] [--no-audit]"
+    # argv WINS over $ARGUMENTS. The Archon bash node passes $ARGUMENTS with no
+    # argv; a human (or the image-gate reject loop) passes argv with $ARGUMENTS
+    # often still exported in the shell. Reading the env first silently ate
+    # --only/--notes and re-ran the whole episode.
+    argv = sys.argv[1:]
+    args = argv if argv else os.environ.get("ARGUMENTS", "").split()
+    if not args:
+        sys.exit(usage)
+    ep, only, notes, no_audit = args[0], None, "", False
+    i = 1
+    while i < len(args):
+        if args[i] == "--only":
+            if i + 1 >= len(args):
+                sys.exit(usage)
+            only = args[i + 1].split(","); i += 2
+        elif args[i] == "--notes":
+            if i + 1 >= len(args):
+                sys.exit(usage)
+            notes = args[i + 1]; i += 2
+        elif args[i] == "--no-audit":
+            no_audit = True; i += 1
+        else:
+            sys.exit(f"unknown flag {args[i]}")
+    sys.exit(run(ep, only, notes, no_audit))
+
+
+if __name__ == "__main__":
+    main()
