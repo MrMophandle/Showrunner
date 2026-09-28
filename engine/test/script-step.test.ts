@@ -92,9 +92,14 @@ describe("scriptExecutor", () => {
     const r = await scriptExecutor(step, ctx, emit);
     const elapsed = Date.now() - started;
 
-    // The result is the child's own last line, fixed when the child exited: the grandchild's
-    // later lines are logged during the drain but cannot become the step's result.
-    expect(r).toEqual({ ok: true, result: "one line" });
+    // The grandchild's lines are logged under this step until the grace abandons the pipes, so
+    // they are part of its stdout and the last of them is its result — "late 19" or thereabouts,
+    // depending on how many 0.1s ticks fit in the grace. The step's own line is long overtaken.
+    // This is the price of reading the result after the drain rather than at exit, and it is the
+    // right side of the trade: a script that prints a summary and exits always gets that summary,
+    // while only a grandchild that outlives its parent and keeps writing can displace one.
+    expect(r.ok).toBe(true);
+    expect(r.ok && r.result).toMatch(/^late \d+$/);
     expect(elapsed).toBeLessThan(3000);
     expect(events.some((e) => e.kind === "script_line" && e.payload["line"] === "one line")).toBe(true);
 
@@ -139,6 +144,23 @@ describe("scriptExecutor", () => {
     const { emit } = collector();
     const r = await scriptExecutor(step, ctx, emit);
     expect(r).toEqual({ ok: true, result: "MIX_OK 12.3s -14.0 LUFS" });
+  });
+
+  it("reads the result after the pipes drain, not when the child exits", async () => {
+    // Twenty thousand short lines with no flush between them, then the summary, then an immediate
+    // exit: the burst leaves stdout in flight when the child goes, and the summary is the very last
+    // line in it. Node emits 'exit' when the process ends, not when its stdio has been read — that
+    // is why 'close' is a separate event — so the result is taken after the drain, never in the
+    // exit handler. A reduced version of this program (one pipe, no detach) reads the wrong last
+    // line in 31 of 40 runs on this machine; the executor's own shape happened to win it 40 of 40,
+    // which is the point: the ordering is not ours to rely on. The trailing flush and os._exit are
+    // load-bearing — without them python's exit flush blocks on the pipe until the parent has
+    // drained it, which hides the hazard rather than exercising it.
+    const program = "import sys, os\nfor i in range(20000): sys.stdout.write('line %d\\n' % i)\nsys.stdout.flush()\nprint('SUMMARY_OK', flush=True)\nos._exit(0)";
+    const step: ScriptStep = { kind: "script", id: "s", argv: () => ["python3", "-c", program] };
+    const { emit } = collector();
+    const r = await scriptExecutor(step, ctx, emit);
+    expect(r).toEqual({ ok: true, result: "SUMMARY_OK" });
   });
 
   it("returns no result key when the script printed only progress lines", async () => {
