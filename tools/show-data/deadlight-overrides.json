@@ -1,0 +1,22 @@
+[
+  {
+    "nodeId": "outline",
+    "pattern": "The full request is: $ARGUMENTS\nThe first token is the episode id ($setup.output); everything after it\nis the premise.",
+    "replacement": "The premise for this episode is in Episodes/{{episodeId}}/premise.md. Read it first; it is the request."
+  },
+  {
+    "nodeId": "*",
+    "pattern": "Canon/season-1.md",
+    "replacement": "Canon/season-{{season}}.md"
+  },
+  {
+    "nodeId": "canon-gate",
+    "pattern": "$diff.output",
+    "replacement": "{{results.diff}} — the full diff is in Production/{{episodeId}}/canon-diff.patch; read that file, not this summary."
+  },
+  {
+    "nodeId": "visual-direction",
+    "pattern": "After writing prompts.json, run the project's own guard against it and\nfix anything it reports, then re-run until it prints 0:\n\n  uv run python -c \"\n  import json, importlib.util\n  s = importlib.util.spec_from_file_location('g', '.archon/scripts/nano-banana-generate.py')\n  g = importlib.util.module_from_spec(s)\n  try: s.loader.exec_module(g)\n  except SystemExit: pass\n  d = json.load(open('Production/$setup.output/images/prompts.json'))\n  bad = [(x['id'], sorted(set(g.find_collective_populators(x.get('brief','')))))\n         for x in d['shots'] if x.get('type') == 'character']\n  bad = [b for b in bad if b[1]]\n  print('POPULATOR VIOLATIONS:', len(bad))\n  [print(' ', i, '->', ', '.join(h)) for i, h in bad]\"\n\nThis is the same function the pipeline enforces minutes later, where a\nsingle hit rejects the WHOLE run and every image goes ungenerated. Three\nconsecutive episodes have been halted this way, every time on innocent\nwording. Catch it here, where it costs nothing.",
+    "replacement": "The pipeline runs the collective-populator check (populator-check.py) after this step and stops the line if a brief describes a crowd without naming its members. Do not run Python yourself; write briefs that name every populator."
+  }
+]
