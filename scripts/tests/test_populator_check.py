@@ -110,3 +110,25 @@ def test_the_show_root_flag_works_from_elsewhere(show_root: Path, tmp_path: Path
                        cwd=str(elsewhere), capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
     assert r.stdout.strip().splitlines()[-1] == "POPULATORS_OK 2 briefs"
+
+
+def test_progress_is_emitted_as_each_brief_is_judged(show_root: Path) -> None:
+    """The line goes inside the loop, not after it: a run that refuses on brief 40 of 50 should
+    have reported 39 units first, not none."""
+    from conftest import load_script
+
+    mod = load_script("populator-check.py")
+    seen: list[tuple[int, int]] = []
+    shots = [{"id": f"s{n}", "type": "character", "brief": "MAEVE alone."} for n in range(1, 4)]
+    _, found = mod.check(shots, ["the crew"], on_judged=lambda d, t: seen.append((d, t)))
+    assert found == []
+    assert seen == [(1, 3), (2, 3), (3, 3)]
+
+
+def test_a_dirty_brief_still_reports_the_units_judged_before_it(show_root: Path) -> None:
+    _episode(show_root, "ep01", DIRTY)
+    out = _run(show_root, "ep01").stdout
+    lines = [json.loads(l[len("::progress "):])
+             for l in out.splitlines() if l.startswith("::progress")]
+    # All three briefs are judged before the refusal is printed.
+    assert lines == [{"done": n, "total": 3, "unit": "briefs"} for n in (1, 2, 3)]

@@ -113,3 +113,26 @@ def test_outside_a_git_repository_the_failure_is_one_line(show_root: Path) -> No
     assert r.returncode == 1
     assert len(r.stderr.strip().splitlines()) == 1
     assert r.stderr.startswith("canon-diff: git diff failed")
+
+
+def test_outside_a_git_repository_the_message_is_gits_actual_complaint(show_root: Path) -> None:
+    """git exits 129 here and prints its whole usage page after the reason. The reason is on the
+    FIRST stderr line; reporting the last one hands the operator an option description."""
+    r = _run(show_root, "ep01")
+    assert "Not a git repository" in r.stderr
+    assert "--output <file>" not in r.stderr
+
+
+def test_a_very_long_complaint_is_truncated(monkeypatch) -> None:
+    """One line on stderr means one line: a git message of any length must not wrap the exit."""
+    mod = load_script("canon-diff.py")
+
+    def fake_run(argv, **kwargs):
+        return subprocess.CompletedProcess(argv, 129, stdout="",
+                                           stderr="x" * 500 + "\nusage: git diff\n")
+
+    monkeypatch.setattr(mod.subprocess, "run", fake_run)
+    with pytest.raises(RuntimeError) as err:
+        mod.git_diff("Canon", "/show")
+    assert len(str(err.value)) < 260
+    assert "usage: git diff" not in str(err.value)

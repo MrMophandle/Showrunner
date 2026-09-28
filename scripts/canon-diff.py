@@ -42,9 +42,12 @@ def git_diff(canon_dir: str, root: str) -> str:
     proc = subprocess.run(["git", "diff", "--", canon_dir],
                           cwd=root, capture_output=True, text=True)
     if proc.returncode != 0:
-        detail = (proc.stderr or "").strip().splitlines()
-        raise RuntimeError(f"git diff failed (exit {proc.returncode}): "
-                           f"{detail[-1] if detail else 'no output'}")
+        # The FIRST non-empty stderr line, not the last. When git refuses it says why on line one
+        # ("warning: Not a git repository...") and then prints its whole usage page; reporting the
+        # last line hands the operator an arbitrary option description instead of the cause.
+        lines = [l.strip() for l in (proc.stderr or "").splitlines() if l.strip()]
+        cause = lines[0][:200] if lines else "no output"
+        raise RuntimeError(f"git diff failed (exit {proc.returncode}): {cause}")
     return proc.stdout
 
 

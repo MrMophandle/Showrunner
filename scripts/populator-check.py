@@ -27,10 +27,21 @@ from lib import showconfig as sc
 DIRTY = 2
 
 
-def check(shots, phrases):
-    """-> [(shot id, matched phrases)] for the character shots whose briefs break the law."""
+def check(shots, phrases, on_judged=None):
+    """-> (character shots, [(shot id, matched phrases)] for those whose briefs break the law).
+
+    `on_judged` is called with (position, total) as each brief is judged, so the caller can report
+    progress AS the work happens rather than after all of it.
+    """
     character_shots = [s for s in shots if s.get("type") == "character"]
-    return character_shots, populators.violations(character_shots, phrases)
+    found = []
+    for pos, shot in enumerate(character_shots, 1):
+        hits = populators.find_collective_populators(str(shot.get("brief", "")), phrases)
+        if hits:
+            found.append((str(shot.get("id", "?")), hits))
+        if on_judged is not None:
+            on_judged(pos, len(character_shots))
+    return character_shots, found
 
 
 def main() -> None:
@@ -49,9 +60,8 @@ def main() -> None:
     prompts_path = f"Production/{ep}/images/prompts.json"
     with open(prompts_path, encoding="utf-8") as fh:
         doc = json.load(fh)
-    shots, found = check(doc.get("shots", []), phrases)
-    for pos, _ in enumerate(shots, 1):
-        sc.progress(pos, len(shots), "briefs")
+    shots, found = check(doc.get("shots", []), phrases,
+                         on_judged=lambda done, total: sc.progress(done, total, "briefs"))
 
     if found:
         print(f"COLLECTIVE POPULATOR(S) in {len(found)} character brief(s) of {prompts_path} "

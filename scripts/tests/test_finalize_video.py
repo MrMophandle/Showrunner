@@ -207,3 +207,44 @@ def test_season_docs_sort_numerically_not_lexicographically(show_root: Path,
         _season_doc(show_root, n, "")
     monkeypatch.chdir(show_root)
     assert [n for n, _ in mod._season_docs("Canon")] == [1, 2, 10]
+
+
+# --- season_slot() edge cases, ported from the show repository's own test_finalize_video.py ---
+
+def test_season_slot_ignores_unruled_rows(show_root: Path, monkeypatch) -> None:
+    """A row that is not RULED is not a slot. Matching on the air number alone would finalize an
+    episode against a job the season desk has not ruled yet."""
+    mod = load_script("finalize-video.py")
+    _season_doc(show_root, 1,
+                "| # | Status | Entry |\n|---|---|---|\n| 7 | DRAFT | some job |\n")
+    monkeypatch.chdir(show_root)
+    assert mod.season_slot("ep07", "Canon") is None
+
+
+def test_season_slot_ignores_non_numeric_season_files(show_root: Path, monkeypatch) -> None:
+    """Canon/season-desk-report.md matches the glob 'season-*.md' but is not a season document,
+    and must never be scanned as one."""
+    mod = load_script("finalize-video.py")
+    (show_root / "Canon").mkdir(exist_ok=True)
+    (show_root / "Canon/season-desk-report.md").write_text(
+        "| # | Status | Entry |\n|---|---|---|\n| 7 | **RULED** | some job |\n")
+    monkeypatch.chdir(show_root)
+    assert mod.season_slot("ep07", "Canon") is None
+
+
+def test_season_slot_is_none_with_no_season_document(show_root: Path, monkeypatch) -> None:
+    mod = load_script("finalize-video.py")
+    monkeypatch.chdir(show_root)
+    assert mod.season_slot("ep07", "Canon") is None
+
+
+def test_two_ruled_rows_naming_the_same_slot_are_one_slot(show_root: Path,
+                                                          monkeypatch) -> None:
+    """A repeated row inside a document is formatting untidiness, not an ambiguity: both rows
+    resolve to the same (season, air), so there is nothing for a human to choose between."""
+    mod = load_script("finalize-video.py")
+    _season_doc(show_root, 1,
+                '| 3 | **RULED** | **"Slack Water"** |\n'
+                '| 3 | **RULED — REWRITTEN** | **"Slack Water"** |\n')
+    monkeypatch.chdir(show_root)
+    assert mod.season_slot("ep03", "Canon") == (1, 3)

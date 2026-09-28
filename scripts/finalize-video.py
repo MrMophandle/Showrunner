@@ -93,6 +93,9 @@ def season_slot(ep: str, canon_dir: str):
                 candidates.append((season, air))
     if not candidates:
         return None
+    # Dedupe before counting: two RULED rows that name the SAME (season, air) are one slot, not
+    # an ambiguity, so repeating a row inside a document is a formatting untidiness rather than a
+    # refusal. Only genuinely DIFFERENT slots are a collision a human must resolve.
     distinct = sorted(set(candidates))
     if len(distinct) > 1:
         named = ", ".join(f"S{s:02d}E{a:02d} (season-{s}.md)" for s, a in distinct)
@@ -164,8 +167,9 @@ def main() -> None:
     video_filename = str(sc.value(cfg, "output", "videoFilename"))
 
     ensure_mounted(mount, dest)
-    sc.progress(0, 1, "episodes")
     n = int(finalize(cfg, ep, dest=dest, canon_dir=canon_dir, video_filename=video_filename))
+    # One unit, reported once the copy has actually happened. A 0-of-1 line before the work only
+    # restates that the step started, which the engine already knows.
     sc.progress(1, 1, "episodes")
     print(f"FINALIZE_OK {n} episode(s) in {dest}/")
 
