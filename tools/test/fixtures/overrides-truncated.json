@@ -1,0 +1,3 @@
+[
+  { "nodeId": "outline", "pattern": "The full request is: $ARGUMENT", "replacement": "This replacement must never be used." }
+]

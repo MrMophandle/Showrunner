@@ -9,10 +9,21 @@
  *
  *  Prompt text moves verbatim. The only change made to a prompt's body is the variable rewriting
  *  of `rewrite.ts`, which is why the show's own name, its characters and its canon paths survive
- *  the move untouched — a prompt is show data (spec §7.4). */
+ *  the move untouched — a prompt is show data (spec §7.4).
+ *
+ *  A file name is built from the node id alone and **no prefixing is done** — not by workflow, not
+ *  by anything else. Two nodes that would write the same file are therefore an error naming both
+ *  sources, not a silent last-writer-wins. That keeps a prompt file's name equal to the step id
+ *  that reads it, which is the whole point of the naming, and it means node ids must be unique
+ *  across the workflows directory.
+ *
+ *  Everything this program cannot do is loud. A name collision, an override that matched nothing,
+ *  a `schemaRequiredAdd` entry for a node that does not exist, a variable form no rule maps, and a
+ *  non-empty output directory without `force` all stop the run or come back in the result; none of
+ *  them is written off quietly. */
 
 import path from "node:path";
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { isMap, isScalar, isSeq, parseDocument, type Document, type YAMLMap } from "yaml";
 import { rewriteVariables, type Override } from "./rewrite.js";
@@ -25,6 +36,11 @@ export interface ExtractOptions {
    *  F-05 is paid: a prompt reading `{{results.<node>.verdict}}` needs `verdict` to be required,
    *  or the SDK may legally omit it and the render then throws. */
   schemaRequiredAdd?: Record<string, string[]>;
+  /** Permission to write into a directory that already holds files, and to delete the extracted
+   *  files a previous run left behind that this run did not produce. Without it a non-empty
+   *  `outDir` is an error, because silently mixing one extraction's output into another's leaves a
+   *  directory nobody can reason about. */
+  force?: boolean;
 }
 
 export interface PromptIndexEntry {
@@ -66,9 +82,24 @@ export interface UnmappedForm {
   form: string;
 }
 
+/** An instruction the caller gave that never fired. Almost always a typo — a node id that does not
+ *  exist, or a pattern that no longer matches the prompt it was written for — and always worth
+ *  stopping on, because the caller believes a rewrite happened that did not. */
+export interface UnusedEntry {
+  kind: "override" | "schemaRequiredAdd";
+  /** The node the entry named. `"*"` for an override that applies to every node. */
+  nodeId: string;
+  /** The override's literal pattern. Absent on a `schemaRequiredAdd` entry. */
+  pattern?: string;
+}
+
 export interface ExtractResult {
   index: PromptIndexEntry[];
   unmapped: UnmappedForm[];
+  unused: UnusedEntry[];
+  /** Extracted files a previous run left in `outDir` that this run did not produce, deleted under
+   *  `force`. Empty without `force`, which refuses a non-empty directory outright. */
+  removed: string[];
 }
 
 const INDEX_FILE = "index.json";
@@ -173,6 +204,13 @@ export async function extractPrompts(opts: ExtractOptions): Promise<ExtractResul
   const overrides = opts.overridesFile !== undefined ? await loadOverrides(opts.overridesFile) : [];
   await mkdir(opts.outDir, { recursive: true });
 
+  // Checked before a single file is read, so a run that is going to be refused is refused before
+  // it has done any work. mkdir ran first, so a directory that did not exist reads as empty.
+  const before = await readdir(opts.outDir);
+  if (before.length > 0 && opts.force !== true) {
+    throw new Error(`output directory ${opts.outDir} is not empty (${before.length} entr${before.length === 1 ? "y" : "ies"}); pass force to overwrite it and delete the extracted files a previous run left behind`);
+  }
+
   const names = (await readdir(opts.workflowsDir)).filter((n) => n.endsWith(".yaml")).sort();
 
   // Each written file becomes one index row; `schemaRow` keeps a node's schema row after its
@@ -180,7 +218,12 @@ export async function extractPrompts(opts: ExtractOptions): Promise<ExtractResul
   const rows: Array<{ entry: PromptIndexEntry; schemaRow: boolean }> = [];
   const unmapped: UnmappedForm[] = [];
   const seenUnmapped = new Set<string>();
-  const writes: Array<{ file: string; body: string }> = [];
+  // Every write is collected before any is performed, so a name collision is found while the
+  // output directory is still untouched. `source` names the block the write came from, so the
+  // error can name both sides of the collision rather than only the file.
+  const writes: Array<{ file: string; body: string; source: string }> = [];
+  const usedOverrides = new Set<Override>();
+  const usedSchemaAdds = new Set<string>();
 
   for (const workflow of names) {
     const src = await readFile(path.join(opts.workflowsDir, workflow), "utf8");
@@ -232,8 +275,10 @@ export async function extractPrompts(opts: ExtractOptions): Promise<ExtractResul
       let schemaFile: string | undefined;
       if (outputFormat !== undefined) {
         schemaFile = `${nodeId}.schema.json`;
-        const schema = withRequiredAdded(outputFormat, opts.schemaRequiredAdd?.[nodeId]);
-        writes.push({ file: schemaFile, body: `${JSON.stringify(schema, null, 2)}\n` });
+        const requiredAdd = opts.schemaRequiredAdd?.[nodeId];
+        if (requiredAdd !== undefined) usedSchemaAdds.add(nodeId);
+        const schema = withRequiredAdded(outputFormat, requiredAdd);
+        writes.push({ file: schemaFile, body: `${JSON.stringify(schema, null, 2)}\n`, source: `${workflow}:${nodeId} (output_format)` });
       }
 
       const loopMap = childMap(item, "loop");
@@ -246,10 +291,10 @@ export async function extractPrompts(opts: ExtractOptions): Promise<ExtractResul
       // A standalone agent prompt.
       const promptSite = scalarSite(item, "prompt", src, lineOf);
       if (promptSite !== undefined) {
-        const r = rewriteVariables(promptSite.text, { nodeId }, overrides);
+        const r = rewriteVariables(promptSite.text, { nodeId }, overrides, usedOverrides);
         for (const form of r.unmapped) record(form);
         const file = `${nodeId}.md`;
-        writes.push({ file, body: r.text });
+        writes.push({ file, body: r.text, source: `${workflow}:${nodeId} (prompt)` });
         rows.push({
           schemaRow: false,
           entry: {
@@ -264,13 +309,13 @@ export async function extractPrompts(opts: ExtractOptions): Promise<ExtractResul
       // A loop body. The loop's own `fresh_context` decides the context, not the node's.
       const loopSite = scalarSite(loopMap, "prompt", src, lineOf);
       if (loopSite !== undefined && loopJs !== undefined) {
-        const r = rewriteVariables(loopSite.text, { nodeId }, overrides);
+        const r = rewriteVariables(loopSite.text, { nodeId }, overrides, usedOverrides);
         for (const form of r.unmapped) record(form);
         const file = `${nodeId}.md`;
         const loopContext = contextOf(asBoolean(loopJs["fresh_context"]), asString(loopJs["context"])) ?? nodeContext;
         const until = asString(loopJs["until"]);
         const maxIterations = asNumber(loopJs["max_iterations"]);
-        writes.push({ file, body: r.text });
+        writes.push({ file, body: r.text, source: `${workflow}:${nodeId} (loop.prompt)` });
         rows.push({
           schemaRow: false,
           entry: {
@@ -290,10 +335,10 @@ export async function extractPrompts(opts: ExtractOptions): Promise<ExtractResul
       // which gate this file belongs to — and is set on both gate rows.
       const messageSite = scalarSite(approvalMap, "message", src, lineOf);
       if (messageSite !== undefined) {
-        const r = rewriteVariables(messageSite.text, { nodeId }, overrides);
+        const r = rewriteVariables(messageSite.text, { nodeId }, overrides, usedOverrides);
         for (const form of r.unmapped) record(form);
         const file = `${nodeId}.gate.md`;
-        writes.push({ file, body: r.text });
+        writes.push({ file, body: r.text, source: `${workflow}:${nodeId} (approval.message)` });
         rows.push({
           schemaRow: false,
           entry: {
@@ -308,11 +353,11 @@ export async function extractPrompts(opts: ExtractOptions): Promise<ExtractResul
       // enclosing gate's id is what names the rejection result.
       const rejectSite = scalarSite(onRejectMap, "prompt", src, lineOf);
       if (rejectSite !== undefined) {
-        const r = rewriteVariables(rejectSite.text, { nodeId, gateId: nodeId }, overrides);
+        const r = rewriteVariables(rejectSite.text, { nodeId, gateId: nodeId }, overrides, usedOverrides);
         for (const form of r.unmapped) record(form);
         const file = `${nodeId}.reject.md`;
         const maxAttempts = onRejectJs ? asNumber(onRejectJs["max_attempts"]) : undefined;
-        writes.push({ file, body: r.text });
+        writes.push({ file, body: r.text, source: `${workflow}:${nodeId} (approval.on_reject.prompt)` });
         rows.push({
           schemaRow: false,
           entry: {
@@ -342,6 +387,19 @@ export async function extractPrompts(opts: ExtractOptions): Promise<ExtractResul
     }
   }
 
+  // Every collision is found before the first byte is written. A file name comes from the node id
+  // alone — no prefixing — so two nodes sharing an id across two workflows, or one node declaring
+  // both a `prompt` and a `loop.prompt`, would otherwise leave whichever ran last on disk and no
+  // trace of the other.
+  const byFile = new Map<string, string>();
+  for (const { file, source } of writes) {
+    const first = byFile.get(file);
+    if (first !== undefined) {
+      throw new Error(`two sources write ${JSON.stringify(file)}: ${first} and ${source}. File names come from the node id alone and no prefixing is done, so a node id must be unique across the workflows directory and a node may declare either a prompt or a loop body, not both.`);
+    }
+    byFile.set(file, source);
+  }
+
   for (const { file, body } of writes) {
     await writeFile(path.join(opts.outDir, file), body, "utf8");
   }
@@ -355,19 +413,54 @@ export async function extractPrompts(opts: ExtractOptions): Promise<ExtractResul
   const index = rows.map((r) => r.entry);
 
   await writeFile(path.join(opts.outDir, INDEX_FILE), `${JSON.stringify(index, null, 2)}\n`, "utf8");
-  return { index, unmapped };
+
+  // Stale files: what a previous extraction wrote that this one did not. Only under `force`, only
+  // at the top level, and only the shapes this program itself produces — a prompt, a gate message,
+  // a rejection prompt, a schema. README.md is never touched even though it matches `*.md`,
+  // because a prompts directory's README is written by a person, not by this program. index.json
+  // is always kept: this run has just rewritten it.
+  const removed: string[] = [];
+  if (opts.force === true) {
+    const keep = new Set<string>([INDEX_FILE, "README.md", ...index.map((e) => e.file)]);
+    const present = await readdir(opts.outDir, { withFileTypes: true });
+    const stale = present
+      .filter((d) => d.isFile())
+      .map((d) => d.name)
+      .filter((name) => !keep.has(name) && (name.endsWith(".md") || name.endsWith(".schema.json") || name === INDEX_FILE))
+      .sort();
+    for (const name of stale) {
+      await rm(path.join(opts.outDir, name));
+      removed.push(name);
+    }
+  }
+
+  // An override or a schemaRequiredAdd entry that never fired. Overrides first in the order the
+  // overrides file gave them, then schemaRequiredAdd node ids in key order, so the report is
+  // stable across runs.
+  const unused: UnusedEntry[] = [];
+  for (const override of overrides) {
+    if (usedOverrides.has(override)) continue;
+    unused.push({ kind: "override", nodeId: override.nodeId ?? "*", pattern: override.pattern });
+  }
+  for (const nodeId of Object.keys(opts.schemaRequiredAdd ?? {}).sort()) {
+    if (usedSchemaAdds.has(nodeId)) continue;
+    unused.push({ kind: "schemaRequiredAdd", nodeId });
+  }
+
+  return { index, unmapped, unused, removed };
 }
 
 // ---------------------------------------------------------------------------------------------
 // CLI
 
-const USAGE = "usage: extract-prompts --workflows <dir> --out <dir> [--overrides <file>] [--schema-required-add <nodeId>=<field>,...]";
+const USAGE = "usage: extract-prompts --workflows <dir> --out <dir> [--overrides <file>] [--schema-required-add <nodeId>=<field>,...] [--force]";
 
 interface ParsedArgs {
   workflows?: string;
   out?: string;
   overrides?: string;
   schemaRequiredAdd: Record<string, string[]>;
+  force: boolean;
 }
 
 /** `--schema-required-add outline-check=verdict,pass --schema-required-add other=x` — a chunk with
@@ -393,7 +486,7 @@ export function parseSchemaRequiredAdd(value: string, into: Record<string, strin
 }
 
 export function parseArgs(argv: string[]): ParsedArgs {
-  const parsed: ParsedArgs = { schemaRequiredAdd: {} };
+  const parsed: ParsedArgs = { schemaRequiredAdd: {}, force: false };
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i];
     const value = argv[i + 1];
@@ -401,6 +494,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     else if (flag === "--out" && value !== undefined) { parsed.out = value; i++; }
     else if (flag === "--overrides" && value !== undefined) { parsed.overrides = value; i++; }
     else if (flag === "--schema-required-add" && value !== undefined) { parseSchemaRequiredAdd(value, parsed.schemaRequiredAdd); i++; }
+    else if (flag === "--force") { parsed.force = true; }
     else throw new Error(`unrecognised argument ${JSON.stringify(flag ?? "")}\n${USAGE}`);
   }
   return parsed;
@@ -417,17 +511,28 @@ async function main(argv: string[]): Promise<number> {
     outDir: args.out,
     ...(args.overrides !== undefined ? { overridesFile: args.overrides } : {}),
     ...(Object.keys(args.schemaRequiredAdd).length > 0 ? { schemaRequiredAdd: args.schemaRequiredAdd } : {}),
+    ...(args.force ? { force: true } : {}),
   });
   for (const entry of result.index) {
     process.stdout.write(`${entry.file}\t${entry.kind}\t${entry.workflow}\t${entry.nodeId}\n`);
   }
   process.stdout.write(`${result.index.length} file(s) written to ${args.out}, plus ${INDEX_FILE}\n`);
+  for (const name of result.removed) process.stdout.write(`removed stale ${name}\n`);
+
+  let failed = false;
   if (result.unmapped.length > 0) {
+    failed = true;
     process.stderr.write(`${result.unmapped.length} unmapped variable form(s); every one needs an override or a plan decision:\n`);
     for (const u of result.unmapped) process.stderr.write(`  ${u.file}\t${u.nodeId}\t${u.form}\n`);
-    return 1;
   }
-  return 0;
+  if (result.unused.length > 0) {
+    failed = true;
+    process.stderr.write(`${result.unused.length} instruction(s) never fired; each is a typo or a rule that has gone stale:\n`);
+    for (const u of result.unused) {
+      process.stderr.write(`  ${u.kind}\t${u.nodeId}\t${u.pattern ?? ""}\n`);
+    }
+  }
+  return failed ? 1 : 0;
 }
 
 const invokedAs = process.argv[1];

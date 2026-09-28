@@ -4,7 +4,9 @@
  *  load-bearing at three points. Overrides run first because an override's `pattern` is a literal
  *  fragment of the *original* Archon text: a pattern spanning a form the rules have already
  *  rewritten would no longer match, and an override is also the only way to retire a form the
- *  rules cannot map, so it must delete the `$` before the unmapped scan can see it. The
+ *  rules cannot map, so it must delete the `$` before the unmapped scan can see it. An override's
+ *  pattern is a literal but is matched only at a boundary, so a mistyped one rewrites nothing
+ *  rather than half a variable. The
  *  sentence-period rule runs before the plain `$setup.output` rule so that the rule written for
  *  the sentence period is the rule that claims those sites, rather than their coming out right by
  *  accident of a word boundary. Both of those run before the `$<node>.output.<field>` rule,
@@ -23,8 +25,9 @@ export interface RewriteContext {
 }
 
 /** A literal find-and-replace applied before the rules. `pattern` is matched literally, never as a
- *  regular expression. An override with no `nodeId`, or with `nodeId` `"*"`, applies to every
- *  prompt in every workflow; any other `nodeId` applies only to the node it names. */
+ *  regular expression, and only at a boundary: see `overrideRegExp`. An override with no `nodeId`,
+ *  or with `nodeId` `"*"`, applies to every prompt in every workflow; any other `nodeId` applies
+ *  only to the node it names. */
 export interface Override {
   nodeId?: string;
   pattern: string;
@@ -58,18 +61,43 @@ const RESULT = /\$([a-z][a-z0-9-]*)\.output\b/g;
  *  never matches either, because the class after the `$` admits only a letter or an underscore. */
 const LEFTOVER = /\$(?!\{)[A-Za-z_][\w.-]*/g;
 
-export function rewriteVariables(text: string, ctx: RewriteContext, overrides: Override[]): RewriteResult {
+/** Escapes a literal so it can be embedded in a regular expression. */
+function escapeLiteral(literal: string): string {
+  return literal.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** An override's pattern is a literal, but it matches only at a boundary: the character before it
+ *  must be neither a word character nor a `$`, and the character after it must not be a word
+ *  character.
+ *
+ *  This is what stops a mistyped override from corrupting a prompt. A pattern one character short
+ *  of the form it means to retire — "The full request is: $ARGUMENT" against the text
+ *  "The full request is: $ARGUMENTS" — would otherwise match the first thirty characters and leave
+ *  a bare "S" behind, a corruption no later rule can see and no reader would expect. With the
+ *  trailing lookahead the pattern matches nothing at all, and the extractor reports it as an
+ *  override that was never used. The leading `$` in the lookbehind does the same job from the other
+ *  side: a pattern of "ARGUMENTS" must not match inside "$ARGUMENTS" and strand the sigil. */
+function overrideRegExp(pattern: string): RegExp {
+  return new RegExp(`(?<![\\w$])${escapeLiteral(pattern)}(?!\\w)`, "g");
+}
+
+/** @param used - when given, every override that matched at least once is added to it. The caller
+ *  uses that to report an override that never fired, which is almost always a typo in a pattern or
+ *  a node id rather than a deliberately dormant rule. */
+export function rewriteVariables(text: string, ctx: RewriteContext, overrides: Override[], used?: Set<Override>): RewriteResult {
   let out = text;
 
   // Rule 1. Longest pattern first, so that when two patterns for the same node overlap the longer
-  // literal claims its match before a shorter one can split it. split/join and not replace(), so
-  // the pattern is a literal throughout: a `$` in a replacement string is a substitution directive
-  // to String.replace, and every pattern here is full of them.
+  // literal claims its match before a shorter one can split it.
   const applicable = overrides.filter((o) => o.nodeId === undefined || o.nodeId === "*" || o.nodeId === ctx.nodeId);
   const ordered = [...applicable].sort((a, b) => b.pattern.length - a.pattern.length || (a.pattern < b.pattern ? -1 : a.pattern > b.pattern ? 1 : 0));
   for (const override of ordered) {
-    if (override.pattern === "") continue; // splitting on "" would explode the text into characters.
-    out = out.split(override.pattern).join(override.replacement);
+    if (override.pattern === "") continue; // an empty pattern would match at every position.
+    let matched = false;
+    // A function replacement, not a string one: `$` in a replacement is a substitution directive
+    // to String.replace, and these replacements carry `{{...}}` and sometimes a literal `$`.
+    out = out.replace(overrideRegExp(override.pattern), () => { matched = true; return override.replacement; });
+    if (matched) used?.add(override);
   }
 
   // Rules 2 through 4: the episode id.

@@ -1,0 +1,11 @@
+name: one
+nodes:
+  - id: twice
+    model: medium
+    prompt: |
+      A standalone prompt for $setup.output.
+    loop:
+      prompt: |
+        A loop body for $setup.output.
+      until: DONE
+      max_iterations: 2

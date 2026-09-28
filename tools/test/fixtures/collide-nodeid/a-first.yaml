@@ -1,0 +1,6 @@
+name: a-first
+nodes:
+  - id: shared
+    model: medium
+    prompt: |
+      The first workflow's take on $setup.output.
