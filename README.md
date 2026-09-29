@@ -491,7 +491,7 @@ A run restarts by replaying its log; there is no separate state file to reconcil
 
 ## Scripts
 
-`scripts/` holds the pipeline's deterministic steps: twenty-three Python programs the engine runs
+`scripts/` holds the pipeline's deterministic steps: twenty-five Python programs the engine runs
 as argv arrays, never as shell strings. **A script belongs to the engine, and the show it is run
 for reaches it through argv and `showrunner.json`** — no script contains a show's name.
 
@@ -549,10 +549,30 @@ Every script follows one convention, which `scripts/lib/showconfig.py`'s module 
   partway — see "The resume contract" below — so a re-run skips each output already on disk:
   `tts-generate.py` skips a segment whose WAV exists, `image-generate.py` prints
   `skip <id> (exists)`, and `nano-banana-generate.py` records `SKIPPED-exists`.
+- **A shot whose `source` is `showrunner` is the showrunner's to make**; `image-generate.py` and
+  `nano-banana-generate.py` leave it alone and `image-sheet.py` says so.
+
+Two of the programs exist for the pipeline's own bookkeeping rather than for a craft step:
+
+- **`git-commit.py <episode> --message <text> [--show-root <path>] -- <path>...`** is the
+  pipeline's four commit steps. It stages each listed path **that exists** (`git add -A -- <path>`,
+  so a deletion under a listed directory leaves the tree in the same commit) and commits only when
+  the index differs from HEAD, printing `COMMIT_OK <short sha>` or `COMMIT_SKIPPED nothing staged`
+  and exiting 0 either way. Both halves are load-bearing: `canon-commit` lists a canon ledger that
+  an episode with no deviations never has, and a commit step declares no `inputs`, so it is never
+  served from cache and a resumed run spawns it a second time for one commit.
+- **`canon-ledger.py <episode> --pass <outline|script> --run <runId> --rows <json-array>`** writes
+  the canon reviewer's deliberate deviations to `<episodesDir>/<episodeId>/canon-ledger.md`,
+  creating the file with the header shown under "The canon ledger" above when there is a first row
+  to write, and printing `LEDGER_OK <new> new rows, <total> total`. The reviewer is given `Read`,
+  `Glob` and `Grep` only and returns the rows in its verdict; this step does the writing. A row
+  whose Where and deviation cells already appear is not appended again — the key excludes Evidence
+  deliberately, because the Evidence cell carries `(<pass> pass, run <runId>)` and would never
+  match across the outline pass and the script pass of one deviation.
 
     cd scripts && uv run pytest
 
-runs the hermetic suite: twenty-one test files under `scripts/tests/`, none of which synthesizes
+runs the hermetic suite: twenty-three test files under `scripts/tests/`, none of which synthesizes
 audio, generates an image or renders anything. `scripts/pyproject.toml` lists the union of every
 script's inline dependency block once and sets `package = false`, so uv treats the directory as a
 virtual project and installs only the dependencies; each script keeps its own inline

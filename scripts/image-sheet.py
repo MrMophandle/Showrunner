@@ -7,6 +7,10 @@ The showrunner's shot list at a glance: every image, who renders it (the local
 engine vs Nano Banana), whether it's in place yet, and — for the Nano Banana
 shots — a clean brief to paste into Nano Banana. Standard artifact per episode.
 
+A shot whose `source` is `showrunner` carries " — made by hand by the showrunner"
+on its line, in both lists: neither generator will make it, so its missing PNG is
+work waiting on a person rather than a render that failed.
+
 Usage: image-sheet.py <episode> [--show-root <path>]
 Writes Production/<ep>/images/IMAGE-SHEET.md.
 """
@@ -39,6 +43,19 @@ def subject(prompt, pre=None, post=None):
     s = post.sub("", s) if post else s
     s = s.strip().rstrip(",")
     return (s[:1].upper() + s[1:]) if s else (prompt or "")[:120]
+
+
+BY_HAND = " — made by hand by the showrunner"
+
+
+def by_hand(shot):
+    """The note appended to the line of a shot whose `source` is "showrunner"; else "".
+
+    Both generators skip such a shot, so its absent PNG is work waiting on a person rather than a
+    render that failed. The sheet is the only place the showrunner reads that distinction, so it
+    is said on the shot's own line in both lists rather than in a legend at the top.
+    """
+    return BY_HAND if shot.get("source") == "showrunner" else ""
 
 def main():
     # The engine runs this with the show root as the working directory; --show-root <path> is for
@@ -90,7 +107,7 @@ def main():
         refs = ", ".join(s.get("refs", [])) or "—"
         L.append(s["id"] + ".png")                       # bare filename, own line — easy copy
         L.append("")
-        L.append(f"refs: **{refs}**  ·  {s.get('scene','')}")
+        L.append(f"refs: **{refs}**  ·  {s.get('scene','')}" + by_hand(s))
         L.append("")
         L.append("> " + (s.get("brief", "").strip() or "*(no brief)*").replace("\n", "\n> "))
         L.append("")
@@ -99,7 +116,7 @@ def main():
         L.append("")
         for s in done:
             refs = ", ".join(s.get("refs", [])) or "—"
-            L.append(f"- ✅ {s['id']}.png  ·  refs: {refs}  ·  {s.get('scene','')}")
+            L.append(f"- ✅ {s['id']}.png  ·  refs: {refs}  ·  {s.get('scene','')}" + by_hand(s))
         L.append("")
 
     # ── ENGINE SHOTS ──────────────────────────────────────────────────────
@@ -112,7 +129,8 @@ def main():
     L.append("|---|------|---------|")
     for s in local:
         mark = "✅" if present(s["id"]) else "⬜"
-        L.append(f"| {mark} | `{s['id']}.png` | {subject(s.get('prompt',''), pre, post)[:110]} |")
+        L.append(f"| {mark} | `{s['id']}.png` | "
+                 f"{subject(s.get('prompt',''), pre, post)[:110]}{by_hand(s)} |")
     L.append("")
 
     out = f"{base}/IMAGE-SHEET.md"

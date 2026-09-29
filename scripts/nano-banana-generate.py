@@ -8,7 +8,8 @@ its PNG: condition on the subject's locked reference sheet + the 2 newest
 approved pile stills (the show's visual.castingPileDir), generate at 2K 16:9,
 vision-audit via Claude headless, retry with corrective notes (<=3 attempts). A
 shot whose PNG exists is skipped — a hand-made shot always wins (delete a PNG or
-use --only to re-roll).
+use --only to re-roll). A shot whose `source` is `showrunner` is never generated;
+the showrunner drops it in.
 
 Everything that makes a frame THIS show's frame comes from the show's config and
 canon, never from this file: the reference index (visual.refs), the photographic
@@ -401,6 +402,18 @@ def check_no_collective_populators(shots: list[dict], phrases, style_path: str) 
     )
 
 
+def exit_code_for(tag: str) -> int:
+    """The process exit code for a run's NANO_* tag.
+
+    NANO_PARTIAL exits 0, not 1. The tag is this step's RESULT, and the nano-banana gate after it
+    shows the partial batch to the showrunner, who decides whether it is good enough; a non-zero
+    exit would fail the step first and the gate would never open to ask. This is the rule the
+    bash node that preceded the engine enforced with `grep -qE 'NANO_(OK|PARTIAL)'` over the
+    captured output — a run that printed no tag at all is the only failure.
+    """
+    return 0 if tag in ("NANO_OK", "NANO_PARTIAL") else 1
+
+
 def run(ep, cfg, root, only=None, notes="", no_audit=False):
     """Generate every missing character shot for one episode. `cfg` is the show's config and
     `root` its absolute directory, from which every show path in the config is resolved."""
@@ -417,7 +430,17 @@ def run(ep, cfg, root, only=None, notes="", no_audit=False):
     base = f"Production/{ep}/images"
     doc = json.load(open(f"{base}/prompts.json"))
     bible = load_bible(bible_path)
-    shots = [s for s in doc["shots"] if s.get("type") == "character"]
+    # A character shot whose `source` is "showrunner" is the showrunner's to make by hand, so it
+    # never enters `shots`: no API call is spent on it, no audit judges it, and it takes no result
+    # row. The engine's `showrunner-images` guard is what holds the line until its PNG is on disk.
+    shots = [s for s in doc["shots"] if s.get("type") == "character"
+             and s.get("source", "pipeline") != "showrunner"]
+    by_hand = [str(s.get("id", "?")) for s in doc["shots"]
+               if s.get("type") == "character" and s.get("source", "pipeline") == "showrunner"]
+    if by_hand:
+        # Say it. Silence reads as loss: a run that generates two of five character shots and
+        # says nothing about the other three looks like a run that dropped them.
+        print(f"  {len(by_hand)} showrunner-made shot(s) left alone: {', '.join(by_hand)}")
 
     if only:
         valid_ids = {s["id"] for s in shots}
@@ -538,7 +561,7 @@ def run(ep, cfg, root, only=None, notes="", no_audit=False):
         else:
             tag = "NANO_OK" if ok_n == len(active) else "NANO_PARTIAL"
             print(f"{tag} {ok_n}/{len(active)}")
-        rc = 0 if tag == "NANO_OK" else 1
+        rc = exit_code_for(tag)
 
     return rc
 
