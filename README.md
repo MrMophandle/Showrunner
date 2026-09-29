@@ -83,18 +83,20 @@ root. Both ids are validated before they become that path. Every event carries `
 optional `stepId`, a `kind`, and a `payload`; the engine stamps `ts` itself, so a caller cannot
 backdate an entry.
 
-There are exactly sixteen kinds. The engine core writes thirteen of them; the three `agent_*`
+There are exactly eighteen kinds. The engine core writes fifteen of them; the three `agent_*`
 kinds are the agent executor's obligation.
 
 | Kind | `stepId` | Payload the engine writes |
 |---|---|---|
 | `run_started` | no | `pipeline`, `episodeId`, and `trigger` when the caller supplied one |
 | `run_finished` | no | `status`: `"completed"` or `"failed"` |
+| `run_resumed` | no | `by` when the caller named one — written by `resumeRun` or by `resetSteps` on a finished run: the run is no longer finished, and failed and swept steps are pending again |
 | `step_started` | yes | `kind`; a script adds `argv` and `inputHashes`; an agent adds `inputHashes`; a loop adds `body`, `until`, `max`; a gate's fix agent adds `rejectionOf` and `attempt` |
 | `step_completed` | yes | a guard writes `result`; a script writes `inputHashes` and `outputHashes`; an agent writes those two plus `result` and `toolCalls`; a loop writes `result` and `iterations`; a gate's fix agent writes `result` and `toolCalls` |
 | `step_failed` | yes | `error` |
 | `step_skipped` | yes | `reason` — `"dependency failed: <id>"`, `"dependency skipped: <id>"`, or `"when: false"` |
 | `step_cached` | yes | `inputHashes`, `outputHashes`, and `result` when the cached completion recorded one |
+| `step_reset` | yes | `by`, and `attempt` when a gate wrote it — written by a gate rejection (`by` is the gate) or by `resetSteps` (`by` is `operator`): the step returns to pending and its result leaves `ctx.results` |
 | `step_progress` | yes | `done`, `total`, `unit`, and an optional `message` |
 | `script_line` | yes | `stream` (`"stdout"` or `"stderr"`) and `line` |
 | `agent_query` | yes | the prompt file, model, allowlist and context policy the query ran with — written by the agent executor |
@@ -327,6 +329,121 @@ the reason string is load-bearing and lives as the exported constant `BYPASS_REA
 The twenty-one stages (`NEEDS_IDEA` through `COMPLETE`) are derived on top of the statuses by
 `deriveStage` in `engine/src/stages.ts`.
 
+## The episode pipeline
+
+**`episodePipeline({ show, episodeId, engineRoot })` builds the seventy-three-step pipeline that
+takes one episode from its premise to a committed canon update** (`engine/src/pipelines/episode.ts`).
+One run covers one episode, and the four Archon workflows are four phases of a single step list: the
+**write** phase (premise, outline, canon review, draft loop, the six-reviewer panel, publish copy),
+the **assets** phase (TTS script, casting, synthesis, three QC passes, mix, shot list, images), the
+**assemble** phase (NAS check, timeline, render, master, finalize, publish kit), and the **canon**
+phase (propose, diff, commit). The spec's ordering rules are therefore dependency edges rather than
+four separate runs, and one log holds the episode's whole history. Every path and name the factory
+produces comes from the show config or the episode id; the engine repository names no show.
+`EPISODE_STAGE_MAP`, exported beside the factory, is what `deriveStage` reads to turn a run's log
+into a stage.
+
+### The eight gates
+
+Each gate opens a `DRAFT_` stage and waits for the showrunner. A rejection runs the gate's fix
+agent, resets the steps named below **and everything downstream of them**, re-runs those, and
+reopens the gate at the next attempt; `<gate>:rejections` keeps every note the gate has received.
+
+| Gate | Opens | Fix agent | Rejection re-runs | Attempts |
+|---|---|---|---|---|
+| `outline-gate` | `DRAFT_OUTLINE` | `outline-gate-fix` | `hand-edits-outline` | 10 |
+| `script-gate` | `DRAFT_SCRIPT` | `script-gate-fix` | `hand-edits-script` and the six reviewers (`tone-check`, `flow-check`, `character-check`, `structure-check`, `environment-check`, `repetition-check`) | 10 |
+| `casting-gate` | `DRAFT_CASTING` | `casting-gate-fix` | `validate-manifest` | 10 |
+| `audio-gate` | `DRAFT_AUDIO` | `audio-gate-fix` | `tts-generate` | 5 |
+| `nano-banana-gate` | `DRAFT_IMAGES` | `nano-banana-gate-fix` | `nano-banana-generate`, `image-generate` | 10 |
+| `image-gate` | `DRAFT_IMAGES` | `image-gate-fix` | `image-generate`, `nano-banana-generate` | 5 |
+| `final-gate` | `DRAFT_ASSEMBLY` | `final-gate-fix` | `build-timeline` | 2 |
+| `canon-gate` | `DRAFT_CANON` | `canon-gate-fix` | `canon-diff` | 10 |
+
+`script-gate`'s closure is the one worth reading twice. `canon-review-script` depends on
+`hand-edits-script`, so the rejection pulls it in and it re-reviews with the rejection note in
+scope; `draft` is *upstream* of every named step and is never reset, so a rejected script is fixed
+and re-reviewed rather than redrafted. `canon-gate` is the one gate carrying a `when`: a canon
+phase whose diff is `NO_CHANGES` bypasses it, which is why `EPISODE_STAGE_MAP` keys `CANON` on
+`canon-commit` rather than on the gate.
+
+### The three guards that stop the line
+
+| Guard | Fails with | What clears it |
+|---|---|---|
+| `premise` | `NEEDS_IDEA: write <episodesDir>/<episodeId>/premise.md` | Write that file with something in it, then launch the run again — nothing but the previous-episode check has run, so there is no work to resume. |
+| `refs-ready` | `NEEDS_REFS: …`, one `;`-separated clause per missing reference | Supply what each clause names — a bible entry, a reference image, a `LOCKED` voice, a WAV — then `resumeRun`. |
+| `showrunner-images` | `NEEDS_IMAGES: drop in <shot ids> under <productionDir>/<episodeId>/images/ and resume` | Put each named PNG at `<productionDir>/<episodeId>/images/<shotId>.png`, then `resumeRun`. |
+
+Each of the three has a stage of its own — `NEEDS_IDEA`, `NEEDS_REFS`, `NEEDS_IMAGES` — derived
+from disk by `episodeNeeds` rather than from the log, so the dashboard shows the blockage even
+though the run is sitting failed. Three further guards stop the line without a `NEEDS_` stage:
+`previous-episode` (rule 1.3 — episode N+1 does not start until episode N's run log shows a
+completed canon update), `nas-mounted` (checked before the render so a finalize cannot fail after
+four hours of rendering), and `canon-clean` (the canon tree has uncommitted changes that the
+propose step would otherwise bury).
+
+### The outline's `## Cast` section
+
+**`refs-ready` reads the outline's `## Cast` section and nothing else**, because that section is
+the only thing that says who is in an episode before a script exists. One entry per line:
+
+    ## Cast
+    - Vale (recurring, speaks)
+    - Harbor (location)
+    - Dock Hand Pim (guest, speaks)
+
+The grammar is `- <Name> (<tag>, <tag>)`. Tags are lowercased; a line outside the section is
+ignored, and so is a line inside it that does not match. Four tags are load-bearing
+(`engine/src/needs.ts`): `recurring` or `location` demands an entry in the visual bible whose `ref`
+image is on disk; `recurring` with `speaks` also demands a voice in the voice cast that is `LOCKED`
+and whose WAV is on disk; `guest` with `speaks` demands a WAV at
+`<productionDir>/<episodeId>/guest-refs/<slug>*.wav`. Names are matched as slugs, so `the Warden`
+finds either `warden` or `the-warden`. An outline with no `## Cast` section reports nothing — the
+section's absence is the canon reviewer's finding, not this probe's.
+
+### The `source` field on shots
+
+`visual-direction` writes `<productionDir>/<episodeId>/images/prompts.json`, whose `shots` array
+carries one object per shot. **A shot whose `source` is `"showrunner"` is the showrunner's to make
+by hand.** The engine enforces that with the `showrunner-images` guard, which holds the line until
+the PNG is on disk at `<productionDir>/<episodeId>/images/<shotId>.png`; the generators are to skip
+such a shot rather than spend an hour of GPU on it. Every other shot is generated —
+`image-generate.py` takes the ambient shots and `nano-banana-generate.py` the character ones.
+
+### The canon ledger
+
+`canon-review-outline` and `canon-review-script` return a `deviations` array: departures from the
+canon store whose provenance is the showrunner's rather than an agent's. `canon-ledger-outline` and
+`canon-ledger-script` append those rows to **`<episodesDir>/<episodeId>/canon-ledger.md`**:
+
+    | # | Where | The deviation | Canon it departs from | Provenance | Evidence | Disposition |
+    |---|---|---|---|---|---|---|
+    | 1 | outline.md beat 7 | the crew is four, not six | Canon/characters/Vale/vale.md:18 | premise | Episodes/s02e01/premise.md (outline pass, run r1) | PENDING |
+
+The Evidence cell carries the pass and the run id that recorded the row, and Disposition starts at
+`PENDING`; the end-of-episode canon moment turns each accepted row into a canon change and drops
+the rest. A row whose Where and deviation already appear is not appended again, so the outline pass
+and the script pass of one run do not duplicate each other.
+
+### The operator's two recovery moves
+
+- **`resumeRun(log, runId, by?)`** reopens a failed run. The failed step and everything the failure
+  swept become pending again; completed steps keep their status, so no agent step is paid for
+  twice. This is what clears `refs-ready` and `showrunner-images` once the missing file is on disk.
+- **`resetSteps(pipeline, log, runId, stepIds, by?)`** is "re-run from here": the named steps and
+  everything downstream of them return to pending, and a finished run is reopened first. A script
+  step whose inputs and outputs are unchanged is still served from cache. On a run with an open
+  gate the gate stays open with its original message — answer it or reset, not both at once.
+
+**A prompt that writes `{{season}}` fails for a production id the show's `airMap` does not place.**
+An aired id (`s02e01`) carries its season; a production id (`ep98`) has one only if `airMap` gives
+it a slot. The variable is resolved eagerly but is not required, so the failure lands at the step
+whose prompt names it rather than at load time. A real run on such an id therefore needs an
+`airMap` entry for it or a prompt that does not name `{{season}}`. The same id shapes the pipeline
+quietly: without a season there is no `<canonDir>/season-<n>.md` in the canon spine, and the mix is
+named `episode.wav` rather than by the show's pattern.
+
 ## The progress contract
 
 A script reports progress by printing one structured line to stdout per unit of work:
@@ -364,6 +481,13 @@ A run restarts by replaying its log; there is no separate state file to reconcil
   changed input is recorded as `input_changed`; a changed output simply re-runs the step.
 - **A run with an open gate resumes waiting at that gate**, and answering it requires the log's
   own run id.
+- **A gate rejection re-runs the steps the gate names** (`rerunOnReject`) and everything
+  downstream of them, after the fix agent, before the gate reopens; the reset is recorded once
+  per rejection, so a crash between the resets and the re-runs does not reset a second time.
+- **A failed run is resumed with `resumeRun`**, which continues from the failed step without
+  re-running any completed agent step.
+- **`resetSteps` is the operator's "re-run from here"**; on a run with an open gate it leaves the
+  gate open with its original message.
 
 ## Scripts
 
