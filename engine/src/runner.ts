@@ -316,7 +316,7 @@ async function runAgentStep(step: AgentStep, ctx: RunContext, emit: Emit, execut
   await emit("step_started", { kind: "agent", inputHashes });
   const r = await executors.agent(step, ctx, emit);
   if (!r.ok) {
-    await emit("step_failed", { error: r.error });
+    await emit("step_failed", { error: r.error, toolCalls: r.toolCalls ?? 0 });
     return { kind: "failed", error: r.error };
   }
   const outputHashes = await hashFiles(ctx.showRoot, step.outputs ?? []);
@@ -369,14 +369,16 @@ async function runGateStep(
       const notes = lastAnswer.payload["notes"];
       const fixCtx: RunContext = { ...ctx, results: { ...ctx.results, [`${step.id}:rejection`]: notes ?? "" } };
       const fixEmit = emitFor(step.onReject.id);
-      await fixEmit("step_started", { kind: "agent", rejectionOf: step.id, attempt: attempts });
+      const fixInputs = await hashFiles(ctx.showRoot, step.onReject.inputs ?? []);
+      await fixEmit("step_started", { kind: "agent", rejectionOf: step.id, attempt: attempts, inputHashes: fixInputs });
       const r = await executors.agent(step.onReject, fixCtx, fixEmit);
       if (!r.ok) {
-        await fixEmit("step_failed", { error: r.error });
+        await fixEmit("step_failed", { error: r.error, toolCalls: r.toolCalls ?? 0 });
         await emit("step_failed", { error: `fix agent failed: ${r.error}` });
         return { kind: "failed", error: `fix agent failed: ${r.error}` };
       }
-      await fixEmit("step_completed", { result: r.verdict ?? r.text, toolCalls: r.toolCalls });
+      const fixOutputs = await hashFiles(ctx.showRoot, step.onReject.outputs ?? []);
+      await fixEmit("step_completed", { result: r.verdict ?? r.text, toolCalls: r.toolCalls, inputHashes: fixInputs, outputHashes: fixOutputs });
     }
     // The rejection invalidates the named steps' work. Recorded once per rejection: a crash after
     // these writes and before the re-runs finish must not reset again on resume, or the re-runs
@@ -416,17 +418,32 @@ async function runLoopStep(
     if (e && e.stepId === step.id && e.kind === "step_started") lastStart = i;
   }
   let done = 0;
+  let lastIteration: Event | undefined;
+  let lastText = "";
   for (let i = lastStart + 1; i < events.length; i++) {
     const e = events[i];
-    if (e && e.stepId === step.id && e.kind === "loop_iteration") done++;
+    if (!e || e.stepId !== step.id) continue;
+    if (e.kind === "loop_iteration") { done++; lastIteration = e; }
+    if (e.kind === "agent_result" && typeof e.payload["text"] === "string") lastText = e.payload["text"];
   }
 
-  await emit("step_started", { kind: "loop", body: step.body.id, until: step.until, max: step.maxIterations });
+  const inputHashes = await hashFiles(ctx.showRoot, step.inputs ?? []);
+  await emit("step_started", { kind: "loop", body: step.body.id, until: step.until, max: step.maxIterations, inputHashes });
+
+  // A crash between the final loop_iteration and step_completed leaves a loop whose sentinel
+  // already fired. Resuming it as "done iterations, sentinel unseen" would run the body again or,
+  // at the cap, fail a loop that had in fact finished — hours of drafting lost to a lost write.
+  if (lastIteration?.payload["sentinel"] === true) {
+    const outputHashes = await hashFiles(ctx.showRoot, step.outputs ?? []);
+    await emit("step_completed", { inputHashes, outputHashes, result: lastText, iterations: done, resumedAfterSentinel: true });
+    return { kind: "completed", result: lastText };
+  }
+
   for (let iteration = done + 1; iteration <= step.maxIterations; iteration++) {
     const iterCtx: RunContext = { ...ctx, results: { ...ctx.results, [`${step.body.id}:iteration`]: iteration } };
     const r = await executors.agent(step.body, iterCtx, emit);
     if (!r.ok) {
-      await emit("loop_iteration", { iteration, max: step.maxIterations, sentinel: false, toolCalls: 0, error: r.error });
+      await emit("loop_iteration", { iteration, max: step.maxIterations, sentinel: false, toolCalls: r.toolCalls ?? 0, error: r.error });
       await emit("step_failed", { error: `iteration ${iteration}: ${r.error}` });
       return { kind: "failed", error: `iteration ${iteration}: ${r.error}` };
     }
@@ -434,7 +451,8 @@ async function runLoopStep(
     await emit("loop_iteration", { iteration, max: step.maxIterations, sentinel, toolCalls: r.toolCalls });
     if (step.progress) await emit("step_progress", { ...(await step.progress(iterCtx)) });
     if (sentinel) {
-      await emit("step_completed", { result: r.text, iterations: iteration });
+      const outputHashes = await hashFiles(ctx.showRoot, step.outputs ?? []);
+      await emit("step_completed", { inputHashes, outputHashes, result: r.text, iterations: iteration });
       return { kind: "completed", result: r.text };
     }
   }

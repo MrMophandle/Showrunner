@@ -264,4 +264,15 @@ describe("rerunOnReject", () => {
     await run({ pipeline, ctx, log, executors });
     expect(calls).toEqual(["make", "make"]);
   });
+  it("records the fix agent's output hashes on its completion", async () => {
+    const { log, ctx, executors } = await setup();
+    const fix: AgentStep = { kind: "agent", id: "fix", promptFile: "fix.md", model: "m", allowedTools: [], context: "fresh", outputs: ["draft.md"] };
+    const pipeline: Pipeline = { name: "p", steps: [{ kind: "gate", id: "g", message: () => "?", onReject: fix }] };
+    await run({ pipeline, ctx, log, executors });
+    await answerGate(log, "r1", "g", { approved: false, notes: "n" });
+    await writeFile(path.join(ctx.showRoot, "draft.md"), "edited by the fix agent");
+    await run({ pipeline, ctx, log, executors });
+    const done = (await log.read()).find((e) => e.kind === "step_completed" && e.stepId === "fix");
+    expect(typeof (done?.payload["outputHashes"] as Record<string, unknown>)["draft.md"]).toBe("string");
+  });
 });

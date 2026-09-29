@@ -270,12 +270,12 @@ export function createAgentExecutor(opts: AgentExecutorOptions): Executors["agen
     const r = failure !== undefined ? undefined : result;
     let outcome: AgentOutcome;
     if (r === undefined) {
-      outcome = { ok: false, error: failure ?? "query ended without a result message" };
+      outcome = { ok: false, error: failure ?? "query ended without a result message", toolCalls };
     } else if (r.subtype === undefined) {
-      outcome = { ok: false, error: "result message with no subtype" };
+      outcome = { ok: false, error: "result message with no subtype", toolCalls };
     } else if (r.subtype === "success") {
       if (step.schema && r.structured_output === undefined) {
-        outcome = { ok: false, error: "success without structured output" };
+        outcome = { ok: false, error: "success without structured output", toolCalls };
       } else {
         outcome = {
           ok: true, text: r.result ?? "", toolCalls,
@@ -284,7 +284,7 @@ export function createAgentExecutor(opts: AgentExecutorOptions): Executors["agen
       }
     } else {
       const errors = r.errors ?? [];
-      outcome = { ok: false, error: errors.length ? `${r.subtype}: ${errors.join("; ")}` : r.subtype };
+      outcome = { ok: false, error: errors.length ? `${r.subtype}: ${errors.join("; ")}` : r.subtype, toolCalls };
     }
 
     // 9: agent_result.

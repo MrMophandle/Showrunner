@@ -25,7 +25,7 @@ describe("agent timeouts", () => {
     const rec = recorder();
     const t0 = Date.now();
     const r = await createAgentExecutor({ query, promptsDir })(step({ timeoutMs: 100 }), ctx(), rec.emit);
-    expect(r).toEqual({ ok: false, error: "timeout after 100ms" });
+    expect(r).toEqual({ ok: false, error: "timeout after 100ms", toolCalls: 0 });
     expect(Date.now() - t0).toBeLessThan(2000);
     expect(controller!.signal.aborted).toBe(true);
     expect(returned).toBe(true);
@@ -43,7 +43,7 @@ describe("agent timeouts", () => {
     };
     const t0 = Date.now();
     const r = await createAgentExecutor({ query, promptsDir })(step({ idleTimeoutMs: 200 }), ctx(), recorder().emit);
-    expect(r).toEqual({ ok: false, error: "idle timeout after 200ms" });
+    expect(r).toEqual({ ok: false, error: "idle timeout after 200ms", toolCalls: 0 });
     expect(controller!.signal.aborted).toBe(true);
     // The message at ~60 ms rearms the idle clock, so the fire lands at ~260 ms rather than ~200.
     // Without the reset the fire would land at ~200 ms and this assertion would fail; a 60 ms timer
@@ -69,7 +69,7 @@ describe("agent timeouts", () => {
       yield { type: "result", subtype: "success", result: "late", session_id: "s", num_turns: 1, duration_ms: 1, total_cost_usd: 0 };
     };
     const r = await createAgentExecutor({ query, promptsDir })(step({ timeoutMs: 80 }), ctx(), recorder().emit);
-    expect(r).toEqual({ ok: false, error: "timeout after 80ms" });
+    expect(r).toEqual({ ok: false, error: "timeout after 80ms", toolCalls: 0 });
   });
 
   it("a timeout keeps the metadata of a result that arrived before the clock fired", async () => {
@@ -83,7 +83,7 @@ describe("agent timeouts", () => {
     };
     const rec = recorder();
     const r = await createAgentExecutor({ query, promptsDir })(step({ timeoutMs: 50 }), ctx(), rec.emit);
-    expect(r).toEqual({ ok: false, error: "timeout after 50ms" });
+    expect(r).toEqual({ ok: false, error: "timeout after 50ms", toolCalls: 0 });
     expect(rec.events.at(-1)!.kind).toBe("agent_result");
     expect(rec.events.at(-1)!.payload).toMatchObject({ ok: false, error: "timeout after 50ms", costUsd: 0.42, subtype: "success", numTurns: 2, durationMs: 12, sessionId: "s" });
   });
@@ -108,7 +108,7 @@ describe("agent timeouts", () => {
       if (kind === "agent_tool_call") await new Promise((r) => setTimeout(r, 40));
     };
     const r = await createAgentExecutor({ query, promptsDir })(step({ timeoutMs: 10, allowedTools: ["Read"] }), ctx(), emit);
-    expect(r).toEqual({ ok: false, error: "timeout after 10ms" });
+    expect(r).toEqual({ ok: false, error: "timeout after 10ms", toolCalls: 1 });
   });
 
   it("an emit that rejects on agent_tool_call fails the step as a log write, not a query failure", async () => {
@@ -123,7 +123,7 @@ describe("agent timeouts", () => {
       if (kind === "agent_tool_call") throw new Error("ENOSPC: no space left on device");
     };
     const r = await createAgentExecutor({ query, promptsDir })(step({ allowedTools: ["Read"] }), ctx(), emit);
-    expect(r).toEqual({ ok: false, error: "log write failed: ENOSPC: no space left on device" });
+    expect(r).toEqual({ ok: false, error: "log write failed: ENOSPC: no space left on device", toolCalls: 1 });
     expect(kinds).toEqual(["agent_query", "agent_tool_call", "agent_result"]);
   });
 });
