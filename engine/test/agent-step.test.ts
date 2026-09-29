@@ -216,4 +216,31 @@ describe("createAgentExecutor: failures", () => {
     expect(r).toEqual({ ok: false, error: "schema must be JSON Schema draft-07, got https://json-schema.org/draft/2020-12/schema" });
     expect(f.calls.length).toBe(0);
   });
+  it("builds outputFormat from schemaFile, applies the same draft check, and refuses a step with both", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "prompts-"));
+    await writeFile(path.join(dir, "audit.md"), "audit {{episodeId}}");
+    await writeFile(path.join(dir, "audit.schema.json"), JSON.stringify(schema));
+    await writeFile(path.join(dir, "newer.schema.json"), JSON.stringify({ ...schema, $schema: "https://json-schema.org/draft/2020-12/schema" }));
+    await writeFile(path.join(dir, "broken.schema.json"), "{ not json");
+
+    const f = fake([init, success({ structured_output: { pass: true } })]);
+    const rec = recorder();
+    const r = await createAgentExecutor({ query: f.query, promptsDir: dir })(step({ promptFile: "audit.md", schemaFile: "audit.schema.json" }), ctx(), rec.emit);
+    expect(r).toEqual({ ok: true, text: "final text", verdict: { pass: true }, toolCalls: 0 });
+    expect(f.calls[0]!.options.outputFormat).toEqual({ type: "json_schema", schema });
+    expect(rec.events[0]!.payload["schema"]).toBe(true);
+    expect(rec.events.at(-1)!.payload).toMatchObject({ verdict: { pass: true } });
+
+    const ex = createAgentExecutor({ query: f.query, promptsDir: dir });
+    expect(await ex(step({ promptFile: "audit.md", schema, schemaFile: "audit.schema.json" }), ctx(), recorder().emit))
+      .toEqual({ ok: false, error: "schema and schemaFile are exclusive" });
+    expect(await ex(step({ promptFile: "audit.md", schemaFile: "newer.schema.json" }), ctx(), recorder().emit))
+      .toEqual({ ok: false, error: "schema must be JSON Schema draft-07, got https://json-schema.org/draft/2020-12/schema" });
+    expect(await ex(step({ promptFile: "audit.md", schemaFile: "broken.schema.json" }), ctx(), recorder().emit))
+      .toMatchObject({ ok: false, error: expect.stringContaining('schema file "broken.schema.json" is not valid JSON') });
+    const absent = await ex(step({ promptFile: "audit.md", schemaFile: "absent.schema.json" }), ctx(), recorder().emit);
+    expect(absent).toMatchObject({ ok: false, error: expect.stringContaining("absent.schema.json") });
+    // Every rejection above happens before the query, so only the first step ever reached it.
+    expect(f.calls.length).toBe(1);
+  });
 });

@@ -118,9 +118,21 @@ not contain `:`, because the runner reserves `<id>:rejection` and `<id>:iteratio
 |---|---|
 | `guard` | `check(ctx)` returning `{pass: true, message?}` or `{pass: false, message}` |
 | `script` | `argv(ctx)` returning an argv array, optional `env(ctx)` and `cwd` |
-| `agent` | `promptFile`, `model`, `allowedTools`, `context` (`"fresh"` or `"shared"`), optional `schema`, `maxTurns`, `idleTimeoutMs`, `maxBudgetUsd` |
-| `gate` | `message(ctx)`, optional `onReject` agent, `maxAttempts` (default 10) |
+| `agent` | `promptFile`, `model`, `allowedTools`, `context` (`"fresh"` or `"shared"`), optional `schema` **or** `schemaFile`, `maxTurns`, `idleTimeoutMs`, `maxBudgetUsd` |
+| `gate` | `message(ctx)` **or** `messageFile`, optional `onReject` agent, `rerunOnReject`, `maxAttempts` (default 10) |
 | `loop` | `body` agent, `until` sentinel, `maxIterations`, optional `progress(ctx)` |
+
+**A schema and a gate message may live in the show's prompts directory rather than in the step.**
+An agent step names its schema either inline as `schema` or as a `schemaFile` — a draft-07 JSON file
+resolved beside the prompts, read with the same loader and held to the same draft-07 check — and the
+two are exclusive: a step carrying both fails rather than one of them winning silently. A gate names
+its message either as `message(ctx)` or as a `messageFile`, a prompt file rendered through
+`renderPrompt` with the run context, and `orderSteps` refuses at load time a gate that sets neither
+or both. The runner owns no prompts directory, so a `messageFile` gate is rendered through
+`RunOptions.renderGateMessage`, which `createGateMessageRenderer(agentExecutorOptions)` builds from
+the same options as the agent executor; a `messageFile` gate run without one fails rather than
+opening with no message. Together these keep the show's prompt and schema text in the show
+repository, where the engine repository holds none of it.
 
 The two nested steps are attributed in opposite ways. A gate's `onReject` agent **is** a step of
 its own: its events are logged under its own id, and its id shares the pipeline's id namespace.

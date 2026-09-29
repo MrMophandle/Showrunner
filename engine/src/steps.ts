@@ -84,6 +84,11 @@ export interface AgentStep extends StepBase {
   /** JSON schema the agent's verdict must satisfy, when the step produces one. With a schema the
    *  outcome carries `verdict`; a success with no verdict is a failure. */
   schema?: JsonSchema;
+  /** The schema, as a draft-07 file relative to the prompts directory; exclusive with `schema`;
+   *  the executor reads it with `loadPrompt` and applies the same draft-07 check. A show that
+   *  keeps its schemas as `<step>.schema.json` beside its prompts names them this way, so the
+   *  engine repository never holds their contents. */
+  schemaFile?: string;
   /** Maximum agentic turns (tool-use round trips) before the SDK stops the query. */
   maxTurns?: number;
   /** Fail the step when no message arrives from the SDK for this long. `timeoutMs` on StepBase
@@ -97,9 +102,22 @@ export interface AgentStep extends StepBase {
  *  `dependsOn`: it runs because its parent decided so. */
 export type NestedAgentStep = Omit<AgentStep, "when" | "dependsOn">;
 
+/** Renders a gate's `messageFile` into the text the showrunner is shown. The runner does not own
+ *  it: resolving a file under the show's prompts directory and rendering its `{{...}}` needs the
+ *  prompts directory and the show config, which the agent executor's owner has — see
+ *  `createGateMessageRenderer` in agent-step.ts. */
+export type GateMessageRenderer = (file: string, ctx: RunContext) => Promise<string>;
+
 export interface GateStep extends StepBase {
   kind: "gate";
-  message: (ctx: RunContext) => string;
+  /** The message the showrunner is shown, built from the run context. Exactly one of `message` and
+   *  `messageFile` is set: `orderSteps` refuses a gate with neither or both. */
+  message?: (ctx: RunContext) => string;
+  /** The message as a prompt file, relative to the show's prompts directory, rendered through
+   *  `renderPrompt` with the run context by `RunOptions.renderGateMessage`. Exclusive with
+   *  `message`; a gate that names one and is run without a renderer fails rather than opening
+   *  with a message the showrunner cannot read. */
+  messageFile?: string;
   /** The agent run when the showrunner rejects. The fix agent is a step of its own: its events
    *  are logged under its own id, so its id shares the pipeline's id namespace (orderSteps
    *  enforces that) and a completed run of it is visible in the log and is not repeated after a

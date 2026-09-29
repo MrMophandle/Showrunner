@@ -78,6 +78,14 @@ export function orderSteps(p: Pipeline): Step[] {
   }
   for (const s of p.steps) {
     if (s.kind !== "gate") continue;
+    // Exactly one source for the message the showrunner is shown. Neither leaves the gate with
+    // nothing to open with; both leave two answers with no rule for which wins. Either is a
+    // mistake worth catching at load time rather than hours in, when the gate is reached.
+    const hasMessage = s.message !== undefined;
+    const hasMessageFile = s.messageFile !== undefined;
+    if (hasMessage === hasMessageFile) {
+      throw new PipelineError(`gate ${JSON.stringify(s.id)} sets ${hasMessage ? "both message and messageFile" : "neither message nor messageFile"}; set exactly one, in pipeline ${p.name}`);
+    }
     for (const r of s.rerunOnReject ?? []) {
       if (!byId.has(r)) throw new PipelineError(`gate ${JSON.stringify(s.id)} names unknown step ${JSON.stringify(r)} in rerunOnReject`);
     }

@@ -5,7 +5,8 @@ import { BYPASS_REASON, deriveRunState, type GateState, type RunState } from "./
 import { hashFiles, sameHashes } from "./hash.js";
 import { parseEpisodeId } from "./ids.js";
 import type {
-  AgentStep, Emit, Executors, GateStep, LoopStep, Pipeline, RunContext, ScriptStep, Step, StepId,
+  AgentStep, Emit, Executors, GateMessageRenderer, GateStep, LoopStep, Pipeline, RunContext,
+  ScriptStep, Step, StepId,
 } from "./steps.js";
 
 export interface RunOptions {
@@ -17,6 +18,12 @@ export interface RunOptions {
    *  The order is load-bearing: when two of them record a completion of the same step, the one
    *  later in this array wins, so the newest run's hashes are the ones compared against disk. */
   priorLogs?: EventLog[];
+  /** Renders a gate's `messageFile`. The runner has no prompts directory and no show config, so
+   *  the caller supplies this — `createGateMessageRenderer(agentExecutorOptions)` builds one that
+   *  reads the same prompts directory and renders the same variables as the agent steps. A gate
+   *  that names a `messageFile` and is run without it fails; a pipeline whose gates all use
+   *  `message` never needs it. */
+  renderGateMessage?: GateMessageRenderer;
 }
 
 export type RunResult =
@@ -204,7 +211,7 @@ async function execute(opts: RunOptions): Promise<RunResult> {
         continue;
       }
 
-      const outcome = await runStep(step, ctx, emitFor, executors, events, [...priorEvents, events], pipeline);
+      const outcome = await runStep(step, ctx, emitFor, executors, events, [...priorEvents, events], pipeline, opts.renderGateMessage);
       if (outcome.kind === "completed") {
         state.steps[step.id] = "completed";
         if (outcome.result !== undefined) ctx.results[step.id] = outcome.result;
@@ -257,6 +264,7 @@ type StepOutcome =
 async function runStep(
   step: Step, ctx: RunContext, emitFor: (id: StepId | undefined) => Emit,
   executors: Executors, events: Event[], allLogs: Event[][], pipeline: Pipeline,
+  renderGateMessage: GateMessageRenderer | undefined,
 ): Promise<StepOutcome> {
   const emit = emitFor(step.id);
   switch (step.kind) {
@@ -275,7 +283,7 @@ async function runStep(
     case "agent":
       return runAgentStep(step, ctx, emit, executors);
     case "gate":
-      return runGateStep(step, ctx, emit, executors, emitFor, events, pipeline);
+      return runGateStep(step, ctx, emit, executors, emitFor, events, pipeline, renderGateMessage);
     case "loop":
       return runLoopStep(step, ctx, emit, executors, events);
   }
@@ -328,6 +336,7 @@ async function runAgentStep(step: AgentStep, ctx: RunContext, emit: Emit, execut
 async function runGateStep(
   step: GateStep, ctx: RunContext, emit: Emit, executors: Executors,
   emitFor: (id: StepId | undefined) => Emit, events: Event[], pipeline: Pipeline,
+  renderGateMessage: GateMessageRenderer | undefined,
 ): Promise<StepOutcome> {
   const state = deriveRunState(events);
   const attempts = state.gateAttempts[step.id] ?? 0;
@@ -400,9 +409,32 @@ async function runGateStep(
   }
 
   const attempt = attempts + 1;
-  const message = step.message(ctx);
+  // A gate the showrunner cannot read is worse than a gate that failed: the message is built
+  // before gate_opened, and every way of not having one fails the step instead of opening it.
+  // orderSteps has already refused a gate with neither `message` nor `messageFile`, so the last
+  // branch is unreachable through `run` and is here because the type permits it.
+  let message: string;
+  if (step.messageFile !== undefined) {
+    if (renderGateMessage === undefined) {
+      return failGate(`gate ${JSON.stringify(step.id)}: messageFile needs RunOptions.renderGateMessage`);
+    }
+    try {
+      message = await renderGateMessage(step.messageFile, ctx);
+    } catch (err) {
+      return failGate(`gate ${JSON.stringify(step.id)}: ${step.messageFile} did not render: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  } else if (step.message !== undefined) {
+    message = step.message(ctx);
+  } else {
+    return failGate(`gate ${JSON.stringify(step.id)}: neither message nor messageFile is set`);
+  }
   await emit("gate_opened", { attempt, message });
   return { kind: "waiting", gate: { stepId: step.id, attempt, message, openedAt: new Date().toISOString() } };
+
+  async function failGate(error: string): Promise<StepOutcome> {
+    await emit("step_failed", { error });
+    return { kind: "failed", error };
+  }
 }
 
 async function runLoopStep(

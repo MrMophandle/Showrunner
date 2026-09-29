@@ -97,4 +97,13 @@ describe("downstreamOf", () => {
     const bad: Pipeline = { name: "p", steps: [{ kind: "gate", id: "g", message: () => "m", rerunOnReject: ["nope"] }] };
     expect(() => orderSteps(bad)).toThrow(/gate "g" names unknown step "nope" in rerunOnReject/);
   });
+  it("orderSteps refuses a gate with neither message nor messageFile, and one with both", () => {
+    const neither: Pipeline = { name: "p", steps: [{ kind: "gate", id: "g" }] };
+    expect(() => orderSteps(neither)).toThrow(PipelineError);
+    expect(() => orderSteps(neither)).toThrow(/gate "g" sets neither message nor messageFile; set exactly one/);
+    const both: Pipeline = { name: "p", steps: [{ kind: "gate", id: "g", message: () => "m", messageFile: "g.md" }] };
+    expect(() => orderSteps(both)).toThrow(/gate "g" sets both message and messageFile; set exactly one/);
+    const file: Pipeline = { name: "p", steps: [{ kind: "gate", id: "g", messageFile: "g.md" }] };
+    expect(() => orderSteps(file)).not.toThrow();
+  });
 });

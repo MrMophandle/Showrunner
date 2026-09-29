@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { run, answerGate } from "../src/runner.js";
 import { EventLog } from "../src/events.js";
-import type { Executors, Pipeline, GateStep, GuardStep, AgentStep } from "../src/steps.js";
+import type { Executors, Pipeline, GateStep, GuardStep, AgentStep, RunContext } from "../src/steps.js";
 
 async function setup() {
   const root = await mkdtemp(path.join(tmpdir(), "show-"));
@@ -264,6 +264,32 @@ describe("rerunOnReject", () => {
     await run({ pipeline, ctx, log, executors });
     expect(calls).toEqual(["make", "make"]);
   });
+  it("renders a messageFile gate through RunOptions.renderGateMessage, and fails the gate without one", async () => {
+    const pipeline: Pipeline = { name: "p", steps: [{ kind: "gate", id: "g", messageFile: "outline-gate.gate.md" } satisfies GateStep] };
+
+    // No renderer: the gate fails rather than opening with a message the showrunner cannot read.
+    const bare = await setup();
+    expect(await run({ pipeline, ctx: bare.ctx, log: bare.log, executors: bare.executors })).toEqual({
+      status: "failed", stepId: "g", error: 'gate "g": messageFile needs RunOptions.renderGateMessage',
+    });
+    expect((await bare.log.read()).some((e) => e.kind === "gate_opened")).toBe(false);
+
+    const renderGateMessage = async (file: string, c: RunContext): Promise<string> => `rendered:${file}:${c.episodeId}`;
+    const { log, ctx, executors } = await setup();
+    const r = await run({ pipeline, ctx, log, executors, renderGateMessage });
+    expect(r).toMatchObject({ status: "waiting", gate: { stepId: "g", attempt: 1, message: "rendered:outline-gate.gate.md:s02e01" } });
+    expect((await log.read()).find((e) => e.kind === "gate_opened")?.payload["message"]).toBe("rendered:outline-gate.gate.md:s02e01");
+  });
+
+  it("fails the gate when its messageFile does not render", async () => {
+    const pipeline: Pipeline = { name: "p", steps: [{ kind: "gate", id: "g", messageFile: "hole.gate.md" } satisfies GateStep] };
+    const { log, ctx, executors } = await setup();
+    const renderGateMessage = async (): Promise<string> => { throw new Error('{{results.missing}}: no result for step "missing"'); };
+    const r = await run({ pipeline, ctx, log, executors, renderGateMessage });
+    expect(r).toEqual({ status: "failed", stepId: "g", error: 'gate "g": hole.gate.md did not render: {{results.missing}}: no result for step "missing"' });
+    expect((await log.read()).some((e) => e.kind === "gate_opened")).toBe(false);
+  });
+
   it("records the fix agent's output hashes on its completion", async () => {
     const { log, ctx, executors } = await setup();
     const fix: AgentStep = { kind: "agent", id: "fix", promptFile: "fix.md", model: "m", allowedTools: [], context: "fresh", outputs: ["draft.md"] };
