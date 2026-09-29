@@ -3247,7 +3247,8 @@ import type { Executors, RunContext } from "../src/steps.js";
 
 const exec = promisify(execFile);
 const engineRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
-const showRoot = process.env["SHOWRUNNER_SHOW_ROOT"] ?? path.join(os.homedir(), "GitHub", "DeadLight");
+// The show root comes from the environment only: a default built from the show's directory name would put a show name in an engine file, which the Global Constraints forbid.
+const showRoot = process.env["SHOWRUNNER_SHOW_ROOT"];
 const EP = "ep98";
 
 /** A log in which every step of `pipeline` before `upto` is completed, so run() starts at `upto`. */
@@ -3266,7 +3267,7 @@ async function seed(logPath: string, runId: string, pipeline: ReturnType<typeof 
   await writeFile(logPath, events.map((e, i) => JSON.stringify({ ts: new Date(Date.UTC(2026, 0, 1, 0, 0, i)).toISOString(), ...e })).join("\n") + "\n");
 }
 
-describe.skipIf(process.env["SHOWRUNNER_EP98"] !== "1")("ep98 exercise (real scripts, no agents)", () => {
+describe.skipIf(process.env["SHOWRUNNER_EP98"] !== "1" || showRoot === undefined)("ep98 exercise (real scripts, no agents)", () => {
   const executors: Executors = { script: scriptExecutor, agent: async () => ({ ok: false, error: "no agent step may run in the ep98 exercise", toolCalls: 0 }) };
 
   async function exercise(runId: string, upto: string, alsoDone: string[], results: Record<string, unknown>, stopsAt: string, timeoutMs: number) {
@@ -3332,7 +3333,7 @@ Without `SHOWRUNNER_EP98=1` the file is skipped, so the ordinary suite stays her
 
 - [ ] **Step 3: README and commit**
 
-In `README.md`'s Develop section add: "`SHOWRUNNER_EP98=1 npx vitest run test/ep98-exercise.test.ts` runs the two script-only exercises against the show at `~/GitHub/DeadLight` (or `SHOWRUNNER_SHOW_ROOT`): the mix, and the timeline → render → master chain, on the non-canon test episode `ep98`, with the real script executor and no agent. It needs `uv`, `ffmpeg`, the render project's dependencies, and about half an hour."
+In `README.md`'s Develop section add: "`SHOWRUNNER_EP98=1 npx vitest run test/ep98-exercise.test.ts` runs the two script-only exercises against the show at `SHOWRUNNER_SHOW_ROOT` (required): the mix, and the timeline → render → master chain, on the non-canon test episode `ep98`, with the real script executor and no agent. It needs `uv`, `ffmpeg`, the render project's dependencies, and about half an hour."
 
 ```bash
 cd ~/GitHub/Showrunner && git add engine/test/ep98-exercise.test.ts README.md
