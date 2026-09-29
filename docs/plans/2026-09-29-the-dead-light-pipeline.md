@@ -679,7 +679,7 @@ type StepOutcome =
 - [ ] **Step 5: Run the whole suite and the typecheck**
 
 Run: `cd ~/GitHub/Showrunner/engine && npx vitest run && npm run typecheck`
-Expected: PASS (170 passed, 2 skipped), typecheck silent. The existing gate tests still pass: a gate without `rerunOnReject` behaves as before.
+Expected: PASS (171 passed, 2 skipped), typecheck silent. The existing gate tests still pass: a gate without `rerunOnReject` behaves as before.
 
 - [ ] **Step 6: Commit**
 
@@ -906,7 +906,7 @@ export function toAgentMessage(m: SDKMessage, dropVerdictTool = false): AgentMes
 - [ ] **Step 6: Run the whole suite and the typecheck**
 
 Run: `cd ~/GitHub/Showrunner/engine && npx vitest run && npm run typecheck`
-Expected: PASS (176 passed, 2 skipped), typecheck silent.
+Expected: PASS (177 passed, 2 skipped), typecheck silent.
 
 - [ ] **Step 7: Commit**
 
@@ -1418,7 +1418,7 @@ Add to `engine/src/index.ts`: `export * from "./needs.js";` and `export * from "
 - [ ] **Step 7: Run the whole suite and the typecheck**
 
 Run: `cd ~/GitHub/Showrunner/engine && npx vitest run && npm run typecheck`
-Expected: PASS (188 passed, 2 skipped), typecheck silent, and the show-name grep from the Global Constraints prints nothing (the test fixtures name an invented show; `engine/test/` is inside `engine/`, so keep the fixtures' names invented).
+Expected: PASS (189 passed, 2 skipped), typecheck silent, and the show-name grep from the Global Constraints prints nothing (the test fixtures name an invented show; `engine/test/` is inside `engine/`, so keep the fixtures' names invented).
 
 - [ ] **Step 8: Commit**
 
