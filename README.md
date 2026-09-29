@@ -655,6 +655,32 @@ consequence is that **the root `npm test` does not run the render project's test
 `npm run typecheck` at the root cover those two and nothing else. `render/` and `scripts/` install
 and test on their own, which is why the root carries a `test:render` script at all.
 
+### The `ep98` exercise — the real scripts, against a real show
+
+    cd engine && SHOWRUNNER_EP98=1 SHOWRUNNER_SHOW_ROOT=<show repository> \
+      npx vitest run test/ep98-exercise.test.ts --reporter=verbose
+
+`engine/test/ep98-exercise.test.ts` runs the two script-only exercises against the show repository
+`SHOWRUNNER_SHOW_ROOT` names: the mix, and the timeline → render → master chain, on the non-canon
+test episode `ep98`, with the real script executor and **no agent step at all** — its agent
+executor fails every call, so a run that reaches one fails the test. Each exercise seeds a run log
+in which every earlier step is already completed, lets the pipeline run the real steps, and stops
+at the gate that follows. It needs `uv`, `ffmpeg`, the render project's dependencies, and about
+half an hour.
+
+**Both environment variables are required and neither has a default.** Without `SHOWRUNNER_EP98=1`
+the file is skipped, so `npm test` stays hermetic; with it set but `SHOWRUNNER_SHOW_ROOT` empty the
+file is skipped with a message saying so. `SHOWRUNNER_SHOW_ROOT` has no built-in fallback because
+any fallback would have to spell a show's directory name, which the rule below forbids.
+
+The exercise writes only under the show's `Production/ep98/` and `Episodes/ep98/` — audio, video
+and images there are git-ignored — and it deletes the two run logs it wrote and restores
+`Episodes/ep98/STATUS.md` from git when it is done, so `git status` in the show repository is the
+same before and after. It never touches the NAS: the `nas-mounted` guard is one of the steps the
+seed marks completed. It also removes `render/public/ep98/`, the staging directory
+`build-timeline.py` filled, because that directory holds the show's own file names inside the
+engine checkout and the rule below forbids them there.
+
 **No show's name may appear in `engine/`, `scripts/`, `render/` or `tools/src/`.** This grep is
 what checks it, and it must print nothing:
 
