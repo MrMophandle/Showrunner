@@ -5,21 +5,25 @@ import type { Needs } from "./stages.js";
 
 export interface CastEntry { name: string; tags: string[] }
 
-/** The outline's `## Cast` section, one entry per line of the form `- <Name> (<tag>, <tag>)`.
+/** The outline's `## Cast` section, split into the lines that parse and the lines that do not.
  *  The section is the pipeline's only knowledge of who is in an episode before a script exists,
  *  which is why the outline prompt requires it and the canon reviewer checks it (F-01). Lines
- *  outside the section, and lines inside it that do not match the grammar, are ignored. */
-export function parseCastSection(outline: string): CastEntry[] {
-  const out: CastEntry[] = [];
+ *  outside the section are ignored; a non-blank line inside it that does not match
+ *  `- <Name> (<tag>, <tag>)` is returned in `malformed` rather than dropped, because a dropped
+ *  line is a cast member the reference probe never checks — an em-dash instead of parentheses
+ *  used to pass `refs-ready` silently and take an unregistered subject into synthesis. */
+export function parseCastSection(outline: string): { entries: CastEntry[]; malformed: string[] } {
+  const entries: CastEntry[] = [];
+  const malformed: string[] = [];
   let inSection = false;
   for (const line of outline.split("\n")) {
     if (/^## /.test(line)) { inSection = /^## Cast\b/.test(line); continue; }
-    if (!inSection) continue;
+    if (!inSection || line.trim() === "") continue;
     const m = /^- (.+?) \(([^)]*)\)\s*$/.exec(line);
-    if (!m || m[1] === undefined || m[2] === undefined) continue;
-    out.push({ name: m[1].trim(), tags: m[2].split(",").map((t) => t.trim().toLowerCase()).filter((t) => t !== "") });
+    if (!m || m[1] === undefined || m[2] === undefined) { malformed.push(line.trim()); continue; }
+    entries.push({ name: m[1].trim(), tags: m[2].split(",").map((t) => t.trim().toLowerCase()).filter((t) => t !== "") });
   }
-  return out;
+  return { entries, malformed };
 }
 
 async function exists(p: string): Promise<boolean> {
@@ -48,14 +52,17 @@ function dirs(show: ShowConfig) {
 /** One line per reference the outline's cast needs and the show does not have: a recurring
  *  subject without an entry or an image in the visual bible, a speaking recurring character
  *  whose voice is not LOCKED or whose WAV is absent, a speaking guest with no WAV under the
- *  episode's guest-refs. Empty when the outline has no `## Cast` section — the section's absence
- *  is the canon reviewer's finding, not this probe's. */
+ *  episode's guest-refs. Two authoring slips are reported the same way, because a cast line this
+ *  probe cannot read is a subject it cannot check: a line inside the section that misses the
+ *  grammar, and an entry whose tags name none of `recurring`, `guest` or `location`. Empty when
+ *  the outline has no `## Cast` section — the section's absence is the canon reviewer's finding,
+ *  not this probe's. */
 export async function missingRefs(showRoot: string, episodeId: string, show: ShowConfig): Promise<string[]> {
   const d = dirs(show);
   const outlinePath = path.join(showRoot, d.episodes, episodeId, "outline.md");
   if (!(await exists(outlinePath))) return [];
-  const cast = parseCastSection(await readFile(outlinePath, "utf8"));
-  if (cast.length === 0) return [];
+  const { entries: cast, malformed } = parseCastSection(await readFile(outlinePath, "utf8"));
+  if (cast.length === 0 && malformed.length === 0) return [];
 
   const biblePath = resolveShowPath(showRoot, d.visualRefs);
   const bibleRaw = (await exists(biblePath)) ? await readJson(biblePath) : {};
@@ -71,10 +78,17 @@ export async function missingRefs(showRoot: string, episodeId: string, show: Sho
   const guestWavs = (await exists(guestDir)) ? (await readdir(guestDir)).filter((f) => f.toLowerCase().endsWith(".wav")).map((f) => f.toLowerCase()) : [];
 
   const missing: string[] = [];
+  for (const line of malformed) missing.push(`${line}: not in the \`- <Name> (<tags>)\` grammar`);
   for (const entry of cast) {
     const slug = slugName(entry.name);
     const tags = new Set(entry.tags);
     const speaks = tags.has("speaks");
+    // A tag set naming none of the three the probe routes on reaches no check below, so the
+    // entry would pass without ever being looked up. `- Vale (lead, speaks)` is the shape.
+    if (!tags.has("recurring") && !tags.has("guest") && !tags.has("location")) {
+      missing.push(`${entry.name}: tags name none of recurring, guest, location (got ${entry.tags.join(", ")})`);
+      continue;
+    }
     if (tags.has("recurring") || tags.has("location")) {
       const key = [slug, `the-${slug}`].find((k) => Object.prototype.hasOwnProperty.call(bible, k));
       if (key === undefined) {

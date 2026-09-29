@@ -5,8 +5,8 @@ import { BYPASS_REASON, deriveRunState, type GateState, type RunState } from "./
 import { hashFiles, sameHashes } from "./hash.js";
 import { parseEpisodeId } from "./ids.js";
 import type {
-  AgentStep, Emit, Executors, GateMessageRenderer, GateStep, LoopStep, Pipeline, RunContext,
-  ScriptStep, Step, StepId,
+  AgentStep, Emit, Executors, GateMessageRenderer, GateStep, GuardResult, LoopStep, Pipeline,
+  RunContext, ScriptStep, Step, StepId,
 } from "./steps.js";
 
 export interface RunOptions {
@@ -68,13 +68,19 @@ export async function resumeRun(log: EventLog, runId: string, by?: string): Prom
 /** The operator's "re-run from here": returns the named steps and every step downstream of them
  *  to pending, so the next run() re-executes them (a script step whose inputs and outputs are
  *  unchanged is served from cache). A finished run is reopened first, with run_resumed, or the
- *  resets would change nothing. Returns the ids that were reset, in pipeline order. */
+ *  resets would change nothing. Gates are never reset, here or on a rejection: an answer the
+ *  showrunner already gave is not invalidated by re-running the work upstream of it, and a reset
+ *  gate re-runs on its recorded approval without emitting an event, which would leave
+ *  deriveRunState with no status for a gate that was in fact approved. Re-asking an approved gate
+ *  is a separate decision; nothing in the engine takes it implicitly. Returns the ids that were
+ *  reset, in pipeline order. */
 export async function resetSteps(pipeline: Pipeline, log: EventLog, runId: string, stepIds: StepId[], by = "operator"): Promise<StepId[]> {
   const state = deriveRunState(await log.read());
   if (state.runId !== runId) {
     throw new Error(`run id mismatch: the log at ${log.path} is run ${JSON.stringify(state.runId)}, not ${JSON.stringify(runId)}`);
   }
-  const ids = downstreamOf(pipeline, stepIds).filter((id) => state.steps[id] !== undefined);
+  const byId = new Map(pipeline.steps.map((s) => [s.id, s] as const));
+  const ids = downstreamOf(pipeline, stepIds).filter((id) => state.steps[id] !== undefined && byId.get(id)?.kind !== "gate");
   if (state.finished) await log.append({ runId, kind: "run_resumed", payload: { by } });
   for (const id of ids) await log.append({ runId, stepId: id, kind: "step_reset", payload: { by } });
   return ids;
@@ -270,7 +276,18 @@ async function runStep(
   switch (step.kind) {
     case "guard": {
       await emit("step_started", { kind: "guard" });
-      const r = await step.check(ctx);
+      let r: GuardResult;
+      try {
+        r = await step.check(ctx);
+      } catch (err) {
+        // A guard reads files an agent wrote — a shot list it JSON.parses, a run log it reads,
+        // a file it hashes — so a malformed write throws here. An escaping throw would leave the
+        // log at step_started with neither step_failed nor run_finished, which breaks the rule
+        // that the log is the source of truth and leaves a run resumeRun refuses to reopen.
+        const error = `guard threw: ${err instanceof Error ? err.message : String(err)}`;
+        await emit("step_failed", { error });
+        return { kind: "failed", error };
+      }
       if (r.pass) {
         await emit("step_completed", { result: r.message ?? null });
         return { kind: "completed", result: r.message ?? null };
@@ -359,8 +376,14 @@ async function runGateStep(
 
   if (lastAnswer) {
     if (lastAnswer.payload["approved"] === true) {
-      // deriveRunState already marks it completed; the runner loop skips completed steps, so this
-      // branch is reached only when the answer arrived between state derivation and execution.
+      // deriveRunState marks an approved gate completed and the pass skips completed steps, so
+      // this branch runs only when the gate lost that status after the derivation. Until the
+      // reset closure below excluded gates, it ran on every restarted pass that reset an
+      // already-approved gate — not only in the race the old comment claimed (an answer arriving
+      // between derivation and execution), for which `execute`'s single read of the log leaves no
+      // window. What remains is a log carrying a step_reset for this gate from somewhere else: an
+      // operator's hand edit, or a run written by an engine older than this filter. The approval
+      // in the log still stands, so the gate completes on it.
       return { kind: "completed", result: lastAnswer.payload };
     }
     // Rejected: run the fix agent (if any), then decide whether another attempt is allowed.
@@ -396,8 +419,14 @@ async function runGateStep(
       .some((e) => e.kind === "step_reset" && e.payload["by"] === step.id);
     if (step.rerunOnReject && step.rerunOnReject.length > 0 && !resetAlreadyDone) {
       // Only steps that have a status are reset: a step that has not run yet is pending already,
-      // and a step_reset for it would only be noise in the log. The gate itself is never reset.
-      const stepIds = downstreamOf(pipeline, step.rerunOnReject).filter((id) => id !== step.id && state.steps[id] !== undefined);
+      // and a step_reset for it would only be noise in the log. No gate is reset — not this one,
+      // and not an earlier gate caught in the closure: an upstream gate's answer is not
+      // invalidated by a later gate's rejection, and resetting it would erase an approval from
+      // the projection that deriveRunState builds, since the re-run of an approved gate does no
+      // work and emits no event.
+      const byId = new Map(pipeline.steps.map((s) => [s.id, s] as const));
+      const stepIds = downstreamOf(pipeline, step.rerunOnReject)
+        .filter((id) => id !== step.id && state.steps[id] !== undefined && byId.get(id)?.kind !== "gate");
       // An empty closure (every named step is downstream of the gate, or none has run) resets
       // nothing and falls through to reopen: returning a reset with no step_reset written would
       // leave resetAlreadyDone false and restart the pass forever.

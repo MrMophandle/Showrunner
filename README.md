@@ -687,7 +687,7 @@ what checks it, and it must print nothing:
     grep -rniwE 'dead ?light|deadlight|sarn|sable|opha|cricket|remo|trent|ilvaren|coalvane|the mute|ansa|mardo' \
       engine/ scripts/ render/ tools/ \
       --exclude-dir=node_modules --exclude-dir=dist --exclude-dir=show-data \
-      --exclude-dir=.venv --exclude-dir=__pycache__ --exclude-dir=.pytest_cache
+      --exclude-dir=public --exclude-dir=.venv --exclude-dir=__pycache__ --exclude-dir=.pytest_cache
 
 **The word list is the first show's, and it is not the whole obligation.** It names Dead Light and
 that show's characters and places because those are the literals this engine was carved out of, and
@@ -697,10 +697,13 @@ reviewer who sees a test fixture or a comment naming a real show's cast must say
 moves to the invented show the fixtures use.
 
 `tools/show-data/` is excluded because that directory holds a show's own data, as the **Tools**
-section above explains. This file and everything under `docs/` are allowed to name a show and are
-outside the paths the grep searches. The remaining exclusions are build and cache trees —
-`node_modules/`, `dist/`, `scripts/.venv/`, `scripts/__pycache__/` and `scripts/.pytest_cache/` —
-none of which is source.
+section above explains. `render/public/` is excluded because it is a staging directory, not
+source: `build-timeline.py` copies the episode's own audio and images into it under the show's
+file names so the renderer can serve them, and a run leaves them there. The exercise described
+above deletes `render/public/ep98/` when it finishes for the same reason. This file and everything
+under `docs/` are allowed to name a show and are outside the paths the grep searches. The
+remaining exclusions are build and cache trees — `node_modules/`, `dist/`, `scripts/.venv/`,
+`scripts/__pycache__/` and `scripts/.pytest_cache/` — none of which is source.
 
 ## Documents
 

@@ -1,6 +1,5 @@
 import json, os, subprocess, sys
 from pathlib import Path
-import pytest
 
 SCRIPT = Path(__file__).resolve().parents[1] / "git-commit.py"
 
@@ -86,6 +85,42 @@ def test_a_deletion_under_a_listed_path_is_staged_too(tmp_path):
     r = run(root, "s02e01", "--message", "second", "--", "Episodes/s02e01")
     assert r.stdout.strip().splitlines()[-1].startswith("COMMIT_OK ")
     assert subprocess.run(["git", "status", "--porcelain"], cwd=root, capture_output=True, text=True).stdout == ""
+
+def test_an_ignored_path_is_skipped_and_the_real_one_is_still_committed(tmp_path):
+    """`assemble-commit` used to list `Production/<ep>/video/timeline.json`, which the first
+    show's .gitignore covers with `Production/*/video/`. `git add -A -- <ignored path>` exits 1
+    and would fail the step after the render, the master and the final gate. The step must stage
+    what it can and say what it passed over."""
+    root = make_show(tmp_path)
+    (root / ".gitignore").write_text("Production/*/video/\n")
+    subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "ignore rules"], cwd=root, check=True)
+    (root / "Production" / "s02e01" / "video").mkdir(parents=True)
+    (root / "Production" / "s02e01" / "video" / "timeline.json").write_text("{}\n")
+    (root / "Episodes" / "s02e01").mkdir(parents=True)
+    (root / "Episodes" / "s02e01" / "STATUS.md").write_text("status\n")
+    r = run(root, "s02e01", "--message", "s02e01: assembled + finalized (assemble phase)",
+            "--", "Production/s02e01/video/timeline.json", "Episodes/s02e01/STATUS.md")
+    assert r.returncode == 0, r.stderr
+    lines = r.stdout.strip().splitlines()
+    assert "skip Production/s02e01/video/timeline.json (ignored)" in lines
+    assert lines[-1].startswith("COMMIT_OK ")
+    files = subprocess.run(["git", "show", "--name-only", "--format=", "HEAD"], cwd=root, capture_output=True, text=True).stdout
+    assert "Episodes/s02e01/STATUS.md" in files
+    assert "timeline.json" not in files
+
+def test_every_listed_path_ignored_degrades_to_nothing_staged(tmp_path):
+    """The other half of the same rule: a commit step whose whole path list meets the show's
+    ignore rules reports COMMIT_SKIPPED and exits 0, rather than stopping the run."""
+    root = make_show(tmp_path)
+    (root / ".gitignore").write_text("Production/*/video/\n")
+    subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "ignore rules"], cwd=root, check=True)
+    (root / "Production" / "s02e01" / "video").mkdir(parents=True)
+    (root / "Production" / "s02e01" / "video" / "timeline.json").write_text("{}\n")
+    r = run(root, "s02e01", "--message", "m", "--", "Production/s02e01/video/timeline.json")
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip().splitlines()[-1] == "COMMIT_SKIPPED nothing staged"
 
 def test_the_show_root_flag_works_from_elsewhere(tmp_path):
     root = make_show(tmp_path)

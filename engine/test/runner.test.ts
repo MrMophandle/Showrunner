@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { run, resetSteps, resumeRun } from "../src/runner.js";
@@ -57,6 +57,35 @@ describe("run", () => {
     expect(events.at(-1)?.payload["status"]).toBe("failed");
     expect(await run({ pipeline: p, ctx: { runId: "r1", episodeId: "s02e01", showRoot: root }, log, executors: okExecutors([]) }))
       .toEqual({ status: "failed", stepId: "g", error: "no script.md" });
+  });
+
+  it("fails the step when a guard throws, so the log records how it ended and the run resumes", async () => {
+    const root = await show();
+    // The shape that made this reachable: a guard that parses a file an agent wrote. A throw
+    // used to escape run() and leave the log at step_started, which resumeRun then refused.
+    await writeFile(path.join(root, "refs.json"), "{ broken");
+    const g: GuardStep = {
+      kind: "guard", id: "refs-ready",
+      check: async () => { JSON.parse(await readFile(path.join(root, "refs.json"), "utf8")); return { pass: true, message: "all references present" }; },
+    };
+    const p: Pipeline = { name: "p", steps: [g] };
+    const log = new EventLog(EventLog.logPath(root, "s02e01", "r1"));
+    const ctx = { runId: "r1", episodeId: "s02e01", showRoot: root };
+    const res = await run({ pipeline: p, ctx, log, executors: okExecutors([]) });
+    expect(res).toMatchObject({ status: "failed", stepId: "refs-ready" });
+    expect(res.status === "failed" && res.error).toMatch(/^guard threw: /);
+    const events = await log.read();
+    expect(events.map((e) => `${e.kind}:${e.stepId ?? "-"}`)).toEqual([
+      "run_started:-", "step_started:refs-ready", "step_failed:refs-ready", "run_finished:-",
+    ]);
+    expect(String(events.find((e) => e.kind === "step_failed")?.payload["error"])).toMatch(/^guard threw: /);
+    const state = deriveRunState(events);
+    expect(state.steps["refs-ready"]).toBe("failed");
+    expect(state.finished && state.status).toBe("failed");
+    // The operator's recovery: repair the file the guard reads, resume, run again.
+    await writeFile(path.join(root, "refs.json"), "{}");
+    await resumeRun(log, "r1", "showrunner");
+    expect(await run({ pipeline: p, ctx, log, executors: okExecutors([]) })).toEqual({ status: "completed" });
   });
 
   it("records a failing script and the agent outcome text as a result", async () => {

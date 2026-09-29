@@ -9,8 +9,15 @@ import { handEdits } from "../provenance.js";
 import type { StageMap } from "../stages.js";
 import type { AgentStep, GuardStep, LoopStep, NestedAgentStep, Pipeline, RunContext, ScriptStep, Step, StepId } from "../steps.js";
 
+/** The name every episode run records in its run_started event and its log path. It is a
+ *  constant rather than a literal at the call sites because the console, the run log and the
+ *  pipeline have to agree on one spelling to find each other's records. */
 export const EPISODE_PIPELINE_NAME = "episode";
 
+/** Everything `episodePipeline` needs to build one episode's step list, and nothing else: the
+ *  show's config supplies every path and name, the episode id supplies the rest, and the engine
+ *  root locates the scripts and the renderer. No show is named in this file; a second show
+ *  builds the same pipeline by passing its own config. */
 export interface EpisodePipelineOptions {
   show: ShowConfig;
   episodeId: string;
@@ -302,7 +309,9 @@ export function episodePipeline(opts: EpisodePipelineOptions): Pipeline {
       check: (ctx) => {
         const last = ctx.results["image-audit-3"] ?? ctx.results["image-audit-2"] ?? ctx.results["image-audit-1"];
         const summary = String(verdictField(last, "summary") ?? "");
-        return verdictPass(last) ? { pass: true, message: summary } : { pass: false, message: `ambient images still failing after 3 audits: ${summary}` };
+        return verdictPass(last)
+          ? { pass: true, message: summary }
+          : { pass: false, message: `ambient images still failing after 3 audits: ${summary} — resume the run and reset image-audit-1 to start the audit again, or fix the named shots by hand` };
       },
     },
     {
@@ -337,8 +346,12 @@ export function episodePipeline(opts: EpisodePipelineOptions): Pipeline {
     { kind: "script", id: "finalize", dependsOn: ["final-gate"], argv: py("finalize-video.py"), inputs: [mastered], timeoutMs: 20 * MIN },
     stamp("stamp-finalized", ["finalize"], "finalized", "pushed to NAS"),
     { kind: "script", id: "publish-kit", dependsOn: ["finalize"], argv: py("publish-kit.py"), inputs: [manifest, ttsScript, script, publishJson], outputs: [`${prod}/publish/upload.md`, `${prod}/publish/captions.srt`], timeoutMs: MIN },
+    // The paths are the files this phase leaves changed and the show keeps: publish.json and
+    // prompts.json because final-gate's fix agent edits exactly those two and no later commit
+    // step stages them, and not the timeline, which is derived and which the show git-ignores
+    // (an ignored path in this list fails the whole step — see git-commit.py).
     commit("assemble-commit", ["stamp-finalized", "publish-kit"], `${episodeId}: assembled + finalized — timeline, publish kit (assemble phase)`,
-      [timeline, `${prod}/publish`, status, runsDir]),
+      [publishJson, prompts, `${prod}/publish`, status, runsDir]),
 
     // ── canon phase (rule 1.2: after the publish kit) ────────────────────────────────────────
     { kind: "script", id: "canon-baseline", dependsOn: ["assemble-commit"], argv: py("canon-diff.py"), timeoutMs: 15_000 },

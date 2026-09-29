@@ -28,13 +28,19 @@ async function show1() {
 }
 
 describe("parseCastSection", () => {
-  it("reads the lines of the ## Cast section and nothing else", () => {
+  it("reads the lines of the ## Cast section, keeps the ones that miss the grammar, and ignores everything outside it", () => {
     const outline = "# Ep\n\n## Cast\n- Vale (recurring, speaks)\n- the Warden (recurring)\n- Dock Hand Pim (guest, speaks)\n- Harbor (location)\nnot a cast line\n\n## Beat outline\n- Vale (this is a beat, not cast)\n";
-    expect(parseCastSection(outline)).toEqual([
-      { name: "Vale", tags: ["recurring", "speaks"] }, { name: "the Warden", tags: ["recurring"] },
-      { name: "Dock Hand Pim", tags: ["guest", "speaks"] }, { name: "Harbor", tags: ["location"] },
-    ]);
-    expect(parseCastSection("# Ep\n## Beat outline\n- x\n")).toEqual([]);
+    expect(parseCastSection(outline)).toEqual({
+      entries: [
+        { name: "Vale", tags: ["recurring", "speaks"] }, { name: "the Warden", tags: ["recurring"] },
+        { name: "Dock Hand Pim", tags: ["guest", "speaks"] }, { name: "Harbor", tags: ["location"] },
+      ],
+      // inside the section and not blank, so it is reported rather than dropped
+      malformed: ["not a cast line"],
+    });
+    expect(parseCastSection("# Ep\n## Beat outline\n- x\n")).toEqual({ entries: [], malformed: [] });
+    // a blank line between entries is layout, not a slip
+    expect(parseCastSection("## Cast\n\n- Vale (recurring)\n\n")).toEqual({ entries: [{ name: "Vale", tags: ["recurring"] }], malformed: [] });
   });
 });
 
@@ -54,6 +60,30 @@ describe("missingRefs", () => {
       "Dock Hand Pim: no guest voice at Production/s02e01/guest-refs/dock-hand-pim*.wav",
     ]);
   });
+  it("reports a cast line that misses the grammar instead of passing it silently", async () => {
+    const { root, w } = await show1();
+    // The show's own prose habit: an em-dash where the grammar wants parentheses. This used to
+    // return [] and take an unregistered subject into synthesis and image generation.
+    await w("Episodes/s02e01/outline.md", "## Cast\n- Vale — recurring, speaks\n");
+    expect(await missingRefs(root, "s02e01", show)).toEqual([
+      "- Vale — recurring, speaks: not in the `- <Name> (<tags>)` grammar",
+    ]);
+    await w("Episodes/s02e01/outline.md", "## Cast\n- Vale (recurring, speaks\n");
+    expect(await missingRefs(root, "s02e01", show)).toEqual([
+      "- Vale (recurring, speaks: not in the `- <Name> (<tags>)` grammar",
+    ]);
+  });
+
+  it("reports an entry whose tags name none of recurring, guest or location", async () => {
+    const { root, w } = await show1();
+    // `lead` reaches no check: without one of the three tags the probe routes on, the entry was
+    // looked up nowhere and the outline passed refs-ready with a subject nobody had registered.
+    await w("Episodes/s02e01/outline.md", "## Cast\n- Vale (lead, speaks)\n- Harbor (location)\n");
+    expect(await missingRefs(root, "s02e01", show)).toEqual([
+      "Vale: tags name none of recurring, guest, location (got lead, speaks)",
+    ]);
+  });
+
   it("finds a guest voice by slug prefix, and is empty without a cast section", async () => {
     const { root, w } = await show1();
     await w("Episodes/s02e01/outline.md", "## Cast\n- Dock Hand Pim (guest, speaks)\n");

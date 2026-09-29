@@ -85,10 +85,17 @@ export function deriveStage(state: RunState, map: StageMap, needs: Needs): Stage
   return highest;
 }
 
-/** Refuses a stage map that would degrade silently: a key that is no step of the pipeline
- *  never advances anything, a gate mapped to an approved stage or a step to a DRAFT_ one is a
- *  category error, and an `approved` step that carries `when` can be bypassed — and a bypassed
- *  step never counts toward `highest`, so the stage it names would never be reached. */
+/** Refuses a stage map that would degrade silently. Four checks, all of them at load time:
+ *  every key names a step of the pipeline, since a key that names nothing never advances
+ *  anything; every `gates` key is a gate step and names a `DRAFT_` stage, since that is the
+ *  stage a gate opens; every `approved` key names a stage that is neither `DRAFT_` nor `NEEDS_`;
+ *  and no `approved` key carries a `when`, because a bypassed step never counts toward
+ *  `highest`, so the stage it names would never be reached.
+ *  A step id appearing in both `gates` and `approved` is legal and intended: a gate whose
+ *  approval is itself the milestone is keyed in both, as `final-gate` is — `DRAFT_ASSEMBLY`
+ *  while it waits and `ASSEMBLY` once it is answered — because no step after it stamps that
+ *  stage. What the function does not check is that a gate is mapped to any approved stage at
+ *  all; that is the pipeline's choice, not an error. */
 export function validateStageMap(map: StageMap, pipeline: Pipeline): void {
   const byId = new Map(pipeline.steps.map((s) => [s.id, s] as const));
   for (const [id, stage] of Object.entries(map.gates)) {

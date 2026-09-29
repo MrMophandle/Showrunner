@@ -131,6 +131,17 @@ export function fakeExecutors(root: string, knobs: { failOnce?: Set<string>; rev
         return { ok: true, text: "3 shots", toolCalls: 2 };
       case "image-audit-1": case "image-audit-2": case "image-audit-3":
         return { ok: true, text: "", toolCalls: 4, verdict: { pass: true, verdict: "IMAGES_CLEAN", fixed: [], flagged: [], summary: "all clean" } };
+      case "image-gate-fix": {
+        // What image-gate.reject.md orders: rewrite the shot's prompt and bump its seed. The file
+        // has to stay valid JSON — the generators parse it — and it has to change, or the two
+        // generators would be served from cache on the restarted pass.
+        const rel = `Production/${ep}/images/prompts.json`;
+        const doc = JSON.parse(await readFile(path.join(root, rel), "utf8")) as { shots: { seed: number; prompt?: string }[] };
+        const first = doc.shots[0];
+        if (first) { first.seed += 1; first.prompt = `reworked: ${String(ctx.results["image-gate:rejection"] ?? "")}`; }
+        await w(rel, JSON.stringify(doc));
+        return { ok: true, text: "image-gate-fix done", toolCalls: 2 };
+      }
       case "propose": await w("Canon/continuity-ledger.md", "changed\n"); return { ok: true, text: "ledger updated", toolCalls: 3 };
       default:
         // every fix agent
@@ -219,6 +230,21 @@ describe("the episode pipeline, walked", () => {
     expect(await go()).toMatchObject({ status: "waiting", gate: { stepId: "image-gate", attempt: 1 } });
     expect(await stage()).toBe("DRAFT_IMAGES");
     expect(calls.filter((c) => c.startsWith("image-audit-"))).toEqual(["image-audit-1"]); // rounds 2 and 3 bypassed after a clean audit
+    // an image-gate rejection: the fix agent runs first, then every image step between the two
+    // gates is reset — but not the already-approved nano-banana-gate inside the closure. A reset
+    // gate re-runs on its recorded approval and emits no event, so the projection would report an
+    // approved gate as never reached for the rest of the run.
+    const beforeImages = calls.length;
+    await answer("image-gate", false, "shot 1 is muddy");
+    expect(await go()).toMatchObject({ status: "waiting", gate: { stepId: "image-gate", attempt: 2 } });
+    expect(calls.slice(beforeImages)[0]).toBe("image-gate-fix");
+    const afterImageReject = await log.read();
+    const resetByImageGate = (id: string) => afterImageReject.some((e) => e.kind === "step_reset" && e.stepId === id && e.payload["by"] === "image-gate");
+    for (const id of ["image-generate", "nano-banana-generate", "image-sheet", "showrunner-images", "image-audit-1", "image-audit-verdict"]) {
+      expect(resetByImageGate(id), id).toBe(true);
+    }
+    expect(afterImageReject.some((e) => e.kind === "step_reset" && e.stepId === "nano-banana-gate")).toBe(false);
+    expect(deriveRunState(afterImageReject).steps["nano-banana-gate"]).toBe("completed");
     await answer("image-gate", true);
 
     expect(await go()).toMatchObject({ status: "waiting", gate: { stepId: "final-gate", attempt: 1 } });

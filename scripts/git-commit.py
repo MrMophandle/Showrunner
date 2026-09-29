@@ -6,9 +6,13 @@ The pipeline's four commit steps used to be shell nodes — `git add` then `git 
 message assembled in bash. This is that pair as one argv program the engine can spawn: each
 listed path that exists is staged (additions, modifications and deletions under it), and a commit
 is made only when the index differs from HEAD, so a step that re-runs after a crash commits
-nothing twice. The message arrives verbatim; the engine already substituted the episode id.
-Prints COMMIT_OK <short sha> or COMMIT_SKIPPED nothing staged; exit 0 either way. A git failure
-exits non-zero with git's own stderr.
+nothing twice. A listed path the show's .gitignore matches is skipped with a `skip <path>
+(ignored)` line rather than staged: `git add -A -- <ignored path>` exits 1, and a commit step
+that fails on a derived artifact the show has declared uninteresting would stop the line after
+the work it exists to record. The message arrives verbatim; the engine already substituted the
+episode id.
+Prints COMMIT_OK <short sha> or COMMIT_SKIPPED nothing staged as its last line; exit 0 either
+way. A git failure exits non-zero with git's own stderr.
 Usage: git-commit.py <episode> --message <text> [--show-root <path>] -- <path>..."""
 import os, subprocess, sys
 from lib import showconfig as sc
@@ -44,6 +48,13 @@ def main() -> None:
     _ep, message, paths = parse(sys.argv)
     for p in paths:
         if os.path.exists(p):
+            # check-ignore exits 0 only when a pattern matched; 1 means no rule covers the path
+            # (a tracked file also exits 1, which is right — a tracked file must still be staged),
+            # and anything else is a git error that `git add` reports better than this does. So
+            # only exit 0 skips.
+            if git("check-ignore", "-q", "--", p).returncode == 0:
+                print(f"skip {p} (ignored)")
+                continue
             r = git("add", "-A", "--", p)
             if r.returncode != 0:
                 sys.exit(f"git-commit: git add {p}: {r.stderr.strip()}")
