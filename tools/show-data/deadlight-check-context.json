@@ -92,7 +92,9 @@
         "Trent",
         "Opha",
         "Cricket",
-        "Remo"
+        "Remo",
+        "Mute",
+        "Ilvaren"
       ],
       "voiceRefsDir": "Production/voice-refs",
       "guestRefsDir": "Production/{episodeId}/guest-refs",
