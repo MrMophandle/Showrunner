@@ -406,6 +406,20 @@ describe("rerunOnReject", () => {
     expect((await log.read()).filter((e) => e.kind === "step_reset")).toHaveLength(2);
   });
 
+  it("reopens without resetting when the closure is empty (the named step is downstream of the gate)", async () => {
+    const { log, ctx, executors, calls } = await rerunSetup();
+    const pipeline: Pipeline = { name: "p", steps: [
+      { kind: "gate", id: "g", message: () => "ok?", rerunOnReject: ["after"] },
+      { kind: "script", id: "after", dependsOn: ["g"], argv: () => ["true"] },
+    ] };
+    await run({ pipeline, ctx, log, executors });
+    await answerGate(log, "r1", "g", { approved: false, notes: "no" });
+    const r = await run({ pipeline, ctx, log, executors });
+    expect(r).toMatchObject({ status: "waiting", gate: { stepId: "g", attempt: 2 } });
+    expect(calls).toEqual([]);
+    expect((await log.read()).some((e) => e.kind === "step_reset")).toBe(false);
+  });
+
   it("resets at once when the gate has no fix agent", async () => {
     const { log, ctx, executors, calls } = await rerunSetup();
     const pipeline: Pipeline = { name: "p", steps: [
@@ -670,9 +684,14 @@ type StepOutcome =
     if (step.rerunOnReject && step.rerunOnReject.length > 0 && !resetAlreadyDone) {
       // Only steps that have a status are reset: a step that has not run yet is pending already,
       // and a step_reset for it would only be noise in the log. The gate itself is never reset.
+      // An empty closure (every named step is downstream of the gate, or none has run) resets
+      // nothing and falls through to reopen: returning a reset with no step_reset written would
+      // leave resetAlreadyDone false and restart the pass forever.
       const stepIds = downstreamOf(pipeline, step.rerunOnReject).filter((id) => id !== step.id && state.steps[id] !== undefined);
-      for (const id of stepIds) await emitFor(id)("step_reset", { by: step.id, attempt: attempts });
-      return { kind: "reset", stepIds };
+      if (stepIds.length > 0) {
+        for (const id of stepIds) await emitFor(id)("step_reset", { by: step.id, attempt: attempts });
+        return { kind: "reset", stepIds };
+      }
     }
 ```
 
