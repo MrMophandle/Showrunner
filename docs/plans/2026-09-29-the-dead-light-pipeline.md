@@ -97,7 +97,7 @@
     provenance.test.ts       NEW
     episode-pipeline.test.ts NEW: the whole pipeline with fake executors, every gate, two rejections, a failure resumed, the stage at every stop
     ep98-exercise.test.ts    NEW: env-gated (SHOWRUNNER_EP98=1): audio-mix, and build-timeline → render → master, with the real script executor
-    concurrency.test.ts      NEW (Task 11)
+    concurrency.test.ts      NEW (Task 10)
   scripts/
     git-commit.py            NEW
     canon-ledger.py          NEW
@@ -313,7 +313,7 @@ EOF
 
 **Interfaces:**
 - Consumes: `step_reset`, `run_resumed`, `GateStep.rerunOnReject` from Task 1.
-- Produces: `downstreamOf(p: Pipeline, ids: StepId[]): StepId[]` (the ids plus every transitive dependent, in pipeline order); `resetSteps(pipeline: Pipeline, log: EventLog, runId: string, stepIds: StepId[], by?: string): Promise<StepId[]>`; `resumeRun(log: EventLog, runId: string, by?: string): Promise<void>`; the runner initialises `ctx.results["<gateId>:rejections"] = []` for every gate step.
+- Produces: `downstreamOf(p: Pipeline, ids: StepId[]): StepId[]` (the ids plus every transitive dependent, in pipeline order); `resetSteps(pipeline: Pipeline, log: EventLog, runId: string, stepIds: StepId[], by?: string): Promise<StepId[]>` (resets only the steps of that closure that have a status — a pending step needs none); `resumeRun(log: EventLog, runId: string, by?: string): Promise<void>`; the runner initialises `ctx.results["<gateId>:rejections"] = []` for every gate step.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -572,7 +572,7 @@ export async function resetSteps(pipeline: Pipeline, log: EventLog, runId: strin
   if (state.runId !== runId) {
     throw new Error(`run id mismatch: the log at ${log.path} is run ${JSON.stringify(state.runId)}, not ${JSON.stringify(runId)}`);
   }
-  const ids = downstreamOf(pipeline, stepIds);
+  const ids = downstreamOf(pipeline, stepIds).filter((id) => state.steps[id] !== undefined);
   if (state.finished) await log.append({ runId, kind: "run_resumed", payload: { by } });
   for (const id of ids) await log.append({ runId, stepId: id, kind: "step_reset", payload: { by } });
   return ids;
@@ -668,7 +668,9 @@ type StepOutcome =
     const resetAlreadyDone = events.slice(lastGateAt + 1)
       .some((e) => e.kind === "step_reset" && e.payload["by"] === step.id);
     if (step.rerunOnReject && step.rerunOnReject.length > 0 && !resetAlreadyDone) {
-      const stepIds = downstreamOf(pipeline, step.rerunOnReject).filter((id) => id !== step.id);
+      // Only steps that have a status are reset: a step that has not run yet is pending already,
+      // and a step_reset for it would only be noise in the log. The gate itself is never reset.
+      const stepIds = downstreamOf(pipeline, step.rerunOnReject).filter((id) => id !== step.id && state.steps[id] !== undefined);
       for (const id of stepIds) await emitFor(id)("step_reset", { by: step.id, attempt: attempts });
       return { kind: "reset", stepIds };
     }
@@ -2067,7 +2069,10 @@ export function fakeExecutors(root: string, knobs: { failOnce?: Set<string>; rev
         if (mine && s.source !== "showrunner" && !(await exists(`Production/${ctx.episodeId}/images/${s.id}.png`))) await w(`Production/${ctx.episodeId}/images/${s.id}.png`, "png");
       }
     }
-    for (const out of step.outputs ?? []) if (!(await exists(out))) await w(out, `${step.id}\n`);
+    // Declared outputs are rewritten on every call, as the QC passes rewrite the manifest in
+    // place: a re-run therefore changes what the next step reads, and the cache is bypassed the
+    // way it would be for real. (The cache itself is tested in runner.test.ts.)
+    for (const out of step.outputs ?? []) await w(out, `${step.id}@${calls.length}\n`);
     return { ok: true, result: results[step.id] ?? `${step.id} OK` };
   };
   let scenes = 0;
@@ -2151,7 +2156,8 @@ describe("the episode pipeline, walked", () => {
     expect(rerun[0]).toBe("script-gate-fix");
     expect(rerun).toEqual(expect.arrayContaining(["tone-check", "flow-check", "character-check", "structure-check", "environment-check", "repetition-check"]));
     expect(rerun).not.toContain("draft-body");
-    expect(rerun).not.toContain("canon-review-script"); // not in rerunOnReject; only the hand-edit guard and the panel
+    expect(rerun).toContain("canon-review-script"); // downstream of hand-edits-script, so it re-runs with the rejection note in scope (F-08)
+    expect(rerun.indexOf("hand-edits-script")).toBeLessThan(rerun.indexOf("canon-review-script"));
     await answer("script-gate", true);
 
     // the write phase closes; refs are present; tts-generate fails once → the run fails, and resumes
@@ -2197,7 +2203,7 @@ describe("the episode pipeline, walked", () => {
     expect(state.results["script-gate:rejections"]).toEqual(["scene two is flat"]);
     expect(state.results["audio-gate:rejections"]).toEqual(["segment 12 is rushed"]);
     expect(Object.values(state.steps).filter((s) => s === "bypassed").length).toBeGreaterThan(0);
-    expect(await readFile(path.join(root, "Episodes/s02e01/STATUS.md"), "utf8")).toContain("stamp-outline");
+    expect(await readFile(path.join(root, "Episodes/s02e01/STATUS.md"), "utf8")).toContain("stamp-finalized");
   });
 
   it("stops at NEEDS_REFS when the outline names a recurring subject the bible lacks, and continues once it exists", async () => {
