@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { STAGES, deriveStage, isStage, stageIndex, compareStages, type StageMap } from "../src/stages.js";
+import { STAGES, deriveStage, isStage, stageIndex, compareStages, validateStageMap, type StageMap } from "../src/stages.js";
 import type { RunState } from "../src/state.js";
+import type { Pipeline } from "../src/steps.js";
 
 const map: StageMap = {
   gates: { "outline-gate": "DRAFT_OUTLINE", "script-gate": "DRAFT_SCRIPT", "casting-gate": "DRAFT_CASTING", "audio-gate": "DRAFT_AUDIO", "image-gate": "DRAFT_IMAGES" },
@@ -60,5 +61,45 @@ describe("stages", () => {
   it("recognises exactly the stage vocabulary", () => {
     for (const stage of STAGES) expect(isStage(stage)).toBe(true);
     for (const other of ["complete", "DONE", "", "NEEDS_SCRIPT"]) expect(isStage(other), other).toBe(false);
+  });
+});
+
+describe("the NEEDS_ windows", () => {
+  it("reports NEEDS_REFS only from SCRIPT to CASTING, and NEEDS_IMAGES only from AUDIO to IMAGES", () => {
+    const atIdea = base({});
+    const atOutline = base({ steps: { "outline-gate": "completed" } });
+    const atScript = base({ steps: { "outline-gate": "completed", "script-gate": "completed" } });
+    const atCasting = base({ steps: { "outline-gate": "completed", "script-gate": "completed", "casting-gate": "completed" } });
+    const atAudio = base({ steps: { "outline-gate": "completed", "script-gate": "completed", "casting-gate": "completed", "audio-gate": "completed" } });
+    const refs = { ...none, refsMissing: true };
+    expect(deriveStage(atIdea, map, refs)).toBe("IDEA");
+    expect(deriveStage(atOutline, map, refs)).toBe("OUTLINE");
+    expect(deriveStage(atScript, map, refs)).toBe("NEEDS_REFS");
+    expect(deriveStage(atCasting, map, refs)).toBe("CASTING");
+    const images = { ...none, imagesMissing: true };
+    expect(deriveStage(atScript, map, images)).toBe("SCRIPT");
+    expect(deriveStage(atAudio, map, images)).toBe("NEEDS_IMAGES");
+    const openImageGate = base({ ...atAudio, steps: { ...atAudio.steps, "image-gate": "waiting" }, openGate: { stepId: "image-gate", attempt: 1, message: "", openedAt: "t" } });
+    expect(deriveStage(openImageGate, map, images)).toBe("NEEDS_IMAGES");
+    expect(deriveStage(openImageGate, map, none)).toBe("DRAFT_IMAGES");
+  });
+});
+
+describe("validateStageMap", () => {
+  const p: Pipeline = { name: "p", steps: [
+    { kind: "gate", id: "g", message: () => "m" },
+    { kind: "script", id: "stamp", dependsOn: ["g"], argv: () => ["true"] },
+    { kind: "script", id: "maybe", dependsOn: ["g"], when: () => true, argv: () => ["true"] },
+  ] };
+  it("accepts a map whose keys are steps and whose values are stages of the right kind", () => {
+    expect(() => validateStageMap({ gates: { g: "DRAFT_SCRIPT" }, approved: { stamp: "SCRIPT" }, final: "COMPLETE" }, p)).not.toThrow();
+  });
+  it("refuses an unknown step, a non-gate under gates, a wrong-kind stage, and an approved step that carries when", () => {
+    expect(() => validateStageMap({ gates: { nope: "DRAFT_SCRIPT" }, approved: {}, final: "COMPLETE" }, p)).toThrow(/gates\.nope: no such step/);
+    expect(() => validateStageMap({ gates: { stamp: "DRAFT_SCRIPT" }, approved: {}, final: "COMPLETE" }, p)).toThrow(/gates\.stamp: step is a script, not a gate/);
+    expect(() => validateStageMap({ gates: { g: "SCRIPT" }, approved: {}, final: "COMPLETE" }, p)).toThrow(/gates\.g: a gate opens a DRAFT_ stage/);
+    expect(() => validateStageMap({ gates: {}, approved: { stamp: "DRAFT_SCRIPT" }, final: "COMPLETE" }, p)).toThrow(/approved\.stamp: DRAFT_SCRIPT is not an approved stage/);
+    expect(() => validateStageMap({ gates: {}, approved: { maybe: "SCRIPT" }, final: "COMPLETE" }, p)).toThrow(/approved\.maybe: the step carries a when/);
+    expect(() => validateStageMap({ gates: {}, approved: {}, final: "NOPE" as never }, p)).toThrow(/final: "NOPE" is not a stage/);
   });
 });

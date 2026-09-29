@@ -132,3 +132,29 @@ export function seasonOf(episodeId: string, airMap: Record<string, [number, numb
 export function resolveShowPath(showRoot: string, p: string): string {
   return path.isAbsolute(p) ? p : path.join(showRoot, p);
 }
+
+
+/** Renders an output-filename pattern the way scripts/lib/showconfig.py's format_filename does,
+ *  so the engine and the scripts name the same file: `{name}` substitutes as is and `{name:02d}`
+ *  zero-pads a number to that width. Nothing else of Python's format grammar is supported, and
+ *  an unknown name is an error rather than a hole in a path. */
+export function formatFilename(pattern: string, vars: Record<string, string | number>): string {
+  return pattern.replace(/\{([A-Za-z_][A-Za-z0-9_]*)(?::0(\d+)d)?\}/g, (_whole, name: string, width?: string) => {
+    if (!Object.prototype.hasOwnProperty.call(vars, name)) throw new ShowConfigError(`filename pattern ${JSON.stringify(pattern)}: unknown name ${JSON.stringify(name)}`);
+    const v = vars[name];
+    return width !== undefined ? String(v).padStart(Number(width), "0") : String(v);
+  });
+}
+
+const DEFAULT_MIX_PATTERN = "{slug} S{season:02d}E{episode:02d}.wav";
+/** scripts/audio-mix.py's name for the mix of an episode that has no season: a production id
+ *  the air map does not place. Mirrored here so the pipeline can declare the file as an input. */
+const UNMAPPED_MIX = "episode.wav";
+
+/** The basename of an episode's mixed WAV, as scripts/audio-mix.py writes it. */
+export function mixFilename(show: ShowConfig, episodeId: string): string {
+  const id = parseEpisodeId(episodeId);
+  const slot = id.kind === "aired" ? [id.season, id.episode] as const : show.airMap[id.raw];
+  if (!slot) return UNMAPPED_MIX;
+  return formatFilename(show.output.mixFilename ?? DEFAULT_MIX_PATTERN, { slug: show.showSlug, season: slot[0], episode: slot[1], episodeId });
+}
