@@ -1,10 +1,11 @@
 import type { Progress } from "./state.js";
+import type { Event } from "./events.js";
 
 export type StepId = string;
 
 export type EventKind =
-  | "run_started" | "run_finished"
-  | "step_started" | "step_completed" | "step_failed" | "step_skipped" | "step_cached"
+  | "run_started" | "run_finished" | "run_resumed"
+  | "step_started" | "step_completed" | "step_failed" | "step_skipped" | "step_cached" | "step_reset"
   | "step_progress" | "script_line"
   | "agent_query" | "agent_tool_call" | "agent_result"
   | "loop_iteration"
@@ -23,6 +24,11 @@ export interface RunContext {
   trigger?: string;
   /** Results of completed steps, by id: a guard's message, a gate's answer, an agent's verdict. */
   results: Record<StepId, unknown>;
+  /** The run's log as read so far — every event the runner has replayed or appended, in log
+   *  order. A guard that needs history (which step last wrote a file, and with what hash) reads
+   *  it here rather than opening the log itself; executors ignore it. Optional so a caller that
+   *  builds a context by hand, as the tests do, need not supply one. */
+  events?: readonly Event[];
 }
 
 interface StepBase {
@@ -99,6 +105,14 @@ export interface GateStep extends StepBase {
    *  enforces that) and a completed run of it is visible in the log and is not repeated after a
    *  crash. Its context carries the rejection notes as the result key `<gate-id>:rejection`. */
   onReject?: NestedAgentStep;
+  /** Steps whose work this gate's rejection invalidates. After the fix agent completes — at once,
+   *  when there is none — the runner emits step_reset for each of these and for every step
+   *  downstream of them (never the gate itself), clears them from the derived state, and
+   *  re-executes them before the gate reopens. A script step among them whose declared inputs
+   *  and outputs are unchanged on disk is served from cache, so naming a step here costs nothing
+   *  when the fix touched nothing it reads. The reset is recorded once per rejection: a crash
+   *  between the step_reset writes and the re-runs does not reset again on resume. */
+  rerunOnReject?: StepId[];
   maxAttempts?: number;
 }
 
@@ -135,7 +149,9 @@ export type ScriptOutcome = { ok: true; result?: string } | { ok: false; error: 
 
 export type AgentOutcome =
   | { ok: true; text: string; verdict?: unknown; toolCalls: number }
-  | { ok: false; error: string };
+  /** toolCalls on a failure is the count made before the failure — the number that tells a
+   *  loop iteration that failed after real work apart from one that did nothing (spec §6.7). */
+  | { ok: false; error: string; toolCalls?: number };
 
 /** The two step kinds that do real work are injected, so the runner is testable with fakes.
  *

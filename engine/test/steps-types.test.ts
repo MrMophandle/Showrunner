@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import type { AgentStep, GateStep, LoopStep, NestedAgentStep, JsonSchema } from "../src/steps.js";
+import type { AgentStep, EventKind, GateStep, LoopStep, NestedAgentStep, JsonSchema } from "../src/steps.js";
 
 describe("agent step types", () => {
   it("a nested agent step cannot carry when or dependsOn", () => {
@@ -23,5 +23,31 @@ describe("agent step types", () => {
       schema, maxTurns: 40, idleTimeoutMs: 900_000, maxBudgetUsd: 2, timeoutMs: 3_600_000,
     };
     expect(step.maxTurns).toBe(40);
+  });
+});
+
+describe("event kinds", () => {
+  it("pins the EventKind union to eighteen kinds, in the order the union declares them", () => {
+    const kinds = [
+      "run_started", "run_finished", "run_resumed",
+      "step_started", "step_completed", "step_failed", "step_skipped", "step_cached", "step_reset",
+      "step_progress", "script_line",
+      "agent_query", "agent_tool_call", "agent_result",
+      "loop_iteration",
+      "gate_opened", "gate_answered",
+      "input_changed",
+    ] as const satisfies readonly EventKind[];
+
+    // The exhaustiveness half of the pin: `covered` owes one key per member of EventKind and can
+    // only be built from the literals in `kinds`, so a kind added to the union without being
+    // added to the list above fails to compile here rather than going quietly unpinned. The
+    // `satisfies` above catches the other direction, a name in the list that is not a kind.
+    const covered: Record<EventKind, true> = Object.fromEntries(
+      kinds.map((k) => [k, true]),
+    ) as Record<(typeof kinds)[number], true>;
+
+    expect(kinds).toHaveLength(18);
+    expect(new Set(kinds).size).toBe(18);
+    expect(Object.keys(covered)).toHaveLength(18);
   });
 });

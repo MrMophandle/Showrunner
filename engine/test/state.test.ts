@@ -58,7 +58,10 @@ describe("deriveRunState", () => {
     s = deriveRunState([...opened, ev("gate_answered", "g", { approved: false, notes: "redo" }, "t2")]);
     expect(s.openGate).toBeUndefined();
     expect(s.steps).toEqual({ g: "running" });
-    expect(s.results).toEqual({});
+    // A rejected gate still records no answer under its own id; the note it carried is kept
+    // under "g:rejections" instead, which is the only results key a rejection writes.
+    expect(s.results).toEqual({ "g:rejections": ["redo"] });
+    expect(s.results["g"]).toBeUndefined();
 
     s = deriveRunState([
       ...opened,
@@ -129,5 +132,43 @@ describe("deriveRunState", () => {
     const s = deriveRunState([ev("gate_opened", "g", { attempt: "not a number", message: "m" }, "t1")]);
     expect(s.openGate?.attempt).toBe(1);
     expect(s.gateAttempts).toEqual({ g: 1 });
+  });
+});
+
+describe("step_reset and run_resumed", () => {
+  const ev = (kind: string, stepId: string | undefined, payload: Record<string, unknown> = {}) =>
+    ({ ts: "t", runId: "r", ...(stepId ? { stepId } : {}), kind: kind as Event["kind"], payload }) as Event;
+
+  it("a step_reset returns the step to pending and drops its result", () => {
+    const s = deriveRunState([
+      ev("run_started", undefined), ev("step_started", "a"), ev("step_completed", "a", { result: "one" }),
+      ev("step_reset", "a", { by: "g", attempt: 1 }),
+    ]);
+    expect(s.steps["a"]).toBeUndefined();
+    expect(s.results["a"]).toBeUndefined();
+  });
+
+  it("a run_resumed reopens a failed run: failed and skipped steps become pending, bypassed and completed stay", () => {
+    const s = deriveRunState([
+      ev("run_started", undefined), ev("step_started", "a"), ev("step_completed", "a"),
+      ev("step_started", "b"), ev("step_failed", "b", { error: "boom" }),
+      ev("step_skipped", "c", { reason: "dependency failed: b" }), ev("step_skipped", "d", { reason: "when: false" }),
+      ev("run_finished", undefined, { status: "failed" }),
+      ev("run_resumed", undefined, { by: "operator" }),
+    ]);
+    expect(s.finished).toBe(false);
+    expect(s.status).toBeUndefined();
+    expect(s.steps).toEqual({ a: "completed", d: "bypassed" });
+  });
+
+  it("keeps every rejection note of a gate under <id>:rejections, in order", () => {
+    const s = deriveRunState([
+      ev("run_started", undefined),
+      ev("gate_opened", "g", { attempt: 1, message: "m" }), ev("gate_answered", "g", { approved: false, notes: "first" }),
+      ev("gate_opened", "g", { attempt: 2, message: "m" }), ev("gate_answered", "g", { approved: false, notes: "second" }),
+      ev("gate_opened", "g", { attempt: 3, message: "m" }), ev("gate_answered", "g", { approved: true }),
+    ]);
+    expect(s.results["g:rejections"]).toEqual(["first", "second"]);
+    expect(s.steps["g"]).toBe("completed");
   });
 });
