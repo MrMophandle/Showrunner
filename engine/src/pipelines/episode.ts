@@ -349,7 +349,7 @@ export function episodePipeline(opts: EpisodePipelineOptions): Pipeline {
     // The paths are the files this phase leaves changed and the show keeps: publish.json and
     // prompts.json because final-gate's fix agent edits exactly those two and no later commit
     // step stages them, and not the timeline, which is derived and which the show git-ignores
-    // (an ignored path in this list fails the whole step — see git-commit.py).
+    // (git-commit.py skips an ignored path, but naming one here would only ever be noise).
     commit("assemble-commit", ["stamp-finalized", "publish-kit"], `${episodeId}: assembled + finalized — publish kit, status (assemble phase)`,
       [publishJson, prompts, `${prod}/publish`, status, runsDir]),
 
