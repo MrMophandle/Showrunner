@@ -180,3 +180,74 @@ describe("gates", () => {
     ]);
   });
 });
+
+describe("rerunOnReject", () => {
+  async function rerunSetup() {
+    const root = await mkdtemp(path.join(tmpdir(), "show-"));
+    const calls: string[] = [];
+    const executors: Executors = {
+      script: async (step) => { calls.push(step.id); return { ok: true, result: `${step.id} ok` }; },
+      agent: async (step) => { calls.push(step.id); return { ok: true, text: "done", toolCalls: 1 }; },
+    };
+    const steps: Pipeline["steps"] = [
+      { kind: "script", id: "make", argv: () => ["true"] },
+      { kind: "agent", id: "review", dependsOn: ["make"], promptFile: "r.md", model: "m", allowedTools: [], context: "fresh" },
+      { kind: "script", id: "side", argv: () => ["true"] },
+      { kind: "gate", id: "g", dependsOn: ["review", "side"], message: () => "ok?", maxAttempts: 3,
+        onReject: { kind: "agent", id: "fix", promptFile: "f.md", model: "m", allowedTools: [], context: "fresh" },
+        rerunOnReject: ["make"] },
+      { kind: "script", id: "after", dependsOn: ["g"], argv: () => ["true"] },
+    ];
+    const pipeline: Pipeline = { name: "p", steps };
+    const log = new EventLog(EventLog.logPath(root, "s02e01", "r1"));
+    const ctx = { runId: "r1", episodeId: "s02e01", showRoot: root };
+    return { pipeline, log, ctx, executors, calls };
+  }
+
+  it("re-runs the named steps and their dependents after the fix agent, then reopens the gate", async () => {
+    const { pipeline, log, ctx, executors, calls } = await rerunSetup();
+    await run({ pipeline, ctx, log, executors });
+    expect(calls).toEqual(["make", "review", "side"]);
+    await answerGate(log, "r1", "g", { approved: false, notes: "again" });
+    const r = await run({ pipeline, ctx, log, executors });
+    expect(r).toMatchObject({ status: "waiting", gate: { stepId: "g", attempt: 2 } });
+    // fix first, then make and review again; side is not downstream of make and does not re-run
+    expect(calls).toEqual(["make", "review", "side", "fix", "make", "review"]);
+    const events = await log.read();
+    const resets = events.filter((e) => e.kind === "step_reset").map((e) => [e.stepId, e.payload["by"]]);
+    expect(resets).toEqual([["make", "g"], ["review", "g"]]);
+    // the re-executions are new step_started events following the old ones, per the resume contract
+    expect(events.filter((e) => e.kind === "step_started" && e.stepId === "make")).toHaveLength(2);
+    // the gate itself is never reset
+    expect(events.some((e) => e.kind === "step_reset" && e.stepId === "g")).toBe(false);
+  });
+
+  it("records the reset once per rejection: a crash after the resets does not reset again", async () => {
+    const { pipeline, log, ctx, executors, calls } = await rerunSetup();
+    await run({ pipeline, ctx, log, executors });
+    await answerGate(log, "r1", "g", { approved: false, notes: "again" });
+    // Simulate the crash: run once, then truncate the log to just after the two step_reset events.
+    await run({ pipeline, ctx, log, executors });
+    const events = await log.read();
+    const lastReset = events.map((e) => e.kind).lastIndexOf("step_reset");
+    const { writeFile: wf } = await import("node:fs/promises");
+    await wf(log.path, events.slice(0, lastReset + 1).map((e) => JSON.stringify(e)).join("\n") + "\n");
+    calls.length = 0;
+    const r = await run({ pipeline, ctx, log, executors });
+    expect(r).toMatchObject({ status: "waiting", gate: { stepId: "g", attempt: 2 } });
+    expect(calls).toEqual(["make", "review"]);
+    expect((await log.read()).filter((e) => e.kind === "step_reset")).toHaveLength(2);
+  });
+
+  it("resets at once when the gate has no fix agent", async () => {
+    const { log, ctx, executors, calls } = await rerunSetup();
+    const pipeline: Pipeline = { name: "p", steps: [
+      { kind: "script", id: "make", argv: () => ["true"] },
+      { kind: "gate", id: "g", dependsOn: ["make"], message: () => "ok?", rerunOnReject: ["make"] },
+    ] };
+    await run({ pipeline, ctx, log, executors });
+    await answerGate(log, "r1", "g", { approved: false, notes: "no" });
+    await run({ pipeline, ctx, log, executors });
+    expect(calls).toEqual(["make", "make"]);
+  });
+});

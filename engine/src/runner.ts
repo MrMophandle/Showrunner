@@ -1,6 +1,6 @@
 import path from "node:path";
 import type { EventLog, Event } from "./events.js";
-import { orderSteps } from "./pipeline.js";
+import { downstreamOf, orderSteps } from "./pipeline.js";
 import { BYPASS_REASON, deriveRunState, type GateState, type RunState } from "./state.js";
 import { hashFiles, sameHashes } from "./hash.js";
 import { parseEpisodeId } from "./ids.js";
@@ -43,6 +43,34 @@ export async function answerGate(
   if (answer.notes !== undefined) payload["notes"] = answer.notes;
   if (answer.by !== undefined) payload["by"] = answer.by;
   await log.append({ runId, stepId, kind: "gate_answered", payload });
+}
+
+/** Reopens a failed run: appends run_resumed, after which deriveRunState returns the failed step
+ *  and every step it swept to pending and the next run() continues from there. Only a run whose
+ *  log ends failed can be resumed; a completed run has nothing to continue and a running one is
+ *  not finished. */
+export async function resumeRun(log: EventLog, runId: string, by?: string): Promise<void> {
+  const state = deriveRunState(await log.read());
+  if (state.runId !== runId) {
+    throw new Error(`run id mismatch: the log at ${log.path} is run ${JSON.stringify(state.runId)}, not ${JSON.stringify(runId)}`);
+  }
+  if (!state.finished || state.status !== "failed") throw new Error(`run ${runId} is not failed, so there is nothing to resume`);
+  await log.append({ runId, kind: "run_resumed", payload: by !== undefined ? { by } : {} });
+}
+
+/** The operator's "re-run from here": returns the named steps and every step downstream of them
+ *  to pending, so the next run() re-executes them (a script step whose inputs and outputs are
+ *  unchanged is served from cache). A finished run is reopened first, with run_resumed, or the
+ *  resets would change nothing. Returns the ids that were reset, in pipeline order. */
+export async function resetSteps(pipeline: Pipeline, log: EventLog, runId: string, stepIds: StepId[], by = "operator"): Promise<StepId[]> {
+  const state = deriveRunState(await log.read());
+  if (state.runId !== runId) {
+    throw new Error(`run id mismatch: the log at ${log.path} is run ${JSON.stringify(state.runId)}, not ${JSON.stringify(runId)}`);
+  }
+  const ids = downstreamOf(pipeline, stepIds).filter((id) => state.steps[id] !== undefined);
+  if (state.finished) await log.append({ runId, kind: "run_resumed", payload: { by } });
+  for (const id of ids) await log.append({ runId, stepId: id, kind: "step_reset", payload: { by } });
+  return ids;
 }
 
 type Hashes = Record<string, string | null>;
@@ -126,61 +154,73 @@ async function execute(opts: RunOptions): Promise<RunResult> {
   }
   if (state.openGate) return { status: "waiting", gate: state.openGate };
 
-  const ctx: RunContext = { ...opts.ctx, results: { ...state.results } };
+  const ctx: RunContext = { ...opts.ctx, results: { ...state.results }, events };
+  // Every gate's rejection notes are renderable from the first step: an absent key is a
+  // TemplateError, so the key exists as [] before any rejection has happened.
+  for (const step of ordered) {
+    if (step.kind === "gate") ctx.results[`${step.id}:rejections`] ??= [];
+  }
   const emitFor = (stepId: StepId | undefined): Emit => async (kind, payload) => {
     await append(stepId === undefined
       ? { runId: ctx.runId, kind, payload }
       : { runId: ctx.runId, stepId, kind, payload });
   };
 
-  for (const step of ordered) {
-    const status = state.steps[step.id] ?? "pending";
-    if (status === "completed") continue;
-    if (status === "failed") {
-      // A crash can end a run between the step_failed write and the downstream sweep, so this
-      // resume path recovers the real error from the log and completes the sweep the crashed
-      // run owed, rather than reporting a placeholder and leaving the log half-written.
-      const error = lastFailure(events, step.id);
+  // One pass over the ordered steps; a gate rejection that reset upstream steps restarts the
+  // pass from the top, where the reset steps are pending again and precede the gate.
+  pass: for (;;) {
+    for (const step of ordered) {
+      const status = state.steps[step.id] ?? "pending";
+      if (status === "completed") continue;
+      if (status === "failed") {
+        // A crash can end a run between the step_failed write and the downstream sweep, so this
+        // resume path recovers the real error from the log and completes the sweep the crashed
+        // run owed, rather than reporting a placeholder and leaving the log half-written.
+        const error = lastFailure(events, step.id);
+        await sweep(step);
+        return finish({ status: "failed", stepId: step.id, error });
+      }
+      if (status === "skipped" || status === "bypassed") continue;
+
+      // Dependency check: failed and skipped are distinct reasons. A "bypassed" dependency counts
+      // as satisfied — its `when` said this run does not need it, which is not a broken dependency.
+      let skipReason: string | undefined;
+      for (const d of step.dependsOn ?? []) {
+        const ds = state.steps[d] ?? "pending";
+        if (ds === "failed") { skipReason = `dependency failed: ${d}`; break; }
+        if (ds === "skipped") { skipReason = `dependency skipped: ${d}`; break; }
+      }
+      if (skipReason) {
+        await emitFor(step.id)("step_skipped", { reason: skipReason });
+        state.steps[step.id] = "skipped";
+        continue;
+      }
+
+      // The step's own condition, checked only once its dependencies are known good, so `when` can
+      // read what they wrote.
+      if (step.when && !(await step.when(ctx))) {
+        await emitFor(step.id)("step_skipped", { reason: BYPASS_REASON });
+        state.steps[step.id] = "bypassed";
+        continue;
+      }
+
+      const outcome = await runStep(step, ctx, emitFor, executors, events, [...priorEvents, events], pipeline);
+      if (outcome.kind === "completed") {
+        state.steps[step.id] = "completed";
+        if (outcome.result !== undefined) ctx.results[step.id] = outcome.result;
+        continue;
+      }
+      if (outcome.kind === "waiting") return { status: "waiting", gate: outcome.gate };
+      if (outcome.kind === "reset") {
+        for (const id of outcome.stepIds) { delete state.steps[id]; delete ctx.results[id]; }
+        continue pass;
+      }
+      state.steps[step.id] = "failed";
       await sweep(step);
-      return finish({ status: "failed", stepId: step.id, error });
+      return finish({ status: "failed", stepId: step.id, error: outcome.error });
     }
-    if (status === "skipped" || status === "bypassed") continue;
-
-    // Dependency check: failed and skipped are distinct reasons. A "bypassed" dependency counts
-    // as satisfied — its `when` said this run does not need it, which is not a broken dependency.
-    let skipReason: string | undefined;
-    for (const d of step.dependsOn ?? []) {
-      const ds = state.steps[d] ?? "pending";
-      if (ds === "failed") { skipReason = `dependency failed: ${d}`; break; }
-      if (ds === "skipped") { skipReason = `dependency skipped: ${d}`; break; }
-    }
-    if (skipReason) {
-      await emitFor(step.id)("step_skipped", { reason: skipReason });
-      state.steps[step.id] = "skipped";
-      continue;
-    }
-
-    // The step's own condition, checked only once its dependencies are known good, so `when` can
-    // read what they wrote.
-    if (step.when && !(await step.when(ctx))) {
-      await emitFor(step.id)("step_skipped", { reason: BYPASS_REASON });
-      state.steps[step.id] = "bypassed";
-      continue;
-    }
-
-    const outcome = await runStep(step, ctx, emitFor, executors, events, [...priorEvents, events]);
-    if (outcome.kind === "completed") {
-      state.steps[step.id] = "completed";
-      if (outcome.result !== undefined) ctx.results[step.id] = outcome.result;
-      continue;
-    }
-    if (outcome.kind === "waiting") return { status: "waiting", gate: outcome.gate };
-    // failed
-    state.steps[step.id] = "failed";
-    await sweep(step);
-    return finish({ status: "failed", stepId: step.id, error: outcome.error });
+    return finish({ status: "completed" });
   }
-  return finish({ status: "completed" });
 
   /** Skip everything downstream of a failure so the log is complete before the run finishes. */
   async function sweep(failedStep: Step): Promise<void> {
@@ -210,11 +250,13 @@ async function execute(opts: RunOptions): Promise<RunResult> {
 type StepOutcome =
   | { kind: "completed"; result?: unknown }
   | { kind: "failed"; error: string }
-  | { kind: "waiting"; gate: GateState };
+  | { kind: "waiting"; gate: GateState }
+  /** A gate rejection reset these steps; the pass restarts so they run before the gate reopens. */
+  | { kind: "reset"; stepIds: StepId[] };
 
 async function runStep(
   step: Step, ctx: RunContext, emitFor: (id: StepId | undefined) => Emit,
-  executors: Executors, events: Event[], allLogs: Event[][],
+  executors: Executors, events: Event[], allLogs: Event[][], pipeline: Pipeline,
 ): Promise<StepOutcome> {
   const emit = emitFor(step.id);
   switch (step.kind) {
@@ -233,7 +275,7 @@ async function runStep(
     case "agent":
       return runAgentStep(step, ctx, emit, executors);
     case "gate":
-      return runGateStep(step, ctx, emit, executors, emitFor, events);
+      return runGateStep(step, ctx, emit, executors, emitFor, events, pipeline);
     case "loop":
       return runLoopStep(step, ctx, emit, executors, events);
   }
@@ -285,7 +327,7 @@ async function runAgentStep(step: AgentStep, ctx: RunContext, emit: Emit, execut
 
 async function runGateStep(
   step: GateStep, ctx: RunContext, emit: Emit, executors: Executors,
-  emitFor: (id: StepId | undefined) => Emit, events: Event[],
+  emitFor: (id: StepId | undefined) => Emit, events: Event[], pipeline: Pipeline,
 ): Promise<StepOutcome> {
   const state = deriveRunState(events);
   const attempts = state.gateAttempts[step.id] ?? 0;
@@ -335,6 +377,18 @@ async function runGateStep(
         return { kind: "failed", error: `fix agent failed: ${r.error}` };
       }
       await fixEmit("step_completed", { result: r.verdict ?? r.text, toolCalls: r.toolCalls });
+    }
+    // The rejection invalidates the named steps' work. Recorded once per rejection: a crash after
+    // these writes and before the re-runs finish must not reset again on resume, or the re-runs
+    // would be re-run.
+    const resetAlreadyDone = events.slice(lastGateAt + 1)
+      .some((e) => e.kind === "step_reset" && e.payload["by"] === step.id);
+    if (step.rerunOnReject && step.rerunOnReject.length > 0 && !resetAlreadyDone) {
+      // Only steps that have a status are reset: a step that has not run yet is pending already,
+      // and a step_reset for it would only be noise in the log. The gate itself is never reset.
+      const stepIds = downstreamOf(pipeline, step.rerunOnReject).filter((id) => id !== step.id && state.steps[id] !== undefined);
+      for (const id of stepIds) await emitFor(id)("step_reset", { by: step.id, attempt: attempts });
+      return { kind: "reset", stepIds };
     }
   }
 

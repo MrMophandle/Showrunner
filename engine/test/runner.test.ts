@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { run } from "../src/runner.js";
+import { run, resetSteps, resumeRun } from "../src/runner.js";
 import { EventLog } from "../src/events.js";
 import { deriveRunState } from "../src/state.js";
 import type { Executors, Pipeline, GuardStep, ScriptStep, AgentStep } from "../src/steps.js";
@@ -321,5 +321,80 @@ describe("run", () => {
     expect(seen).toBe("MASTER_OK");
     const done = (await log.read()).find((e) => e.kind === "step_completed" && e.stepId === "master");
     expect(done?.payload["result"]).toBe("MASTER_OK");
+  });
+
+  it("initialises <gate>:rejections to an empty array so a prompt can always render it", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "show-"));
+    const seen: unknown[] = [];
+    const executors: Executors = {
+      script: async () => ({ ok: true }),
+      agent: async (_s, ctx) => { seen.push(ctx.results["g:rejections"]); return { ok: true, text: "t", toolCalls: 0 }; },
+    };
+    const pipeline: Pipeline = { name: "p", steps: [
+      { kind: "agent", id: "a", promptFile: "a.md", model: "m", allowedTools: [], context: "fresh" },
+      { kind: "gate", id: "g", dependsOn: ["a"], message: () => "m" },
+    ] };
+    const log = new EventLog(EventLog.logPath(root, "s02e01", "r1"));
+    await run({ pipeline, ctx: { runId: "r1", episodeId: "s02e01", showRoot: root }, log, executors });
+    expect(seen).toEqual([[]]);
+  });
+
+  it("hands every step the run's events so far through ctx.events", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "show-"));
+    let kinds: string[] = [];
+    const pipeline: Pipeline = { name: "p", steps: [
+      { kind: "guard", id: "a", check: () => ({ pass: true }) },
+      { kind: "guard", id: "b", dependsOn: ["a"], check: (ctx) => { kinds = (ctx.events ?? []).map((e) => e.kind); return { pass: true }; } },
+    ] };
+    const log = new EventLog(EventLog.logPath(root, "s02e01", "r1"));
+    await run({ pipeline, ctx: { runId: "r1", episodeId: "s02e01", showRoot: root }, log, executors: { script: async () => ({ ok: true }), agent: async () => ({ ok: true, text: "", toolCalls: 0 }) } });
+    expect(kinds).toEqual(["run_started", "step_started", "step_completed", "step_started"]);
+  });
+
+  it("resumeRun reopens a failed run and continues from the failed step", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "show-"));
+    let fail = true;
+    const executors: Executors = {
+      script: async (step) => (step.id === "b" && fail ? { ok: false, error: "boom" } : { ok: true }),
+      agent: async () => ({ ok: true, text: "", toolCalls: 0 }),
+    };
+    const pipeline: Pipeline = { name: "p", steps: [
+      { kind: "script", id: "a", argv: () => ["true"] },
+      { kind: "script", id: "b", dependsOn: ["a"], argv: () => ["true"] },
+      { kind: "script", id: "c", dependsOn: ["b"], argv: () => ["true"] },
+    ] };
+    const log = new EventLog(EventLog.logPath(root, "s02e01", "r1"));
+    const ctx = { runId: "r1", episodeId: "s02e01", showRoot: root };
+    expect(await run({ pipeline, ctx, log, executors })).toEqual({ status: "failed", stepId: "b", error: "boom" });
+    await expect(resumeRun(log, "r2")).rejects.toThrow(/run id mismatch/);
+    fail = false;
+    await resumeRun(log, "r1", "showrunner");
+    await expect(resumeRun(log, "r1")).rejects.toThrow(/not failed/);
+    expect(await run({ pipeline, ctx, log, executors })).toEqual({ status: "completed" });
+    const events = await log.read();
+    expect(events.filter((e) => e.kind === "step_started" && e.stepId === "a")).toHaveLength(1);
+    expect(events.filter((e) => e.kind === "step_started" && e.stepId === "b")).toHaveLength(2);
+    expect(events.filter((e) => e.kind === "run_finished")).toHaveLength(2);
+    expect(events.find((e) => e.kind === "run_resumed")?.payload).toEqual({ by: "showrunner" });
+  });
+
+  it("resetSteps returns the named steps and their dependents to pending, reopening a finished run", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "show-"));
+    const calls: string[] = [];
+    const executors: Executors = { script: async (step) => { calls.push(step.id); return { ok: true }; }, agent: async () => ({ ok: true, text: "", toolCalls: 0 }) };
+    const pipeline: Pipeline = { name: "p", steps: [
+      { kind: "script", id: "a", argv: () => ["true"] },
+      { kind: "script", id: "b", dependsOn: ["a"], argv: () => ["true"] },
+      { kind: "script", id: "c", argv: () => ["true"] },
+    ] };
+    const log = new EventLog(EventLog.logPath(root, "s02e01", "r1"));
+    const ctx = { runId: "r1", episodeId: "s02e01", showRoot: root };
+    await run({ pipeline, ctx, log, executors });
+    expect(await resetSteps(pipeline, log, "r1", ["a"])).toEqual(["a", "b"]);
+    calls.length = 0;
+    expect(await run({ pipeline, ctx, log, executors })).toEqual({ status: "completed" });
+    expect(calls).toEqual(["a", "b"]);
+    const resets = (await log.read()).filter((e) => e.kind === "step_reset");
+    expect(resets.map((e) => e.payload)).toEqual([{ by: "operator" }, { by: "operator" }]);
   });
 });

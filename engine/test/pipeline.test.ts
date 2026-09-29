@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { orderSteps, PipelineError } from "../src/pipeline.js";
+import { downstreamOf, orderSteps, PipelineError } from "../src/pipeline.js";
 import type { Pipeline, GuardStep, GateStep, LoopStep, AgentStep } from "../src/steps.js";
 
 const g = (id: string, dependsOn: string[] = []): GuardStep => ({
@@ -74,5 +74,27 @@ describe("orderSteps", () => {
       steps: [{ ...gate("gt", "fix"), dependsOn: ["lp"] }, loop("lp", "draft"), g("last", ["gt"])],
     };
     expect(orderSteps(p).map((s) => s.id)).toEqual(["lp", "gt", "last"]);
+  });
+});
+
+describe("downstreamOf", () => {
+  const p: Pipeline = { name: "p", steps: [
+    { kind: "guard", id: "a", check: () => ({ pass: true }) },
+    { kind: "guard", id: "b", dependsOn: ["a"], check: () => ({ pass: true }) },
+    { kind: "guard", id: "c", dependsOn: ["a"], check: () => ({ pass: true }) },
+    { kind: "guard", id: "d", dependsOn: ["b", "c"], check: () => ({ pass: true }) },
+    { kind: "guard", id: "e", check: () => ({ pass: true }) },
+  ] };
+  it("returns the named steps and every transitive dependent, in pipeline order", () => {
+    expect(downstreamOf(p, ["b"])).toEqual(["b", "d"]);
+    expect(downstreamOf(p, ["a"])).toEqual(["a", "b", "c", "d"]);
+    expect(downstreamOf(p, ["e", "c"])).toEqual(["c", "d", "e"]);
+  });
+  it("refuses an unknown id", () => {
+    expect(() => downstreamOf(p, ["zz"])).toThrow(/unknown step "zz"/);
+  });
+  it("orderSteps refuses a gate whose rerunOnReject names an unknown step", () => {
+    const bad: Pipeline = { name: "p", steps: [{ kind: "gate", id: "g", message: () => "m", rerunOnReject: ["nope"] }] };
+    expect(() => orderSteps(bad)).toThrow(/gate "g" names unknown step "nope" in rerunOnReject/);
   });
 });

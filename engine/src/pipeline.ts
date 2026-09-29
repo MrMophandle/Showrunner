@@ -14,6 +14,26 @@ function nestedIdsOf(step: Step): StepId[] {
   return [];
 }
 
+/** The named steps plus every step that depends on one of them, transitively, in pipeline order.
+ *  This is what a gate rejection resets and what an operator's "re-run from here" re-runs: a
+ *  step whose input was remade cannot keep a result computed from the old one. */
+export function downstreamOf(p: Pipeline, ids: StepId[]): StepId[] {
+  const known = new Set(p.steps.map((s) => s.id));
+  for (const id of ids) {
+    if (!known.has(id)) throw new PipelineError(`unknown step ${JSON.stringify(id)} in pipeline ${p.name}`);
+  }
+  const marked = new Set<StepId>(ids);
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const s of p.steps) {
+      if (marked.has(s.id)) continue;
+      if ((s.dependsOn ?? []).some((d) => marked.has(d))) { marked.add(s.id); grew = true; }
+    }
+  }
+  return p.steps.filter((s) => marked.has(s.id)).map((s) => s.id);
+}
+
 /** Kahn's algorithm, preferring declaration order among steps that are ready. */
 export function orderSteps(p: Pipeline): Step[] {
   const byId = new Map<StepId, Step>();
@@ -54,6 +74,12 @@ export function orderSteps(p: Pipeline): Step[] {
   for (const s of p.steps) {
     for (const d of s.dependsOn ?? []) {
       if (!byId.has(d)) throw new PipelineError(`step ${JSON.stringify(s.id)} depends on unknown step ${JSON.stringify(d)}`);
+    }
+  }
+  for (const s of p.steps) {
+    if (s.kind !== "gate") continue;
+    for (const r of s.rerunOnReject ?? []) {
+      if (!byId.has(r)) throw new PipelineError(`gate ${JSON.stringify(s.id)} names unknown step ${JSON.stringify(r)} in rerunOnReject`);
     }
   }
   const remaining = new Map<StepId, Set<StepId>>();
