@@ -239,6 +239,20 @@ describe("rerunOnReject", () => {
     expect((await log.read()).filter((e) => e.kind === "step_reset")).toHaveLength(2);
   });
 
+  it("reopens without resetting when the closure is empty (the named step is downstream of the gate)", async () => {
+    const { log, ctx, executors, calls } = await rerunSetup();
+    const pipeline: Pipeline = { name: "p", steps: [
+      { kind: "gate", id: "g", message: () => "ok?", rerunOnReject: ["after"] },
+      { kind: "script", id: "after", dependsOn: ["g"], argv: () => ["true"] },
+    ] };
+    await run({ pipeline, ctx, log, executors });
+    await answerGate(log, "r1", "g", { approved: false, notes: "no" });
+    const r = await run({ pipeline, ctx, log, executors });
+    expect(r).toMatchObject({ status: "waiting", gate: { stepId: "g", attempt: 2 } });
+    expect(calls).toEqual([]);
+    expect((await log.read()).some((e) => e.kind === "step_reset")).toBe(false);
+  });
+
   it("resets at once when the gate has no fix agent", async () => {
     const { log, ctx, executors, calls } = await rerunSetup();
     const pipeline: Pipeline = { name: "p", steps: [

@@ -387,8 +387,13 @@ async function runGateStep(
       // Only steps that have a status are reset: a step that has not run yet is pending already,
       // and a step_reset for it would only be noise in the log. The gate itself is never reset.
       const stepIds = downstreamOf(pipeline, step.rerunOnReject).filter((id) => id !== step.id && state.steps[id] !== undefined);
-      for (const id of stepIds) await emitFor(id)("step_reset", { by: step.id, attempt: attempts });
-      return { kind: "reset", stepIds };
+      // An empty closure (every named step is downstream of the gate, or none has run) resets
+      // nothing and falls through to reopen: returning a reset with no step_reset written would
+      // leave resetAlreadyDone false and restart the pass forever.
+      if (stepIds.length > 0) {
+        for (const id of stepIds) await emitFor(id)("step_reset", { by: step.id, attempt: attempts });
+        return { kind: "reset", stepIds };
+      }
     }
   }
 
