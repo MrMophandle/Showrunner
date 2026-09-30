@@ -5,19 +5,23 @@ import type { AgentContentBlock, AgentMessage, AgentQueryOptions, QueryFn } from
  *  AgentMessage field by field, so a change in the SDK's types shows up here as a compile error
  *  and nowhere else. */
 export const sdkQuery: QueryFn = async function* ({ prompt, options }: { prompt: string; options: AgentQueryOptions }) {
+  const dropVerdictTool = options.outputFormat !== undefined;
   for await (const m of query({ prompt, options: { ...options } })) {
-    yield toAgentMessage(m);
+    yield toAgentMessage(m, dropVerdictTool);
   }
 };
 
 /** Maps one SDK message onto the executor's AgentMessage. Exported for this file's own unit tests,
- *  which build SDK-shaped messages by hand; the executor only ever reaches it through sdkQuery. */
-export function toAgentMessage(m: SDKMessage): AgentMessage {
+ *  which build SDK-shaped messages by hand; the executor only ever reaches it through sdkQuery.
+ *
+ *  `dropVerdictTool` is true only for a query run with `outputFormat`: on any other query a tool
+ *  that happens to be named StructuredOutput is a real tool call and is counted. */
+export function toAgentMessage(m: SDKMessage, dropVerdictTool = false): AgentMessage {
   const out: AgentMessage = { type: m.type };
   if ("subtype" in m && typeof m.subtype === "string") out.subtype = m.subtype;
   if ("session_id" in m && typeof m.session_id === "string") out.session_id = m.session_id;
   if (m.type === "assistant") {
-    out.message = { content: m.message.content.filter((b) => !isVerdictDelivery(b)).map(toBlock) };
+    out.message = { content: m.message.content.filter((b) => !(dropVerdictTool && isVerdictDelivery(b))).map(toBlock) };
   }
   if (m.type === "result") {
     if (typeof m.num_turns === "number") out.num_turns = m.num_turns;

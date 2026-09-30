@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { orderSteps, PipelineError } from "../src/pipeline.js";
+import { downstreamOf, orderSteps, PipelineError } from "../src/pipeline.js";
 import type { Pipeline, GuardStep, GateStep, LoopStep, AgentStep } from "../src/steps.js";
 
 const g = (id: string, dependsOn: string[] = []): GuardStep => ({
@@ -74,5 +74,36 @@ describe("orderSteps", () => {
       steps: [{ ...gate("gt", "fix"), dependsOn: ["lp"] }, loop("lp", "draft"), g("last", ["gt"])],
     };
     expect(orderSteps(p).map((s) => s.id)).toEqual(["lp", "gt", "last"]);
+  });
+});
+
+describe("downstreamOf", () => {
+  const p: Pipeline = { name: "p", steps: [
+    { kind: "guard", id: "a", check: () => ({ pass: true }) },
+    { kind: "guard", id: "b", dependsOn: ["a"], check: () => ({ pass: true }) },
+    { kind: "guard", id: "c", dependsOn: ["a"], check: () => ({ pass: true }) },
+    { kind: "guard", id: "d", dependsOn: ["b", "c"], check: () => ({ pass: true }) },
+    { kind: "guard", id: "e", check: () => ({ pass: true }) },
+  ] };
+  it("returns the named steps and every transitive dependent, in pipeline order", () => {
+    expect(downstreamOf(p, ["b"])).toEqual(["b", "d"]);
+    expect(downstreamOf(p, ["a"])).toEqual(["a", "b", "c", "d"]);
+    expect(downstreamOf(p, ["e", "c"])).toEqual(["c", "d", "e"]);
+  });
+  it("refuses an unknown id", () => {
+    expect(() => downstreamOf(p, ["zz"])).toThrow(/unknown step "zz"/);
+  });
+  it("orderSteps refuses a gate whose rerunOnReject names an unknown step", () => {
+    const bad: Pipeline = { name: "p", steps: [{ kind: "gate", id: "g", message: () => "m", rerunOnReject: ["nope"] }] };
+    expect(() => orderSteps(bad)).toThrow(/gate "g" names unknown step "nope" in rerunOnReject/);
+  });
+  it("orderSteps refuses a gate with neither message nor messageFile, and one with both", () => {
+    const neither: Pipeline = { name: "p", steps: [{ kind: "gate", id: "g" }] };
+    expect(() => orderSteps(neither)).toThrow(PipelineError);
+    expect(() => orderSteps(neither)).toThrow(/gate "g" sets neither message nor messageFile; set exactly one/);
+    const both: Pipeline = { name: "p", steps: [{ kind: "gate", id: "g", message: () => "m", messageFile: "g.md" }] };
+    expect(() => orderSteps(both)).toThrow(/gate "g" sets both message and messageFile; set exactly one/);
+    const file: Pipeline = { name: "p", steps: [{ kind: "gate", id: "g", messageFile: "g.md" }] };
+    expect(() => orderSteps(file)).not.toThrow();
   });
 });

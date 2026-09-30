@@ -128,29 +128,35 @@ describe("createAgentExecutor: failures", () => {
     const f = fake([init, success()]);
     const rec = recorder();
     const r = await createAgentExecutor({ query: f.query, promptsDir })(step({ schema }), ctx(), rec.emit);
-    expect(r).toEqual({ ok: false, error: "success without structured output" });
+    expect(r).toEqual({ ok: false, error: "success without structured output", toolCalls: 0 });
     expect(rec.events.at(-1)!.payload).toMatchObject({ ok: false, error: "success without structured output", subtype: "success" });
   });
   it("an error subtype fails with the subtype and the errors", async () => {
     const f = fake([init, { type: "result", subtype: "error_max_turns", errors: ["hit 7 turns", "stopped"], session_id: "sess-1", num_turns: 7, duration_ms: 5, total_cost_usd: 0.1 }]);
     const r = await createAgentExecutor({ query: f.query, promptsDir })(step(), ctx(), recorder().emit);
-    expect(r).toEqual({ ok: false, error: "error_max_turns: hit 7 turns; stopped" });
+    expect(r).toEqual({ ok: false, error: "error_max_turns: hit 7 turns; stopped", toolCalls: 0 });
+  });
+  it("an error result carries the tool calls made before it, so a dead iteration is distinguishable", async () => {
+    const f = fake([init, toolUse("Read", { file_path: "a.md" }, "t1"), toolUse("Grep", { pattern: "x" }, "t2"),
+      { type: "result", subtype: "error_during_execution", session_id: "s", num_turns: 2, duration_ms: 3, total_cost_usd: 0 }]);
+    const r = await createAgentExecutor({ query: f.query, promptsDir })(step({ allowedTools: ["Read", "Grep"] }), ctx(), recorder().emit);
+    expect(r).toEqual({ ok: false, error: "error_during_execution", toolCalls: 2 });
   });
   it("an error subtype with no errors fails with the bare subtype", async () => {
     const f = fake([init, { type: "result", subtype: "error_during_execution", session_id: "s", num_turns: 0, duration_ms: 1, total_cost_usd: 0 }]);
     const r = await createAgentExecutor({ query: f.query, promptsDir })(step(), ctx(), recorder().emit);
-    expect(r).toEqual({ ok: false, error: "error_during_execution" });
+    expect(r).toEqual({ ok: false, error: "error_during_execution", toolCalls: 0 });
   });
   it("a throw after an error result is ignored in favour of the result", async () => {
     const f = fake([init, { type: "result", subtype: "error_max_budget_usd", errors: ["budget"], session_id: "s", num_turns: 2, duration_ms: 1, total_cost_usd: 1.5 }], { throwAfter: true });
     const r = await createAgentExecutor({ query: f.query, promptsDir })(step(), ctx(), recorder().emit);
-    expect(r).toEqual({ ok: false, error: "error_max_budget_usd: budget" });
+    expect(r).toEqual({ ok: false, error: "error_max_budget_usd: budget", toolCalls: 0 });
   });
   it("a throw with no result fails with the message and still emits agent_result", async () => {
     const f = fake([], { throwBefore: new Error("Native CLI binary for darwin-arm64 not found") });
     const rec = recorder();
     const r = await createAgentExecutor({ query: f.query, promptsDir })(step(), ctx(), rec.emit);
-    expect(r).toEqual({ ok: false, error: "query failed: Native CLI binary for darwin-arm64 not found" });
+    expect(r).toEqual({ ok: false, error: "query failed: Native CLI binary for darwin-arm64 not found", toolCalls: 0 });
     expect(rec.events.map((e) => e.kind)).toEqual(["agent_query", "agent_result"]);
     expect(rec.events[1]!.payload).toMatchObject({ ok: false, toolCalls: 0 });
   });
@@ -159,7 +165,7 @@ describe("createAgentExecutor: failures", () => {
       throw { code: "ECONNRESET" };
     };
     const r = await createAgentExecutor({ query, promptsDir })(step(), ctx(), recorder().emit);
-    expect(r).toEqual({ ok: false, error: "query failed: [object Object]" });
+    expect(r).toEqual({ ok: false, error: "query failed: [object Object]", toolCalls: 0 });
   });
   it("a throw inside the executor's own message handling fails the step, even after a result arrived", async () => {
     // message.content is an object, not an array: the handler's for-of throws. The result message
@@ -175,12 +181,12 @@ describe("createAgentExecutor: failures", () => {
   it("a result message with no subtype fails by naming the missing subtype", async () => {
     const f = fake([init, { type: "result", result: "t" }]);
     const r = await createAgentExecutor({ query: f.query, promptsDir })(step(), ctx(), recorder().emit);
-    expect(r).toEqual({ ok: false, error: "result message with no subtype" });
+    expect(r).toEqual({ ok: false, error: "result message with no subtype", toolCalls: 0 });
   });
   it("a stream that ends without a result fails", async () => {
     const f = fake([init, text("hi")]);
     const r = await createAgentExecutor({ query: f.query, promptsDir })(step(), ctx(), recorder().emit);
-    expect(r).toEqual({ ok: false, error: "query ended without a result message" });
+    expect(r).toEqual({ ok: false, error: "query ended without a result message", toolCalls: 0 });
   });
   it("a missing prompt file fails before any query and emits nothing", async () => {
     const f = fake([init, success()]);
@@ -209,5 +215,32 @@ describe("createAgentExecutor: failures", () => {
     const r = await createAgentExecutor({ query: f.query, promptsDir })(step({ schema: { ...schema, $schema: "https://json-schema.org/draft/2020-12/schema" } }), ctx(), recorder().emit);
     expect(r).toEqual({ ok: false, error: "schema must be JSON Schema draft-07, got https://json-schema.org/draft/2020-12/schema" });
     expect(f.calls.length).toBe(0);
+  });
+  it("builds outputFormat from schemaFile, applies the same draft check, and refuses a step with both", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "prompts-"));
+    await writeFile(path.join(dir, "audit.md"), "audit {{episodeId}}");
+    await writeFile(path.join(dir, "audit.schema.json"), JSON.stringify(schema));
+    await writeFile(path.join(dir, "newer.schema.json"), JSON.stringify({ ...schema, $schema: "https://json-schema.org/draft/2020-12/schema" }));
+    await writeFile(path.join(dir, "broken.schema.json"), "{ not json");
+
+    const f = fake([init, success({ structured_output: { pass: true } })]);
+    const rec = recorder();
+    const r = await createAgentExecutor({ query: f.query, promptsDir: dir })(step({ promptFile: "audit.md", schemaFile: "audit.schema.json" }), ctx(), rec.emit);
+    expect(r).toEqual({ ok: true, text: "final text", verdict: { pass: true }, toolCalls: 0 });
+    expect(f.calls[0]!.options.outputFormat).toEqual({ type: "json_schema", schema });
+    expect(rec.events[0]!.payload["schema"]).toBe(true);
+    expect(rec.events.at(-1)!.payload).toMatchObject({ verdict: { pass: true } });
+
+    const ex = createAgentExecutor({ query: f.query, promptsDir: dir });
+    expect(await ex(step({ promptFile: "audit.md", schema, schemaFile: "audit.schema.json" }), ctx(), recorder().emit))
+      .toEqual({ ok: false, error: "schema and schemaFile are exclusive" });
+    expect(await ex(step({ promptFile: "audit.md", schemaFile: "newer.schema.json" }), ctx(), recorder().emit))
+      .toEqual({ ok: false, error: "schema must be JSON Schema draft-07, got https://json-schema.org/draft/2020-12/schema" });
+    expect(await ex(step({ promptFile: "audit.md", schemaFile: "broken.schema.json" }), ctx(), recorder().emit))
+      .toMatchObject({ ok: false, error: expect.stringContaining('schema file "broken.schema.json" is not valid JSON') });
+    const absent = await ex(step({ promptFile: "audit.md", schemaFile: "absent.schema.json" }), ctx(), recorder().emit);
+    expect(absent).toMatchObject({ ok: false, error: expect.stringContaining("absent.schema.json") });
+    // Every rejection above happens before the query, so only the first step ever reached it.
+    expect(f.calls.length).toBe(1);
   });
 });

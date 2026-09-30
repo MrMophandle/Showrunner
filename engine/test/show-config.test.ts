@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import path from "node:path";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { loadShowConfig, seasonOf, resolveShowPath, ShowConfigError, SHOW_CONFIG_FILE } from "../src/show-config.js";
+import { loadShowConfig, seasonOf, resolveShowPath, formatFilename, mixFilename, ShowConfigError, SHOW_CONFIG_FILE } from "../src/show-config.js";
 
 const good = {
   showName: "Harbor Lights", showSlug: "HarborLights", promptsDir: "prompts",
@@ -65,5 +65,20 @@ describe("resolveShowPath", () => {
   it("joins relative paths and keeps absolute ones", () => {
     expect(resolveShowPath("/show", "prompts")).toBe(path.join("/show", "prompts"));
     expect(resolveShowPath("/show", "/elsewhere/prompts")).toBe("/elsewhere/prompts");
+  });
+});
+
+describe("filenames", () => {
+  it("formats {name} and {name:02d}, and refuses an unknown name", () => {
+    expect(formatFilename("{slug} S{season:02d}E{episode:02d}.wav", { slug: "Show", season: 2, episode: 1 })).toBe("Show S02E01.wav");
+    expect(formatFilename("{episodeId}.mp4", { episodeId: "ep98" })).toBe("ep98.mp4");
+    expect(() => formatFilename("{nope}", { slug: "s" })).toThrow(/unknown name "nope"/);
+  });
+  it("names the mix from the pattern for an id with a season, and episode.wav otherwise", () => {
+    const show = { showName: "S", showSlug: "Show", promptsDir: "prompts", models: { medium: "m", large: "l", writer: "w" }, airMap: { ep10: [1, 10] as [number, number] }, output: { nasRoot: "/nas", mixFilename: "{slug} S{season:02d}E{episode:02d}.wav" } };
+    expect(mixFilename(show, "s02e01")).toBe("Show S02E01.wav");
+    expect(mixFilename(show, "ep10")).toBe("Show S01E10.wav");
+    expect(mixFilename(show, "ep98")).toBe("episode.wav");
+    expect(mixFilename({ ...show, output: { nasRoot: "/nas" } }, "s02e01")).toBe("Show S02E01.wav");
   });
 });

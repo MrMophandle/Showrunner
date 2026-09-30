@@ -3,11 +3,16 @@
 Two prompts.json fixtures carry it: one whose character briefs are clean, one whose are not.
 The distinction the test pins hardest is the exit code — 2 for a dirty brief, 1 for a broken
 config — because the pipeline reads them differently and the operator fixes different files.
+
+The third mode is `--report-only`, which the pipeline's first populator-check runs: the verdict
+leaves on stdout and the exit code stays 0, so the engine records it as the step's result and the
+run can route a dirty brief to a fix agent instead of stopping on it.
 """
 
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -23,8 +28,8 @@ def _episode(show_root: Path, episode_id: str, shots: list[dict]) -> None:
     (base / "prompts.json").write_text(json.dumps({"shots": shots}))
 
 
-def _run(show_root: Path, episode_id: str) -> subprocess.CompletedProcess:
-    return subprocess.run([sys.executable, str(SCRIPT), episode_id],
+def _run(show_root: Path, episode_id: str, *flags: str) -> subprocess.CompletedProcess:
+    return subprocess.run([sys.executable, str(SCRIPT), episode_id, *flags],
                           cwd=str(show_root), capture_output=True, text=True)
 
 
@@ -40,6 +45,13 @@ DIRTY = [
     {"id": "s1-maeve", "type": "character", "brief": "MAEVE and the crew at the winch."},
     {"id": "s2-quay", "type": "character", "brief": "A crowd on the quay, waiting."},
     {"id": "s3-clean", "type": "character", "brief": "MAEVE alone."},
+]
+
+# One offending brief among several, so the report-only line's count and its id list are both
+# pinned to something a two-offender fixture could not distinguish.
+ONE_DIRTY = [
+    {"id": "s04-lamp", "type": "character", "brief": "MAEVE alone at the lamp."},
+    {"id": "s05-crowd", "type": "character", "brief": "A crowd on the quay, waiting."},
 ]
 
 
@@ -132,3 +144,55 @@ def test_a_dirty_brief_still_reports_the_units_judged_before_it(show_root: Path)
              for l in out.splitlines() if l.startswith("::progress")]
     # All three briefs are judged before the refusal is printed.
     assert lines == [{"done": n, "total": 3, "unit": "briefs"} for n in (1, 2, 3)]
+
+
+# ── --report-only: the verdict as a result line the pipeline can branch on ────────────────────
+
+def test_report_only_names_the_dirty_briefs_on_stdout_and_exits_zero(show_root: Path) -> None:
+    """The pipeline's `populator-check` step runs `--report-only` so the verdict reaches the
+    engine as the step's RESULT (`engine/src/script-step.ts` records the last stdout line only on
+    a clean exit). `visual-direction-fix` and `populator-check-final` both branch on it with
+    `String(ctx.results["populator-check"]).startsWith("POPULATORS_BAD")`; an exit 2 would fail
+    the step instead, and the fix agent would never be reached."""
+    _episode(show_root, "ep01", ONE_DIRTY)
+    r = _run(show_root, "ep01", "--report-only")
+    assert r.returncode == 0, r.stderr
+    assert re.match(r"^POPULATORS_BAD 1 briefs: s05-crowd$", r.stdout.strip().splitlines()[-1])
+
+
+def test_report_only_still_puts_the_per_brief_detail_on_stderr(show_root: Path) -> None:
+    """stdout carries the machine-readable verdict; the operator's detail is unchanged."""
+    _episode(show_root, "ep01", ONE_DIRTY)
+    r = _run(show_root, "ep01", "--report-only")
+    assert "s05-crowd: matched A crowd" in r.stderr
+    assert "s04-lamp" not in r.stderr
+
+
+def test_report_only_on_a_clean_episode_is_the_ordinary_ok_line(show_root: Path) -> None:
+    _episode(show_root, "ep01", CLEAN)
+    r = _run(show_root, "ep01", "--report-only")
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip().splitlines()[-1] == "POPULATORS_OK 2 briefs"
+
+
+def test_without_the_flag_a_dirty_episode_still_exits_two(show_root: Path) -> None:
+    """`populator-check-final` runs the plain mode after the fix agent: there the dirty brief is
+    a hard stop before the image branch spends money, exactly as before the flag existed."""
+    _episode(show_root, "ep01", ONE_DIRTY)
+    r = _run(show_root, "ep01")
+    assert r.returncode == 2, (r.returncode, r.stdout, r.stderr)
+    assert "POPULATORS_BAD" not in r.stdout
+
+
+def test_the_flag_is_removed_before_the_episode_id_is_read(show_root: Path, tmp_path: Path) -> None:
+    """The episode id is positional (`sys.argv[1]`), so a flag left in argv ahead of it becomes
+    the id. `sc.show_root` strips its own flag in place for this reason; `--report-only` follows
+    the same rule, and an operator's argument order does not change which episode is checked."""
+    _episode(show_root, "ep01", ONE_DIRTY)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    r = subprocess.run([sys.executable, str(SCRIPT), "--report-only", "ep01",
+                        "--show-root", str(show_root)],
+                       cwd=str(elsewhere), capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip().splitlines()[-1] == "POPULATORS_BAD 1 briefs: s05-crowd"

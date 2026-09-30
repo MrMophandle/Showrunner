@@ -40,6 +40,26 @@ export function deriveRunState(events: Event[]): RunState {
         // otherwise be reported as still awaiting an answer that can never be acted on.
         delete s.openGate;
         break;
+      case "run_resumed":
+        // A failed run reopened by resumeRun(): the failure and everything it swept become
+        // pending again, and the run is no longer finished. Completed and bypassed steps keep
+        // their status — nothing about them changed.
+        s.finished = false;
+        delete s.status;
+        for (const [stepId, st] of Object.entries(s.steps)) {
+          if (st === "failed" || st === "skipped") delete s.steps[stepId];
+        }
+        break;
+      case "step_reset":
+        // Written by a gate rejection (payload.by is the gate) or by resetSteps (payload.by is
+        // "operator"): the step's work is invalidated, so it returns to pending and its result
+        // leaves ctx.results until it completes again.
+        if (id) {
+          delete s.steps[id];
+          delete s.results[id];
+          if (s.position?.stepId === id) delete s.position;
+        }
+        break;
       case "step_started":
         if (id) { s.steps[id] = "running"; s.position = { stepId: id, startedAt: e.ts }; }
         break;
@@ -95,6 +115,12 @@ export function deriveRunState(events: Event[]): RunState {
             s.steps[id] = "completed";
             s.results[id] = e.payload;
           } else {
+            // Every rejection note the gate has received in this run, in order, under a key a
+            // later step may render: the canon reviewer's provenance rule (spec §2.3) needs them
+            // after the gate's own fix agent has come and gone.
+            const key = `${id}:rejections`;
+            const prior = Array.isArray(s.results[key]) ? (s.results[key] as unknown[]) : [];
+            s.results[key] = [...prior, String(e.payload["notes"] ?? "")];
             // A rejected gate leaves the step "running" with no open gate. The runner
             // re-executes any step whose status is not terminal and does not consult
             // `position` to decide that, so the gate is re-executed: it runs the fix agent

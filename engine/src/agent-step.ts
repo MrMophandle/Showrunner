@@ -1,5 +1,5 @@
 import path from "node:path";
-import type { AgentOutcome, AgentStep, Emit, Executors, JsonSchema, RunContext } from "./steps.js";
+import type { AgentOutcome, AgentStep, Emit, Executors, GateMessageRenderer, JsonSchema, RunContext } from "./steps.js";
 import { loadPrompt, renderPrompt, type RenderExtra } from "./prompt-template.js";
 import { resolveShowPath, seasonOf, ShowConfigError, type ShowConfig } from "./show-config.js";
 
@@ -140,6 +140,47 @@ async function pump(
   }
 }
 
+/** Where an executor built with these options looks for prompt, schema and gate-message files,
+ *  resolved per call because the show root is the run context's. Shared with
+ *  `createGateMessageRenderer` so a gate's message and an agent's prompt are never read from two
+ *  different directories. */
+function promptsDirFor(opts: AgentExecutorOptions, ctx: RunContext): string {
+  return opts.promptsDir ?? (opts.show ? resolveShowPath(ctx.showRoot, opts.show.promptsDir) : path.join(ctx.showRoot, "prompts"));
+}
+
+/** The `{{season}}` and `{{show.*}}` half of a render, shared with `createGateMessageRenderer` so
+ *  the two cannot drift. The season is resolved eagerly but is not required: an id the air map does
+ *  not carry leaves it undefined, and only a template that writes {{season}} then fails, in the
+ *  renderer. A malformed episode id is an InvalidEpisodeId rather than a ShowConfigError, is not
+ *  swallowed here, and fails the caller before anything is logged or queried. */
+function renderExtraFor(opts: AgentExecutorOptions, ctx: RunContext): RenderExtra {
+  let season: number | undefined;
+  if (opts.show) {
+    try {
+      season = seasonOf(ctx.episodeId, opts.show.airMap);
+    } catch (err) {
+      if (!(err instanceof ShowConfigError)) throw err;
+    }
+  }
+  return {
+    ...(season !== undefined ? { season } : {}),
+    ...(opts.show ? { show: opts.show as unknown as Record<string, unknown> } : {}),
+  };
+}
+
+/** The renderer a gate's `messageFile` needs, for `RunOptions.renderGateMessage`. It is built from
+ *  the same options as the agent executor and reuses the same two functions — `loadPrompt` for the
+ *  file (refusing a path that escapes the prompts directory) and `renderPrompt` for the `{{...}}`,
+ *  with the same `RenderExtra` — so a gate message and an agent prompt see one prompts directory
+ *  and one set of variables. Every hole is a TemplateError, as it is for a prompt: the runner
+ *  catches it and fails the gate rather than opening it with a message that lies. */
+export function createGateMessageRenderer(opts: AgentExecutorOptions): GateMessageRenderer {
+  return async (file: string, ctx: RunContext): Promise<string> => {
+    const loaded = await loadPrompt(promptsDirFor(opts, ctx), file);
+    return renderPrompt(loaded.text, ctx, renderExtraFor(opts, ctx));
+  };
+}
+
 export function createAgentExecutor(opts: AgentExecutorOptions): Executors["agent"] {
   /** context: "shared" — session ids by `${episodeId}/${runId}/${stepId}`, for this executor's
    *  lifetime. The episode id is part of the key because a run id is only unique within an episode:
@@ -151,38 +192,48 @@ export function createAgentExecutor(opts: AgentExecutorOptions): Executors["agen
 
   return async (step: AgentStep, ctx: RunContext, emit: Emit): Promise<AgentOutcome> => {
     // 1–2: the prompt and the schema, checked before anything is logged or queried.
-    const promptsDir = opts.promptsDir ?? (opts.show ? resolveShowPath(ctx.showRoot, opts.show.promptsDir) : path.join(ctx.showRoot, "prompts"));
+    const promptsDir = promptsDirFor(opts, ctx);
     let prompt: string;
     let promptHash: string;
     let promptPath: string;
     try {
-      // The season is resolved eagerly but is not required: an id the air map does not carry
-      // leaves it undefined, and only a prompt that writes {{season}} then fails, in the renderer.
-      // A malformed episode id is an InvalidEpisodeId rather than a ShowConfigError, is not
-      // swallowed here, and fails the step before anything is logged or queried.
-      let season: number | undefined;
-      if (opts.show) {
-        try {
-          season = seasonOf(ctx.episodeId, opts.show.airMap);
-        } catch (err) {
-          if (!(err instanceof ShowConfigError)) throw err;
-        }
-      }
-      const extra: RenderExtra = {
-        ...(season !== undefined ? { season } : {}),
-        ...(opts.show ? { show: opts.show as unknown as Record<string, unknown> } : {}),
-      };
       const loaded = await loadPrompt(promptsDir, step.promptFile);
       promptHash = loaded.hash;
       promptPath = loaded.path;
-      prompt = renderPrompt(loaded.text, ctx, extra);
+      prompt = renderPrompt(loaded.text, ctx, renderExtraFor(opts, ctx));
     } catch (err) {
       return { ok: false, error: errorMessage(err) };
     }
+    // The schema, from the step or from a file beside the prompts. The two are exclusive: a step
+    // carrying both has two answers to "what shape is this verdict" and no way to tell which the
+    // author meant, so the step fails rather than one of them winning silently.
+    if (step.schema !== undefined && step.schemaFile !== undefined) {
+      return { ok: false, error: "schema and schemaFile are exclusive" };
+    }
+    let schema: JsonSchema | undefined = step.schema;
+    if (schema === undefined && step.schemaFile !== undefined) {
+      let text: string;
+      try {
+        text = (await loadPrompt(promptsDir, step.schemaFile)).text;
+      } catch (err) {
+        return { ok: false, error: errorMessage(err) };
+      }
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(text);
+      } catch (err) {
+        return { ok: false, error: `schema file ${JSON.stringify(step.schemaFile)} is not valid JSON: ${errorMessage(err)}` };
+      }
+      if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+        return { ok: false, error: `schema file ${JSON.stringify(step.schemaFile)} must be a JSON object` };
+      }
+      schema = parsed as JsonSchema;
+    }
     // An allowlist rather than a denylist: the SDK validates against draft-07 only, so anything a
     // `$schema` names that is not draft-07 is refused, including a draft this code has never heard
-    // of. A schema with no `$schema` key at all is accepted — draft-07 is the SDK's default.
-    const declared = step.schema?.["$schema"];
+    // of. A schema with no `$schema` key at all is accepted — draft-07 is the SDK's default. The
+    // check is the same whether the schema came from the step or from a file.
+    const declared = schema?.["$schema"];
     if (typeof declared === "string" && !declared.includes("draft-07")) {
       return { ok: false, error: `schema must be JSON Schema draft-07, got ${declared}` };
     }
@@ -205,7 +256,7 @@ export function createAgentExecutor(opts: AgentExecutorOptions): Executors["agen
       settingSources: [],
       systemPrompt: { type: "preset", preset: "claude_code" },
       abortController,
-      ...(step.schema ? { outputFormat: { type: "json_schema" as const, schema: step.schema } } : {}),
+      ...(schema ? { outputFormat: { type: "json_schema" as const, schema } } : {}),
       ...(step.maxTurns !== undefined ? { maxTurns: step.maxTurns } : {}),
       ...(step.maxBudgetUsd !== undefined ? { maxBudgetUsd: step.maxBudgetUsd } : {}),
       ...(resume !== undefined ? { resume } : {}),
@@ -214,7 +265,7 @@ export function createAgentExecutor(opts: AgentExecutorOptions): Executors["agen
     // 4: agent_query.
     await emit("agent_query", {
       promptFile: step.promptFile, promptHash, promptPath, model, modelAlias: step.model,
-      allowedTools: [...step.allowedTools], context: step.context, schema: Boolean(step.schema), resumed: Boolean(options.resume),
+      allowedTools: [...step.allowedTools], context: step.context, schema: Boolean(schema), resumed: Boolean(options.resume),
       showConfig: Boolean(opts.show),
     });
 
@@ -270,21 +321,21 @@ export function createAgentExecutor(opts: AgentExecutorOptions): Executors["agen
     const r = failure !== undefined ? undefined : result;
     let outcome: AgentOutcome;
     if (r === undefined) {
-      outcome = { ok: false, error: failure ?? "query ended without a result message" };
+      outcome = { ok: false, error: failure ?? "query ended without a result message", toolCalls };
     } else if (r.subtype === undefined) {
-      outcome = { ok: false, error: "result message with no subtype" };
+      outcome = { ok: false, error: "result message with no subtype", toolCalls };
     } else if (r.subtype === "success") {
-      if (step.schema && r.structured_output === undefined) {
-        outcome = { ok: false, error: "success without structured output" };
+      if (schema && r.structured_output === undefined) {
+        outcome = { ok: false, error: "success without structured output", toolCalls };
       } else {
         outcome = {
           ok: true, text: r.result ?? "", toolCalls,
-          ...(step.schema ? { verdict: r.structured_output } : {}),
+          ...(schema ? { verdict: r.structured_output } : {}),
         };
       }
     } else {
       const errors = r.errors ?? [];
-      outcome = { ok: false, error: errors.length ? `${r.subtype}: ${errors.join("; ")}` : r.subtype };
+      outcome = { ok: false, error: errors.length ? `${r.subtype}: ${errors.join("; ")}` : r.subtype, toolCalls };
     }
 
     // 9: agent_result.
@@ -298,8 +349,8 @@ export function createAgentExecutor(opts: AgentExecutorOptions): Executors["agen
       ...(result?.total_cost_usd !== undefined ? { costUsd: result.total_cost_usd } : {}),
       ...(sessionId !== undefined ? { sessionId } : {}),
       permissionDenials: denials.length, deniedTools,
-      ...(outcome.ok && step.schema ? { verdict: outcome.verdict } : {}),
-      ...(outcome.ok && !step.schema ? { text: outcome.text } : {}),
+      ...(outcome.ok && schema ? { verdict: outcome.verdict } : {}),
+      ...(outcome.ok && !schema ? { text: outcome.text } : {}),
       ...(!outcome.ok ? { error: outcome.error } : {}),
     });
     return outcome;

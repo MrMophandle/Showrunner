@@ -17,6 +17,9 @@ warning, so the pipeline works before the bible is complete.
 
 Idempotent: skips shots whose PNG already exists (delete a PNG to re-roll it).
 
+A shot whose `source` is `showrunner` is never generated; the showrunner drops it in, and the
+line says `[MISSING — drop the file here]` until he has.
+
 Usage: image-generate.py <episode> [--show-root <path>]"""
 import json, os, shutil, subprocess, sys
 
@@ -81,6 +84,14 @@ def main() -> None:
     for pos, shot in enumerate(shots, 1):
         sc.progress(pos, len(shots), "shots")
         out = f"{base}/{shot['id']}.png"
+        if shot.get("source", "pipeline") == "showrunner":
+            # The showrunner makes this one by hand, whatever its type. Checked BEFORE the
+            # character/ambient branch, because a showrunner-made ambient shot would otherwise
+            # fall through to the GPU.
+            done += 1
+            print(f"skip {shot['id']} (showrunner-made)"
+                  + ("" if os.path.exists(out) else "  [MISSING — drop the file here]"))
+            continue
         if shot.get("type") == "character":
             # generated in Nano Banana by the showrunner (faces); skip locally.
             # expects the returned PNG dropped in as {id}.png; warn if still missing.

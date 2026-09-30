@@ -26,7 +26,7 @@ describe("toAgentMessage", () => {
         ],
       },
     } as unknown as SDKAssistantMessage;
-    expect(toAgentMessage(m)).toEqual({
+    expect(toAgentMessage(m, true)).toEqual({
       type: "assistant",
       session_id: "sess-1",
       message: {
@@ -37,8 +37,14 @@ describe("toAgentMessage", () => {
       },
     });
     // The executor counts tool_use blocks, so the verdict delivery must not reach it as one.
-    const blocks = toAgentMessage(m).message?.content ?? [];
+    const blocks = toAgentMessage(m, true).message?.content ?? [];
     expect(blocks.filter((b) => b.type === "tool_use")).toHaveLength(1);
+  });
+
+  it("keeps a tool_use named StructuredOutput when not asked to drop it", () => {
+    const m = { type: "assistant", message: { content: [{ type: "tool_use", id: "t1", name: "StructuredOutput", input: { pass: true } }] } };
+    const out = toAgentMessage(m as never);
+    expect(out.message?.content).toHaveLength(1);
   });
 
   it("copies every field the executor reads off a success result", () => {

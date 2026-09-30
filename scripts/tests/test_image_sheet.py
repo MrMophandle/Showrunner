@@ -84,3 +84,53 @@ def test_the_result_line_is_last(episode: Path) -> None:
     out = subprocess.run([sys.executable, str(SCRIPT), "ep01"],
                          cwd=str(episode), capture_output=True, text=True).stdout
     assert out.strip().splitlines()[-1].startswith("IMAGE_SHEET ep01:")
+
+
+# ── source: "showrunner" — the sheet says who a shot is waiting on ───────────────────────────
+
+@pytest.fixture
+def handmade_episode(show_root: Path) -> Path:
+    """One character shot the showrunner makes by hand, one already in place, one ambient."""
+    base = show_root / "Production" / "ep02" / "images"
+    base.mkdir(parents=True)
+    (base / "prompts.json").write_text(json.dumps({"shots": [
+        {"id": "s1-maeve", "type": "character", "refs": ["Maeve"], "scene": "COLD OPEN",
+         "brief": "MAEVE at the rail.", "source": "showrunner"},
+        {"id": "s2-pell", "type": "character", "refs": ["Pell"], "scene": "SCENE TWO",
+         "brief": "PELL on the stair.", "source": "showrunner"},
+        {"id": "s3-lamp", "type": "ambient", "prompt": "lamp room glass, a cracked lens",
+         "source": "showrunner"},
+        {"id": "s4-quay", "type": "ambient", "prompt": "grey sea horizon, a rope coiled"},
+    ]}))
+    (base / "s2-pell.png").write_bytes(b"png")
+    return show_root
+
+
+def _sheet(root: Path) -> str:
+    r = subprocess.run([sys.executable, str(SCRIPT), "ep02"],
+                       cwd=str(root), capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    return (root / "Production/ep02/images/IMAGE-SHEET.md").read_text()
+
+
+def test_a_showrunner_made_shot_is_marked_in_the_to_make_list(handmade_episode: Path) -> None:
+    """The generators skip a `source: "showrunner"` shot, so a missing PNG is work waiting on a
+    person rather than a render that failed. The sheet is where the showrunner reads that."""
+    line = [l for l in _sheet(handmade_episode).splitlines() if l.startswith("refs: **Maeve**")][0]
+    assert "made by hand by the showrunner" in line
+
+
+def test_a_showrunner_made_shot_is_marked_once_it_is_in_place(handmade_episode: Path) -> None:
+    line = [l for l in _sheet(handmade_episode).splitlines() if "s2-pell.png" in l and l.startswith("- ")][0]
+    assert "made by hand by the showrunner" in line
+
+
+def test_a_showrunner_made_engine_shot_is_marked_in_the_table(handmade_episode: Path) -> None:
+    """An ambient shot can be the showrunner's too; the engine-shots table is the other list."""
+    line = [l for l in _sheet(handmade_episode).splitlines() if "`s3-lamp.png`" in l][0]
+    assert "made by hand by the showrunner" in line
+
+
+def test_a_shot_with_no_source_field_is_not_marked(handmade_episode: Path) -> None:
+    line = [l for l in _sheet(handmade_episode).splitlines() if "`s4-quay.png`" in l][0]
+    assert "made by hand by the showrunner" not in line

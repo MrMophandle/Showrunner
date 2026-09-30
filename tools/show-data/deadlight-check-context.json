@@ -92,7 +92,9 @@
         "Trent",
         "Opha",
         "Cricket",
-        "Remo"
+        "Remo",
+        "Mute",
+        "Ilvaren"
       ],
       "voiceRefsDir": "Production/voice-refs",
       "guestRefsDir": "Production/{episodeId}/guest-refs",
@@ -119,7 +121,7 @@
         "starfield, ",
         "low-key but clearly exposed"
       ],
-      "styleConstants": "dark hard science fiction, low-key but clearly exposed, real shadow, film grain. The picture fills the entire frame edge to edge — full-bleed, no letterbox bars or black borders. no text, no watermark, no signature.",
+      "styleConstants": "dark hard science fiction, low-key but clearly exposed, real shadow, film grain. The picture fills the entire frame edge to edge \u2014 full-bleed, no letterbox bars or black borders. no text, no watermark, no signature.",
       "collectivePopulatorBans": [
         "the crew",
         "the others",
@@ -169,14 +171,30 @@
     "arc-tracker": "Arc report: the Mute's arc is on ruled beats; Sable's is one episode behind.",
     "audio-gate:rejection": "The showrunner rejected this step: the ending does not pay off the cold open, and Opha's scale is wrong in two shots. Fix both and resubmit.",
     "audio-mix": "MIX OK: DeadLight S02E01.wav, 00:23:41, -14.0 LUFS, room tone -42 dB.",
+    "canon-diff": "CANON CHANGES: 4 files changed, 37 insertions(+), 6 deletions(-).",
     "canon-gate:rejection": "The showrunner rejected this step: the ending does not pay off the cold open, and Opha's scale is wrong in two shots. Fix both and resubmit.",
+    "canon-review-outline": {
+      "pass": true,
+      "verdict": "CANON PASSED",
+      "issues": [],
+      "deviations": [
+        {
+          "where": "Beat 4 \u2014 the Mute answers Sable in the hold",
+          "deviation": "the Mute signs a whole sentence rather than single words",
+          "canon": "Canon/characters/The Mute/the-mute.md \u2014 he signs one word at a time",
+          "provenance": "locked-beats",
+          "evidence": "Episodes/s02e01/locked-beats.md: \"he answers her in a whole sentence, and she understands it\""
+        }
+      ]
+    },
+    "canon-review-script": {
+      "pass": true,
+      "verdict": "CANON PASSED",
+      "issues": [],
+      "deviations": []
+    },
     "casting-gate:rejection": "The showrunner rejected this step: the ending does not pay off the cold open, and Opha's scale is wrong in two shots. Fix both and resubmit.",
     "character-check": {
-      "pass": true,
-      "verdict": "DRAFT PASSED",
-      "issues": []
-    },
-    "continuity-check": {
       "pass": true,
       "verdict": "DRAFT PASSED",
       "issues": []
@@ -185,7 +203,6 @@
     "desk-editor": "Desk report: six proposals, three ruled, the season's spine unchanged.",
     "desk-gate": "Approved. Enact proposals 1, 3 and 6; hold 2 for the next desk.",
     "desk-gate:rejection": "The showrunner rejected this step: the ending does not pay off the cold open, and Opha's scale is wrong in two shots. Fix both and resubmit.",
-    "diff": "NO_CHANGES",
     "environment-check": {
       "pass": true,
       "verdict": "DRAFT PASSED",
@@ -197,18 +214,18 @@
       "verdict": "DRAFT PASSED",
       "issues": []
     },
-    "image-audit": "IMAGES_CLEAN: 18 shots audited, 0 defects outstanding.",
+    "hand-edits-outline": "{\"handEdited\": []}",
+    "hand-edits-script": "{\"handEdited\": []}",
+    "image-audit-verdict": "s01-hold-corridor: pass; s04-relic-bench: fixed (prompt rewritten positively, seed +1000); s07-opha-still-corner: character-note \u2014 visible corner watermark, re-export clean.",
     "image-gate:rejection": "The showrunner rejected this step: the ending does not pay off the cold open, and Opha's scale is wrong in two shots. Fix both and resubmit.",
     "master": "MASTER OK: episode-mastered.mp4, 00:23:41, -14.0 LUFS.",
     "nano-banana-gate:rejection": "The showrunner rejected this step: the ending does not pay off the cold open, and Opha's scale is wrong in two shots. Fix both and resubmit.",
     "nano-banana-generate": "NANO_OK: 18 of 18 character shots generated, 0 audit failures.",
-    "outline-canon-check": {
-      "pass": true,
-      "verdict": "OUTLINE PASSED",
-      "issues": []
-    },
     "outline-gate:rejection": "The showrunner rejected this step: the ending does not pay off the cold open, and Opha's scale is wrong in two shots. Fix both and resubmit.",
+    "outline-gate:rejections": [],
+    "populator-check": "POPULATORS_BAD: s05-galley-supper \u2014 \"the crew\" (banned substring); s09-dock-argument \u2014 \"several figures\" (banned substring).",
     "propose": "Proposed canon edits: two ledger threads advanced, one character sheet amended.",
+    "publish-copy": "A salvage crew takes a contract on a dead hauler that still has power, and finds the reason it was left running.",
     "repetition-check": {
       "pass": true,
       "verdict": "DRAFT PASSED",
@@ -216,6 +233,7 @@
     },
     "review-gate": "no",
     "script-gate:rejection": "The showrunner rejected this step: the ending does not pay off the cold open, and Opha's scale is wrong in two shots. Fix both and resubmit.",
+    "script-gate:rejections": [],
     "season-status": "SEASON STATUS: 10 episodes, 10 finalized, 0 drafting.",
     "structure-check": {
       "pass": true,

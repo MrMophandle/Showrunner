@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { run } from "../src/runner.js";
-import { EventLog } from "../src/events.js";
+import { EventLog, type Event } from "../src/events.js";
 import type { Executors, Pipeline, LoopStep, AgentStep } from "../src/steps.js";
 
 const body: AgentStep = { kind: "agent", id: "draft", promptFile: "draft.md", model: "m", allowedTools: ["Read", "Write"], context: "fresh" };
@@ -20,6 +20,14 @@ async function runLoop(texts: string[], toolCalls: number[], maxIterations: numb
   const log = new EventLog(EventLog.logPath(root, "s02e01", "r1"));
   const result = await run({ pipeline, ctx: { runId: "r1", episodeId: "s02e01", showRoot: root }, log, executors });
   return { result, events: await log.read() };
+}
+
+const at = (n: number) => `2026-01-01T10:00:0${n}.000Z`;
+
+/** Writes a log by hand, as a crashed run left it — the same helper as `test/e2e.test.ts:27`. */
+async function writeCrashLog(logPath: string, events: Omit<Event, "ts">[]): Promise<void> {
+  await mkdir(path.dirname(logPath), { recursive: true });
+  await writeFile(logPath, events.map((e, i) => JSON.stringify({ ts: at(i), ...e })).join("\n") + "\n");
 }
 
 describe("loops", () => {
@@ -110,5 +118,55 @@ describe("loops", () => {
     expect(result).toEqual({ status: "failed", stepId: "draft-loop", error: "exhausted 3 iterations without sentinel DRAFT_COMPLETE" });
     const dead = events.filter((e) => e.kind === "loop_iteration" && e.payload["toolCalls"] === 0);
     expect(dead).toHaveLength(2);
+  });
+  it("resumes a loop whose last iteration recorded the sentinel by completing it without running the body", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "show-"));
+    const logPath = EventLog.logPath(root, "s02e01", "r1");
+    await writeCrashLog(logPath, [
+      { runId: "r1", kind: "run_started", payload: { pipeline: "p", episodeId: "s02e01" } },
+      { runId: "r1", stepId: "loop", kind: "step_started", payload: { kind: "loop", body: "body", until: "DONE", max: 3 } },
+      { runId: "r1", stepId: "loop", kind: "agent_result", payload: { ok: true, toolCalls: 2, text: "all DONE" } },
+      { runId: "r1", stepId: "loop", kind: "loop_iteration", payload: { iteration: 1, max: 3, sentinel: true, toolCalls: 2 } },
+      // crashed here, before step_completed
+    ]);
+    let bodyCalls = 0;
+    const pipeline: Pipeline = { name: "p", steps: [
+      { kind: "loop", id: "loop", until: "DONE", maxIterations: 3, body: { kind: "agent", id: "body", promptFile: "b.md", model: "m", allowedTools: [], context: "fresh" } },
+    ] };
+    const r = await run({ pipeline, ctx: { runId: "r1", episodeId: "s02e01", showRoot: root }, log: new EventLog(logPath),
+      executors: { script: async () => ({ ok: true }), agent: async () => { bodyCalls++; return { ok: true, text: "DONE", toolCalls: 1 }; } } });
+    expect(r).toEqual({ status: "completed" });
+    expect(bodyCalls).toBe(0);
+    const done = (await new EventLog(logPath).read()).find((e) => e.kind === "step_completed" && e.stepId === "loop");
+    expect(done?.payload).toMatchObject({ result: "all DONE", iterations: 1, resumedAfterSentinel: true });
+  });
+
+  it("hashes the loop's declared inputs on start and outputs on completion", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "show-"));
+    await writeFile(path.join(root, "in.md"), "in");
+    const pipeline: Pipeline = { name: "p", steps: [
+      { kind: "loop", id: "loop", until: "DONE", maxIterations: 2, inputs: ["in.md"], outputs: ["out.md"],
+        body: { kind: "agent", id: "body", promptFile: "b.md", model: "m", allowedTools: [], context: "fresh" } },
+    ] };
+    const log = new EventLog(EventLog.logPath(root, "s02e01", "r1"));
+    await run({ pipeline, ctx: { runId: "r1", episodeId: "s02e01", showRoot: root }, log,
+      executors: { script: async () => ({ ok: true }), agent: async (_s, ctx) => { await writeFile(path.join(ctx.showRoot, "out.md"), "out"); return { ok: true, text: "DONE", toolCalls: 1 }; } } });
+    const events = await log.read();
+    const started = events.find((e) => e.kind === "step_started" && e.stepId === "loop");
+    const done = events.find((e) => e.kind === "step_completed" && e.stepId === "loop");
+    expect(Object.keys(started?.payload["inputHashes"] as object)).toEqual(["in.md"]);
+    expect(typeof (done?.payload["outputHashes"] as Record<string, unknown>)["out.md"]).toBe("string");
+  });
+
+  it("records the true tool count on a failed iteration", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "show-"));
+    const pipeline: Pipeline = { name: "p", steps: [
+      { kind: "loop", id: "loop", until: "DONE", maxIterations: 2, body: { kind: "agent", id: "body", promptFile: "b.md", model: "m", allowedTools: [], context: "fresh" } },
+    ] };
+    const log = new EventLog(EventLog.logPath(root, "s02e01", "r1"));
+    await run({ pipeline, ctx: { runId: "r1", episodeId: "s02e01", showRoot: root }, log,
+      executors: { script: async () => ({ ok: true }), agent: async () => ({ ok: false, error: "idle timeout after 5ms", toolCalls: 4 }) } });
+    const it1 = (await log.read()).find((e) => e.kind === "loop_iteration");
+    expect(it1?.payload).toMatchObject({ iteration: 1, sentinel: false, toolCalls: 4, error: "idle timeout after 5ms" });
   });
 });

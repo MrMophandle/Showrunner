@@ -1,10 +1,11 @@
 import type { Progress } from "./state.js";
+import type { Event } from "./events.js";
 
 export type StepId = string;
 
 export type EventKind =
-  | "run_started" | "run_finished"
-  | "step_started" | "step_completed" | "step_failed" | "step_skipped" | "step_cached"
+  | "run_started" | "run_finished" | "run_resumed"
+  | "step_started" | "step_completed" | "step_failed" | "step_skipped" | "step_cached" | "step_reset"
   | "step_progress" | "script_line"
   | "agent_query" | "agent_tool_call" | "agent_result"
   | "loop_iteration"
@@ -23,6 +24,11 @@ export interface RunContext {
   trigger?: string;
   /** Results of completed steps, by id: a guard's message, a gate's answer, an agent's verdict. */
   results: Record<StepId, unknown>;
+  /** The run's log as read so far — every event the runner has replayed or appended, in log
+   *  order. A guard that needs history (which step last wrote a file, and with what hash) reads
+   *  it here rather than opening the log itself; executors ignore it. Optional so a caller that
+   *  builds a context by hand, as the tests do, need not supply one. */
+  events?: readonly Event[];
 }
 
 interface StepBase {
@@ -78,6 +84,11 @@ export interface AgentStep extends StepBase {
   /** JSON schema the agent's verdict must satisfy, when the step produces one. With a schema the
    *  outcome carries `verdict`; a success with no verdict is a failure. */
   schema?: JsonSchema;
+  /** The schema, as a draft-07 file relative to the prompts directory; exclusive with `schema`;
+   *  the executor reads it with `loadPrompt` and applies the same draft-07 check. A show that
+   *  keeps its schemas as `<step>.schema.json` beside its prompts names them this way, so the
+   *  engine repository never holds their contents. */
+  schemaFile?: string;
   /** Maximum agentic turns (tool-use round trips) before the SDK stops the query. */
   maxTurns?: number;
   /** Fail the step when no message arrives from the SDK for this long. `timeoutMs` on StepBase
@@ -91,14 +102,35 @@ export interface AgentStep extends StepBase {
  *  `dependsOn`: it runs because its parent decided so. */
 export type NestedAgentStep = Omit<AgentStep, "when" | "dependsOn">;
 
+/** Renders a gate's `messageFile` into the text the showrunner is shown. The runner does not own
+ *  it: resolving a file under the show's prompts directory and rendering its `{{...}}` needs the
+ *  prompts directory and the show config, which the agent executor's owner has — see
+ *  `createGateMessageRenderer` in agent-step.ts. */
+export type GateMessageRenderer = (file: string, ctx: RunContext) => Promise<string>;
+
 export interface GateStep extends StepBase {
   kind: "gate";
-  message: (ctx: RunContext) => string;
+  /** The message the showrunner is shown, built from the run context. Exactly one of `message` and
+   *  `messageFile` is set: `orderSteps` refuses a gate with neither or both. */
+  message?: (ctx: RunContext) => string;
+  /** The message as a prompt file, relative to the show's prompts directory, rendered through
+   *  `renderPrompt` with the run context by `RunOptions.renderGateMessage`. Exclusive with
+   *  `message`; a gate that names one and is run without a renderer fails rather than opening
+   *  with a message the showrunner cannot read. */
+  messageFile?: string;
   /** The agent run when the showrunner rejects. The fix agent is a step of its own: its events
    *  are logged under its own id, so its id shares the pipeline's id namespace (orderSteps
    *  enforces that) and a completed run of it is visible in the log and is not repeated after a
    *  crash. Its context carries the rejection notes as the result key `<gate-id>:rejection`. */
   onReject?: NestedAgentStep;
+  /** Steps whose work this gate's rejection invalidates. After the fix agent completes — at once,
+   *  when there is none — the runner emits step_reset for each of these and for every step
+   *  downstream of them (never the gate itself), clears them from the derived state, and
+   *  re-executes them before the gate reopens. A script step among them whose declared inputs
+   *  and outputs are unchanged on disk is served from cache, so naming a step here costs nothing
+   *  when the fix touched nothing it reads. The reset is recorded once per rejection: a crash
+   *  between the step_reset writes and the re-runs does not reset again on resume. */
+  rerunOnReject?: StepId[];
   maxAttempts?: number;
 }
 
@@ -135,7 +167,9 @@ export type ScriptOutcome = { ok: true; result?: string } | { ok: false; error: 
 
 export type AgentOutcome =
   | { ok: true; text: string; verdict?: unknown; toolCalls: number }
-  | { ok: false; error: string };
+  /** toolCalls on a failure is the count made before the failure — the number that tells a
+   *  loop iteration that failed after real work apart from one that did nothing (spec §6.7). */
+  | { ok: false; error: string; toolCalls?: number };
 
 /** The two step kinds that do real work are injected, so the runner is testable with fakes.
  *

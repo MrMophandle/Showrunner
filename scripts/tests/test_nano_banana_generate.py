@@ -388,7 +388,9 @@ def test_run_states_and_partial(tmp_path, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "s2-pell  OK" in out and "s3-done  SKIPPED-exists" in out
     assert "s4-ghost  SKIPPED-no-ref" in out
-    assert "NANO_PARTIAL 1/2" in out and rc == 1   # ghost counts, s3 skip doesn't
+    # NANO_PARTIAL exits 0: the tag is the step's result and the nano-banana gate shows the
+    # partial batch to the showrunner, who decides. A non-zero exit would fail the step first.
+    assert "NANO_PARTIAL 1/2" in out and rc == 0   # ghost counts, s3 skip doesn't
 
 def test_run_retry_then_failed_audit_keeps_last(tmp_path, monkeypatch, capsys):
     ep, bible = _mk_episode(tmp_path)
@@ -403,7 +405,7 @@ def test_run_retry_then_failed_audit_keeps_last(tmp_path, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert len(prompts_seen) == 3                       # MAX_ATTEMPTS
     assert "PREVIOUS ATTEMPT REJECTED: three arms" in prompts_seen[1]
-    assert "s2-pell  FAILED-AUDIT" in out and rc == 1
+    assert "s2-pell  FAILED-AUDIT" in out and rc == 0   # NANO_PARTIAL: the gate decides
     assert (tmp_path / "Production/ep99/images/s2-pell.png").exists()  # last kept
 
 def test_run_prints_audit_rejection_notes_as_they_happen(tmp_path, monkeypatch, capsys):
@@ -449,7 +451,7 @@ def test_refused_is_terminal_no_retry(tmp_path, monkeypatch, capsys):
     def gen(p, i, o, c): n["gen"] += 1; return "refused"
     monkeypatch.setattr(nbg, "generate_image", gen)
     rc = nbg.run("ep99", *_show(tmp_path), only=["s2-pell"], notes="", no_audit=False)
-    assert n["gen"] == 1 and "s2-pell  REFUSED" in capsys.readouterr().out and rc == 1
+    assert n["gen"] == 1 and "s2-pell  REFUSED" in capsys.readouterr().out and rc == 0
 
 
 def test_only_backup_restored_on_generation_failure(tmp_path, monkeypatch, capsys):
@@ -469,7 +471,7 @@ def test_only_backup_restored_on_generation_failure(tmp_path, monkeypatch, capsy
     assert png.read_bytes() == b"handmade", "original hand-made image must be restored"
     assert not bak.exists(), "backup must not survive the run"
     assert "s3-done  FAILED-AUDIT (original restored)" in out
-    assert rc == 1
+    assert rc == 0   # NANO_PARTIAL: the gate decides
 
 
 def test_cost_cap_systemexit_mid_run_prints_summary_and_restores_backup(tmp_path, monkeypatch, capsys):
@@ -581,7 +583,7 @@ def test_error_state_is_reported_distinctly_and_run_continues(tmp_path, monkeypa
     assert "s2-pell  ERROR (error:503 from host)" in out
     assert "REFUSED" not in out
     assert "s4-ghost  SKIPPED-no-ref" in out, "run must continue past the ERROR shot"
-    assert rc == 1
+    assert rc == 0   # NANO_PARTIAL: the gate decides
 
 
 def test_run_no_audit_end_to_end_skips_the_audit_safety_net(tmp_path, monkeypatch, capsys):
@@ -909,3 +911,92 @@ def test_a_real_collective_populator_is_still_caught():
     """The widened carve-outs must not open the door the guard exists to shut."""
     bad = "The crew works the deck while a few figures move in the background."
     assert _find(bad) != []
+
+
+# ── source: "showrunner" — the shot the showrunner makes by hand ─────────────────────────────
+
+def _mk_handmade_episode(tmp_path):
+    """An episode whose character shots are one for the pipeline and one for the showrunner."""
+    ep = tmp_path / "Production/ep98/images"; ep.mkdir(parents=True)
+    canon = tmp_path / "Canon/characters/Pell"; canon.mkdir(parents=True)
+    sheet = canon / "Pell Reference.png"; sheet.write_bytes(b"s")
+    (ep / "prompts.json").write_text(json.dumps({"episode": "ep98", "shots": [
+        {"id": "s1-pell", "type": "character", "refs": ["pell"], "brief": "PELL still."},
+        {"id": "s2-hand", "type": "character", "refs": ["pell"], "brief": "PELL again.",
+         "source": "showrunner"},
+        {"id": "s3-amb", "type": "ambient", "prompt": "x", "seed": 1}]}))
+    return ep, {"pell": {"identity": "dog-sized grub", "kind": "creature", "ref": str(sheet)}}
+
+
+def test_a_showrunner_made_shot_is_never_generated(tmp_path, monkeypatch, capsys):
+    """`source: "showrunner"` takes a shot out of the generated set before any money is spent:
+    no API call, no audit, no PNG, and no result row — the showrunner drops the file in himself
+    and the `showrunner-images` guard holds the line until he has."""
+    ep, bible = _mk_handmade_episode(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(nbg, "load_bible", lambda path="x": bible)
+    generated = []
+    def gen(p, i, o, c):
+        generated.append(o); open(o, "wb").write(b"g"); return "ok"
+    monkeypatch.setattr(nbg, "generate_image", gen)
+    monkeypatch.setattr(nbg, "audit_image", lambda s, p, laws, name: (True, ""))
+    rc = nbg.run("ep98", *_show(tmp_path), only=None, notes="", no_audit=False)
+    out = capsys.readouterr().out
+    assert [os.path.basename(o) for o in generated] == ["s1-pell.png"]
+    assert not (ep / "s2-hand.png").exists()
+    # A per-shot result row is printed as "  <id>  <state>"; the handmade shot has no row at all,
+    # so it never counts toward the NANO_OK/NANO_PARTIAL tally either.
+    assert "  s2-hand  " not in out
+    assert "NANO_OK 1/1" in out and rc == 0
+
+
+def test_the_run_says_how_many_showrunner_made_shots_it_left_alone(tmp_path, monkeypatch, capsys):
+    """Silence would read as loss: a run that generates one of two character shots has to say the
+    other was somebody else's to make, or the operator counts a missing file as a failure."""
+    ep, bible = _mk_handmade_episode(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(nbg, "load_bible", lambda path="x": bible)
+    monkeypatch.setattr(nbg, "generate_image",
+        lambda p, i, o, c: (open(o, "wb").write(b"g") and None) or "ok")
+    monkeypatch.setattr(nbg, "audit_image", lambda s, p, laws, name: (True, ""))
+    nbg.run("ep98", *_show(tmp_path), only=None, notes="", no_audit=False)
+    out = capsys.readouterr().out
+    assert "1 showrunner-made shot(s) left alone: s2-hand" in out
+
+
+def test_a_shot_with_no_source_field_is_still_generated(tmp_path, monkeypatch, capsys):
+    """The default is "pipeline": every prompts.json written before the field existed still has
+    its character shots generated."""
+    ep, bible = _mk_episode(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(nbg, "load_bible", lambda path="x": bible)
+    monkeypatch.setattr(nbg, "generate_image",
+        lambda p, i, o, c: (open(o, "wb").write(b"g") and None) or "ok")
+    monkeypatch.setattr(nbg, "audit_image", lambda s, p, laws, name: (True, ""))
+    nbg.run("ep99", *_show(tmp_path), only=None, notes="", no_audit=False)
+    out = capsys.readouterr().out
+    assert "s2-pell  OK" in out
+    assert "left alone" not in out
+
+
+def test_only_cannot_name_a_showrunner_made_shot(tmp_path, monkeypatch):
+    """--only re-rolls a shot the generator owns. A showrunner-made shot is not one, so naming it
+    is an unknown id rather than a silent no-op that reports success having done nothing."""
+    ep, bible = _mk_handmade_episode(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(nbg, "load_bible", lambda path="x": bible)
+    try:
+        nbg.run("ep98", *_show(tmp_path), only=["s2-hand"], notes="", no_audit=False)
+        assert False, "expected SystemExit for an id that is not a generated shot"
+    except SystemExit as e:
+        assert "s2-hand" in str(e)
+
+
+def test_exit_code_for_treats_a_partial_run_as_a_reportable_result(tmp_path):
+    """The bash node this replaced decided the exit code with `grep -qE 'NANO_(OK|PARTIAL)'` over
+    the captured output. Both tags exit 0; anything else — a run that printed no tag at all — is
+    the failure."""
+    assert nbg.exit_code_for("NANO_OK") == 0
+    assert nbg.exit_code_for("NANO_PARTIAL") == 0
+    assert nbg.exit_code_for("NANO_FAILED") == 1
+    assert nbg.exit_code_for("") == 1
