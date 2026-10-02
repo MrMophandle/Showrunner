@@ -16,7 +16,7 @@ This document is the durable record of what the review process deferred to later
 
 ## Plan F — cutover
 
-- Console v1, `.archon/`, `remotion/` and the root `package.json` leave the show repository; `STATUS.md` and the six `status.py` steps retire. **The Season 1 episodes read `NEEDS_IDEA · no runs` on the Board** because they predate the engine and have no `premise.md`; Plan F decides whether archived episodes get a marker file the Board reads or a Board rule keyed on an existing `script.md` with no run.
+- Console v1, `.archon/`, `remotion/` and the root `package.json` leave the show repository; `STATUS.md` and the six `status.py` steps retire. **Archived episodes carry a marker, `<episodesDir>/<id>/archive.json` `{stage, note}`, read only when the episode has no run logs** (Ryan's ruling of 2026-10-02, after the branch review; the Season 1 markers are a PR on the show); Plan F carries the ten files through the Season 1 rename and decides what `ep98` and `ep99` (test beds, no marker) should show.
 - `prompts/index.json` can be deleted.
 - `prompts/audio-gate.gate.md`'s air-named glob and the ten `epNN` encodings the inventory listed in console v1 go with v1.
 
@@ -41,7 +41,7 @@ This document is the durable record of what the review process deferred to later
 - **The Board's refresh is a full per-episode projection at up to 4 Hz during a run**, and `RunStore` never evicts a tailed log (F-21 ruled no cap). Fine at one show's scale; measure on the first real run.
 - **`step_started` order inside a concurrent batch is the order the steps' input hashing finished**, not pipeline order; array order still equals file order.
 - **The withdrawn `attempt` number recorded on a withdrawal is the withdrawn attempt**, not the reopened one; the Gate page's copy says so.
-- **Console v1 was still listening on port 4400** (pid 3353, started 2026-09-30) during the live check; the new server bound `127.0.0.1:4400` beside it. Plan F retires v1; until then check `lsof -ti :4400` before trusting a live check, and `--host` would collide outright.
+- **Console v1 listens on 4400 (Vite 5183); the new console's defaults are 4410 and 5193** (Ryan's ruling of 2026-10-02, so both run side by side during the transition). Plan F retires v1.
 - **The Playwright MCP server writes screenshots and scratch into the show repository by default**; a screenshot task against the real show must move them out.
 - **`ep99`** is a production directory holding a spike, not an episode; it joins Plan F's archived-episode question with Season 1.
 
@@ -66,4 +66,5 @@ This document is the durable record of what the review process deferred to later
 10. **Task 9 ran before Task 8**, not after it as the plan's budget rule said, because no budget signal fired and its files did not overlap Task 6's. Cost: none.
 11. **The whole-branch review's fix-before-merge set was taken whole** — the launch that creates its log before spawning and refuses while the latest run is unfinished (C-1); the worker entry checked at startup (I-1); the worker log surfaced on the Run page (I-2); a tail failure shown rather than frozen (I-3); withdraw offered only on the latest approved gate with the surviving gates named, the engine's rule unchanged (I-4); `safeHref` stripping what a browser strips (M-1); the lock beaten atomically by rename (M-2); the pipeline hash compared with today's (M-3) — plus the parked minors of the nine task reviews. Cost if wrong: one fix wave and one scoped re-review.
 12. **A launch whose spawn fails removes the log it created** (fix round 2; the fix wave's own implementer found that the `wx` log would otherwise wedge the episode). Cost: none.
-13. **Reviewers on Sonnet, implementers and the whole-branch reviewer on Opus; the three-question quiz before every implementer** — it caught, in this plan, a missing-test claim (T1), the heartbeat race (T3), three prose-versus-test defects (T4), a URL-normalised traversal test (T5), the fixture slip (T6) and the throttle-versus-test tension (T7), each before code was written.
+13. **The default port is 4410 (Vite 5193) and archived episodes carry `archive.json`** — Ryan's two rulings after the branch review, applied as an addendum to PR #108. Cost: Plan F's archive question is decided by a marker; the ten marker files move with the Season 1 rename.
+14. **Reviewers on Sonnet, implementers and the whole-branch reviewer on Opus; the three-question quiz before every implementer** — it caught, in this plan, a missing-test claim (T1), the heartbeat race (T3), three prose-versus-test defects (T4), a URL-normalised traversal test (T5), the fixture slip (T6) and the throttle-versus-test tension (T7), each before code was written.

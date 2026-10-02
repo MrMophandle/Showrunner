@@ -31,7 +31,16 @@ function present(name: string): boolean {
   return process.argv.includes(`--${name}`);
 }
 
-const USAGE = "usage: console --show <root> [--engine-root <path>] [--port 4400] [--host] [--operator <name>] [--worker <path to a worker entry>] [--concurrency 7]\n";
+/** The port the server listens on when `--port` is not given.
+ *
+ *  **4410 and not 4400, because 4400 is console v1's port in the show repository** (its Vite dev
+ *  server is on 5183, and this console's is on 5193). The two defaults differ so that both
+ *  consoles run side by side through the transition — the showrunner's ruling of 2026-10-02 —
+ *  rather than the second one to start failing to bind, or worse, binding the same port on a
+ *  different interface and answering half the requests. Plan F retires v1 and frees 4400. */
+export const DEFAULT_PORT = 4410;
+
+const USAGE = `usage: console --show <root> [--engine-root <path>] [--port ${DEFAULT_PORT}] [--host] [--operator <name>] [--worker <path to a worker entry>] [--concurrency 7]\n`;
 
 async function main(): Promise<void> {
   const showRoot = flag("show");
@@ -40,7 +49,7 @@ async function main(): Promise<void> {
   // dist/server/main.js → dist/server → dist → console → the repository root, where `scripts/`
   // and `render/` live.
   const engineRoot = flag("engine-root") ?? path.resolve(here, "..", "..", "..");
-  const portRaw = flag("port") ?? "4400";
+  const portRaw = flag("port") ?? String(DEFAULT_PORT);
   const port = Number(portRaw);
   if (!Number.isInteger(port) || port < 1 || port > 65535) { process.stderr.write(`invalid --port ${portRaw}\n`); process.exit(64); }
   const operator = flag("operator");

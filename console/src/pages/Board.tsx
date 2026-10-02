@@ -12,6 +12,11 @@ import { NewEpisode } from "../components/NewEpisode.js";
  *  shape that can be built without opening a run: the Board is the page that is left open on a
  *  tablet, and it re-reads every episode of the show on every change notification.
  *
+ *  An episode whose directory carries an `archive.json` marker and no run logs is drawn at the
+ *  marker's stage with an "archived" chip and the marker's one line, no reasons beside it, and no
+ *  launch button. Season 1 was made by console v1, has no run logs and no `premise.md`, and would
+ *  otherwise read NEEDS_IDEA · no runs for ten rows.
+ *
  *  The stage and the gate are drawn side by side rather than one instead of the other, because
  *  they can disagree and both be right: `deriveStage` (`engine/src/stages.ts`) tests the NEEDS_
  *  rules *before* it looks at the open gate, so an episode parked at `image-gate` whose
@@ -45,6 +50,13 @@ function statusChip(row: EpisodeRow, now: number): { text: string; className: st
       return { className: "chip chip-completed", text: "completed" };
     case "none":
       return { className: "chip chip-none", text: "no runs" };
+    case "archived":
+      // The note is the marker's own line — where the finished episode is and what made it —
+      // because "archived" alone would leave the operator asking which archive.
+      return {
+        className: "chip chip-archived",
+        text: row.archiveNote === undefined ? "archived" : `archived · ${row.archiveNote}`,
+      };
     default:
       return { className: "chip", text: row.status };
   }
@@ -52,7 +64,8 @@ function statusChip(row: EpisodeRow, now: number): { text: string; className: st
 
 /** The reasons a NEEDS_ row is blocked, in the operator's words. The lists are on the row, not
  *  only the flags, so a row that says NEEDS_REFS names the three references that are not on disk
- *  instead of sending its reader looking for them. */
+ *  instead of sending its reader looking for them. An archived episode's `needs` are empty by
+ *  construction (`idleEpisodeRow`, `server/episodes.ts`), so an archived row prints no reasons. */
 function needsLines(row: EpisodeRow, episodesDir: string): string[] {
   const lines: string[] = [];
   if (row.needs.ideaMissing) lines.push(`premise missing — write ${episodesDir}/${row.id}/premise.md`);
@@ -169,6 +182,12 @@ export function Board() {
                       <span className="action-reason">write {episodesDir}/{row.id}/premise.md first</span>
                     )}
                   </>
+                )}
+                {/* No launch button for an archived episode. The marker says the episode was
+                    finished outside the engine, and what a run over a finished episode should do
+                    is Plan F's question, not a button's. */}
+                {row.status === "archived" && (
+                  <span className="action-reason">archived; launch is not offered</span>
                 )}
                 {row.status === "waiting" && runHref !== null && (
                   <Link className="btn btn-primary" to={`${runHref}/gate`}>open gate</Link>

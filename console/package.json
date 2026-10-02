@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "concurrently -k \"tsx watch server/main.ts --show ${SHOWRUNNER_SHOW_ROOT}\" \"vite --port 5183\"",
+    "dev": "concurrently -k \"tsx watch server/main.ts --show ${SHOWRUNNER_SHOW_ROOT}\" \"vite --port 5193\"",
     "build": "tsc -p tsconfig.server.json && vite build",
     "start": "node dist/server/main.js",
     "test": "vitest run",

@@ -26,6 +26,25 @@ tool. It does not rotate its logs. The season map, the desk, discuss, notes and 
 step buttons of the rewrite design's §7.2 are not built. Nothing in the console edits a prompt or
 a canon file.
 
+## The archive marker — an episode the engine never ran
+
+**`<episodesDir>/<id>/archive.json` is how an episode finished before this engine existed is shown
+as finished: `{"stage": "COMPLETE", "note": "one line about where it is"}`.** `stage` must be a
+`Stage` string the engine's `isStage` accepts (`"complete"` is not one) and `note` is optional.
+The row then reads at the marker's stage, in that stage's ordinary colour, with an "archived"
+status chip carrying the note, no reasons beside it — an archived episode needs nothing, whatever
+is or is not on disk — and **no launch button**: what a run over a finished episode should do is
+Plan F's question, so the row says "archived; launch is not offered" instead of offering it. **The
+marker is read only for an episode with no run logs at all** (`idleEpisodeRow`, `server/episodes.ts`,
+which `RunStore.episodeRow` calls only when the episode has no runs), because a run once launched
+is the truth and a hand-written file must never be able to hide a gate that is open, a run that
+failed or a worker that is alive. A marker that cannot be read — bad JSON, a `stage` that is not a
+stage — leaves the derived stage and status exactly as they were and says so on the row as
+`archive.json: <reason>`, rather than disappearing and letting a finished season quietly read
+NEEDS_IDEA again. The showrunner's first season carries ten of these markers, written by a pull
+request on the show repository; Plan F carries those ten files through the Season 1 rename and
+decides what the test-bed episodes should show.
+
 ## The three processes
 
 | Process | Entry point | What it owns |
@@ -49,12 +68,18 @@ they are still writing.
 ## Running it
 
     cd <engine repository> && npm run build
-    node console/dist/server/main.js --show <show repository> --port 4400
+    node console/dist/server/main.js --show <show repository> --port 4410
+
+**The default port is 4410 and the Vite dev server's is 5193, which are deliberately not console
+v1's 4400 and 5183.** The two consoles' defaults differ so that both run side by side through the
+transition (the showrunner's ruling of 2026-10-02): v1 still serves the Season 1 archive in the
+show repository while this console is brought up on the same machine. Plan F retires v1 and frees
+4400.
 
 | Flag | Default | What it does |
 |---|---|---|
 | `--show <path>` | **required** | The show repository the server reads and the only tree it writes into. Without it the server prints its usage line and exits 64. |
-| `--port <n>` | `4400` | The port to listen on. A value that is not an integer in 1–65535 exits 64. |
+| `--port <n>` | `4410` | The port to listen on (`DEFAULT_PORT`, `server/main.ts`). A value that is not an integer in 1–65535 exits 64. |
 | `--host` | absent | A presence, not a value. **Absent, the server binds `127.0.0.1` and is reachable only from the machine it runs on; given, it binds `0.0.0.0` and is on the network.** The console has no authentication of its own and it spawns processes, so `--host` is the operator saying "this is my home network" and must never be given on a network that is not. |
 | `--operator <name>` | `console:<username>` | Who the server acts as. The string is stamped on every gate answer as `by`, on every reset, and as the `trigger` of every run it launches. |
 | `--worker <path>` | the console's own compiled worker | The worker entry to spawn. A test points it at a fake worker; an operator has no reason to set it. |
@@ -65,7 +90,7 @@ In development, Vite serves the client on its own port and proxies `/api` to the
 
     cd console && SHOWRUNNER_SHOW_ROOT=<show repository> npm run dev
 
-`npm run dev` starts `tsx watch server/main.ts --show $SHOWRUNNER_SHOW_ROOT` and `vite --port 5183`
+`npm run dev` starts `tsx watch server/main.ts --show $SHOWRUNNER_SHOW_ROOT` and `vite --port 5193`
 together, and the browser goes to the Vite port. The variable has no default, because a default
 would have to spell a show's directory name.
 
