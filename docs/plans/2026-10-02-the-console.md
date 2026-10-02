@@ -1254,7 +1254,7 @@ The document title (`useDocTitle`) is the alerting story on the home network: `�
 
 - [ ] **Step 1: Write the failing projection tests**
 
-`console/test/client/projections.test.ts`: `elapsed("2026-10-02T10:00:00Z", new Date("2026-10-02T10:12:05Z"))` → `"12m 05s"`; `stalled(…, 15 min later)` → `true`, 13 min → `false`; `stageLabel("NEEDS_REFS")` → `{ kind: "needs", text: "NEEDS REFS" }`, `"DRAFT_SCRIPT"` → `draft`, `"SCRIPT"` → `approved`; `composeShotRejection({ "s03-opha-still": "she reads too large", "s05-wide": "" })` → `"s03-opha-still: she reads too large\ns05-wide: redo"`; `titleFor("Harbor Light", rows)` → the three forms above. `doc-title.test.ts`: the hook's pure part.
+`console/test/client/projections.test.ts`: `elapsed("2026-10-02T10:00:00Z", new Date("2026-10-02T10:12:05Z"))` → `"12m 05s"`; `stalled(…, 15 min later)` → `true`, 13 min → `false`; `stageLabel("NEEDS_REFS")` → `{ kind: "needs", text: "NEEDS REFS" }`, `"DRAFT_SCRIPT"` → `draft`, `"SCRIPT"` → `approved`; `composeShotRejection({ "s03-vale-still": "she reads too large", "s05-harbor-wide": "" })` → `"s03-vale-still: she reads too large\ns05-harbor-wide: redo"`; `titleFor("Harbor Light", rows)` → the three forms above. `doc-title.test.ts`: the hook's pure part.
 
 - [ ] **Step 2: Build the client**
 
