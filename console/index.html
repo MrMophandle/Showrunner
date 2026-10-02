@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <!-- No user scaling restriction and no `viewport-fit`: the Board is read on an iPad in
+         landscape and pinching it is a reasonable thing to want. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark light" />
+    <!-- The title the shell shows for the half-second before the client reads `GET /api/show`.
+         It names no show, because this repository names none: `useDocTitle` replaces it with the
+         show's own name as soon as that route answers. -->
+    <title>console</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

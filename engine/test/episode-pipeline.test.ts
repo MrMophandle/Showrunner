@@ -52,10 +52,15 @@ describe("episodePipeline", () => {
     const ctx = { runId: "r", episodeId: "s02e01", showRoot: "/show", results: {} };
     const stamp = p.steps.find((s) => s.id === "stamp-outline");
     expect(stamp?.kind === "script" && stamp.argv(ctx)).toEqual(["uv", "run", "--project", "/engine/scripts", "python", "/engine/scripts/status.py", "s02e01", "outline", "approved at outline-gate"]);
+    // The render goes through render-video.py, which spawns Remotion itself so its frame counter
+    // becomes `::progress` lines. The render directory, the composition id and the output path
+    // therefore travel in argv, and REMOTION_EPISODE is set by the wrapper from the episode id:
+    // the step carries neither a `cwd` nor an `env` of its own, so the executor's default cwd
+    // (the show root) applies, as every other Python step requires.
     const render = p.steps.find((s) => s.id === "render");
-    expect(render?.kind === "script" && render.argv(ctx)).toEqual(["npx", "remotion", "render", "Episode", "/show/Production/s02e01/video/episode.mp4", "--log=error"]);
-    expect(render?.kind === "script" && render.cwd).toBe("/engine/render");
-    expect(render?.kind === "script" && render.env?.(ctx)).toEqual({ REMOTION_EPISODE: "s02e01" });
+    expect(render?.kind === "script" && render.argv(ctx)).toEqual(["uv", "run", "--project", "/engine/scripts", "python", "/engine/scripts/render-video.py", "s02e01", "--render-dir", "/engine/render", "--composition", "Episode", "--out", "/show/Production/s02e01/video/episode.mp4"]);
+    expect(render?.kind === "script" && render.cwd).toBeUndefined();
+    expect(render?.kind === "script" && render.env).toBeUndefined();
   });
 });
 

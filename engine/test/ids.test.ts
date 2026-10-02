@@ -46,9 +46,9 @@ describe("formatAired", () => {
     expect(formatAired(2, 1)).toBe("s02e01");
     expect(formatAired(10, 20)).toBe("s10e20");
   });
-  it("rejects out-of-range", () => {
-    expect(() => formatAired(0, 1)).toThrow(InvalidEpisodeId);
-    expect(() => formatAired(1, 100)).toThrow(InvalidEpisodeId);
+  it("rejects out-of-range, naming the parameter that was out of range", () => {
+    expect(() => formatAired(0, 1)).toThrow("invalid season 0: season must be 1..99");
+    expect(() => formatAired(1, 100)).toThrow("invalid episode 100: episode must be 1..99");
   });
 });
 

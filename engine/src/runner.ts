@@ -1,6 +1,7 @@
 import path from "node:path";
 import type { EventLog, Event } from "./events.js";
-import { downstreamOf, orderSteps } from "./pipeline.js";
+import { downstreamOf, orderSteps, pipelineHash } from "./pipeline.js";
+import { ENGINE_VERSION } from "./version.js";
 import { BYPASS_REASON, deriveRunState, type GateState, type RunState } from "./state.js";
 import { hashFiles, sameHashes } from "./hash.js";
 import { parseEpisodeId } from "./ids.js";
@@ -24,6 +25,12 @@ export interface RunOptions {
    *  that names a `messageFile` and is run without it fails; a pipeline whose gates all use
    *  `message` never needs it. */
   renderGateMessage?: GateMessageRenderer;
+  /** How many ready agent steps may run at once. Default 1: one step at a time in dependency
+   *  order, which is the behaviour every other test assumes. The review panel is the case this
+   *  exists for — seven reviewers that depend on the same draft, 35 minutes apart sequential and
+   *  concurrent on ep10's logs. Only agent steps are batched; scripts, guards, gates and loops
+   *  always run alone. */
+  concurrency?: number;
 }
 
 export type RunResult =
@@ -31,11 +38,32 @@ export type RunResult =
   | { status: "failed"; stepId: StepId; error: string }
   | { status: "waiting"; gate: GateState };
 
+/** The showrunner's answer to an open gate — approve, or reject with notes — as one
+ *  `gate_answered` event. This is the only way a gate is answered: the console calls it, the next
+ *  `run()` reads the log and takes it from there, and nothing writes the event by hand.
+ *
+ *  Four refusals, each of them a mistake worth catching before the answer lands in a log:
+ *  an empty log (the caller is pointed at an episode or a run that never started), a `runId` that
+ *  is not the log's (a console tab held across a restart, whose answer would be written into
+ *  another run's history under a gate that shares its step id), a `stepId` that is not the open
+ *  gate's, and an `expectedAttempt` that is not the attempt now open — which is the whole
+ *  protection against a tab left open across a rejection, where the showrunner would otherwise
+ *  approve a message a fix agent has already superseded.
+ *
+ *  `waitedMs` is stamped from the gate's `openedAt`, so the log records how long the run sat
+ *  waiting on a person; `notes` and `by` are recorded when the caller gives them. A rejection
+ *  resets nothing here: the next `run()` re-executes the gate, which runs its fix agent, re-runs
+ *  the gate's `rerunOnReject` set and reopens the gate at the next attempt. */
 export async function answerGate(
   log: EventLog, runId: string, stepId: StepId,
-  answer: { approved: boolean; notes?: string; by?: string },
+  answer: { approved: boolean; notes?: string; by?: string; expectedAttempt?: number },
 ): Promise<void> {
-  const state = deriveRunState(await log.read());
+  const events = await log.read();
+  // An empty log is named plainly rather than through the run-id mismatch below, whose message
+  // would report the run as undefined: the log has no run in it at all, which is what a caller
+  // pointed at the wrong episode or a run that never launched needs to be told.
+  if (events.length === 0) throw new Error(`no run in the log at ${log.path}`);
+  const state = deriveRunState(events);
   // An answer carries the run it answers. A mismatch means the caller is holding a stale run id
   // — a console tab left open across a restart — and the answer would be written into the wrong
   // run's history under a gate that happens to share its step id.
@@ -44,6 +72,11 @@ export async function answerGate(
   }
   if (!state.openGate || state.openGate.stepId !== stepId) {
     throw new Error(`gate ${JSON.stringify(stepId)} is not open on run ${runId}`);
+  }
+  // A console tab left open across a rejection shows an attempt that has since been superseded;
+  // an answer that names the attempt it saw cannot answer a newer one it never read.
+  if (answer.expectedAttempt !== undefined && answer.expectedAttempt !== state.openGate.attempt) {
+    throw new Error(`gate ${JSON.stringify(stepId)} is open at attempt ${state.openGate.attempt}, not ${answer.expectedAttempt}`);
   }
   const waitedMs = Date.now() - new Date(state.openGate.openedAt).getTime();
   const payload: Record<string, unknown> = { approved: answer.approved, waitedMs, attempt: state.openGate.attempt };
@@ -83,6 +116,35 @@ export async function resetSteps(pipeline: Pipeline, log: EventLog, runId: strin
   const ids = downstreamOf(pipeline, stepIds).filter((id) => state.steps[id] !== undefined && byId.get(id)?.kind !== "gate");
   if (state.finished) await log.append({ runId, kind: "run_resumed", payload: { by } });
   for (const id of ids) await log.append({ runId, stepId: id, kind: "step_reset", payload: { by } });
+  return ids;
+}
+
+/** Rejects a gate the showrunner already approved — the "re-ask" the record of Plan D asked for.
+ *  Everything downstream of the gate is reset (never another gate: a later gate's approval is its
+ *  own answer and survives), then a rejection answer is appended with `withdrawn: true`, so the
+ *  next run() takes the ordinary rejection path: the fix agent, the gate's own re-run set, and
+ *  the gate reopened at the next attempt. Refused while any gate is open (answer it instead), and
+ *  for a gate whose last answer is not an approval. A finished run is reopened first. */
+export async function withdrawApproval(
+  pipeline: Pipeline, log: EventLog, runId: string, stepId: StepId, answer: { notes: string; by: string },
+): Promise<StepId[]> {
+  const events = await log.read();
+  if (events.length === 0) throw new Error(`no run in the log at ${log.path}`);
+  const state = deriveRunState(events);
+  if (state.runId !== runId) {
+    throw new Error(`run id mismatch: the log at ${log.path} is run ${JSON.stringify(state.runId)}, not ${JSON.stringify(runId)}`);
+  }
+  if (state.openGate) throw new Error(`gate ${JSON.stringify(state.openGate.stepId)} is open; answer it instead`);
+  let last: Event | undefined;
+  for (const e of events) if (e.stepId === stepId && (e.kind === "gate_opened" || e.kind === "gate_answered")) last = e;
+  if (!last || last.kind !== "gate_answered" || last.payload["approved"] !== true) {
+    throw new Error(`gate ${JSON.stringify(stepId)} is not approved on run ${runId}`);
+  }
+  const byId = new Map(pipeline.steps.map((s) => [s.id, s] as const));
+  const ids = downstreamOf(pipeline, [stepId]).filter((id) => id !== stepId && byId.get(id)?.kind !== "gate" && state.steps[id] !== undefined);
+  if (state.finished) await log.append({ runId, kind: "run_resumed", payload: { by: answer.by } });
+  for (const id of ids) await log.append({ runId, stepId: id, kind: "step_reset", payload: { by: `withdraw:${stepId}` } });
+  await log.append({ runId, stepId, kind: "gate_answered", payload: { approved: false, notes: answer.notes, by: answer.by, withdrawn: true, attempt: Number(last.payload["attempt"] ?? state.gateAttempts[stepId] ?? 1) } });
   return ids;
 }
 
@@ -151,10 +213,18 @@ async function execute(opts: RunOptions): Promise<RunResult> {
   // The log is read exactly once per run. Every append below also pushes onto this array, so it
   // stays the current contents of the file without the file being re-read per step.
   const events: Event[] = await log.read();
-  const append = async (e: Omit<Event, "ts">): Promise<void> => { events.push(await log.append(e)); };
+  // Appends are chained so that the events array and the file agree on order even when several
+  // agent steps are emitting at once: the log's order is authoritative and must be the order the
+  // calls were made in, not the order their writes happened to resolve.
+  let tail: Promise<unknown> = Promise.resolve();
+  const append = (e: Omit<Event, "ts">): Promise<void> => {
+    const next = tail.then(async () => { events.push(await log.append(e)); });
+    tail = next.catch(() => undefined);
+    return next;
+  };
 
   if (events.length === 0) {
-    const started: Record<string, unknown> = { pipeline: pipeline.name, episodeId: opts.ctx.episodeId };
+    const started: Record<string, unknown> = { pipeline: pipeline.name, episodeId: opts.ctx.episodeId, engineVersion: ENGINE_VERSION, pipelineHash: pipelineHash(pipeline) };
     if (opts.ctx.trigger !== undefined) started["trigger"] = opts.ctx.trigger;
     await append({ runId: opts.ctx.runId, kind: "run_started", payload: started });
   }
@@ -217,20 +287,56 @@ async function execute(opts: RunOptions): Promise<RunResult> {
         continue;
       }
 
-      const outcome = await runStep(step, ctx, emitFor, executors, events, [...priorEvents, events], pipeline, opts.renderGateMessage);
-      if (outcome.kind === "completed") {
-        state.steps[step.id] = "completed";
-        if (outcome.result !== undefined) ctx.results[step.id] = outcome.result;
-        continue;
+      // The batch: this step, plus — when it is an agent step and the cap allows — every later
+      // agent step in `ordered` whose dependencies are already terminal. Only agent steps are
+      // batched, so a script, guard, gate or loop step is always a batch of one, which is exactly
+      // the sequential path this code replaced.
+      const concurrency = Math.max(1, opts.concurrency ?? 1);
+      const batch: Step[] = [step];
+      if (step.kind === "agent" && concurrency > 1) {
+        for (const later of ordered) {
+          if (batch.length >= concurrency) break;
+          if (later === step || later.kind !== "agent" || batch.includes(later)) continue;
+          if ((state.steps[later.id] ?? "pending") !== "pending") continue;
+          const ready = (later.dependsOn ?? []).every((d) => ["completed", "bypassed"].includes(state.steps[d] ?? "pending"));
+          if (!ready) continue;
+          if (later.when && !(await later.when(ctx))) {
+            await emitFor(later.id)("step_skipped", { reason: BYPASS_REASON });
+            state.steps[later.id] = "bypassed";
+            continue;
+          }
+          batch.push(later);
+        }
       }
-      if (outcome.kind === "waiting") return { status: "waiting", gate: outcome.gate };
-      if (outcome.kind === "reset") {
-        for (const id of outcome.stepIds) { delete state.steps[id]; delete ctx.results[id]; }
+      const outcomes = await Promise.all(batch.map((s) => runStep(s, ctx, emitFor, executors, events, [...priorEvents, events], pipeline, opts.renderGateMessage)));
+      // Outcomes are applied in pipeline order once the whole batch has settled: the first
+      // failure in that order is the one the run reports, however the executors finished.
+      let failed: { step: Step; error: string } | undefined;
+      let reset: StepId[] | undefined;
+      let waiting: GateState | undefined;
+      for (let i = 0; i < batch.length; i++) {
+        const s = batch[i]!;
+        const outcome = outcomes[i]!;
+        if (outcome.kind === "completed") {
+          state.steps[s.id] = "completed";
+          if (outcome.result !== undefined) ctx.results[s.id] = outcome.result;
+        } else if (outcome.kind === "waiting") {
+          waiting = outcome.gate;
+        } else if (outcome.kind === "reset") {
+          reset = outcome.stepIds;
+        } else if (!failed) {
+          state.steps[s.id] = "failed";
+          failed = { step: s, error: outcome.error };
+        } else {
+          state.steps[s.id] = "failed";
+        }
+      }
+      if (failed) { await sweep(failed.step); return finish({ status: "failed", stepId: failed.step.id, error: failed.error }); }
+      if (waiting) return { status: "waiting", gate: waiting };
+      if (reset) {
+        for (const id of reset) { delete state.steps[id]; delete ctx.results[id]; }
         continue pass;
       }
-      state.steps[step.id] = "failed";
-      await sweep(step);
-      return finish({ status: "failed", stepId: step.id, error: outcome.error });
     }
     return finish({ status: "completed" });
   }

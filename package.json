@@ -1,11 +1,11 @@
 {
   "name": "showrunner",
   "private": true,
-  "workspaces": ["engine", "tools"],
+  "workspaces": ["engine", "tools", "console"],
   "scripts": {
-    "build": "npm run build -w engine && npm run build -w tools",
-    "test": "npm test -w engine && npm test -w tools",
-    "typecheck": "npm run typecheck -w engine && npm run typecheck -w tools",
+    "build": "npm run build -w engine && npm run build -w tools && npm run build -w console",
+    "test": "npm test -w engine && npm test -w tools && npm test -w console",
+    "typecheck": "npm run typecheck -w engine && npm run typecheck -w tools && npm run typecheck -w console",
     "test:render": "npm test --prefix render",
     "typecheck:render": "npm run typecheck --prefix render"
   },

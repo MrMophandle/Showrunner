@@ -1,0 +1,89 @@
+import path from "node:path";
+import os from "node:os";
+import { existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { loadShowConfig, type ShowConfig } from "@showrunner/engine";
+
+/** The one show this server is pointed at, resolved once at startup. Everything the server does
+ *  afterwards is relative to it: the episode list, every log path, every artifact path and the
+ *  argv of every worker it spawns. The server holds one of these and never a second, because a
+ *  console that could be pointed at two shows at once would have to say which one every route
+ *  meant, and no route does.
+ *
+ *  `productionDir` and `episodesDir` are lifted out of `show` because every path the server
+ *  builds needs them and `show.productionDir` is optional with a default; resolving the default
+ *  once here keeps the fallback from being written out at a dozen call sites, where one of them
+ *  would eventually get it wrong. */
+export interface ShowContext {
+  /** Absolute path of the show repository: the one tree the server reads and writes. */
+  showRoot: string;
+  show: ShowConfig;
+  /** Absolute path of the engine repository checkout, where `scripts/` and `render/` live. */
+  engineRoot: string;
+  /** Who this server acts as, stamped on every gate answer and every run it launches:
+   *  "console:<user>". */
+  operator: string;
+  /** The show's production directory name, already defaulted ("Production"). */
+  productionDir: string;
+  /** The show's episodes directory name, already defaulted ("Episodes"). */
+  episodesDir: string;
+  /** argv of the worker, as an array and never a shell string: `[executable, entry]`, to which
+   *  `spawnWorker` appends the run's flags. A test points it at a fake worker. */
+  workerCommand: string[];
+  /** How many ready agent steps a run may execute at once, passed to every worker this server
+   *  spawns as `--concurrency <n>` and from there into `run()`. The default of 7 is the width of
+   *  the script pass's review panel — the canon reviewer plus the six checks, which all depend on
+   *  the same draft — so the panel goes out in one batch. Only agent steps are batched, so a
+   *  larger number buys nothing anywhere else in the episode pipeline. */
+  concurrency: number;
+}
+
+/** What `loadShowContext` needs. `operator` defaults to "console:<username>", matching what the
+ *  worker stamps when it is run by hand, and `workerCommand` to this console's own compiled
+ *  worker. */
+export interface ShowContextOptions {
+  showRoot: string;
+  engineRoot: string;
+  operator?: string;
+  workerCommand?: string[];
+  concurrency?: number;
+}
+
+/** The compiled worker entry, as a path relative to this module. `server/show.ts` compiles to
+ *  `dist/server/show.js`, so the worker is one directory over at `dist/worker/main.js`. Resolved
+ *  from `import.meta.url` rather than from `process.cwd()` because the console is started from
+ *  wherever the operator happens to be standing. */
+function defaultWorkerEntry(): string {
+  return path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "worker", "main.js");
+}
+
+/** Reads the show's config and resolves the paths and the identity the rest of the server works
+ *  from. `showRoot` and `engineRoot` are made absolute here, once, so no later path join can
+ *  depend on the working directory.
+ *
+ *  **The worker entry must exist, and this is where that is checked.** Under `npm run dev` the
+ *  server runs from `console/server/main.ts` through `tsx`, so `defaultWorkerEntry()` resolves to
+ *  `console/worker/main.js` — a file that exists only after a build; only `worker/main.ts` is
+ *  there. Spawning it starts a Node process that exits at once with `ERR_MODULE_NOT_FOUND`, and
+ *  `spawnWorker` sees a pid and reports success, so the route answers 200, the client navigates
+ *  to the Run page, and the run never starts. Failing at startup instead puts the remedy in front
+ *  of the operator before any episode is launched against it. */
+export async function loadShowContext(opts: ShowContextOptions): Promise<ShowContext> {
+  const showRoot = path.resolve(opts.showRoot);
+  const show = await loadShowConfig(showRoot);
+  const workerCommand = opts.workerCommand ?? [process.execPath, defaultWorkerEntry()];
+  const entry = workerCommand[1];
+  if (entry !== undefined && !existsSync(entry)) {
+    throw new Error(`the worker is not built: run npm run build -w console, or pass --worker <path>`);
+  }
+  return {
+    showRoot,
+    show,
+    engineRoot: path.resolve(opts.engineRoot),
+    operator: opts.operator ?? `console:${os.userInfo().username}`,
+    productionDir: show.productionDir ?? "Production",
+    episodesDir: show.episodesDir ?? "Episodes",
+    workerCommand,
+    concurrency: opts.concurrency ?? 7,
+  };
+}

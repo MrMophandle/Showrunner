@@ -23,6 +23,16 @@ The orchestrator calls the other two layers through the injected `Executors` int
 (`engine/src/steps.ts`), so the engine can be tested end to end with fakes. Each executor owes
 the log a fixed set of events; those obligations are documented on the interface.
 
+**`console/` is the operating layer over all three, and it is three processes rather than one.**
+The split is the rewrite design §4.2's structural detachment: the process that answers the browser
+is never the process that runs an episode, so restarting the console cannot stop a render.
+
+| Process | Entry point | Owns |
+|---|---|---|
+| The console server | `console/dist/server/main.js` | The HTTP surface and one store watching the show's run logs. It reads logs and spawns workers; it owns **no run** |
+| The worker | `console/dist/worker/main.js` | One run segment: it takes the run's lock, calls `run()` once, and releases the lock. Spawned detached, in its own process group |
+| The client | `console/dist/client/` | The browser bundle the server serves as static files, holding nothing the server did not hand it |
+
 ## The show config
 
 **A show identifies itself in one file: `showrunner.json` at the show repository's root.** The
@@ -343,6 +353,16 @@ produces comes from the show config or the episode id; the engine repository nam
 `EPISODE_STAGE_MAP`, exported beside the factory, is what `deriveStage` reads to turn a run's log
 into a stage.
 
+**`run({ …, concurrency: 7 })` runs ready agent steps together** — the script pass's review panel
+is the case it exists for: the canon reviewer and the six checks all depend on the same draft, and
+seven at once is 9 min 36 s against 45 min 26 s one at a time on ep10's logs, paid again on every
+script-gate rejection. Only agent steps are batched; scripts, guards, gates and loops always run
+alone, and the default of 1 is one step at a time in dependency order. Outcomes are applied in
+pipeline order once the batch has settled, so the first failure in that order is the one the run
+reports. The log's order is the order the emits were made in, whatever order the agents finish in.
+The console's worker takes `--concurrency <n>` and the server passes 7 unless its own
+`--concurrency` says otherwise.
+
 ### The eight gates
 
 Each gate opens a `DRAFT_` stage and waits for the showrunner. A rejection runs the gate's fix
@@ -444,6 +464,27 @@ whose prompt names it rather than at load time. A real run on such an id therefo
 quietly: without a season there is no `<canonDir>/season-<n>.md` in the canon spine, and the mix is
 named `episode.wav` rather than by the show's pattern.
 
+## The console
+
+**`console/` is the showrunner's operating layer over the engine: four browser surfaces that show
+what every episode is doing, open each gate for an answer, and start and restart runs — without the
+server owning a single run.** The Board is one row per episode; the Run view is the pipeline's steps
+and the run's events; the Gate view is the question, its artifacts and the Approve and Reject
+buttons; and "What happened" hands a read-only agent the run's own record. Every action goes
+through the engine's verbs — `answerGate`, `resumeRun`, `resetSteps` and `withdrawApproval` — and
+then spawns a detached worker, so the event log stays the only thing that decides what a run is.
+
+The console names no show. It is pointed at a show repository with `--show <path>` and reads that
+repository's `showrunner.json`, exactly as the engine does.
+
+    npm run build && node console/dist/server/main.js --show <show repository> --port 4400
+
+**`console/README.md` is the console's own documentation**: the four surfaces and what is deferred,
+the three processes, every file the console writes, the flags and the home-network rule for
+`--host`, the four recovery moves with what each appends and when each is refused, the four files
+beside a run log, the artifact route's three-layer fence, and why the browser tab's title is the
+whole alerting story.
+
 ## The progress contract
 
 A script reports progress by printing one structured line to stdout per unit of work:
@@ -491,7 +532,7 @@ A run restarts by replaying its log; there is no separate state file to reconcil
 
 ## Scripts
 
-`scripts/` holds the pipeline's deterministic steps: twenty-five Python programs the engine runs
+`scripts/` holds the pipeline's deterministic steps: twenty-six Python programs the engine runs
 as argv arrays, never as shell strings. **A script belongs to the engine, and the show it is run
 for reaches it through argv and `showrunner.json`** — no script contains a show's name.
 
@@ -570,9 +611,30 @@ Two of the programs exist for the pipeline's own bookkeeping rather than for a c
   deliberately, because the Evidence cell carries `(<pass> pass, run <runId>)` and would never
   match across the outline pass and the script pass of one deviation.
 
+One further program exists because a step was silent rather than because a step was missing:
+
+- **`render-video.py <episode> --render-dir <path> --composition <id> --out <path>
+  [--progress-interval <seconds>] [--show-root <path>]`** is the `render` step. It spawns
+  `npx remotion render <composition> <out> --log=info` with the render directory as that child's
+  working directory and `REMOTION_EPISODE=<episode>` in its environment, reads the child's output,
+  and turns Remotion's own frame counter into the progress contract's lines —
+  `::progress {"done":N,"total":M,"unit":"frames"}`, at most one per `--progress-interval` second
+  (default one). Every other line Remotion prints is forwarded unchanged, the last line is
+  `RENDER_OK <out>`, and a failed render **exits with Remotion's exit code rather than 1**,
+  carrying Remotion's own last line as the reason. **The step passes the render directory and the
+  output path in argv and keeps the executor's default working directory, the show root**, because
+  the scripts' convention requires it: `showrunner.json` has to be findable without a flag.
+  Remotion is given the output path absolute, because Remotion itself runs in the engine's
+  `render/` directory where a show-relative path would resolve inside the engine checkout.
+  The parser was written against a measurement rather than a guess, which the script's docstring
+  records: under a pipe, Remotion 4.0.487 prints `Rendered 1/63280, time remaining: 3h 33m 2s`,
+  newline-separated with no carriage returns, once per frame, and `--log=info` is the lowest level
+  that prints the counter at all (`--log=error`, which this step passed before, prints nothing for
+  the whole render, which is the silence this program exists to end).
+
     cd scripts && uv run pytest
 
-runs the hermetic suite: twenty-three test files under `scripts/tests/`, none of which synthesizes
+runs the hermetic suite: twenty-four test files under `scripts/tests/`, none of which synthesizes
 audio, generates an image or renders anything. `scripts/pyproject.toml` lists the union of every
 script's inline dependency block once and sets `package = false`, so uv treats the directory as a
 virtual project and installs only the dependencies; each script keeps its own inline
@@ -639,10 +701,11 @@ consequence is that **the root `npm test` does not run the render project's test
 
 ## Develop
 
-    npm install                    # engine and tools, through the workspaces
-    npm run build                  # engine and tools, into each package's dist/ — tools/dist is
-                                   # what the Tools section's commands run
-    npm test                       # engine's suite, then tools'
+    npm install                    # engine, tools and console, through the workspaces
+    npm run build                  # engine and tools into each package's dist/ — tools/dist is
+                                   # what the Tools section's commands run — then the console's
+                                   # server, worker and client bundle
+    npm test                       # engine's suite, then tools', then the console's
     npm run typecheck              # tsc over src/, then over test/, in each
 
     npm run test:render            # the render project — NOT part of npm test
@@ -651,9 +714,22 @@ consequence is that **the root `npm test` does not run the render project's test
     cd render && npm install       # the render project's own dependency tree
     cd scripts && uv run pytest    # the Python steps' hermetic suite
 
-`engine` and `tools` are the root `package.json`'s two workspaces, so `npm test` and
-`npm run typecheck` at the root cover those two and nothing else. `render/` and `scripts/` install
+`engine`, `tools` and `console` are the root `package.json`'s three workspaces, so `npm test` and
+`npm run typecheck` at the root cover those three and nothing else. `render/` and `scripts/` install
 and test on their own, which is why the root carries a `test:render` script at all.
+
+The console's own commands, for working on it alone:
+
+    npm run build -w console       # tsc for server and worker, then vite build for the client
+    npm test -w console            # the console's vitest suite
+    npm run typecheck -w console   # tsc over the server project, then over the client project
+
+    cd console && SHOWRUNNER_SHOW_ROOT=<show repository> npm run dev
+
+`npm run dev` runs the server under `tsx watch` and Vite on port 5183 together, with Vite serving
+the client and proxying `/api` to the server. `SHOWRUNNER_SHOW_ROOT` has no default, for the same
+reason the `ep98` exercise's copy of it has none: a default would have to spell a show's directory
+name. `console/README.md` documents the console itself.
 
 ### The `ep98` exercise — the real scripts, against a real show
 
@@ -681,11 +757,11 @@ seed marks completed. It also removes `render/public/ep98/`, the staging directo
 `build-timeline.py` filled, because that directory holds the show's own file names inside the
 engine checkout and the rule below forbids them there.
 
-**No show's name may appear in `engine/`, `scripts/`, `render/` or `tools/src/`.** This grep is
-what checks it, and it must print nothing:
+**No show's name may appear in `engine/`, `scripts/`, `render/`, `tools/src/` or `console/`.** This
+grep is what checks it, and it must print nothing:
 
     grep -rniwE 'dead ?light|deadlight|sarn|sable|opha|cricket|remo|trent|ilvaren|coalvane|the mute|ansa|mardo' \
-      engine/ scripts/ render/ tools/ \
+      engine/ scripts/ render/ tools/ console/ \
       --exclude-dir=node_modules --exclude-dir=dist --exclude-dir=show-data \
       --exclude-dir=public --exclude-dir=.venv --exclude-dir=__pycache__ --exclude-dir=.pytest_cache
 
@@ -701,9 +777,12 @@ section above explains. `render/public/` is excluded because it is a staging dir
 source: `build-timeline.py` copies the episode's own audio and images into it under the show's
 file names so the renderer can serve them, and a run leaves them there. The exercise described
 above deletes `render/public/ep98/` when it finishes for the same reason. This file and everything
-under `docs/` are allowed to name a show and are outside the paths the grep searches. The
-remaining exclusions are build and cache trees — `node_modules/`, `dist/`, `scripts/.venv/`,
-`scripts/__pycache__/` and `scripts/.pytest_cache/` — none of which is source.
+under `docs/` are allowed to name a show and are outside the paths the grep searches;
+**`console/README.md` has no such exemption**, because it is inside a path the grep searches and the
+console it documents is show-agnostic in the same way the engine is. The remaining exclusions are
+build and cache trees — `node_modules/`, `dist/`, `scripts/.venv/`, `scripts/__pycache__/` and
+`scripts/.pytest_cache/` — none of which is source. `console/dist/` is covered by the `dist`
+exclusion, which is what keeps the built client bundle out of the search.
 
 ## Documents
 
