@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { appendFile, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { EventLog } from "../src/events.js";
@@ -63,5 +63,29 @@ describe("EventLog", () => {
   it("refuses to build a path from a run id outside the allowed alphabet", () => {
     expect(() => EventLog.logPath("/show", "s02e01", "../x")).toThrow(/invalid run id/);
     expect(() => EventLog.logPath("/show", "s02e01", "")).toThrow(/invalid run id/);
+  });
+});
+
+describe("readFrom", () => {
+  it("returns the events after an offset and the offset to resume from, leaving a partial line unconsumed", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "log-"));
+    const log = new EventLog(path.join(root, "r.jsonl"));
+    expect(await log.readFrom(0)).toEqual({ events: [], offset: 0 });
+    await log.append({ runId: "r", kind: "run_started", payload: {} });
+    await log.append({ runId: "r", stepId: "a", kind: "step_started", payload: {} });
+    const first = await log.readFrom(0);
+    expect(first.events.map((e) => e.kind)).toEqual(["run_started", "step_started"]);
+    const partial = '{"ts":"t","runId":"r","kind":"step_comp';
+    await appendFile(log.path, partial);
+    const second = await log.readFrom(first.offset);
+    expect(second).toEqual({ events: [], offset: first.offset });
+    await appendFile(log.path, 'leted","payload":{}}\n');
+    const third = await log.readFrom(second.offset);
+    expect(third.events.map((e) => e.kind)).toEqual(["step_completed"]);
+    expect(third.offset).toBe((await stat(log.path)).size);
+  });
+  it("logPath takes the production directory", () => {
+    expect(EventLog.logPath("/show", "s02e01", "r1")).toBe(path.join("/show", "Production", "s02e01", "runs", "r1.jsonl"));
+    expect(EventLog.logPath("/show", "s02e01", "r1", "Prod")).toBe(path.join("/show", "Prod", "s02e01", "runs", "r1.jsonl"));
   });
 });

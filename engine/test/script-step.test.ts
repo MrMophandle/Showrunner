@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { killLiveProcessGroups, liveProcessGroups, parseProgressLine, scriptExecutor } from "../src/script-step.js";
+import { __setLiveForTest, killLiveProcessGroups, liveProcessGroups, parseProgressLine, scriptExecutor } from "../src/script-step.js";
 import type { ScriptStep, RunContext, EventKind } from "../src/steps.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -132,7 +132,7 @@ describe("scriptExecutor", () => {
       await new Promise((done) => setTimeout(done, 10));
     }
     expect(liveProcessGroups()).toHaveLength(1);
-    expect(killLiveProcessGroups()).toBe(1);
+    expect(killLiveProcessGroups()).toEqual({ killed: 1, failed: 0 });
 
     const r = await pending;
     expect(r.ok).toBe(false);
@@ -198,5 +198,29 @@ describe("scriptExecutor", () => {
     const { emit } = collector();
     const r = await scriptExecutor(step, ctx, emit);
     expect(r).toEqual({ ok: true });
+  });
+});
+
+describe("killLiveProcessGroups", () => {
+  it("returns how many it killed and how many it could not, and continues past a failure", () => {
+    const original = process.kill;
+    const calls: number[] = [];
+    // three live groups: the first dies, the second refuses (EPERM), the third dies
+    (process as unknown as { kill: typeof process.kill }).kill = ((pid: number) => {
+      calls.push(pid);
+      if (pid === -2) { const e = new Error("EPERM") as NodeJS.ErrnoException; e.code = "EPERM"; throw e; }
+      return true;
+    }) as typeof process.kill;
+    try {
+      __setLiveForTest([1, 2, 3]);
+      expect(killLiveProcessGroups()).toEqual({ killed: 2, failed: 1 });
+      expect(calls).toEqual([-1, -2, -3]);
+    } finally {
+      // The registry is emptied before the real process.kill is restored: pids 1, 2 and 3 are
+      // real processes on the host, so a later killLiveProcessGroups() finding them in the set
+      // would signal process group 1 for real.
+      __setLiveForTest([]);
+      (process as unknown as { kill: typeof process.kill }).kill = original;
+    }
   });
 });

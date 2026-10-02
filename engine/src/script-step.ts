@@ -33,22 +33,24 @@ export function liveProcessGroups(): number[] {
   return [...live];
 }
 
-/** SIGKILL the whole process group of every live child, and report how many were signalled.
- *  This is the shutdown path: without it a console going down leaves a render or an audio batch
- *  running with nothing reading its output. A group that has already gone (ESRCH) is not counted
- *  and is not an error, because a child can exit between the read of the set and the kill. */
-export function killLiveProcessGroups(): number {
-  let killed = 0;
+/** SIGKILL the whole process group of every live child, and report how many were signalled and
+ *  how many could not be. This is the shutdown path: without it a worker going down leaves a
+ *  render or an audio batch running with nothing reading its output. A group that has already
+ *  gone (ESRCH) is neither killed nor failed; any other error is counted as failed and the loop
+ *  continues, because stopping at the first refusal would leave every later group running. */
+export function killLiveProcessGroups(): { killed: number; failed: number } {
+  let killed = 0, failed = 0;
   for (const pid of live) {
-    try {
-      process.kill(-pid, "SIGKILL");
-      killed++;
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== "ESRCH") throw err;
-    }
+    try { process.kill(-pid, "SIGKILL"); killed++; }
+    catch (err) { if ((err as NodeJS.ErrnoException).code !== "ESRCH") failed++; }
   }
-  return killed;
+  return { killed, failed };
 }
+
+/** Test-only: replace the registry's contents. Production code never calls it — the registry is
+ *  written only by a spawn and an exit — and a test that fills it must empty it again, because a
+ *  pid left behind is a real process group on the host that a later kill would signal. */
+export function __setLiveForTest(pids: number[]): void { live.clear(); for (const p of pids) live.add(p); }
 
 export const scriptExecutor: Executors["script"] = (step: ScriptStep, ctx: RunContext, emit: Emit) => {
   const argv = step.argv(ctx);

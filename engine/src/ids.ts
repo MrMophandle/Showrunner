@@ -41,9 +41,13 @@ export function isEpisodeId(raw: string): boolean {
   }
 }
 
+/** The aired id for a season and episode number, zero-padded. A number out of range throws a
+ *  plain Error naming the parameter, not InvalidEpisodeId: the caller passed two numbers, not an
+ *  id, and `invalid episode id "0": season must be 1..99` would quote a number as though it were
+ *  the id it failed to build. InvalidEpisodeId stays for the real ids parseEpisodeId refuses. */
 export function formatAired(season: number, episode: number): string {
-  if (!Number.isInteger(season) || season < 1 || season > 99) throw new InvalidEpisodeId(String(season), "season must be 1..99");
-  if (!Number.isInteger(episode) || episode < 1 || episode > 99) throw new InvalidEpisodeId(String(episode), "episode must be 1..99");
+  if (!Number.isInteger(season) || season < 1 || season > 99) throw new Error(`invalid season ${season}: season must be 1..99`);
+  if (!Number.isInteger(episode) || episode < 1 || episode > 99) throw new Error(`invalid episode ${episode}: episode must be 1..99`);
   return `s${String(season).padStart(2, "0")}e${String(episode).padStart(2, "0")}`;
 }
 

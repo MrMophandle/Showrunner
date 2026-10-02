@@ -103,3 +103,18 @@ describe("validateStageMap", () => {
     expect(() => validateStageMap({ gates: {}, approved: {}, final: "NOPE" as never }, p)).toThrow(/final: "NOPE" is not a stage/);
   });
 });
+
+describe("deriveStage edges", () => {
+  it("ignores a completed step absent from approved, and an open gate absent from gates", () => {
+    const s = base({ steps: { "outline-gate": "completed", unmapped: "completed", other: "waiting" }, openGate: { stepId: "other", attempt: 1, message: "", openedAt: "t" } });
+    expect(deriveStage(s, map, none)).toBe("OUTLINE");
+  });
+  it("compareStages is zero for equal stages and negative in order", () => {
+    expect(compareStages("IDEA", "IDEA")).toBe(0);
+    expect(compareStages("IDEA", "OUTLINE")).toBeLessThan(0);
+  });
+  it("stops reporting NEEDS_IDEA exactly at OUTLINE and NEEDS_IMAGES exactly at IMAGES", () => {
+    expect(deriveStage(base({ steps: { "outline-gate": "completed" } }), map, { ...none, ideaMissing: true })).toBe("OUTLINE");
+    expect(deriveStage(base({ steps: { "outline-gate": "completed", "script-gate": "completed", "casting-gate": "completed", "audio-gate": "completed", "image-gate": "completed" } }), map, { ...none, imagesMissing: true })).toBe("IMAGES");
+  });
+});

@@ -179,6 +179,19 @@ describe("gates", () => {
       ["after", "dependency skipped: g"],
     ]);
   });
+
+  it("refuses an answer whose expectedAttempt is not the open attempt, and names both", async () => {
+    const { pipeline, log, ctx, executors } = await setup();
+    await run({ pipeline, ctx, log, executors });
+    await expect(answerGate(log, "r1", "g", { approved: true, by: "t", expectedAttempt: 2 })).rejects.toThrow('gate "g" is open at attempt 1, not 2');
+    await answerGate(log, "r1", "g", { approved: true, by: "t", expectedAttempt: 1 });
+    expect(await run({ pipeline, ctx, log, executors })).toEqual({ status: "completed" });
+  });
+  it("names an empty log plainly", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "show-"));
+    const log = new EventLog(EventLog.logPath(root, "s02e01", "r9"));
+    await expect(answerGate(log, "r9", "g", { approved: true })).rejects.toThrow(/^no run in the log at /);
+  });
 });
 
 describe("rerunOnReject", () => {

@@ -33,9 +33,14 @@ export type RunResult =
 
 export async function answerGate(
   log: EventLog, runId: string, stepId: StepId,
-  answer: { approved: boolean; notes?: string; by?: string },
+  answer: { approved: boolean; notes?: string; by?: string; expectedAttempt?: number },
 ): Promise<void> {
-  const state = deriveRunState(await log.read());
+  const events = await log.read();
+  // An empty log is named plainly rather than through the run-id mismatch below, whose message
+  // would report the run as undefined: the log has no run in it at all, which is what a caller
+  // pointed at the wrong episode or a run that never launched needs to be told.
+  if (events.length === 0) throw new Error(`no run in the log at ${log.path}`);
+  const state = deriveRunState(events);
   // An answer carries the run it answers. A mismatch means the caller is holding a stale run id
   // — a console tab left open across a restart — and the answer would be written into the wrong
   // run's history under a gate that happens to share its step id.
@@ -44,6 +49,11 @@ export async function answerGate(
   }
   if (!state.openGate || state.openGate.stepId !== stepId) {
     throw new Error(`gate ${JSON.stringify(stepId)} is not open on run ${runId}`);
+  }
+  // A console tab left open across a rejection shows an attempt that has since been superseded;
+  // an answer that names the attempt it saw cannot answer a newer one it never read.
+  if (answer.expectedAttempt !== undefined && answer.expectedAttempt !== state.openGate.attempt) {
+    throw new Error(`gate ${JSON.stringify(stepId)} is open at attempt ${state.openGate.attempt}, not ${answer.expectedAttempt}`);
   }
   const waitedMs = Date.now() - new Date(state.openGate.openedAt).getTime();
   const payload: Record<string, unknown> = { approved: answer.approved, waitedMs, attempt: state.openGate.attempt };
