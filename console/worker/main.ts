@@ -9,7 +9,9 @@ import {
 
 /** Which run segment to execute, and as whom. `engineRoot` locates the engine's `scripts/` and
  *  `render/` directories for the pipeline's script steps; `operator` becomes the run's `trigger`,
- *  so the log records who started it. `concurrency` is the cap on parallel steps (Task 9). */
+ *  so the log records who started it. `concurrency` is how many ready agent steps one run may
+ *  execute at once — the console's default is 7, which covers the review panel; everything that
+ *  is not an agent step runs alone whatever it is set to. */
 export interface WorkerOptions { showRoot: string; episodeId: string; runId: string; engineRoot: string; operator: string; concurrency?: number }
 
 /** The contents of `<runs>/<runId>.lock` — the one fact the run log cannot state: whether a
@@ -98,8 +100,7 @@ export async function runOnce(opts: WorkerOptions, deps: WorkerDeps = {}): Promi
     const priorLogs = (await runLogPaths(opts.showRoot, opts.episodeId, productionDir)).filter((p) => p !== logFile).map((p) => new EventLog(p));
     let result: RunResult;
     try {
-      // Task 9 adds RunOptions.concurrency; the worker passes it then
-      result = await run({ pipeline, ctx: { runId: opts.runId, episodeId: opts.episodeId, showRoot: opts.showRoot, trigger: opts.operator }, log: new EventLog(logFile), executors, priorLogs, renderGateMessage, ...({} as Record<string, never>) });
+      result = await run({ pipeline, ctx: { runId: opts.runId, episodeId: opts.episodeId, showRoot: opts.showRoot, trigger: opts.operator }, log: new EventLog(logFile), executors, priorLogs, renderGateMessage, ...(opts.concurrency !== undefined ? { concurrency: opts.concurrency } : {}) });
     } catch (err) {
       const detail = `run() rejected: ${err instanceof Error ? err.stack ?? err.message : String(err)}`;
       await note(detail);

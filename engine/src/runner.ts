@@ -25,6 +25,12 @@ export interface RunOptions {
    *  that names a `messageFile` and is run without it fails; a pipeline whose gates all use
    *  `message` never needs it. */
   renderGateMessage?: GateMessageRenderer;
+  /** How many ready agent steps may run at once. Default 1: one step at a time in dependency
+   *  order, which is the behaviour every other test assumes. The review panel is the case this
+   *  exists for — seven reviewers that depend on the same draft, 35 minutes apart sequential and
+   *  concurrent on ep10's logs. Only agent steps are batched; scripts, guards, gates and loops
+   *  always run alone. */
+  concurrency?: number;
 }
 
 export type RunResult =
@@ -191,7 +197,15 @@ async function execute(opts: RunOptions): Promise<RunResult> {
   // The log is read exactly once per run. Every append below also pushes onto this array, so it
   // stays the current contents of the file without the file being re-read per step.
   const events: Event[] = await log.read();
-  const append = async (e: Omit<Event, "ts">): Promise<void> => { events.push(await log.append(e)); };
+  // Appends are chained so that the events array and the file agree on order even when several
+  // agent steps are emitting at once: the log's order is authoritative and must be the order the
+  // calls were made in, not the order their writes happened to resolve.
+  let tail: Promise<unknown> = Promise.resolve();
+  const append = (e: Omit<Event, "ts">): Promise<void> => {
+    const next = tail.then(async () => { events.push(await log.append(e)); });
+    tail = next.catch(() => undefined);
+    return next;
+  };
 
   if (events.length === 0) {
     const started: Record<string, unknown> = { pipeline: pipeline.name, episodeId: opts.ctx.episodeId, engineVersion: ENGINE_VERSION, pipelineHash: pipelineHash(pipeline) };
@@ -257,20 +271,56 @@ async function execute(opts: RunOptions): Promise<RunResult> {
         continue;
       }
 
-      const outcome = await runStep(step, ctx, emitFor, executors, events, [...priorEvents, events], pipeline, opts.renderGateMessage);
-      if (outcome.kind === "completed") {
-        state.steps[step.id] = "completed";
-        if (outcome.result !== undefined) ctx.results[step.id] = outcome.result;
-        continue;
+      // The batch: this step, plus — when it is an agent step and the cap allows — every later
+      // agent step in `ordered` whose dependencies are already terminal. Only agent steps are
+      // batched, so a script, guard, gate or loop step is always a batch of one, which is exactly
+      // the sequential path this code replaced.
+      const concurrency = Math.max(1, opts.concurrency ?? 1);
+      const batch: Step[] = [step];
+      if (step.kind === "agent" && concurrency > 1) {
+        for (const later of ordered) {
+          if (batch.length >= concurrency) break;
+          if (later === step || later.kind !== "agent" || batch.includes(later)) continue;
+          if ((state.steps[later.id] ?? "pending") !== "pending") continue;
+          const ready = (later.dependsOn ?? []).every((d) => ["completed", "bypassed"].includes(state.steps[d] ?? "pending"));
+          if (!ready) continue;
+          if (later.when && !(await later.when(ctx))) {
+            await emitFor(later.id)("step_skipped", { reason: BYPASS_REASON });
+            state.steps[later.id] = "bypassed";
+            continue;
+          }
+          batch.push(later);
+        }
       }
-      if (outcome.kind === "waiting") return { status: "waiting", gate: outcome.gate };
-      if (outcome.kind === "reset") {
-        for (const id of outcome.stepIds) { delete state.steps[id]; delete ctx.results[id]; }
+      const outcomes = await Promise.all(batch.map((s) => runStep(s, ctx, emitFor, executors, events, [...priorEvents, events], pipeline, opts.renderGateMessage)));
+      // Outcomes are applied in pipeline order once the whole batch has settled: the first
+      // failure in that order is the one the run reports, however the executors finished.
+      let failed: { step: Step; error: string } | undefined;
+      let reset: StepId[] | undefined;
+      let waiting: GateState | undefined;
+      for (let i = 0; i < batch.length; i++) {
+        const s = batch[i]!;
+        const outcome = outcomes[i]!;
+        if (outcome.kind === "completed") {
+          state.steps[s.id] = "completed";
+          if (outcome.result !== undefined) ctx.results[s.id] = outcome.result;
+        } else if (outcome.kind === "waiting") {
+          waiting = outcome.gate;
+        } else if (outcome.kind === "reset") {
+          reset = outcome.stepIds;
+        } else if (!failed) {
+          state.steps[s.id] = "failed";
+          failed = { step: s, error: outcome.error };
+        } else {
+          state.steps[s.id] = "failed";
+        }
+      }
+      if (failed) { await sweep(failed.step); return finish({ status: "failed", stepId: failed.step.id, error: failed.error }); }
+      if (waiting) return { status: "waiting", gate: waiting };
+      if (reset) {
+        for (const id of reset) { delete state.steps[id]; delete ctx.results[id]; }
         continue pass;
       }
-      state.steps[step.id] = "failed";
-      await sweep(step);
-      return finish({ status: "failed", stepId: step.id, error: outcome.error });
     }
     return finish({ status: "completed" });
   }

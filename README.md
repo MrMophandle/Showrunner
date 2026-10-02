@@ -343,6 +343,16 @@ produces comes from the show config or the episode id; the engine repository nam
 `EPISODE_STAGE_MAP`, exported beside the factory, is what `deriveStage` reads to turn a run's log
 into a stage.
 
+**`run({ …, concurrency: 7 })` runs ready agent steps together** — the script pass's review panel
+is the case it exists for: the canon reviewer and the six checks all depend on the same draft, and
+seven at once is 9 min 36 s against 45 min 26 s one at a time on ep10's logs, paid again on every
+script-gate rejection. Only agent steps are batched; scripts, guards, gates and loops always run
+alone, and the default of 1 is one step at a time in dependency order. Outcomes are applied in
+pipeline order once the batch has settled, so the first failure in that order is the one the run
+reports. The log's order is the order the emits were made in, whatever order the agents finish in.
+The console's worker takes `--concurrency <n>` and the server passes 7 unless its own
+`--concurrency` says otherwise.
+
 ### The eight gates
 
 Each gate opens a `DRAFT_` stage and waits for the showrunner. A rejection runs the gate's fix

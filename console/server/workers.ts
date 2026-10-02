@@ -85,7 +85,7 @@ export async function spawnWorker(ctx: ShowContext, episodeId: string, runId: st
   // in one file, in order, which is the only record of a worker that died before it could log.
   const fd = openSync(out, "a");
   try {
-    const argv = [...entry, "--show", ctx.showRoot, "--episode", episodeId, "--run", runId, "--engine-root", ctx.engineRoot, "--operator", ctx.operator];
+    const argv = [...entry, "--show", ctx.showRoot, "--episode", episodeId, "--run", runId, "--engine-root", ctx.engineRoot, "--operator", ctx.operator, "--concurrency", String(ctx.concurrency)];
     const child = spawn(cmd, argv, { detached: true, stdio: ["ignore", fd, fd] });
     child.unref();
     if (child.pid === undefined) throw new Error(`worker did not start: ${[cmd, ...entry].join(" ")}`);

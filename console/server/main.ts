@@ -31,7 +31,7 @@ function present(name: string): boolean {
   return process.argv.includes(`--${name}`);
 }
 
-const USAGE = "usage: console --show <root> [--engine-root <path>] [--port 4400] [--host] [--operator <name>] [--worker <path to a worker entry>]\n";
+const USAGE = "usage: console --show <root> [--engine-root <path>] [--port 4400] [--host] [--operator <name>] [--worker <path to a worker entry>] [--concurrency 7]\n";
 
 async function main(): Promise<void> {
   const showRoot = flag("show");
@@ -45,9 +45,14 @@ async function main(): Promise<void> {
   if (!Number.isInteger(port) || port < 1 || port > 65535) { process.stderr.write(`invalid --port ${portRaw}\n`); process.exit(64); }
   const operator = flag("operator");
   const worker = flag("worker");
+  // How many ready agent steps a worker may run at once. 7 is the review panel's width; the flag
+  // is here for an operator who is being rate-limited and wants the panel narrower.
+  const concurrencyRaw = flag("concurrency") ?? "7";
+  const concurrency = Number(concurrencyRaw);
+  if (!Number.isInteger(concurrency) || concurrency < 1) { process.stderr.write(`invalid --concurrency ${concurrencyRaw}\n`); process.exit(64); }
 
   const ctx = await loadShowContext({
-    showRoot, engineRoot,
+    showRoot, engineRoot, concurrency,
     ...(operator !== undefined ? { operator } : {}),
     ...(worker !== undefined ? { workerCommand: [process.execPath, path.resolve(worker)] } : {}),
   });

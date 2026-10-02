@@ -29,6 +29,12 @@ export interface ShowContext {
   /** argv of the worker, as an array and never a shell string: `[executable, entry]`, to which
    *  `spawnWorker` appends the run's flags. A test points it at a fake worker. */
   workerCommand: string[];
+  /** How many ready agent steps a run may execute at once, passed to every worker this server
+   *  spawns as `--concurrency <n>` and from there into `run()`. The default of 7 is the width of
+   *  the script pass's review panel — the canon reviewer plus the six checks, which all depend on
+   *  the same draft — so the panel goes out in one batch. Only agent steps are batched, so a
+   *  larger number buys nothing anywhere else in the episode pipeline. */
+  concurrency: number;
 }
 
 /** What `loadShowContext` needs. `operator` defaults to "console:<username>", matching what the
@@ -39,6 +45,7 @@ export interface ShowContextOptions {
   engineRoot: string;
   operator?: string;
   workerCommand?: string[];
+  concurrency?: number;
 }
 
 /** The compiled worker entry, as a path relative to this module. `server/show.ts` compiles to
@@ -63,5 +70,6 @@ export async function loadShowContext(opts: ShowContextOptions): Promise<ShowCon
     productionDir: show.productionDir ?? "Production",
     episodesDir: show.episodesDir ?? "Episodes",
     workerCommand: opts.workerCommand ?? [process.execPath, defaultWorkerEntry()],
+    concurrency: opts.concurrency ?? 7,
   };
 }

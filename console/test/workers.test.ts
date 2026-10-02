@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { killRecordedGroups, readLock, spawnWorker } from "../server/workers.js";
-import { appWith, makeShow, waitFor, writeLock } from "./helpers.js";
+import { appWith, ENGINE_ROOT, makeShow, waitFor, writeLock } from "./helpers.js";
 
 const exists = async (p: string): Promise<boolean> => { try { await stat(p); return true; } catch { return false; } };
 
@@ -27,6 +27,19 @@ describe("spawnWorker", () => {
     const { ctx } = await appWith(await makeShow());
     await expect(spawnWorker(ctx, "zz", "r1")).rejects.toThrow(/invalid episode id/);
     await expect(spawnWorker(ctx, "s02e01", "../escape")).rejects.toThrow(/invalid run id/);
+  });
+
+  it("passes the show context's concurrency to the worker as --concurrency", async () => {
+    const { root, ctx } = await appWith(await makeShow());
+    // /bin/echo stands in for the worker: the run's .worker.out file is where a detached
+    // process's output lands, so it is the one place the argv can be read back from.
+    await spawnWorker({ ...ctx, workerCommand: ["/bin/echo"], concurrency: 3 }, "s02e01", "r9");
+    const out = path.join(root, "Production", "s02e01", "runs", "r9.worker.out");
+    await waitFor(async () => (await read(out)).includes("--concurrency"));
+    expect((await read(out)).trim()).toBe([
+      "--show", root, "--episode", "s02e01", "--run", "r9",
+      "--engine-root", ENGINE_ROOT, "--operator", "console:test", "--concurrency", "3",
+    ].join(" "));
   });
 });
 
