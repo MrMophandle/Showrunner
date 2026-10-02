@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { run, answerGate } from "../src/runner.js";
+import { run, answerGate, withdrawApproval } from "../src/runner.js";
 import { EventLog } from "../src/events.js";
 import type { Executors, Pipeline, GateStep, GuardStep, AgentStep, RunContext } from "../src/steps.js";
 
@@ -313,5 +313,60 @@ describe("rerunOnReject", () => {
     await run({ pipeline, ctx, log, executors });
     const done = (await log.read()).find((e) => e.kind === "step_completed" && e.stepId === "fix");
     expect(typeof (done?.payload["outputHashes"] as Record<string, unknown>)["draft.md"]).toBe("string");
+  });
+});
+
+describe("withdrawApproval", () => {
+  async function withdrawSetup() {
+    const root = await mkdtemp(path.join(tmpdir(), "show-"));
+    const calls: string[] = [];
+    const executors: Executors = {
+      script: async (step) => { calls.push(step.id); return { ok: true }; },
+      agent: async (step, ctx) => { calls.push(`${step.id}:${String(ctx.results["g:rejection"] ?? "")}`); return { ok: true, text: "fixed", toolCalls: 1 }; },
+    };
+    const pipeline: Pipeline = { name: "p", steps: [
+      { kind: "script", id: "make", argv: () => ["true"] },
+      { kind: "gate", id: "g", dependsOn: ["make"], message: () => "ok?", rerunOnReject: ["make"], onReject: { kind: "agent", id: "fix", promptFile: "f.md", model: "m", allowedTools: [], context: "fresh" } },
+      { kind: "script", id: "after", dependsOn: ["g"], argv: () => ["true"] },
+      { kind: "gate", id: "g2", dependsOn: ["after"], message: () => "ok2?" },
+      { kind: "script", id: "last", dependsOn: ["g2"], argv: () => ["true"] },
+    ] };
+    const log = new EventLog(EventLog.logPath(root, "s02e01", "r1"));
+    const ctx = { runId: "r1", episodeId: "s02e01", showRoot: root };
+    return { pipeline, log, ctx, executors, calls };
+  }
+
+  it("rejects an approved gate after the fact: downstream work is reset, the fix agent runs, the gate reopens at the next attempt", async () => {
+    const { pipeline, log, ctx, executors, calls } = await withdrawSetup();
+    await run({ pipeline, ctx, log, executors });
+    await answerGate(log, "r1", "g", { approved: true, by: "t" });
+    expect(await run({ pipeline, ctx, log, executors })).toMatchObject({ status: "waiting", gate: { stepId: "g2" } });
+    await answerGate(log, "r1", "g2", { approved: true, by: "t" });
+    expect(await run({ pipeline, ctx, log, executors })).toEqual({ status: "completed" });
+    expect(calls).toEqual(["make", "after", "last"]);
+    const reset = await withdrawApproval(pipeline, log, "r1", "g", { notes: "scene two is wrong after all", by: "t" });
+    expect(reset).toEqual(["after", "last"]);
+    const r = await run({ pipeline, ctx, log, executors });
+    expect(r).toMatchObject({ status: "waiting", gate: { stepId: "g", attempt: 2 } });
+    expect(calls.slice(3)).toEqual(["fix:scene two is wrong after all", "make"]);
+    const events = await log.read();
+    const answers = events.filter((e) => e.kind === "gate_answered" && e.stepId === "g");
+    expect(answers[1]?.payload).toMatchObject({ approved: false, notes: "scene two is wrong after all", by: "t", withdrawn: true, attempt: 1 });
+    expect(events.filter((e) => e.kind === "step_reset").map((e) => [e.stepId, e.payload["by"]])).toEqual(expect.arrayContaining([["after", "withdraw:g"], ["last", "withdraw:g"], ["make", "g"]]));
+    expect(events.some((e) => e.kind === "step_reset" && e.stepId === "g2")).toBe(false);
+    expect(events.filter((e) => e.kind === "run_resumed")).toHaveLength(1);
+    // g2's approval survives untouched: once g is re-approved, g2 does not ask again
+    await answerGate(log, "r1", "g", { approved: true, by: "t" });
+    expect(await run({ pipeline, ctx, log, executors })).toEqual({ status: "completed" });
+    expect(calls.slice(5)).toEqual(["after", "last"]);
+  });
+
+  it("refuses a gate that is not approved, a run with an open gate, and a wrong run id", async () => {
+    const { pipeline, log, ctx, executors } = await withdrawSetup();
+    await run({ pipeline, ctx, log, executors });
+    await expect(withdrawApproval(pipeline, log, "r1", "g", { notes: "n", by: "t" })).rejects.toThrow(/gate "g" is open; answer it instead/);
+    await answerGate(log, "r1", "g", { approved: false, notes: "no", by: "t" });
+    await expect(withdrawApproval(pipeline, log, "r1", "g", { notes: "n", by: "t" })).rejects.toThrow(/gate "g" is not approved/);
+    await expect(withdrawApproval(pipeline, log, "r2", "g", { notes: "n", by: "t" })).rejects.toThrow(/run id mismatch/);
   });
 });

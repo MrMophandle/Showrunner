@@ -1,6 +1,7 @@
 import path from "node:path";
 import type { EventLog, Event } from "./events.js";
-import { downstreamOf, orderSteps } from "./pipeline.js";
+import { downstreamOf, orderSteps, pipelineHash } from "./pipeline.js";
+import { ENGINE_VERSION } from "./version.js";
 import { BYPASS_REASON, deriveRunState, type GateState, type RunState } from "./state.js";
 import { hashFiles, sameHashes } from "./hash.js";
 import { parseEpisodeId } from "./ids.js";
@@ -96,6 +97,35 @@ export async function resetSteps(pipeline: Pipeline, log: EventLog, runId: strin
   return ids;
 }
 
+/** Rejects a gate the showrunner already approved — the "re-ask" the record of Plan D asked for.
+ *  Everything downstream of the gate is reset (never another gate: a later gate's approval is its
+ *  own answer and survives), then a rejection answer is appended with `withdrawn: true`, so the
+ *  next run() takes the ordinary rejection path: the fix agent, the gate's own re-run set, and
+ *  the gate reopened at the next attempt. Refused while any gate is open (answer it instead), and
+ *  for a gate whose last answer is not an approval. A finished run is reopened first. */
+export async function withdrawApproval(
+  pipeline: Pipeline, log: EventLog, runId: string, stepId: StepId, answer: { notes: string; by: string },
+): Promise<StepId[]> {
+  const events = await log.read();
+  if (events.length === 0) throw new Error(`no run in the log at ${log.path}`);
+  const state = deriveRunState(events);
+  if (state.runId !== runId) {
+    throw new Error(`run id mismatch: the log at ${log.path} is run ${JSON.stringify(state.runId)}, not ${JSON.stringify(runId)}`);
+  }
+  if (state.openGate) throw new Error(`gate ${JSON.stringify(state.openGate.stepId)} is open; answer it instead`);
+  let last: Event | undefined;
+  for (const e of events) if (e.stepId === stepId && (e.kind === "gate_opened" || e.kind === "gate_answered")) last = e;
+  if (!last || last.kind !== "gate_answered" || last.payload["approved"] !== true) {
+    throw new Error(`gate ${JSON.stringify(stepId)} is not approved on run ${runId}`);
+  }
+  const byId = new Map(pipeline.steps.map((s) => [s.id, s] as const));
+  const ids = downstreamOf(pipeline, [stepId]).filter((id) => id !== stepId && byId.get(id)?.kind !== "gate" && state.steps[id] !== undefined);
+  if (state.finished) await log.append({ runId, kind: "run_resumed", payload: { by: answer.by } });
+  for (const id of ids) await log.append({ runId, stepId: id, kind: "step_reset", payload: { by: `withdraw:${stepId}` } });
+  await log.append({ runId, stepId, kind: "gate_answered", payload: { approved: false, notes: answer.notes, by: answer.by, withdrawn: true, attempt: Number(last.payload["attempt"] ?? state.gateAttempts[stepId] ?? 1) } });
+  return ids;
+}
+
 type Hashes = Record<string, string | null>;
 
 interface CachedCompletion { inputHashes: Hashes; outputHashes: Hashes; result?: unknown }
@@ -164,7 +194,7 @@ async function execute(opts: RunOptions): Promise<RunResult> {
   const append = async (e: Omit<Event, "ts">): Promise<void> => { events.push(await log.append(e)); };
 
   if (events.length === 0) {
-    const started: Record<string, unknown> = { pipeline: pipeline.name, episodeId: opts.ctx.episodeId };
+    const started: Record<string, unknown> = { pipeline: pipeline.name, episodeId: opts.ctx.episodeId, engineVersion: ENGINE_VERSION, pipelineHash: pipelineHash(pipeline) };
     if (opts.ctx.trigger !== undefined) started["trigger"] = opts.ctx.trigger;
     await append({ runId: opts.ctx.runId, kind: "run_started", payload: started });
   }

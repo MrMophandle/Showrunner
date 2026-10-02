@@ -3,6 +3,8 @@ import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { run, resetSteps, resumeRun } from "../src/runner.js";
+import { pipelineHash } from "../src/pipeline.js";
+import { ENGINE_VERSION } from "../src/version.js";
 import { EventLog } from "../src/events.js";
 import { deriveRunState } from "../src/state.js";
 import type { Executors, Pipeline, GuardStep, ScriptStep, AgentStep } from "../src/steps.js";
@@ -224,11 +226,11 @@ describe("run", () => {
     const withTrigger = new EventLog(EventLog.logPath(root, "s02e01", "r1"));
     await run({ pipeline: p, ctx: { runId: "r1", episodeId: "s02e01", showRoot: root, trigger: "console:user" }, log: withTrigger, executors: okExecutors([]) });
     const started = (await withTrigger.read()).find((e) => e.kind === "run_started");
-    expect(started?.payload).toEqual({ pipeline: "p", episodeId: "s02e01", trigger: "console:user" });
+    expect(started?.payload).toEqual({ pipeline: "p", episodeId: "s02e01", engineVersion: ENGINE_VERSION, pipelineHash: pipelineHash(p), trigger: "console:user" });
 
     const without = new EventLog(EventLog.logPath(root, "s02e01", "r2"));
     await run({ pipeline: p, ctx: { runId: "r2", episodeId: "s02e01", showRoot: root }, log: without, executors: okExecutors([]) });
-    expect((await without.read()).find((e) => e.kind === "run_started")?.payload).toEqual({ pipeline: "p", episodeId: "s02e01" });
+    expect((await without.read()).find((e) => e.kind === "run_started")?.payload).toEqual({ pipeline: "p", episodeId: "s02e01", engineVersion: ENGINE_VERSION, pipelineHash: pipelineHash(p) });
   });
 
   it("reads its own log exactly once for the whole run", async () => {
@@ -425,5 +427,14 @@ describe("run", () => {
     expect(calls).toEqual(["a", "b"]);
     const resets = (await log.read()).filter((e) => e.kind === "step_reset");
     expect(resets.map((e) => e.payload)).toEqual([{ by: "operator" }, { by: "operator" }]);
+  });
+
+  it("records the engine version and the pipeline hash on run_started", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "show-"));
+    const pipeline: Pipeline = { name: "p", steps: [{ kind: "guard", id: "a", check: () => ({ pass: true }) }] };
+    const log = new EventLog(EventLog.logPath(root, "s02e01", "r1"));
+    await run({ pipeline, ctx: { runId: "r1", episodeId: "s02e01", showRoot: root }, log, executors: { script: async () => ({ ok: true }), agent: async () => ({ ok: true, text: "", toolCalls: 0 }) } });
+    const started = (await log.read())[0];
+    expect(started?.payload).toMatchObject({ pipeline: "p", episodeId: "s02e01", engineVersion: ENGINE_VERSION, pipelineHash: pipelineHash(pipeline) });
   });
 });

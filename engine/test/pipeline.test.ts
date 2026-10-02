@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { downstreamOf, orderSteps, PipelineError } from "../src/pipeline.js";
+import { describePipeline, downstreamOf, orderSteps, pipelineHash, PipelineError } from "../src/pipeline.js";
 import type { Pipeline, GuardStep, GateStep, LoopStep, AgentStep } from "../src/steps.js";
 
 const g = (id: string, dependsOn: string[] = []): GuardStep => ({
@@ -105,5 +105,27 @@ describe("downstreamOf", () => {
     expect(() => orderSteps(both)).toThrow(/gate "g" sets both message and messageFile; set exactly one/);
     const file: Pipeline = { name: "p", steps: [{ kind: "gate", id: "g", messageFile: "g.md" }] };
     expect(() => orderSteps(file)).not.toThrow();
+  });
+});
+
+describe("describePipeline", () => {
+  it("reduces a pipeline to JSON, keeping names and edges and marking functions as present", () => {
+    const p: Pipeline = { name: "p", steps: [
+      { kind: "guard", id: "g0", check: () => ({ pass: true }) },
+      { kind: "script", id: "s", dependsOn: ["g0"], argv: () => ["true"], inputs: ["a.md"], outputs: ["b.md"], cwd: "/x", timeoutMs: 5 },
+      { kind: "agent", id: "a", dependsOn: ["s"], promptFile: "a.md", schemaFile: "a.schema.json", model: "medium", allowedTools: ["Read"], context: "fresh", when: () => true },
+      { kind: "gate", id: "g", dependsOn: ["a"], messageFile: "g.gate.md", maxAttempts: 3, rerunOnReject: ["s"], onReject: { kind: "agent", id: "g-fix", promptFile: "g.reject.md", model: "writer", allowedTools: [], context: "fresh" } },
+      { kind: "loop", id: "l", dependsOn: ["g"], until: "DONE", maxIterations: 2, body: { kind: "agent", id: "l-body", promptFile: "l.md", model: "writer", allowedTools: [], context: "shared" } },
+    ] };
+    const d = describePipeline(p);
+    expect(JSON.parse(JSON.stringify(d))).toEqual(d);
+    expect(d.steps.map((s) => s.id)).toEqual(["g0", "s", "a", "g", "l"]);
+    expect(d.steps[1]).toEqual({ id: "s", kind: "script", dependsOn: ["g0"], inputs: ["a.md"], outputs: ["b.md"], when: false, cwd: "/x", timeoutMs: 5 });
+    expect(d.steps[2]).toMatchObject({ id: "a", kind: "agent", when: true, promptFile: "a.md", schemaFile: "a.schema.json", model: "medium", allowedTools: ["Read"], context: "fresh" });
+    expect(d.steps[3]).toMatchObject({ id: "g", kind: "gate", messageFile: "g.gate.md", maxAttempts: 3, rerunOnReject: ["s"], onReject: { id: "g-fix", promptFile: "g.reject.md", model: "writer" } });
+    expect(d.steps[4]).toMatchObject({ id: "l", kind: "loop", until: "DONE", maxIterations: 2, body: { id: "l-body", promptFile: "l.md", model: "writer" } });
+    expect(pipelineHash(p)).toMatch(/^[0-9a-f]{64}$/);
+    expect(pipelineHash(p)).toBe(pipelineHash({ ...p }));
+    expect(pipelineHash(p)).not.toBe(pipelineHash({ ...p, name: "q" }));
   });
 });

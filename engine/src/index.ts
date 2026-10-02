@@ -1,4 +1,4 @@
-export const ENGINE_VERSION = "0.0.1";
+export * from "./version.js";
 export * from "./ids.js";
 export * from "./steps.js";
 export * from "./pipeline.js";

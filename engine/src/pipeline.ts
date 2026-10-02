@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { Pipeline, Step, StepId } from "./steps.js";
 
 export class PipelineError extends Error {
@@ -109,4 +110,58 @@ export function orderSteps(p: Pipeline): Step[] {
     }
   }
   return out;
+}
+
+/** One step as plain data: the names, edges, files and bounds it declares, with every function it
+ *  carries reduced to a flag or dropped. Separate from `Step` because `Step` holds live code —
+ *  `argv`, `when`, `check`, `message`, `progress` — which neither a reader nor a hash can hold. */
+export interface StepDescription {
+  id: StepId; kind: Step["kind"]; dependsOn: StepId[]; inputs: string[]; outputs: string[];
+  /** Whether the step carries a `when` predicate; the predicate itself is code and not described. */
+  when: boolean;
+  timeoutMs?: number; promptFile?: string; schemaFile?: string; model?: string; allowedTools?: string[]; context?: "fresh" | "shared";
+  idleTimeoutMs?: number; messageFile?: string; maxAttempts?: number; rerunOnReject?: StepId[];
+  onReject?: { id: StepId; promptFile: string; model: string }; body?: { id: StepId; promptFile: string; model: string };
+  until?: string; maxIterations?: number; cwd?: string;
+}
+
+/** A whole pipeline as plain data — the name a run records and its steps in declaration order.
+ *  This is the shape `pipelineHash` hashes and the shape a console or a report renders. */
+export interface PipelineDescription { name: string; steps: StepDescription[] }
+
+/** The pipeline as a document: every name, edge, file and bound a step declares, with each
+ *  function reduced to "present". A pipeline is live TypeScript — argv, when, check, progress are
+ *  code — so JSON.stringify would drop every decision it makes; this is the part that can be
+ *  handed to a reader or hashed. The evaluated argv of each script step is in the log already,
+ *  on its step_started. */
+export function describePipeline(p: Pipeline): PipelineDescription {
+  const steps = p.steps.map((s): StepDescription => {
+    const d: StepDescription = { id: s.id, kind: s.kind, dependsOn: [...(s.dependsOn ?? [])], inputs: [...(s.inputs ?? [])], outputs: [...(s.outputs ?? [])], when: s.when !== undefined };
+    if (s.timeoutMs !== undefined) d.timeoutMs = s.timeoutMs;
+    if (s.kind === "script" && s.cwd !== undefined) d.cwd = s.cwd;
+    if (s.kind === "agent") {
+      d.promptFile = s.promptFile; d.model = s.model; d.allowedTools = [...s.allowedTools]; d.context = s.context;
+      if (s.schemaFile !== undefined) d.schemaFile = s.schemaFile;
+      if (s.idleTimeoutMs !== undefined) d.idleTimeoutMs = s.idleTimeoutMs;
+    }
+    if (s.kind === "gate") {
+      if (s.messageFile !== undefined) d.messageFile = s.messageFile;
+      if (s.maxAttempts !== undefined) d.maxAttempts = s.maxAttempts;
+      if (s.rerunOnReject !== undefined) d.rerunOnReject = [...s.rerunOnReject];
+      if (s.onReject) d.onReject = { id: s.onReject.id, promptFile: s.onReject.promptFile, model: s.onReject.model };
+    }
+    if (s.kind === "loop") {
+      d.until = s.until; d.maxIterations = s.maxIterations;
+      d.body = { id: s.body.id, promptFile: s.body.promptFile, model: s.body.model };
+    }
+    return d;
+  });
+  return { name: p.name, steps };
+}
+
+/** A content hash of the description, recorded on run_started so a log says which shape of the
+ *  pipeline it ran against — the version question §6.8's troubleshooting agent would otherwise
+ *  have to guess at. */
+export function pipelineHash(p: Pipeline): string {
+  return createHash("sha256").update(JSON.stringify(describePipeline(p))).digest("hex");
 }
