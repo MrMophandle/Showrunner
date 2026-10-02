@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
+import { rm } from "node:fs/promises";
 import { EventLog } from "@showrunner/engine";
 import type { SseMessage } from "../shared/types.js";
-import { appWith, makeShow, seedRun, waitFor, writeIn } from "./helpers.js";
+import { appWith, makeShow, seedRun, waitFor, writeIn, writeLock } from "./helpers.js";
 
 describe("RunStore", () => {
   it("tails a log incrementally and publishes a change per append", async () => {
@@ -28,8 +29,8 @@ describe("RunStore", () => {
     await seedRun(root, "s02e02", "r1", [{ kind: "run_started", payload: { pipeline: "episode", episodeId: "s02e02" } }]);
     await waitFor(() => seen.some((m) => m.type === "run" && m.episodeId === "s02e02"));
     expect((await store.get("s02e02", "r1")).events).toHaveLength(1);
-    // A lock appearing beside the log is a Board fact, not a log one: nothing new to read, but
-    // the episode's status changed from crashed to running.
+    // A lock appearing beside the log is a Board fact, not a log one: there is nothing new to
+    // read, and yet every row's status may have changed, since the lock is what "running" means.
     const before = seen.filter((m) => m.type === "episodes").length;
     await writeIn(root, "Production/s02e02/runs/r1.lock", JSON.stringify({ pid: process.pid, startedAt: "t", heartbeatAt: "t", groups: [] }));
     await waitFor(() => seen.filter((m) => m.type === "episodes").length > before);
@@ -64,8 +65,12 @@ describe("RunStore", () => {
       { ts: t(40), stepId: "draft", kind: "loop_iteration", payload: { iteration: 3, max: 15, sentinel: false, toolCalls: 6 } },
       { ts: t(40), stepId: "draft", kind: "step_progress", payload: { done: 2, total: 12, unit: "scenes" } },
     ]);
+    // A run with a step in flight has a worker holding it: the lock is what makes this log's
+    // "running" honest, and without it the same log is a crash (asserted below).
+    const lock = await writeLock(root, "s02e01", "r1", process.pid);
     const v = await store.view("s02e01", "r1");
     expect(v.status).toBe("running");
+    expect(v.worker).toMatchObject({ pid: process.pid, alive: true });
     expect(v.position).toEqual({ stepId: "draft", startedAt: t(10) });
     expect(v.steps.map((s) => s.id).slice(0, 4)).toEqual(["previous-episode", "premise", "outline", "hand-edits-outline"]);
     expect(v.steps.find((s) => s.id === "outline")).toMatchObject({ kind: "agent", status: "completed", startedAt: t(3), endedAt: t(9), toolCalls: 4 });
@@ -80,6 +85,15 @@ describe("RunStore", () => {
     // A step the log never mentions still has a row, which is what makes the count the
     // pipeline's rather than the log's.
     expect(v.steps.find((s) => s.id === "hand-edits-outline")).toEqual({ id: "hand-edits-outline", kind: "guard", status: "pending" });
+
+    // The same log with no worker holding it is a crash, not a run in progress: one worker owns
+    // one run, taking the lock before run() and removing it in finally, so a log whose last word
+    // on `draft` is step_started with no live lock is a killed worker or a rejected run().
+    await rm(lock);
+    const abandoned = await store.view("s02e01", "r1");
+    expect(abandoned.status).toBe("crashed");
+    expect(abandoned.worker).toBeUndefined();
+    expect(abandoned.position).toEqual({ stepId: "draft", startedAt: t(10) });
     store.close();
   });
 

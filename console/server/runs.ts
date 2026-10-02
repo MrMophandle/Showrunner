@@ -214,21 +214,32 @@ function projectSteps(descriptions: StepDescription[], events: Event[]): StepRow
  *  2. An open gate — "waiting". Read before anything about the lock, because a run parked at a
  *     gate has no lock at all: the worker released it and exited, which is the normal resting
  *     state of an episode awaiting the showrunner and not a crash.
- *  3. A live lock — "running". A process is holding this run right now.
- *  4. A lock whose pid is dead — "crashed". This is what a crash looks like from outside: a
- *     worker that was killed, or died, without reaching its `finally`.
- *  5. No lock and a step in flight — "running". Nothing on disk says the run stopped.
- *  6. No lock and nothing in flight — "running" if the log was written to within the last
- *     minute (a worker between steps), else "crashed"; and "none" for a run id whose log is
- *     empty, which is a run that was launched and has not written yet. */
+ *  3. A live lock — "running". A process is holding this run right now, and that is the only
+ *     thing that means a run is running.
+ *  4. An empty log and no lock — "none". A run that was launched and has not written yet: the
+ *     worker takes the lock and appends `run_started` within milliseconds of being spawned, and
+ *     for that moment there is nothing on disk to read. Reporting it as a crash would make every
+ *     launch flash red.
+ *  5. A step in flight, with no live lock — "crashed", whether the lock is stale or gone.
+ *     **There is no honest state in which a step is in flight and no live worker holds the run.**
+ *     One worker owns one run: it takes the lock before `run()` and removes it in `finally`, and
+ *     the runner writes a terminal event for every step it finishes. So a log whose last word on
+ *     a step is `step_started`, beside a lock that nothing holds or no lock at all, is one of
+ *     exactly two things — a worker that was killed (the lock is still there, its pid dead) or a
+ *     `run()` that rejected (the `finally` took the lock with it, and only `<runId>.worker.log`
+ *     says why). Both are crashes, and the Board has to say so: the operator's move is Continue,
+ *     which replays the open step, and a run mislabelled "running" offers no move at all and
+ *     waits forever on a process that is gone.
+ *  6. Nothing in flight and no live lock — "running" if the log was written to within the last
+ *     minute, else "crashed". This is the narrow window where a lock write has not landed yet or
+ *     a reader raced it; a minute of silence is twelve missed heartbeats. */
 export function deriveRunStatus(state: RunState, lock: { alive: boolean } | undefined, eventCount: number, now = Date.now()): RunStatus {
   if (state.finished) return state.status === "completed" ? "completed" : "failed";
   if (state.openGate) return "waiting";
   if (lock?.alive === true) return "running";
-  if (lock !== undefined) return "crashed";
-  if (eventCount === 0) return "none";
+  if (eventCount === 0 && lock === undefined) return "none";
   const inFlight = state.position !== undefined || Object.values(state.steps).some((s) => s === "running");
-  if (inFlight) return "running";
+  if (inFlight) return "crashed";
   const last = state.lastEventAt !== undefined ? Date.parse(state.lastEventAt) : NaN;
   return Number.isFinite(last) && now - last < STALE_MS ? "running" : "crashed";
 }
