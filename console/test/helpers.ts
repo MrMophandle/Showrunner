@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import type { Hono } from "hono";
-import { EventLog } from "@showrunner/engine";
+import { EventLog, type QueryFn } from "@showrunner/engine";
 import { createApp } from "../server/app.js";
 import { loadShowContext, type ShowContext } from "../server/show.js";
 import { RunStore } from "../server/runs.js";
@@ -94,14 +94,16 @@ export async function writeLock(root: string, episodeId: string, runId: string, 
 /** What the server's tests drive: the app, the context it was built from, and the store the app
  *  reads through. The worker command is the fake worker, so an action spawns a process that
  *  writes a log and exits rather than one that calls a model. `pollMs` is short so a test that
- *  wants the store's directory poll does not wait the production two seconds for it. */
-export async function appWith(root: string, opts: { pollMs?: number } = {}): Promise<{ root: string; app: Hono; ctx: ShowContext; store: RunStore }> {
+ *  wants the store's directory poll does not wait the production two seconds for it, and `query`
+ *  is the seam the "what happened" route asks a model through — a test passes a fake so the
+ *  route can be driven without a model behind it. */
+export async function appWith(root: string, opts: { pollMs?: number; query?: QueryFn } = {}): Promise<{ root: string; app: Hono; ctx: ShowContext; store: RunStore }> {
   const ctx = await loadShowContext({
     showRoot: root, engineRoot: ENGINE_ROOT, operator: "console:test",
     workerCommand: [process.execPath, FAKE_WORKER],
   });
   const store = new RunStore(ctx, { pollMs: opts.pollMs ?? 2000 });
-  return { root, app: createApp(ctx, store), ctx, store };
+  return { root, app: createApp(ctx, store, opts.query !== undefined ? { query: opts.query } : {}), ctx, store };
 }
 
 /** Polls a condition until it holds, then returns; throws when it has not held by `timeoutMs`.

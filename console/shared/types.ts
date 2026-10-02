@@ -1,10 +1,17 @@
 /** The types the console's server and client both read: the status vocabulary the worker's
  *  outcomes are drawn from, what a reader of a run's lock file can say about the process running
  *  it, and the three altitudes the server serves — the Board's `EpisodeRow`, one run's `RunView`
- *  with its `StepRow`s, and the `EventBatch` a client tails a log with. Nothing here imports the
- *  engine: the client bundles this file, and an engine import would drag `node:fs` into it,
- *  which is why `stage`, `kind` and `StepRow.status` are plain strings rather than the engine's
- *  `Stage`, `Step["kind"]` and `StepStatus` unions. */
+ *  with its `StepRow`s, and the `EventBatch` a client tails a log with — plus the `GateView` the
+ *  Gate page draws and the `WhatHappenedContext` the troubleshooter is handed.
+ *
+ *  Nothing here imports engine *code*: the client bundles this file, and a value import from the
+ *  engine would drag `node:fs` into the browser bundle. That is why `stage`, `kind` and
+ *  `StepRow.status` are plain strings rather than the engine's `Stage`, `Step["kind"]` and
+ *  `StepStatus` unions. The one exception is the `import type` below, which TypeScript and
+ *  esbuild both erase: `WhatHappenedContext.pipeline` *is* the engine's `PipelineDescription`,
+ *  and mirroring its twenty fields here would be two declarations to keep in agreement. Keep the
+ *  `type` keyword on it. */
+import type { PipelineDescription } from "@showrunner/engine";
 
 /** What the console reports for an episode's latest run, or for a run it is showing. Six states,
  *  and only two of them are not in the run log: "none" is an episode that has never run, and
@@ -100,11 +107,22 @@ export interface RunView {
   offset: number;
 }
 
+/** One event of a run's log on the wire: the engine's `Event` without its `runId`, which every
+ *  event of one log repeats, and with `kind` as a plain string for the reason the file header
+ *  gives. Named rather than inlined because two things carry it — the `EventBatch` a client tails
+ *  with, and the `WhatHappenedContext` the troubleshooter reads. */
+export interface WireEvent {
+  ts: string;
+  stepId?: string;
+  kind: string;
+  payload: Record<string, unknown>;
+}
+
 /** A slice of a run's log, with the byte offset to resume from. The console's clients never read
  *  a log from the start twice: they hold the offset the last batch returned and ask for what has
  *  been appended since. */
 export interface EventBatch {
-  events: Array<{ ts: string; stepId?: string; kind: string; payload: Record<string, unknown> }>;
+  events: WireEvent[];
   offset: number;
 }
 
@@ -117,3 +135,72 @@ export type SseMessage =
   | { type: "run"; episodeId: string; runId: string; offset: number }
   | { type: "episodes" }
   | { type: "hello"; operator: string; showName: string };
+
+/** One file (or one directory of files) a gate refers to, as a url the artifact route serves.
+ *
+ *  `kind` says how to render it and `label` is what the operator sees. `url` is what the client
+ *  fetches; `listUrl` is set when `url` names a **directory**, and it is the address whose JSON
+ *  listing enumerates the files to render, each of them at `url` + "/" + the entry's name. The
+ *  two are the same string, because one route serves both a file and a listing — so the presence
+ *  of `listUrl` is the client's one unambiguous test for "this artifact is a directory", rather
+ *  than it having to infer that from `kind`. */
+export interface GateArtifact {
+  kind: "markdown" | "audio" | "video" | "images" | "diff" | "json" | "text";
+  label: string;
+  url: string;
+  listUrl?: string;
+}
+
+/** Everything the Gate page draws: the question the gate is asking, the files it is asking about,
+ *  and the evidence the pipeline gathered before it asked.
+ *
+ *  `attempt` is load-bearing and not decoration. The showrunner answers the attempt they read,
+ *  and the answer carries that number back as `expectedAttempt`, so an answer written against a
+ *  message that a rejection has since superseded is refused by the engine rather than applied to
+ *  a newer ask nobody read. `verdicts` are the verdict-shaped step results of this run, by step
+ *  id; `rejections` is every note the gate has already been rejected with, oldest first;
+ *  `maxAttempts` is the gate's cap from the pipeline definition, absent for a gate with none. */
+export interface GateView {
+  episodeId: string;
+  runId: string;
+  stepId: string;
+  attempt: number;
+  openedAt: string;
+  /** The gate's rendered message — several paragraphs of prose, which is why the Board's row
+   *  carries the gate's identity and not this. */
+  message: string;
+  artifacts: GateArtifact[];
+  verdicts: Record<string, unknown>;
+  rejections: string[];
+  maxAttempts?: number;
+}
+
+/** One prompt file an agent step ran, as the run recorded it and as it stands on disk now.
+ *  `hashAtRun` is the sha256 the engine logged on that step's `agent_query`; `hashNow` is the
+ *  sha256 of the same file today, or null when the file is gone. `changed` is the answer to "did
+ *  someone edit the prompt after this run read it", which is the first question to ask about a
+ *  run that behaved unlike its neighbours. */
+export interface PromptAtRun {
+  stepId: string;
+  promptFile: string;
+  hashAtRun: string;
+  hashNow: string | null;
+  changed: boolean;
+}
+
+/** What the troubleshooter is handed before it is asked anything: the pipeline as a document, the
+ *  run at the middle altitude, the run's events with the chatter collapsed, the prompts by hash,
+ *  and every file the run wrote.
+ *
+ *  `events` is collapsed rather than complete because a render writes a `script_line` per second
+ *  and a loop a `step_progress` per iteration: a whole log would be mostly chatter, and the
+ *  chatter would crowd out the events that say what happened. The last fifty lines of a step are
+ *  the ones that carry its failure, and only the last progress of a step says how far it got. */
+export interface WhatHappenedContext {
+  pipeline: PipelineDescription;
+  run: RunView;
+  events: WireEvent[];
+  prompts: PromptAtRun[];
+  /** Every path named by any `outputHashes` the run recorded, sorted and without repeats. */
+  outputs: string[];
+}
