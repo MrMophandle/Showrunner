@@ -131,6 +131,10 @@ export function WhatHappened() {
             <li>
               the pipeline <span className="mono">{ctx.pipeline.name}</span> as a document — {ctx.pipeline.steps.length} steps,
               every input, output and bound each one declares
+              {/* The pipeline the code builds today, hashed, beside the hash this run recorded:
+                  the same then-and-now comparison the prompt table makes below, for the shape of
+                  the run itself. */}
+              {ctx.run.pipeline.changed && <span className="chip chip-needs chip-inline">changed since the run</span>}
             </li>
             <li>
               the run at the middle altitude — status <span className="mono">{ctx.run.status}</span>, stage{" "}

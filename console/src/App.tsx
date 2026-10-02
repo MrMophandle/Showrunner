@@ -26,9 +26,18 @@ export function App() {
 
   const refetchRows = useCoalesced(() => { episodes.refetch(); }, 250);
   useSSE((message) => {
-    // A "run" notice is a log that grew, which changes that row's status, its last-event time and
-    // possibly its stage; an "episodes" notice is the list itself changing. Both are the Board's.
-    if (message.type === "run" || message.type === "episodes") refetchRows();
+    // An "episodes" notice is the list itself changing — a new episode, or a lock appearing or
+    // disappearing — and every row may have moved.
+    if (message.type === "episodes") { refetchRows(); return; }
+    if (message.type !== "run") return;
+    // A "run" notice is a log that grew. It is the Board's only when the run is a row's latest
+    // run: an operator reading an older run of some episode makes the store tail that log, and
+    // re-reading every episode of the show for a run no row shows would be a full per-episode
+    // projection — the 73-step pipeline, the needs probes against disk, the whole log — several
+    // times a second for a row that cannot change. Before the first `/api/episodes` has answered
+    // there are no rows to test against, so the notice is taken.
+    const rows = episodes.data;
+    if (rows === null || rows.some((r) => r.id === message.episodeId && r.runId === message.runId)) refetchRows();
   });
 
   useDocTitle(show.data?.showName, episodes.data);

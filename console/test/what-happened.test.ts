@@ -39,6 +39,11 @@ describe("the what-happened context", () => {
     const context = await assemble(ctx, store, "s02e01", "r1");
     expect(context.pipeline.name).toBe("episode");
     expect(context.run).toMatchObject({ episodeId: "s02e01", runId: "r1" });
+    // The hash of the pipeline above, which is the comparison the run's own `pipeline.hash` is
+    // for: this run recorded none, so there is nothing to disagree with and `changed` is false.
+    expect(context.pipelineHashNow).toMatch(/^[0-9a-f]{64}$/);
+    expect(context.pipelineHashNow).toBe(context.run.pipeline.hashNow);
+    expect(context.run.pipeline.changed).toBe(false);
     expect(context.prompts.map((p) => p.stepId)).toEqual(["outline", "draft"]);
     expect(context.prompts[0]).toMatchObject({ promptFile: "outline.md", changed: false });
     expect(context.prompts[0]?.hashAtRun).toBe(context.prompts[0]?.hashNow);

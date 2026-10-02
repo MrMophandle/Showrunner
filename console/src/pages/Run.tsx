@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import type { EventBatch, RunView, WireEvent } from "../../shared/types.js";
-import { getJson, post, useApi, useCoalesced, useNow, useSSE } from "../api.js";
+import { getJson, post, useApi, useCoalesced, useConsole, useNow, useSSE } from "../api.js";
 import { elapsed, stageLabel, stallState } from "../projections.js";
 import { ActionBar } from "../components/ActionBar.js";
 import { AutoTextarea } from "../components/AutoTextarea.js";
@@ -44,6 +44,7 @@ export function Run() {
   const base = `/api/episodes/${encodeURIComponent(episodeId)}/runs/${encodeURIComponent(runId)}`;
 
   const view = useApi<RunView>(base);
+  const { show } = useConsole();
   const now = useNow();
   const [events, setEvents] = useState<WireEvent[]>([]);
   const [feedError, setFeedError] = useState<string | null>(null);
@@ -109,9 +110,15 @@ export function Run() {
     setError(null);
     setNotice(null);
     try {
-      const result = await post<{ reset?: unknown }>(`${base}/withdraw`, { stepId, notes: withdrawNotes });
+      const result = await post<{ reset?: unknown; survivingGates?: unknown }>(`${base}/withdraw`, { stepId, notes: withdrawNotes });
       const reset = Array.isArray(result.reset) ? result.reset.map(String) : [];
-      setNotice(`${stepId}'s approval withdrawn — ${reset.length === 0 ? "nothing downstream had run" : `these run again: ${reset.join(", ")}`}`);
+      const surviving = Array.isArray(result.survivingGates) ? result.survivingGates.map(String) : [];
+      setNotice([
+        `${stepId}'s approval withdrawn — ${reset.length === 0 ? "nothing downstream had run" : `these run again: ${reset.join(", ")}`}`,
+        // The gates the engine leaves approved. Named in the notice as well as in the
+        // confirmation, because this is the half of the move that is easy to forget having made.
+        ...(surviving.length > 0 ? [`these gates keep their approvals and will not be re-asked: ${surviving.join(", ")}`] : []),
+      ].join(". "));
       setWithdrawFor(null);
       setWithdrawNotes("");
       refresh();
@@ -137,6 +144,25 @@ export function Run() {
   const current = run.position === undefined ? undefined : run.steps.find((s) => s.id === run.position?.stepId);
   const worker = run.worker;
 
+  // One of the run's own files beside its log, as a url the artifact route serves — built the way
+  // the What-happened page builds the troubleshooting log's. Both are null until `GET /api/show`
+  // has answered, because the production directory's name is the show's and not this code's.
+  const runFileUrl = (suffix: string): string | null => show === null
+    ? null
+    : `/api/episodes/${encodeURIComponent(episodeId)}/files/${encodeURIComponent(show.productionDir)}/${encodeURIComponent(episodeId)}/runs/${encodeURIComponent(`${runId}${suffix}`)}`;
+  const workerLogUrl = runFileUrl(".worker.log");
+  const workerOutUrl = runFileUrl(".worker.out");
+
+  // The gates that would keep their approvals if this withdrawal went through: every approved gate
+  // after the subject in pipeline order. The authoritative list comes back from the route, which
+  // computes it from the pipeline's dependency edges; this is the pre-flight estimate the
+  // confirmation shows, and it is empty whenever the rail's own rule held — the rail offers
+  // withdraw only on the latest approved gate.
+  const withdrawAt = withdrawFor === null ? -1 : run.steps.findIndex((s) => s.id === withdrawFor);
+  const survivingIfWithdrawn = withdrawAt === -1
+    ? []
+    : run.steps.slice(withdrawAt + 1).filter((s) => s.kind === "gate" && s.status === "completed").map((s) => s.id);
+
   return (
     <div className="run">
       <div className="run-head">
@@ -149,6 +175,14 @@ export function Run() {
           {run.pipeline.name}
           {run.pipeline.hash !== undefined && ` · ${run.pipeline.hash.slice(0, 12)}`}
           {run.pipeline.engineVersion !== undefined && ` · engine ${run.pipeline.engineVersion}`}
+          {/* The logged hash beside the hash of the pipeline the code builds today: the two
+              differing is why this run has steps the code does not, and the first thing to know
+              about a run whose rail does not look like the pipeline. Marked the way the
+              What-happened page's prompt table marks a prompt that was edited after the run read
+              it, because it is the same kind of fact about the same kind of drift. */}
+          {run.pipeline.changed && (
+            <span className="chip chip-needs chip-inline">pipeline changed since this run · now {run.pipeline.hashNow.slice(0, 12)}</span>
+          )}
         </div>
       </div>
 
@@ -204,6 +238,31 @@ export function Run() {
           <span className="mono">{run.failed.stepId}</span> failed: {run.failed.error.split("\n")[0]}
         </p>
       )}
+      {/* A log the store could not read to its end. Everything above and below is derived from the
+          bytes before the bad one, so the page says the run's picture has stopped rather than
+          presenting a frozen view as a current one. */}
+      {run.logError !== undefined && <p className="error-line">{run.logError}</p>}
+
+      {/* The crashed run's own account. Ruling F-09: the worker catches a rejected `run()`, writes
+          the error to `<runId>.worker.log` and exits 2 — and its `finally` removes the lock, so
+          this file is the whole of the explanation. The two links are the full files, which carry
+          the stack and anything the worker process printed before it could log a line. */}
+      {run.status === "crashed" && (
+        <section className="worker-exit">
+          <h2>the worker's account</h2>
+          {run.workerExit === undefined
+            ? <p className="quiet">nothing in <span className="mono">{run.runId}.worker.log</span> — the worker died before it could write a line.</p>
+            : <pre className="worker-exit-text">{run.workerExit}</pre>}
+          {workerLogUrl !== null && workerOutUrl !== null && (
+            <p className="quiet">
+              <a href={workerLogUrl}>{run.runId}.worker.log</a>
+              {" · "}
+              <a href={workerOutUrl}>{run.runId}.worker.out</a>
+              {" — the whole files, through the artifact route"}
+            </p>
+          )}
+        </section>
+      )}
 
       <ActionBar view={run} onDone={() => { refresh(); }} />
 
@@ -217,6 +276,16 @@ export function Run() {
             answers the gate again as a rejection, so the next worker takes the ordinary rejection path — the fix
             agent, then the gate reopened at the next attempt. Say what is wrong, as you would in a rejection.
           </p>
+          {/* The engine never resets a gate, so a gate downstream of this one keeps the approval it
+              already has and the next worker walks straight past it — the showrunner's "yes" to the
+              old work applied to the new. Named here because the operator cannot otherwise know. */}
+          {survivingIfWithdrawn.length > 0 && (
+            <p className="error-line">
+              {survivingIfWithdrawn.length === 1 ? "This gate keeps its approval" : "These gates keep their approvals"} and
+              will <strong>not</strong> be re-asked: <span className="mono">{survivingIfWithdrawn.join(", ")}</span>. The
+              work they approved is about to be remade.
+            </p>
+          )}
           <AutoTextarea value={withdrawNotes} onChange={setWithdrawNotes} placeholder="what the fix agent should change" />
           <div className="action-row">
             <button

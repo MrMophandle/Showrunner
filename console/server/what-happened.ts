@@ -1,7 +1,7 @@
 import path from "node:path";
 import { appendFile, mkdir } from "node:fs/promises";
 import {
-  EventLog, describePipeline, episodePipeline, hashFile, parseEpisodeId, resolveShowPath, sdkQuery,
+  EventLog, describePipeline, episodePipeline, hashFile, parseEpisodeId, pipelineHash, resolveShowPath, sdkQuery,
   type AgentQueryOptions, type Event, type QueryFn,
 } from "@showrunner/engine";
 import type { PromptAtRun, WhatHappenedContext, WireEvent } from "../shared/types.js";
@@ -138,8 +138,13 @@ function outputsOf(events: Event[]): string[] {
 export async function assemble(ctx: ShowContext, store: RunStore, episodeId: string, runId: string): Promise<WhatHappenedContext> {
   parseEpisodeId(episodeId);
   const { events } = await store.get(episodeId, runId);
+  const pipeline = episodePipeline({ show: ctx.show, episodeId, engineRoot: ctx.engineRoot });
   return {
-    pipeline: describePipeline(episodePipeline({ show: ctx.show, episodeId, engineRoot: ctx.engineRoot })),
+    pipeline: describePipeline(pipeline),
+    // The hash of the pipeline above, beside the run's own recorded hash on `run.pipeline`: the
+    // two differing is why a run has steps the code does not, and the troubleshooter would
+    // otherwise have the logged hash and nothing to compare it with.
+    pipelineHashNow: pipelineHash(pipeline),
     run: await store.view(episodeId, runId),
     events: collapse(events),
     prompts: await promptRows(ctx, events),

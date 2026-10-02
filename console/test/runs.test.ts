@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { rm } from "node:fs/promises";
-import { EventLog } from "@showrunner/engine";
+import { appendFile, rm } from "node:fs/promises";
+import { EventLog, episodePipeline, loadShowConfig, pipelineHash } from "@showrunner/engine";
 import type { SseMessage } from "../shared/types.js";
-import { appWith, makeShow, seedRun, waitFor, writeIn, writeLock } from "./helpers.js";
+import { appWith, ENGINE_ROOT, makeShow, seedRun, waitFor, writeIn, writeLock } from "./helpers.js";
 
 describe("RunStore", () => {
   it("tails a log incrementally and publishes a change per append", async () => {
@@ -80,7 +80,11 @@ describe("RunStore", () => {
     expect(draft.progress?.ratePerSec).toBeCloseTo(1 / 20, 3);          // 1 scene over the 20 s between the last two progress events
     expect(draft.progress?.etaSec).toBeCloseTo(200, 0);
     expect(draft.flag).toBe("did-nothing");                              // iteration 2: toolCalls 0, no error
-    expect(v.pipeline).toEqual({ name: "episode", hash: "abc", engineVersion: "0.0.1" });
+    // The logged pipeline beside the pipeline the code builds today: "abc" is not the current
+    // hash, so `changed` is true, which is the "this run is older than the code" answer the Run
+    // page prints beside the run's own hash.
+    expect(v.pipeline).toMatchObject({ name: "episode", hash: "abc", engineVersion: "0.0.1", changed: true });
+    expect(v.pipeline.hashNow).toMatch(/^[0-9a-f]{64}$/);
     expect(v.steps.length).toBe(73);
     // A step the log never mentions still has a row, which is what makes the count the
     // pipeline's rather than the log's.
@@ -126,6 +130,78 @@ describe("RunStore", () => {
     expect(outline.startedAt).toBe(t(1));
     expect(v.steps.find((s) => s.id === "outline-revise")?.status).toBe("bypassed");
     expect(v.steps.find((s) => s.id === "canon-commit")?.status).toBe("completed");
+    store.close();
+  });
+
+  it("reports no pipeline change when the run recorded the hash the code builds today", async () => {
+    const { root, store } = await appWith(await makeShow());
+    const hash = pipelineHash(episodePipeline({
+      show: await loadShowConfig(root), episodeId: "s02e01", engineRoot: ENGINE_ROOT,
+    }));
+    await seedRun(root, "s02e01", "r1", [
+      { kind: "run_started", payload: { pipeline: "episode", episodeId: "s02e01", pipelineHash: hash } },
+    ]);
+    const v = await store.view("s02e01", "r1");
+    expect(v.pipeline.hashNow).toBe(hash);
+    expect(v.pipeline.changed).toBe(false);
+    // A log that recorded no hash has nothing to compare, and a mismatch is not invented from an
+    // absent value.
+    await seedRun(root, "s02e01", "r2", [{ kind: "run_started", payload: { pipeline: "episode", episodeId: "s02e01" } }]);
+    const old = await store.view("s02e01", "r2");
+    expect(old.pipeline.hash).toBeUndefined();
+    expect(old.pipeline.changed).toBe(false);
+    store.close();
+  });
+
+  it("carries a crashed run's worker log on the view, which is the only account of a rejected run()", async () => {
+    const { root, store } = await appWith(await makeShow());
+    // A step in flight with no lock: a `run()` that rejected, whose `finally` removed the lock.
+    // Ruling F-09 says the Run view shows the worker's exit, and this file is all there is of it.
+    await seedRun(root, "s02e01", "r1", [
+      { kind: "run_started", payload: { pipeline: "episode", episodeId: "s02e01" } },
+      { stepId: "render", kind: "step_started", payload: { kind: "script" } },
+    ]);
+    await writeIn(root, "Production/s02e01/runs/r1.worker.log",
+      "2026-10-02T10:00:00.000Z pid 4821: run() rejected: Error: log write failed: ENOSPC\n    at EventLog.append\n");
+    const v = await store.view("s02e01", "r1");
+    expect(v.status).toBe("crashed");
+    expect(v.workerExit).toContain("run() rejected");
+    expect(v.workerExit).toContain("ENOSPC");
+
+    // A run that is not crashed does not carry it, and a crash with no worker log says nothing
+    // rather than inventing a reason.
+    await seedRun(root, "s02e01", "r2", [
+      { kind: "run_started", payload: { pipeline: "episode", episodeId: "s02e01" } },
+      { stepId: "render", kind: "step_started", payload: { kind: "script" } },
+    ]);
+    expect((await store.view("s02e01", "r2")).workerExit).toBeUndefined();
+    store.close();
+  });
+
+  it("reports a log it could not read past a byte, and keeps projecting the good prefix", async () => {
+    const { root, store } = await appWith(await makeShow());
+    const t = (s: number) => new Date(Date.UTC(2026, 9, 2, 12, 0, s)).toISOString();
+    const file = await seedRun(root, "s02e01", "r1", [
+      { ts: t(0), kind: "run_started", payload: { pipeline: "episode", episodeId: "s02e01" } },
+      { ts: t(1), stepId: "previous-episode", kind: "step_started", payload: { kind: "guard" } },
+      { ts: t(2), stepId: "previous-episode", kind: "step_completed", payload: { result: "ok" } },
+    ]);
+    const before = await store.view("s02e01", "r1");
+    expect(before.logError).toBeUndefined();
+    expect(before.steps.find((s) => s.id === "previous-episode")?.status).toBe("completed");
+
+    // A complete line that is not JSON — a crash mid-write, ENOSPC, or any second writer. Without
+    // `lastError` this run's Board row and rail freeze here for the life of the server and say so
+    // nowhere.
+    await appendFile(file, "{not json}\n", "utf8");
+    const after = await store.view("s02e01", "r1");
+    expect(after.logError).toMatch(/^this run's log could not be read past byte \d+: /);
+    expect(after.logError).toContain("malformed JSON");
+    // The status and the rail still come from the bytes before the bad one.
+    expect(after.steps.find((s) => s.id === "previous-episode")?.status).toBe("completed");
+    expect(after.lastEventAt).toBe(t(2));
+    const row = await store.episodeRow("s02e01");
+    expect(row.logError).toBe(after.logError);
     store.close();
   });
 });

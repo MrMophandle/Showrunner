@@ -1,12 +1,12 @@
 import path from "node:path";
-import { mkdir, stat, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { stream as streamText, streamSSE } from "hono/streaming";
 import {
-  ENGINE_VERSION, EventLog, RUN_ID, STAGES, answerGate, deriveRunState, episodePipeline, latestRunId,
-  listEpisodeIds, mintRunId, parseEpisodeId, resetSteps, resumeRun, withdrawApproval,
-  type Pipeline, type QueryFn,
+  ENGINE_VERSION, EventLog, RUN_ID, STAGES, answerGate, deriveRunState, describePipeline, episodePipeline,
+  latestRunId, listEpisodeIds, mintRunId, parseEpisodeId, resetSteps, resumeRun, withdrawApproval,
+  type Pipeline, type PipelineDescription, type QueryFn, type RunState,
 } from "@showrunner/engine";
 import type { EventBatch, SseMessage } from "../shared/types.js";
 import { serveArtifact, serveRunLog } from "./artifacts.js";
@@ -94,10 +94,31 @@ function pipelineFor(ctx: ShowContext, episodeId: string): Pipeline {
   return episodePipeline({ show: ctx.show, episodeId, engineRoot: ctx.engineRoot });
 }
 
-/** Whether a path exists. Used for one thing: telling a minted run id that already has a log from
- *  one that is free. */
-async function exists(absolute: string): Promise<boolean> {
-  try { await stat(absolute); return true; } catch { return false; }
+/** The approved gates downstream of one gate, in pipeline order — the gates a withdrawal does
+ *  **not** re-ask, computed from the pipeline's own dependency edges and the run's state.
+ *
+ *  This is a disclosure and not a behaviour: `withdrawApproval` resets every non-gate step
+ *  downstream of the gate and leaves every downstream gate at `completed` (ruling F-26, and the
+ *  engine's standing rule that no reset touches a gate), so withdrawing `outline-gate` on a run
+ *  whose `script-gate` was also approved regenerates the script and then walks past the approval
+ *  the showrunner gave the old one. The route returns these ids so the operator is told which
+ *  approvals will be applied to work they have not seen.
+ *
+ *  The description is read rather than the pipeline's live steps because the edges and the kinds
+ *  are all this needs, and the description is the shape that is already built per episode. */
+function survivingGatesOf(description: PipelineDescription, state: RunState, stepId: string): string[] {
+  const marked = new Set<string>([stepId]);
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const step of description.steps) {
+      if (marked.has(step.id)) continue;
+      if (step.dependsOn.some((d) => marked.has(d))) { marked.add(step.id); grew = true; }
+    }
+  }
+  return description.steps
+    .filter((step) => step.id !== stepId && step.kind === "gate" && marked.has(step.id) && state.steps[step.id] === "completed")
+    .map((step) => step.id);
 }
 
 /** The seams the app is built with. Production passes none: `query` defaults, inside
@@ -265,17 +286,30 @@ export function createApp(ctx: ShowContext, store: RunStore, deps: AppDeps = {})
     return c.json({ id });
   });
 
-  /** Launches a run: mints an id and spawns a worker on it.
+  /** Launches a run: mints an id, creates its log, and spawns a worker on it.
    *
-   *  Refused while the episode's latest run is live or parked at a gate. The gate refusal is the
-   *  important one: a second run of an episode whose first run is waiting on the showrunner would
-   *  redo from the beginning the work the showrunner is in the middle of judging, and both runs
-   *  would write the same files.
+   *  **Refused unless the episode's latest run is finished.** Three checks in order — a live
+   *  lock, an open gate, an unfinished log — and the third is the one that keeps two workers off
+   *  one episode. A run that is working, parked, crashed or resumed is a run whose files the next
+   *  worker would write over: the same `outline.md`, the same `tts-script.json`, the same
+   *  `video/episode.mp4`. The three legitimate launches all pass: the first one (there is no
+   *  latest run), a relaunch after a completed run, and a relaunch after a failed one.
    *
-   *  The id is minted up to three times. `mintRunId` stamps the time to the second and appends
-   *  four random characters, so two launches inside one second can collide — and a collision
-   *  would not be a new run at all: the worker would take the existing run's log and append to
-   *  its history. */
+   *  **The log is created before the spawn, with `wx` and zero bytes**, which is what makes the
+   *  refusal above reachable at all. `latestRunId` lists `*.jsonl` and nothing else, while a
+   *  worker writes its first line only after Node has started, the show config is read and the
+   *  pipeline is built — half a second to a second in which a second launch would see no latest
+   *  run, skip every check and mint a second run of the same episode. Creating the log here makes
+   *  the minted run the latest run from the moment this route answers, and an empty log is
+   *  unfinished, so the second launch is refused by the same check as a crash.
+   *
+   *  The empty file costs the worker nothing: `run()` reads its log once and appends
+   *  `run_started` when that read yields no events, and a zero-byte file yields none. `wx` also
+   *  subsumes the collision check the mint loop used to make — `mintRunId` stamps the time to the
+   *  second and appends four random characters, so two launches inside one second can collide,
+   *  and a collision would not be a new run at all but a second worker appending to an existing
+   *  run's history. An `EEXIST` here is that collision, caught atomically rather than in the gap
+   *  between a test and a create. */
   app.post("/api/episodes/:id/runs", async (c) => {
     const id = c.req.param("id");
     const valid = checkEpisodeId(id);
@@ -286,11 +320,19 @@ export function createApp(ctx: ShowContext, store: RunStore, deps: AppDeps = {})
       if (held?.alive === true) return c.json({ error: `run ${latest} is held by pid ${held.pid}` }, 409);
       const state = deriveRunState((await store.get(id, latest)).events);
       if (state.openGate !== undefined) return c.json({ error: `answer the gate on run ${latest} first` }, 409);
+      if (!state.finished) return c.json({ error: `run ${latest} is not finished; continue it, answer its gate, or resume it` }, 409);
     }
     let runId: string | undefined;
     for (let attempt = 0; attempt < 3 && runId === undefined; attempt++) {
       const candidate = mintRunId();
-      if (!(await exists(EventLog.logPath(ctx.showRoot, id, candidate, ctx.productionDir)))) runId = candidate;
+      const file = EventLog.logPath(ctx.showRoot, id, candidate, ctx.productionDir);
+      await mkdir(path.dirname(file), { recursive: true });
+      try {
+        await writeFile(file, "", { encoding: "utf8", flag: "wx" });
+        runId = candidate;
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+      }
     }
     if (runId === undefined) return c.json({ error: `could not mint a free run id for ${id}: three candidates already had logs` }, 409);
     const { pid } = await spawnWorker(ctx, id, runId);
@@ -409,7 +451,14 @@ export function createApp(ctx: ShowContext, store: RunStore, deps: AppDeps = {})
    *  back to pending and the gate is answered again as a rejection, so the next worker takes the
    *  ordinary rejection path — the fix agent, the gate's re-run set, and the gate reopened at the
    *  next attempt. `reset` names the steps that will run again, which is what the operator is
-   *  really deciding about. */
+   *  really deciding about.
+   *
+   *  `survivingGates` names the other half of that decision: the approved gates downstream of the
+   *  withdrawn one, which keep their approvals and are walked past rather than re-asked. They are
+   *  computed from the state **before** the withdrawal, because the withdrawal's own
+   *  `gate_answered` changes the state it would be read from afterwards. The rail offers withdraw
+   *  only on the latest approved gate, so an operator reaching this route for an earlier gate is
+   *  acting deliberately — and is told exactly which approvals that spends. */
   app.post("/api/episodes/:id/runs/:run/withdraw", async (c) => {
     const checked = checkIds(c);
     if (!checked.ok) return c.json({ error: checked.error }, 400);
@@ -421,14 +470,17 @@ export function createApp(ctx: ShowContext, store: RunStore, deps: AppDeps = {})
     if (typeof notes !== "string") return c.json({ error: "notes must be a string" }, 400);
     const held = await readLock(ctx, id, run);
     if (held?.alive === true) return c.json({ error: `run ${run} is held by pid ${held.pid}` }, 409);
+    const pipeline = pipelineFor(ctx, id);
+    const before = deriveRunState((await store.get(id, run)).events);
+    const survivingGates = survivingGatesOf(describePipeline(pipeline), before, stepId);
     let reset: string[];
     try {
-      reset = await withdrawApproval(pipelineFor(ctx, id), logOf(ctx, id, run), run, stepId, { notes, by: ctx.operator });
+      reset = await withdrawApproval(pipeline, logOf(ctx, id, run), run, stepId, { notes, by: ctx.operator });
     } catch (err) {
       return c.json({ error: (err as Error).message }, 409);
     }
     const { pid } = await spawnWorker(ctx, id, run);
-    return c.json({ runId: run, pid, reset });
+    return c.json({ runId: run, pid, reset, survivingGates });
   });
 
   // ── the gate, the artifacts and "what happened" ───────────────────────────────────────────

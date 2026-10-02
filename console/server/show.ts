@@ -1,5 +1,6 @@
 import path from "node:path";
 import os from "node:os";
+import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { loadShowConfig, type ShowConfig } from "@showrunner/engine";
 
@@ -58,10 +59,23 @@ function defaultWorkerEntry(): string {
 
 /** Reads the show's config and resolves the paths and the identity the rest of the server works
  *  from. `showRoot` and `engineRoot` are made absolute here, once, so no later path join can
- *  depend on the working directory. */
+ *  depend on the working directory.
+ *
+ *  **The worker entry must exist, and this is where that is checked.** Under `npm run dev` the
+ *  server runs from `console/server/main.ts` through `tsx`, so `defaultWorkerEntry()` resolves to
+ *  `console/worker/main.js` — a file that exists only after a build; only `worker/main.ts` is
+ *  there. Spawning it starts a Node process that exits at once with `ERR_MODULE_NOT_FOUND`, and
+ *  `spawnWorker` sees a pid and reports success, so the route answers 200, the client navigates
+ *  to the Run page, and the run never starts. Failing at startup instead puts the remedy in front
+ *  of the operator before any episode is launched against it. */
 export async function loadShowContext(opts: ShowContextOptions): Promise<ShowContext> {
   const showRoot = path.resolve(opts.showRoot);
   const show = await loadShowConfig(showRoot);
+  const workerCommand = opts.workerCommand ?? [process.execPath, defaultWorkerEntry()];
+  const entry = workerCommand[1];
+  if (entry !== undefined && !existsSync(entry)) {
+    throw new Error(`the worker is not built: run npm run build -w console, or pass --worker <path>`);
+  }
   return {
     showRoot,
     show,
@@ -69,7 +83,7 @@ export async function loadShowContext(opts: ShowContextOptions): Promise<ShowCon
     operator: opts.operator ?? `console:${os.userInfo().username}`,
     productionDir: show.productionDir ?? "Production",
     episodesDir: show.episodesDir ?? "Episodes",
-    workerCommand: opts.workerCommand ?? [process.execPath, defaultWorkerEntry()],
+    workerCommand,
     concurrency: opts.concurrency ?? 7,
   };
 }

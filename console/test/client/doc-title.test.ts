@@ -45,12 +45,25 @@ describe("titleFor, the document title's pure part", () => {
     expect(titleFor("Harbor Light", rows)).toBe("● s02e02 IDEA · 0m — Harbor Light");
   });
 
-  it("keeps the three forms the spec names: a failed or crashed run is the Board's red, not the tab's", () => {
-    // The brief's vocabulary is exactly "waiting", "running" and otherwise. A crash and a failure
-    // are shown — in red, with their recovery action — on the Board and on the Run page; the tab
-    // title claims only what the spec gave it, rather than inventing a fourth string.
-    expect(titleFor("Harbor Light", [row({ id: "s02e07", status: "crashed", stage: "DRAFT_ASSEMBLY" })])).toBe("Harbor Light console");
-    expect(titleFor("Harbor Light", [row({ id: "s02e08", status: "failed", stage: "CASTING" })])).toBe("Harbor Light console");
+  it("warns about a failed or a crashed run, which will not restart itself", () => {
+    // The fourth form. A run that failed or crashed has stopped and nothing will move it until the
+    // operator does, so a tab that reported it as idle would let an episode sit broken for as long
+    // as nobody opened the Board.
+    expect(titleFor("Harbor Light", [row({ id: "s02e07", status: "crashed", stage: "DRAFT_ASSEMBLY" })])).toBe("⚠ s02e07 CRASHED — Harbor Light");
+    expect(titleFor("Harbor Light", [row({ id: "s02e08", status: "failed", stage: "CASTING" })])).toBe("⚠ s02e08 FAILED — Harbor Light");
+  });
+
+  it("asks for the showrunner before it warns, and warns before it reports a run that is working", () => {
+    // Precedence, in the order of what the person at the tab can do about it: a gate is a question
+    // addressed to them, a crash is a job waiting on them, and a run that is working wants nothing.
+    const broken = row({ id: "s02e07", status: "crashed", stage: "DRAFT_ASSEMBLY" });
+    const working = row({ id: "s02e02", status: "running", stage: "DRAFT_AUDIO", lastEventAt: "2026-10-02T10:00:00Z" });
+    const asking = row({ id: "s02e04", status: "waiting", stage: "DRAFT_IMAGES" });
+    expect(titleFor("Harbor Light", [working, broken])).toBe("⚠ s02e07 CRASHED — Harbor Light");
+    expect(titleFor("Harbor Light", [broken, asking])).toBe("⏸ s02e04 NEEDS YOU — Harbor Light");
+    // The first match in Board order, so a show with two broken episodes names the earlier one and
+    // the title does not flicker between them.
+    expect(titleFor("Harbor Light", [row({ id: "s02e05", status: "failed" }), broken])).toBe("⚠ s02e05 FAILED — Harbor Light");
   });
 
   it("is idle for a board of finished and never-run episodes, and for one it could not read", () => {

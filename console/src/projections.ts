@@ -179,11 +179,15 @@ export function composeNotesWithFlags(
 /** The document title: the console's entire alerting story, since the spec rules out web
  *  notifications on a LAN (http is not a secure context) and the console makes no sound.
  *
- *  Three forms and no fourth, which is the brief's vocabulary. An episode waiting on the
- *  showrunner wins over one that is running, because only the first of them is a question
- *  addressed to the person reading the tab. A failed or crashed run is not in here: it is shown
- *  in red, with its recovery action, on the Board and on the Run page, and the title does not
- *  invent a string the spec did not give it.
+ *  Four forms, read in order of what the person at the tab can do about them. An episode waiting
+ *  on the showrunner wins everything, because only that one is a question addressed to them. A
+ *  **failed or crashed** run comes next — `⚠ <id> FAILED` or `⚠ <id> CRASHED` — because it is a
+ *  run that has stopped and will not restart itself, and a tab that reported it as idle let an
+ *  episode sit broken for as long as nobody opened the Board. A run that is working is third,
+ *  with the whole minutes since it last moved. Everything else is idle.
+ *
+ *  Each form names the first row in Board order that matches, so a show with two waiting episodes
+ *  names the earlier one and the title does not flicker between them.
  *
  *  `showName` comes from `GET /api/show` and never from code: this repository names no show. */
 export function titleFor(showName: string, rows: EpisodeRow[] | null, now: Date | number = Date.now()): string {
@@ -191,6 +195,8 @@ export function titleFor(showName: string, rows: EpisodeRow[] | null, now: Date 
   if (rows === null) return idle;
   const waiting = rows.find((r) => r.status === "waiting");
   if (waiting !== undefined) return `⏸ ${waiting.id} NEEDS YOU — ${showName}`;
+  const broken = rows.find((r) => r.status === "failed" || r.status === "crashed");
+  if (broken !== undefined) return `⚠ ${broken.id} ${broken.status === "failed" ? "FAILED" : "CRASHED"} — ${showName}`;
   const running = rows.find((r) => r.status === "running");
   if (running !== undefined) {
     const minutes = Math.floor((since(running.lastEventAt, now) ?? 0) / 60_000);
@@ -207,14 +213,23 @@ const SAFE_SCHEMES = new Set(["http:", "https:", "mailto:"]);
 
 /** `href` if it is safe to put in the DOM, else undefined. A url with no scheme at all (a path,
  *  a fragment, a bare filename) is kept: those resolve against this console's own origin, which
- *  is the only origin it talks to. */
+ *  is the only origin it talks to.
+ *
+ *  **Tab, line feed and carriage return are stripped before the scheme is read, and the stripped
+ *  string is what is returned.** A browser's URL parser removes those three characters from a url
+ *  before it parses one, so `java<tab>script:alert(1)` — which `marked` keeps verbatim out of a
+ *  markdown destination in angle brackets — has no scheme that this function would recognise, is
+ *  classified as a relative url, and is navigated to as `javascript:alert(1)` by the browser that
+ *  stripped the tab. Judging the same string the browser will judge is the whole fix. The prose
+ *  this is applied to is a gate's rendered message and the episode's own markdown, which is agent
+ *  output: input, however much it looks like markup. */
 export function safeHref(href: string | null | undefined): string | undefined {
   if (href === null || href === undefined) return undefined;
-  const trimmed = href.trim();
-  if (trimmed === "") return undefined;
-  const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(trimmed);
+  const cleaned = href.replace(/[\t\n\r]/g, "").trim();
+  if (cleaned === "") return undefined;
+  const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(cleaned);
   const name = scheme?.[1];
   // No scheme at all is a relative url, which is this console's own origin.
-  if (name === undefined) return trimmed;
-  return SAFE_SCHEMES.has(`${name.toLowerCase()}:`) ? trimmed : undefined;
+  if (name === undefined) return cleaned;
+  return SAFE_SCHEMES.has(`${name.toLowerCase()}:`) ? cleaned : undefined;
 }

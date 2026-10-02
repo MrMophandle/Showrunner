@@ -38,6 +38,22 @@ export type RunResult =
   | { status: "failed"; stepId: StepId; error: string }
   | { status: "waiting"; gate: GateState };
 
+/** The showrunner's answer to an open gate — approve, or reject with notes — as one
+ *  `gate_answered` event. This is the only way a gate is answered: the console calls it, the next
+ *  `run()` reads the log and takes it from there, and nothing writes the event by hand.
+ *
+ *  Four refusals, each of them a mistake worth catching before the answer lands in a log:
+ *  an empty log (the caller is pointed at an episode or a run that never started), a `runId` that
+ *  is not the log's (a console tab held across a restart, whose answer would be written into
+ *  another run's history under a gate that shares its step id), a `stepId` that is not the open
+ *  gate's, and an `expectedAttempt` that is not the attempt now open — which is the whole
+ *  protection against a tab left open across a rejection, where the showrunner would otherwise
+ *  approve a message a fix agent has already superseded.
+ *
+ *  `waitedMs` is stamped from the gate's `openedAt`, so the log records how long the run sat
+ *  waiting on a person; `notes` and `by` are recorded when the caller gives them. A rejection
+ *  resets nothing here: the next `run()` re-executes the gate, which runs its fix agent, re-runs
+ *  the gate's `rerunOnReject` set and reopens the gate at the next attempt. */
 export async function answerGate(
   log: EventLog, runId: string, stepId: StepId,
   answer: { approved: boolean; notes?: string; by?: string; expectedAttempt?: number },

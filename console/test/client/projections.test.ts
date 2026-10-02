@@ -28,7 +28,7 @@ function step(over: Partial<StepRow> = {}): StepRow {
 function view(over: Partial<RunView> = {}): RunView {
   return {
     episodeId: "s02e01", runId: "20261002-120000-abcd", status: "running", stage: "DRAFT_OUTLINE",
-    steps: [], pipeline: { name: "episode" }, offset: 0,
+    steps: [], pipeline: { name: "episode", hashNow: "0".repeat(64), changed: false }, offset: 0,
     ...over,
   };
 }
@@ -237,5 +237,24 @@ describe("safeHref", () => {
     expect(safeHref("data:text/html;base64,PHNjcmlwdD4=")).toBeUndefined();
     expect(safeHref("vbscript:msgbox")).toBeUndefined();
     expect(safeHref(undefined)).toBeUndefined();
+  });
+
+  it("refuses a scheme split by the characters a browser strips from a url", () => {
+    // `marked` keeps a tab inside an angle-bracketed markdown destination, so a gate's message can
+    // produce this href verbatim. No scheme matches it, which classified it as a relative url —
+    // and the browser then strips the tab and navigates to javascript:alert(1). The same holds
+    // for a line feed and a carriage return.
+    expect(safeHref("java\tscript:alert(1)")).toBeUndefined();
+    expect(safeHref("java\nscript:alert(1)")).toBeUndefined();
+    expect(safeHref("java\rscript:alert(1)")).toBeUndefined();
+    // The stripped string is what comes back, so what React writes is what was judged.
+    expect(safeHref("https://example.test/\tx")).toBe("https://example.test/x");
+  });
+
+  it("keeps a protocol-relative url, which is this console's own scheme and another host", () => {
+    // Documented rather than refused: `//host/path` has no scheme to test and is kept as a
+    // relative url. It is the smaller, separate wart the whole-branch review named beside the
+    // tab case (2026-10-02 final-review.md, M-1) and left to the deferred list.
+    expect(safeHref("//host.example/x")).toBe("//host.example/x");
   });
 });

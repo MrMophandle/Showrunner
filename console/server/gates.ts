@@ -18,15 +18,21 @@ import type { ShowContext } from "./show.js";
 
 /** Which `results` entries of a run are verdicts, and so belong in the gate view.
  *
- *  The test is structural — a result that is an object carrying a `pass` field — rather than a
- *  list of step ids. The verdict-shaped results of the episode pipeline are the six reviewers
- *  (`tone-check`, `flow-check`, `character-check`, `structure-check`, `environment-check`,
- *  `repetition-check`), the two canon reviews (`canon-review-outline`, `canon-review-script`) and
- *  the three image audits, every one of which is an agent step with a `schemaFile` whose schema
- *  has a `pass`. A hard-coded id list would be a second place to edit whenever a reviewer is
- *  added, and the one that nobody remembers: the gate view would then quietly stop showing the
- *  new reviewer's verdict. A gate's own answer payload (`{approved, waitedMs, attempt, …}`) and a
- *  guard's message string both fail this test, which is what keeps them out. */
+ *  Two tests, both of them derived from the pipeline rather than from a list of step ids. The
+ *  step must be an **agent step the pipeline description marks with a `schemaFile`** — which is
+ *  what a verdict is: the parsed output of a schema whose shape the pipeline declared. And the
+ *  result must be shaped like one, an object carrying a `pass` field, since a schema-bearing step
+ *  whose log predates its schema would otherwise put an arbitrary result on the verdict board.
+ *
+ *  The verdict-shaped results of the episode pipeline are the six reviewers (`tone-check`,
+ *  `flow-check`, `character-check`, `structure-check`, `environment-check`, `repetition-check`),
+ *  the two canon reviews (`canon-review-outline`, `canon-review-script`) and the three image
+ *  audits — every one of them an agent step with a `schemaFile`. A hard-coded id list would be a
+ *  second place to edit whenever a reviewer is added, and the one nobody remembers: the gate view
+ *  would quietly stop showing the new reviewer's verdict. The structural test alone was the other
+ *  extreme: a guard whose `check` happens to return `{pass, message}` is not a verdict the
+ *  showrunner is being asked to weigh, and neither is anything a future step returns that merely
+ *  looks like one. A gate's own answer payload (`{approved, waitedMs, attempt, …}`) fails both. */
 function isVerdict(value: unknown): boolean {
   return typeof value === "object" && value !== null && !Array.isArray(value) && "pass" in value;
 }
@@ -117,16 +123,22 @@ export async function gateView(ctx: ShowContext, store: RunStore, episodeId: str
   const gate = state.openGate;
   if (gate === undefined) return undefined;
 
-  const verdicts: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(state.results)) if (isVerdict(value)) verdicts[key] = value;
-  const rejected = state.results[`${gate.stepId}:rejections`];
-  const rejections = Array.isArray(rejected) ? rejected.map((note) => String(note)) : [];
-
   // Built per episode, never cached: every step's paths are the episode's own. The description is
-  // consulted for one field — the gate's attempt cap — which the operator needs to know how many
-  // rejections are left before the gate gives up.
+  // consulted for two things — the gate's attempt cap, which the operator needs to know how many
+  // rejections are left before the gate gives up, and which steps are schema-bearing agent steps,
+  // which is what makes a result a verdict.
   const description = describePipeline(episodePipeline({ show: ctx.show, episodeId, engineRoot: ctx.engineRoot }));
   const maxAttempts = description.steps.find((s) => s.id === gate.stepId)?.maxAttempts;
+  const schemaBearing = new Set(
+    description.steps.filter((s) => s.kind === "agent" && s.schemaFile !== undefined).map((s) => s.id),
+  );
+
+  const verdicts: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(state.results)) {
+    if (schemaBearing.has(key) && isVerdict(value)) verdicts[key] = value;
+  }
+  const rejected = state.results[`${gate.stepId}:rejections`];
+  const rejections = Array.isArray(rejected) ? rejected.map((note) => String(note)) : [];
 
   return {
     episodeId,

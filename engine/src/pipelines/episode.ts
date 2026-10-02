@@ -336,9 +336,11 @@ export function episodePipeline(opts: EpisodePipelineOptions): Pipeline {
       // Wrapped rather than spawned directly, because Remotion with `--log=error` printed nothing
       // for the ten to forty minutes it ran and the run view could show no evidence of life.
       // `render-video.py` spawns Remotion itself and turns its frame counter into `::progress`
-      // lines, so the render directory, the composition id, the output path and REMOTION_EPISODE
-      // all travel in argv now; the step keeps the executor's default cwd (the show root), which
-      // is what the scripts' convention requires of every Python step.
+      // lines, so the render directory, the composition id, the output path and the episode id
+      // all travel in argv — the episode id as the positional argument. REMOTION_EPISODE is not
+      // in argv: `render-video.py` puts it in the Remotion child's *environment* (`:179`), which
+      // is where Remotion reads it from. The step keeps the executor's default cwd (the show
+      // root), which is what the scripts' convention requires of every Python step.
       kind: "script", id: "render", dependsOn: ["build-timeline"], timeoutMs: 4 * HOUR,
       argv: (ctx) => py("render-video.py", "--render-dir", renderDir, "--composition", compositionId,
         "--out", path.join(ctx.showRoot, video))(),

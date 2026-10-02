@@ -36,8 +36,15 @@ a canon file.
 
 The server and the worker are separate processes on purpose (the rewrite design §4.2). The worker
 exits with 0 when its segment finished or parked at a gate, 1 when the run failed, 2 when the
-segment crashed (a rejected `run()` or a lock another worker holds), 64 for a missing flag, and 143
-after a `SIGTERM` or `SIGINT`, which first signals the live script process groups.
+segment crashed (a rejected `run()` or a lock another worker holds), 64 for a missing or malformed
+flag, and 143 after a `SIGTERM` or `SIGINT`.
+
+**Two different signals are sent in two different places, and they are not the same move.** A
+signalled worker shuts down by sending **`SIGKILL`** to the script process groups it is supervising
+(`killLiveProcessGroups`): it is on its way out and cannot wait for a renderer to finish. Continue,
+on the operator's explicit request, sends **`SIGTERM`** to the groups a dead worker's lock recorded
+(`killRecordedGroups`): nothing is supervising those any more, and a replay must not start while
+they are still writing.
 
 ## Running it
 
@@ -62,17 +69,26 @@ In development, Vite serves the client on its own port and proxies `/api` to the
 together, and the browser goes to the Vite port. The variable has no default, because a default
 would have to spell a show's directory name.
 
+**`npm run dev` needs `npm run build -w console` to have been run once**, or `--worker <path>`.
+The server spawns the **compiled** worker (`console/dist/worker/main.js`), which the watched
+TypeScript server does not produce: under `tsx` the default entry resolves to
+`console/worker/main.js`, where only `worker/main.ts` exists. The server refuses to start rather
+than spawning it — `the worker is not built: run npm run build -w console, or pass --worker
+<path>` — because the failure is otherwise invisible: the spawned process exits at once with
+`ERR_MODULE_NOT_FOUND`, the launch route answers 200 with its pid, and the Run page shows a run
+that never started.
+
 ## What the console writes
 
-**The console writes six things, all of them inside the show repository, and nothing else.** No
+**The console writes six things, all of them inside the show repository, and nothing else** (seven paths, counting the lock's temporary file, which exists only between a beat's write and its rename). No
 file is written anywhere under the engine repository, and no file is written outside the episode
 the operator acted on.
 
 | What | Where | Written by |
 |---|---|---|
-| The run log | `<productionDir>/<id>/runs/<runId>.jsonl` | **Only through the engine's verbs** — `answerGate`, `resumeRun`, `resetSteps` and `withdrawApproval` in the server, and `run()` in the worker. The server appends no event of its own invention, and the `RunStore` that reads every log writes nothing at all. |
-| The lock | `<productionDir>/<id>/runs/<runId>.lock` | The worker, which creates it with `O_CREAT\|O_EXCL`, rewrites it every five seconds, and removes it in a `finally`. |
-| The worker log | `<productionDir>/<id>/runs/<runId>.worker.log` | The worker, one line per segment outcome. |
+| The run log | `<productionDir>/<id>/runs/<runId>.jsonl` | **Every event, only through the engine's verbs** — `answerGate`, `resumeRun`, `resetSteps` and `withdrawApproval` in the server, and `run()` in the worker. The server appends no event of its own invention, and the `RunStore` that reads every log writes nothing at all. The one write that is not an append is the launch route **creating** the file, empty, with `wx`, before it spawns: that is what makes the minted run the episode's latest run from the moment the route answers, so a second launch in the worker's startup second is refused instead of starting a second worker on one episode. `run()` appends `run_started` when its one read of the log yields no events, which a zero-byte file does. |
+| The lock | `<productionDir>/<id>/runs/<runId>.lock` | The worker, which creates it with `O_CREAT\|O_EXCL` and removes it in a `finally`. Each five-second beat is written to `<runId>.lock.tmp` and **renamed over** the lock, so a reader never sees the empty file a truncating rewrite leaves behind for a microsecond — which `readLock` would parse as "no lock", and which is the one path in the protocol where two workers could hold one run. |
+| The worker log | `<productionDir>/<id>/runs/<runId>.worker.log` | The worker, one line per segment outcome. The Run view shows its last lines for a run whose status is `crashed`, and links the whole file: for a `run()` that rejected it is the only account there is, since the `finally` took the lock and the run log has no entry for the failure. |
 | The worker's output | `<productionDir>/<id>/runs/<runId>.worker.out` | The spawned worker's stdout and stderr, appended by the kernel. The server opens the file; it writes nothing into it. |
 | The troubleshooting log | `<productionDir>/<id>/runs/<runId>.troubleshooting.jsonl` | The server, one line per question asked on the What-happened page. |
 | An episode's premise | `<episodesDir>/<id>/premise.md` | The server, once, when the New-episode form is submitted. It is written with `wx`, so a second submission for the same id is refused rather than overwriting an idea. |
@@ -161,11 +177,20 @@ per step downstream of the gate — recorded as `by: withdraw:<gateId>`, so the 
 withdrawal reset them — and finally a `gate_answered` with `approved: false` and the notes the
 operator wrote.
 
-Refused with a 409 while a live worker holds the run, while **any** gate is open (`answer it
-instead`), and for a gate whose last answer is not an approval (`gate "<stepId>" is not approved on
-run <runId>`). The next worker then takes the ordinary rejection path, which is the point of writing
-the withdrawal as a rejection: the gate's fix agent runs, the gate's own re-run set and everything
-downstream of it run again, and the gate reopens at the next attempt.
+Refused with a 409 while a live worker holds the run, while **any** gate is open (`gate "<stepId>"
+is open; answer it instead`), and for a gate whose last answer is not an approval (`gate "<stepId>"
+is not approved on run <runId>`). The next worker then takes the ordinary rejection path, which is
+the point of writing the withdrawal as a rejection: the gate's fix agent runs, the gate's own re-run
+set and everything downstream of it run again, and the gate reopens at the next attempt.
+
+**A gate downstream of the withdrawn one keeps its approval, and the response names which.** The
+engine never resets a gate — a later gate's approval is its own answer (ruling F-26) — so
+withdrawing `outline-gate` on a run whose `script-gate` was also approved regenerates the script
+and then walks straight past the approval the showrunner gave the old one. The response carries
+`survivingGates` beside `reset` for exactly that reason, and the Run page names them in the
+confirmation and in the notice. The step rail offers "withdraw approval" **only on the latest
+approved gate**, which is the one case that spends no approval the operator cannot see; withdrawing
+an earlier gate is still available through the route, deliberately.
 
 ## The artifact route's fence
 
@@ -206,14 +231,20 @@ no sound. What is left is the string in the tab, which an operator can see acros
 window behind something else.
 
 The title is set once at the top of the app rather than per page, so a Run view open on one episode
-still says that a different episode has started waiting. It takes three forms: `<show> console` when
-nothing wants attention, `⏸ <id> NEEDS YOU — <show>` when an episode is parked at a gate, and
-`● <id> <stage> · <N>m — <show>` when a run is working, where `N` is the whole minutes since that
-run's last event. Before `GET /api/show` has answered there is no show name to use and the title is
-the neutral `console`: this repository names no show, and a placeholder would be a name invented in
-code.
+still says that a different episode has started waiting. It takes four forms, read in the order of
+what the person at the tab can do about them:
 
-A failed or crashed run reaches the Board in red but does **not** reach the tab title.
+| Form | When |
+|---|---|
+| `⏸ <id> NEEDS YOU — <show>` | An episode is parked at a gate. This wins everything: it is the only form that is a question addressed to the reader. |
+| `⚠ <id> FAILED — <show>` / `⚠ <id> CRASHED — <show>` | A run has stopped and will not restart itself. Second, because it is a job waiting on the operator rather than a question. |
+| `● <id> <stage> · <N>m — <show>` | A run is working, where `N` is the whole minutes since that run's last event. |
+| `<show> console` | Nothing wants attention. |
+
+Each form names the first row in Board order that matches, so two waiting episodes name the earlier
+one and the title does not flicker between them. Before `GET /api/show` has answered there is no
+show name to use and the title is the neutral `console`: this repository names no show, and a
+placeholder would be a name invented in code.
 
 ## Develop
 

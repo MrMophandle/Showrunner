@@ -58,6 +58,11 @@ export interface EpisodeRow {
    *  the Board sorts and colours by. */
   lastEventAt?: string;
   worker?: WorkerInfo;
+  /** Set when the store could not read this run's log to its end: "this run's log could not be
+   *  read past byte N: <message>". Everything else on the row is then derived from the bytes
+   *  before N, which is a row that has stopped moving — and a row that has stopped moving without
+   *  saying so is the worst thing the Board can show. */
+  logError?: string;
 }
 
 /** One step of a run as the console draws it: the row exists for every step of the pipeline
@@ -99,12 +104,24 @@ export interface RunView {
   failed?: { stepId: string; error: string };
   /** Every step of the pipeline definition, in pipeline order, overlaid with the log. */
   steps: StepRow[];
-  /** The pipeline the run recorded on its `run_started`: its name, and the hash and engine
-   *  version if the log carried them. A hash that differs from the pipeline the console just
-   *  built is the "this run is older than the code" answer. */
-  pipeline: { name: string; hash?: string; engineVersion?: string };
+  /** The pipeline the run recorded on its `run_started` set beside the pipeline the console built
+   *  for the same episode just now: `name`, `hash` and `engineVersion` are the log's own (absent
+   *  when the log did not record them), `hashNow` is the hash of the pipeline the code builds
+   *  today, and `changed` is the answer to "is this run older than the code" — true only when the
+   *  log recorded a hash and it differs from `hashNow`, marked the way `PromptAtRun.changed`
+   *  marks a prompt that was edited after the run read it. */
+  pipeline: { name: string; hash?: string; engineVersion?: string; hashNow: string; changed: boolean };
   worker?: WorkerInfo;
   offset: number;
+  /** The last lines of `<runId>.worker.log` — the worker's own account of how the segment ended —
+   *  carried only for a run whose status is "crashed", and absent when the file does not exist.
+   *  A `run()` that rejected removes its lock in the `finally`, so this file is the whole of the
+   *  explanation for that crash and the run log has no entry for it at all (ruling F-09). */
+  workerExit?: string;
+  /** Set when the store could not read this run's log to its end: "this run's log could not be
+   *  read past byte N: <message>". Every other field of the view is then derived from the bytes
+   *  before N — a view frozen at the bad byte, which the page says rather than hides. */
+  logError?: string;
 }
 
 /** One event of a run's log on the wire: the engine's `Event` without its `runId`, which every
@@ -198,6 +215,10 @@ export interface PromptAtRun {
  *  the ones that carry its failure, and only the last progress of a step says how far it got. */
 export interface WhatHappenedContext {
   pipeline: PipelineDescription;
+  /** The hash of the pipeline above — the one the code builds today. The run's own recorded hash
+   *  is `run.pipeline.hash`, and the two differing is the "this run has steps the code does not"
+   *  answer, which is the question a troubleshooter would otherwise have to guess at. */
+  pipelineHashNow: string;
   run: RunView;
   events: WireEvent[];
   prompts: PromptAtRun[];

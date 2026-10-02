@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { RunView, StepRow, WireEvent } from "../../shared/types.js";
 import { duration, elapsed, firstLine } from "../projections.js";
 import { ProgressBar } from "./ProgressBar.js";
@@ -60,12 +61,55 @@ export interface StepRailProps {
   view: RunView;
   events: WireEvent[];
   now: number;
-  /** Offered for a gate that was approved while no gate is open. Absent while one is. */
+  /** Offered for the latest approved gate while no gate is open. Absent while one is. */
   onWithdraw?: (stepId: string) => void;
   withdrawing?: string | null;
 }
 
+/** The last approved gate in pipeline order, or undefined when none is approved — the one gate
+ *  the rail offers "withdraw approval" on.
+ *
+ *  The affordance is restricted to it because the engine's withdrawal leaves every **downstream**
+ *  gate at `completed` (ruling F-26, and the engine's standing rule that no reset touches a gate).
+ *  Withdrawing an earlier gate therefore regenerates the work the later gates were approving and
+ *  then walks past those approvals without re-asking: the showrunner's "yes" to the old script
+ *  applied to a new one. That is a real move, and the route still performs it and names the
+ *  surviving gates when it does; it is not a move to offer as one click beside every approved gate
+ *  in a 73-row rail. */
+export function latestApprovedGate(steps: StepRow[]): string | undefined {
+  let latest: string | undefined;
+  for (const row of steps) if (row.kind === "gate" && row.status === "completed") latest = row.id;
+  return latest;
+}
+
+/** How many steps the rail shows beyond the run's current position when it is collapsed: the
+ *  current step and the one after it, so the rail says what is next without listing the sixty
+ *  pending steps behind that. */
+const LOOKAHEAD = 1;
+
+/** Where the collapsed rail stops: past the last row the log has anything to say about and past
+ *  the run's current position, plus `LOOKAHEAD`. A run that has not started yet cuts at its first
+ *  step, which reads as "next up" rather than as an empty rail. */
+function collapseAt(view: RunView): number {
+  let last = -1;
+  for (let i = 0; i < view.steps.length; i++) {
+    const row = view.steps[i];
+    if (row === undefined) continue;
+    if (row.status !== "pending" || view.position?.stepId === row.id) last = i;
+  }
+  return Math.min(view.steps.length, last + 1 + LOOKAHEAD);
+}
+
 export function StepRail({ view, events, now, onWithdraw, withdrawing = null }: StepRailProps) {
+  // Collapsed by default: the episode pipeline is 73 steps, and a run three steps in drew seventy
+  // rows of "pending" between the operator and the event feed. The toggle is the whole picture
+  // back, because "what is still ahead" is the rail's other job.
+  const [showAll, setShowAll] = useState(false);
+  const cut = collapseAt(view);
+  const collapsible = Math.max(0, view.steps.length - cut);
+  const shown = showAll || collapsible === 0 ? view.steps : view.steps.slice(0, cut);
+  const withdrawable = latestApprovedGate(view.steps);
+
   // Every reset the log recorded, by the step it reset, and every resume the run has had. Read
   // from the events rather than from the step rows because a reset is a thing that *happened* and
   // the row only carries where the step ended up: a step that was reset and then completed again
@@ -93,10 +137,10 @@ export function StepRail({ view, events, now, onWithdraw, withdrawing = null }: 
         </ul>
       )}
       <ol className="rail-steps">
-        {view.steps.map((row) => {
+        {shown.map((row) => {
           const current = view.position?.stepId === row.id;
           const resetList = resets.get(row.id) ?? [];
-          const approvedGate = row.kind === "gate" && row.status === "completed";
+          const approvedGate = row.id === withdrawable;
           return (
             <li key={row.id} className={`rail-step rail-${row.status}${current ? " rail-current" : ""}`}>
               <div className="rail-line">
@@ -128,6 +172,11 @@ export function StepRail({ view, events, now, onWithdraw, withdrawing = null }: 
           );
         })}
       </ol>
+      {collapsible > 0 && (
+        <button type="button" className="btn btn-small rail-toggle" onClick={() => { setShowAll(!showAll); }}>
+          {showAll ? "show only what has run" : `show all ${view.steps.length} steps (${collapsible} pending hidden)`}
+        </button>
+      )}
     </div>
   );
 }

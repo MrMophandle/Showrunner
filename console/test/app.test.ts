@@ -121,13 +121,22 @@ describe("the actions", () => {
     store.close();
   });
 
-  it("POST /api/episodes/:id/runs mints a run and spawns a worker that writes run_started", async () => {
+  it("POST /api/episodes/:id/runs mints a run, creates its log before spawning, and the worker writes run_started", async () => {
     const { root, app, store } = await appWith(await makeShow());
     const res = await app.request("/api/episodes/s02e01/runs", { method: "POST" });
     expect(res.status).toBe(200);
     const body = await res.json() as { runId: string; pid: number };
     expect(body.runId).toMatch(RUN_ID);
     expect(body.pid).toBeGreaterThan(0);
+
+    // The log exists the moment the route answers, before the worker has written anything to it:
+    // that is what makes the minted run the episode's latest run, and a second launch inside the
+    // worker's startup window sees it and is refused (the next test). Zero bytes or more — the
+    // detached worker may already have appended by the time this line runs, and either is the
+    // assertion's point, which is existence and not emptiness.
+    const log = path.join(root, "Production", "s02e01", "runs", `${body.runId}.jsonl`);
+    expect((await stat(log)).size).toBeGreaterThanOrEqual(0);
+
     await waitFor(async () => (await logText(root, body.runId)).includes("run_started"), 2000);
     const events = await logEvents(root, body.runId);
     expect(events[0]).toMatchObject({ kind: "run_started" });
@@ -142,6 +151,30 @@ describe("the actions", () => {
     const res = await app.request("/api/episodes/s02e01/runs", { method: "POST" });
     expect(res.status).toBe(409);
     expect(await res.json()).toMatchObject({ error: `run r1 is held by pid ${process.pid}` });
+    store.close();
+  });
+
+  it("POST /api/episodes/:id/runs refuses while the latest run is unfinished, and allows a relaunch after a completed one", async () => {
+    const { root, app, store } = await appWith(await makeShow());
+    // A crashed run: a step in flight, no terminal event, and no lock — the `finally` of a
+    // rejected `run()` took it. Nothing above refuses this, and two workers on one episode would
+    // write the same outline, the same tts-script and the same MP4.
+    await seedRun(root, "s02e01", "r1", [
+      { kind: "run_started", payload: { pipeline: "episode", episodeId: "s02e01" } },
+      { stepId: "render", kind: "step_started", payload: { kind: "script" } },
+    ]);
+    const refused = await app.request("/api/episodes/s02e01/runs", { method: "POST" });
+    expect(refused.status).toBe(409);
+    expect(await refused.json()).toEqual({ error: "run r1 is not finished; continue it, answer its gate, or resume it" });
+
+    // The legitimate relaunch: the latest run finished, so a new run of the episode is the
+    // operator's to make.
+    await seedRun(root, "s02e01", "r1", [
+      { kind: "run_started", payload: { pipeline: "episode", episodeId: "s02e01" } },
+      { kind: "run_finished", payload: { status: "completed" } },
+    ]);
+    const allowed = await app.request("/api/episodes/s02e01/runs", { method: "POST" });
+    expect(allowed.status).toBe(200);
     store.close();
   });
 
@@ -253,6 +286,44 @@ describe("the actions", () => {
     // A gate that was never approved cannot be withdrawn.
     const nope = await app.request("/api/episodes/s02e01/runs/r1/withdraw", json({ stepId: "script-gate", notes: "no" }));
     expect(nope.status).toBe(409);
+    store.close();
+  });
+
+  it("POST …/withdraw names the approved gates downstream that keep their approvals", async () => {
+    const { root, app, store } = await appWith(await makeShow());
+    // Three gates approved, in pipeline order: outline-gate, script-gate, casting-gate. The
+    // engine never resets a gate (ruling F-26), so withdrawing the first leaves the other two at
+    // `completed` and the next worker walks straight past them — the showrunner's approval of the
+    // old script applied to a script that is about to be regenerated. The route says which.
+    const approved = (stepId: string) => ([
+      { stepId, kind: "gate_opened", payload: { attempt: 1, message: `approve ${stepId}` } },
+      { stepId, kind: "gate_answered", payload: { approved: true, attempt: 1, by: "console:test" } },
+    ]);
+    await seedRun(root, "s02e01", "r1", [
+      { kind: "run_started", payload: { pipeline: "episode", episodeId: "s02e01" } },
+      ...approved("outline-gate"),
+      { stepId: "stamp-outline", kind: "step_completed", payload: { result: "ok" } },
+      ...approved("script-gate"),
+      ...approved("casting-gate"),
+      { kind: "run_finished", payload: { status: "completed" } },
+    ]);
+    const res = await app.request("/api/episodes/s02e01/runs/r1/withdraw", json({ stepId: "outline-gate", notes: "the cast list is wrong" }));
+    expect(res.status).toBe(200);
+    const body = await res.json() as { reset: string[]; survivingGates: string[] };
+    expect(body.survivingGates).toEqual(["script-gate", "casting-gate"]);
+    // The gates are not in `reset`: the engine resets only non-gate steps downstream.
+    expect(body.reset).toEqual(["stamp-outline"]);
+
+    // The latest approved gate has nothing downstream of it that was approved, which is the one
+    // case the rail offers — and the one that spends no approval the operator cannot see.
+    await seedRun(root, "s02e01", "r2", [
+      { kind: "run_started", payload: { pipeline: "episode", episodeId: "s02e01" } },
+      ...approved("outline-gate"),
+      { kind: "run_finished", payload: { status: "completed" } },
+    ]);
+    const latest = await app.request("/api/episodes/s02e01/runs/r2/withdraw", json({ stepId: "outline-gate", notes: "again" }));
+    expect(latest.status).toBe(200);
+    expect((await latest.json() as { survivingGates: string[] }).survivingGates).toEqual([]);
     store.close();
   });
 

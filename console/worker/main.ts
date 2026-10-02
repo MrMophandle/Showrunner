@@ -1,6 +1,6 @@
 import path from "node:path";
 import os from "node:os";
-import { appendFile, mkdir, open, readFile, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, open, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import {
   EventLog, run, runLogPaths, episodePipeline, loadShowConfig, createAgentExecutor, createGateMessageRenderer, sdkQuery, scriptExecutor,
@@ -76,23 +76,45 @@ export async function runOnce(opts: WorkerOptions, deps: WorkerDeps = {}): Promi
   const workerLog = logFile.replace(/\.jsonl$/, ".worker.log");
   const note = async (line: string) => { await mkdir(path.dirname(workerLog), { recursive: true }); await appendFile(workerLog, `${now().toISOString()} pid ${process.pid}: ${line}\n`); };
 
-  const lock = await takeLock(lockFile, now());
+  const tookAt = now();
+  const lock = await takeLock(lockFile, tookAt);
   if (!lock.ok) { const detail = `run ${opts.runId} is held by pid ${lock.holder}`; await note(detail); return { status: "crashed", detail }; }
 
   // The latest beat is held as a promise so the release in `finally` can wait for it. A write
   // still in flight when the lock file is removed would land after the removal and recreate the
   // lock, leaving the run looking held by a worker that has already exited.
   let beat: Promise<void> = Promise.resolve();
-  const heartbeat = setInterval(() => {
-    const body: LockFile = { pid: process.pid, startedAt: now().toISOString(), heartbeatAt: now().toISOString(), groups: liveProcessGroups() };
-    beat = writeFile(lockFile, JSON.stringify(body), "utf8").catch(() => undefined);
+  let heartbeat: NodeJS.Timeout | undefined;
+  // One `startedAt` for the life of the worker — the moment it took the lock, which is what the
+  // field means. Recomputing it on every beat made it a second copy of `heartbeatAt` that happens
+  // to be spelled differently, and a lock whose `startedAt` moves says nothing about how long the
+  // worker has held the run.
+  const startedAt = tookAt.toISOString();
+  const tmpFile = `${lockFile}.tmp`;
+
+  /** One beat: write the body to `<lockFile>.tmp` and rename it over the lock.
+   *
+   *  `writeFile` on the lock itself opens with `O_TRUNC` and then writes, so between those two
+   *  syscalls the lock is zero bytes — which `readLock` reads as "no lock" by design, every five
+   *  seconds, for the life of the run. Two things follow from that microsecond: the Board can read
+   *  a running episode as crashed, and `spawnWorker`'s refusal does not fire, so a second worker
+   *  starts and its `takeLock` finds the same truncated file, cannot parse it, deletes it and
+   *  takes the lock. Rename within one directory is atomic: a reader resolving the lock's name
+   *  gets the previous beat whole or this one whole, and the lock's path is never empty, so
+   *  `takeLock`'s `wx` still refuses a second worker throughout. */
+  const writeBeat = async (): Promise<void> => {
+    const body: LockFile = { pid: process.pid, startedAt, heartbeatAt: now().toISOString(), groups: liveProcessGroups() };
     deps.onHeartbeat?.(body);
-  }, deps.heartbeatMs ?? 5000);
-  // the first beat at once, so a reader never sees a lock without groups
-  const first: LockFile = { pid: process.pid, startedAt: now().toISOString(), heartbeatAt: now().toISOString(), groups: liveProcessGroups() };
-  await writeFile(lockFile, JSON.stringify(first), "utf8"); deps.onHeartbeat?.(first);
+    await writeFile(tmpFile, JSON.stringify(body), "utf8");
+    await rename(tmpFile, lockFile);
+  };
 
   try {
+    // The first beat at once, so a reader never sees a lock without `groups` — and inside the
+    // `try`, so a write that throws still reaches the release below rather than leaving a lock
+    // behind with no worker.
+    await writeBeat();
+    heartbeat = setInterval(() => { beat = writeBeat().catch(() => undefined); }, deps.heartbeatMs ?? 5000);
     const pipeline = episodePipeline({ show, episodeId: opts.episodeId, engineRoot: opts.engineRoot });
     const agentOpts = { query: sdkQuery, show };
     const executors: Executors = deps.executors ?? { script: scriptExecutor, agent: createAgentExecutor(agentOpts) };
@@ -111,9 +133,12 @@ export async function runOnce(opts: WorkerOptions, deps: WorkerDeps = {}): Promi
     await note(detail);
     return { status: result.status, detail };
   } finally {
-    clearInterval(heartbeat);
+    if (heartbeat !== undefined) clearInterval(heartbeat);
     await beat;
     await rm(lockFile, { force: true });
+    // A beat that failed between its write and its rename leaves the temporary file behind; it is
+    // the worker's own and nothing else reads it, so it goes with the lock.
+    await rm(tmpFile, { force: true });
   }
 }
 
@@ -124,7 +149,15 @@ async function main(): Promise<void> {
   if (!showRoot || !episodeId || !runId) { process.stderr.write("usage: worker --show <root> --episode <id> --run <runId> [--engine-root <path>] [--operator <name>] [--concurrency N]\n"); process.exit(64); }
   const engineRoot = flag("engine-root") ?? path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
   const operator = flag("operator") ?? `console:${os.userInfo().username}`;
+  // Validated the way the server validates its own `--concurrency` (`server/main.ts`): without
+  // this, `Number("abc")` is NaN, `Math.max(1, NaN)` is NaN, `concurrency > 1` is false, and the
+  // run falls back silently to one agent step at a time — a review panel that takes seven times
+  // as long as it was asked to, reported nowhere.
   const c = flag("concurrency");
+  if (c !== undefined && (!Number.isInteger(Number(c)) || Number(c) < 1)) {
+    process.stderr.write(`invalid --concurrency ${c}\n`);
+    process.exit(64);
+  }
   const stop = () => { const { killed, failed } = killLiveProcessGroups(); process.stderr.write(`signalled: killed ${killed} process groups, ${failed} refused\n`); process.exit(143); };
   process.on("SIGTERM", stop); process.on("SIGINT", stop);
   const r = await runOnce({ showRoot, episodeId, runId, engineRoot, operator, ...(c !== undefined ? { concurrency: Number(c) } : {}) });

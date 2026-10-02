@@ -37,11 +37,9 @@ export interface ContactSheetProps {
   /** Shot id → the operator's reason, empty string for a shot flagged without one. */
   flags: Record<string, string>;
   onFlagsChange: (next: Record<string, string>) => void;
-  /** Absent on a page with no rejection to compose — a Run page showing a finished gate. */
-  readOnly?: boolean;
 }
 
-export function ContactSheet({ url, listUrl, flags, onFlagsChange, readOnly = false }: ContactSheetProps) {
+export function ContactSheet({ url, listUrl, flags, onFlagsChange }: ContactSheetProps) {
   const listing = useApi<{ entries: DirEntry[] }>(listUrl);
 
   if (listing.error !== null && listing.data === null) {
@@ -88,18 +86,16 @@ export function ContactSheet({ url, listUrl, flags, onFlagsChange, readOnly = fa
               </a>
               <div className="shot-foot">
                 <span className="shot-id mono">{id}</span>
-                {!readOnly && (
-                  <button
-                    type="button"
-                    className={`btn shot-flag${flagged ? " shot-flag-on" : ""}`}
-                    aria-pressed={flagged}
-                    onClick={() => { toggle(id); }}
-                  >
-                    {flagged ? "flagged" : "flag"}
-                  </button>
-                )}
+                <button
+                  type="button"
+                  className={`btn shot-flag${flagged ? " shot-flag-on" : ""}`}
+                  aria-pressed={flagged}
+                  onClick={() => { toggle(id); }}
+                >
+                  {flagged ? "flagged" : "flag"}
+                </button>
               </div>
-              {flagged && !readOnly && (
+              {flagged && (
                 <input
                   className="shot-note"
                   type="text"

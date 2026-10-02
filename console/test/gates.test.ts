@@ -100,6 +100,24 @@ describe("the gate view", () => {
     image.store.close();
   });
 
+  it("shows the verdicts of schema-bearing agent steps and nothing else that happens to carry a pass", async () => {
+    const { ctx, store } = await parkedAt("script-gate", [
+      // Schema-bearing agent steps: a reviewer and the canon review. These are verdicts.
+      { stepId: "tone-check", kind: "step_completed", payload: { result: { pass: false, issues: ["three flat lines"] } } },
+      { stepId: "canon-review-script", kind: "step_completed", payload: { result: { pass: true, deviations: [] } } },
+      // A guard whose `check` returns `{pass, message}`: the same shape, and not a verdict the
+      // showrunner is being asked to weigh. The pipeline marks no `schemaFile` on it.
+      { stepId: "hand-edits-script", kind: "step_completed", payload: { result: { pass: true, message: "no hand edits" } } },
+      // An agent step with no schema at all: its result is prose, and a future one that returned
+      // something pass-shaped would not belong on the verdict board either.
+      { stepId: "publish-copy", kind: "step_completed", payload: { result: { pass: true } } },
+    ]);
+    const v = (await gateView(ctx, store, "s02e01", "r1"))!;
+    expect(Object.keys(v.verdicts).sort()).toEqual(["canon-review-script", "tone-check"]);
+    expect((v.verdicts["tone-check"] as { pass: boolean }).pass).toBe(false);
+    store.close();
+  });
+
   it("is undefined for a run with no gate open", async () => {
     const { root, ctx, store } = await appWith(await makeShow());
     await seedRun(root, "s02e01", "r1", [

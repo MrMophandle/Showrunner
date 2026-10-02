@@ -1,9 +1,9 @@
 import path from "node:path";
 import { watch, type FSWatcher } from "node:fs";
-import { readdir, stat } from "node:fs/promises";
+import { readFile, readdir, stat } from "node:fs/promises";
 import {
   BYPASS_REASON, EPISODE_STAGE_MAP, EventLog, RUN_ID, deriveRunState, deriveStage, describePipeline,
-  episodePipeline, latestRunId, listEpisodeIds, parseEpisodeId,
+  episodePipeline, latestRunId, listEpisodeIds, parseEpisodeId, pipelineHash,
   type Event, type Needs, type RunState, type StepDescription,
 } from "@showrunner/engine";
 import type { EpisodeRow, RunStatus, RunView, SseMessage, StepRow } from "../shared/types.js";
@@ -21,10 +21,22 @@ const STALE_MS = 60_000;
  *  first run of a new episode creates `Production/<id>/runs/` as its first act. */
 const DEFAULT_POLL_MS = 2_000;
 
-/** One log as the store holds it: every event parsed so far, and the byte offset to resume
- *  reading from. The offset is the whole point — a run log grows by thousands of lines, and a
- *  console that re-read it on every change notification would spend the run re-parsing it. */
-interface CachedLog { events: Event[]; offset: number }
+/** How many lines of a crashed run's `<runId>.worker.log` the run view carries. Enough for the
+ *  frames of a rejected `run()`'s stack that name the engine's own modules, short enough that the
+ *  Run page's crashed status does not become a wall of text. */
+const WORKER_LOG_TAIL_LINES = 20;
+
+/** One log as the store holds it: every event parsed so far, the byte offset to resume reading
+ *  from, and the last read failure if there was one. The offset is the whole point — a run log
+ *  grows by thousands of lines, and a console that re-read it on every change notification would
+ *  spend the run re-parsing it.
+ *
+ *  `lastError` exists because the alternative is worse than an error. A log the store cannot
+ *  parse past byte N leaves the cached events at their last good state and the offset where it
+ *  was, so every projection of that run — its Board row, its step rail, its progress — is frozen
+ *  at the bad byte while the status still reads from the lock. Carrying the failure forward is
+ *  what lets both surfaces say so instead of showing stale truth confidently. */
+interface CachedLog { events: Event[]; offset: number; lastError?: string }
 
 /** The one seam the store has: how often the directory poll runs. Production takes the default. */
 export interface RunStoreOptions { pollMs?: number }
@@ -244,11 +256,13 @@ export function deriveRunStatus(state: RunState, lock: { alive: boolean } | unde
   return Number.isFinite(last) && now - last < STALE_MS ? "running" : "crashed";
 }
 
-/** The run log's own account of which pipeline it ran: the name it recorded, and the hash and
- *  engine version if it recorded them. A hash that differs from the pipeline the console just
- *  built for the same episode is the answer to "why does this run have steps the code does
- *  not" — so it is reported as the log wrote it, never as the current code would. */
-function pipelineOf(name: string, started: Event | undefined): RunView["pipeline"] {
+/** The run log's own account of which pipeline it ran, set beside the pipeline the console built
+ *  for the same episode just now. The name, the hash and the engine version are reported as the
+ *  log wrote them, never as the current code would; `hashNow` is the current code's hash, and
+ *  `changed` is the two of them differing — which is the answer to "why does this run have steps
+ *  the code does not". A log that recorded no hash has nothing to compare, so `changed` is false
+ *  rather than a mismatch invented from an absent value. */
+function pipelineOf(name: string, started: Event | undefined, hashNow: string): RunView["pipeline"] {
   const payload = started?.payload ?? {};
   const logged = payload["pipeline"];
   const hash = payload["pipelineHash"];
@@ -257,7 +271,23 @@ function pipelineOf(name: string, started: Event | undefined): RunView["pipeline
     name: typeof logged === "string" && logged !== "" ? logged : name,
     ...(typeof hash === "string" ? { hash } : {}),
     ...(typeof engineVersion === "string" ? { engineVersion } : {}),
+    hashNow,
+    changed: typeof hash === "string" && hash !== hashNow,
   };
+}
+
+/** The last few lines of a crashed run's `<runId>.worker.log`, or undefined when the file is not
+ *  there. Blank lines are dropped and the tail is taken from the end, so a run that was continued
+ *  three times shows the most recent worker's account rather than the first one's.
+ *
+ *  Read only for a crashed run (`RunStore.#project`), because that is the one status whose
+ *  explanation is not in the run log: a rejected `run()` removes its lock in the `finally`, which
+ *  leaves the console with a step stuck at `running`, no worker to report, and this file. */
+async function workerExitOf(workerLog: string, lines = WORKER_LOG_TAIL_LINES): Promise<string | undefined> {
+  let text: string;
+  try { text = await readFile(workerLog, "utf8"); } catch { return undefined; }
+  const kept = text.split("\n").filter((line) => line.trim() !== "").slice(-lines);
+  return kept.length === 0 ? undefined : kept.join("\n");
 }
 
 /** The step whose failure the run stopped at, if one is still failed. Read from the last
@@ -299,12 +329,17 @@ export class RunStore {
   }
 
   /** The events of one run, tailing the log first so the answer includes everything on disk at
-   *  the moment of the call, with the byte offset they were read to. */
-  async get(episodeId: string, runId: string): Promise<{ events: Event[]; offset: number }> {
+   *  the moment of the call, with the byte offset they were read to — and `lastError` when the
+   *  tail could not be read past that offset, so a caller projecting these events knows they are
+   *  a prefix of the log rather than the whole of it. */
+  async get(episodeId: string, runId: string): Promise<{ events: Event[]; offset: number; lastError?: string }> {
     const key = this.#key(episodeId, runId);
     await this.#tailAndPublish(episodeId, runId);
     const cached = this.#logs.get(key) ?? { events: [], offset: 0 };
-    return { events: [...cached.events], offset: cached.offset };
+    return {
+      events: [...cached.events], offset: cached.offset,
+      ...(cached.lastError !== undefined ? { lastError: cached.lastError } : {}),
+    };
   }
 
   /** Starts watching every runs directory the show has, and polls for ones that appear later.
@@ -352,6 +387,10 @@ export class RunStore {
     if (view.failed) row.failed = view.failed;
     if (view.lastEventAt !== undefined) row.lastEventAt = view.lastEventAt;
     if (view.worker) row.worker = view.worker;
+    // A row whose log could not be read to its end is a row that has stopped moving: everything
+    // above is derived from the bytes before the bad one, and the Board says so rather than
+    // showing a frozen row as a current one.
+    if (view.logError !== undefined) row.logError = view.logError;
     return row;
   }
 
@@ -385,27 +424,36 @@ export class RunStore {
   /** The run view and the episode's needs from one pass: `episodeRow` wants both, and reading
    *  the needs twice would scan the same reference files twice per row. */
   async #project(episodeId: string, runId: string): Promise<{ view: RunView; needs: { flags: Needs; detail: EpisodeRow["needs"] } }> {
-    const { events, offset } = await this.get(episodeId, runId);
+    const { events, offset, lastError } = await this.get(episodeId, runId);
     const state = deriveRunState(events);
     const needs = await readNeeds(this.#ctx, episodeId);
     // Built per episode, never cached across them: every step's inputs and outputs, every
     // script step's argv and the canon spine's season file are the episode's own, so one
     // pipeline reused for a second episode would describe the first one's files.
-    const description = describePipeline(episodePipeline({ show: this.#ctx.show, episodeId, engineRoot: this.#ctx.engineRoot }));
+    const pipeline = episodePipeline({ show: this.#ctx.show, episodeId, engineRoot: this.#ctx.engineRoot });
+    const description = describePipeline(pipeline);
     const lock = await readLock(this.#ctx, episodeId, runId);
     const started = events.find((e) => e.kind === "run_started");
     let finished: Event | undefined;
     for (const e of events) if (e.kind === "run_finished") finished = e;
 
+    const status = deriveRunStatus(state, lock, events.length);
     const view: RunView = {
       episodeId,
       runId,
-      status: deriveRunStatus(state, lock, events.length),
+      status,
       stage: deriveStage(state, EPISODE_STAGE_MAP, needs.flags),
       steps: projectSteps(description.steps, events),
-      pipeline: pipelineOf(description.name, started),
+      pipeline: pipelineOf(description.name, started, pipelineHash(pipeline)),
       offset,
     };
+    if (lastError !== undefined) view.logError = lastError;
+    // Only for a crash: the file exists for every segment, and reading it for a run that is
+    // working would put a worker's last line on a page whose status already says more than it.
+    if (status === "crashed") {
+      const exit = await workerExitOf(this.#logPath(episodeId, runId).replace(/\.jsonl$/, ".worker.log"));
+      if (exit !== undefined) view.workerExit = exit;
+    }
     if (started !== undefined) view.startedAt = started.ts;
     if (finished !== undefined) view.finishedAt = finished.ts;
     if (state.lastEventAt !== undefined) view.lastEventAt = state.lastEventAt;
@@ -431,14 +479,39 @@ export class RunStore {
    *    events describe bytes that no longer exist, so the log is re-read from the start rather
    *    than appended to. A log the store already holds is never otherwise re-read from zero:
    *    doing so on a change notification would double every event in the cache and announce a
-   *    change to a run that had not changed. */
+   *    change to a run that had not changed.
+   *
+   *  And one case that is not `readFrom`'s: a read that throws, which is a malformed line
+   *  (`EventLog.readFrom`'s "malformed JSON after byte N") or a failure of the read itself. The
+   *  offset does not advance and the cached events stay at their last good state — the same
+   *  freeze as before — but the failure is recorded against the log, so `RunView.logError` and
+   *  `EpisodeRow.logError` can say which run stopped being readable and where. The strictness is
+   *  kept deliberately: a malformed line is skipped by nobody, because an event the store
+   *  silently dropped would be a projection that is wrong rather than frozen. */
   async #tailOnce(episodeId: string, runId: string): Promise<number> {
     const key = this.#key(episodeId, runId);
     const cached = this.#logs.get(key) ?? { events: [], offset: 0 };
     const log = new EventLog(this.#logPath(episodeId, runId));
-    const next = await log.readFrom(cached.offset);
+    let next: { events: Event[]; offset: number };
+    try {
+      next = await log.readFrom(cached.offset);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.#logs.set(key, {
+        events: cached.events, offset: cached.offset,
+        lastError: `this run's log could not be read past byte ${cached.offset}: ${message}`,
+      });
+      return 0;
+    }
     if (next.offset < cached.offset) {
-      const fresh = await log.readFrom(0);
+      let fresh: { events: Event[]; offset: number };
+      try {
+        fresh = await log.readFrom(0);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        this.#logs.set(key, { events: [], offset: 0, lastError: `this run's log could not be read past byte 0: ${message}` });
+        return 0;
+      }
       this.#logs.set(key, { events: fresh.events, offset: fresh.offset });
       return fresh.events.length;
     }

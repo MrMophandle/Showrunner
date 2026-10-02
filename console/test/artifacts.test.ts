@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { resolveArtifactPath } from "../server/artifacts.js";
+import { parseRange, resolveArtifactPath } from "../server/artifacts.js";
 import { appWith, makeShow, seedRun, writeIn } from "./helpers.js";
 
 /** The artifact route and its fence. Three layers refuse a path, and each of these tests names
@@ -162,5 +162,41 @@ describe("the fence, called directly", () => {
     expect(yes.ok).toBe(true);
     expect(yes.ok && yes.abs).toBe(path.join(ctx.showRoot, "Production/s02e01/images/shot-01.png"));
     store.close();
+  });
+});
+
+/** `parseRange`, directly: the arithmetic is the part that is easy to get subtly wrong, and it is
+ *  pure, so the named edge cases need no filesystem behind them. RFC 7233 §3.1's distinction is
+ *  the one being asserted — a header this server does not understand is **ignored** and the whole
+ *  representation is served, which is not the same answer as a well-formed range it cannot
+ *  satisfy. */
+describe("parseRange", () => {
+  it("reads a suffix range as the last N bytes", () => {
+    expect(parseRange("bytes=-100", 1000)).toEqual({ kind: "range", start: 900, end: 999 });
+    // A suffix longer than the file is the whole file, not a negative start.
+    expect(parseRange("bytes=-5000", 1000)).toEqual({ kind: "range", start: 0, end: 999 });
+  });
+
+  it("reads a single-byte range, and the first byte of a file", () => {
+    expect(parseRange("bytes=0-0", 1000)).toEqual({ kind: "range", start: 0, end: 0 });
+    expect(parseRange("bytes=999-", 1000)).toEqual({ kind: "range", start: 999, end: 999 });
+  });
+
+  it("calls a zero-length suffix unsatisfiable rather than ignorable", () => {
+    // "bytes=-0" is well-formed syntax asking for zero bytes: there is no span to answer with, so
+    // it is a 416 and not a 200 with the whole file.
+    expect(parseRange("bytes=-0", 1000)).toEqual({ kind: "unsatisfiable" });
+    expect(parseRange("bytes=1000-", 1000)).toEqual({ kind: "unsatisfiable" });
+  });
+
+  it("ignores a multi-range header and anything it does not understand", () => {
+    // This server serves one span per response, so a multi-range request is a header it does not
+    // understand: RFC 7233 §3.1 requires it to be ignored and the whole file served.
+    expect(parseRange("bytes=0-99,200-299", 1000)).toEqual({ kind: "full" });
+    expect(parseRange("items=0-99", 1000)).toEqual({ kind: "full" });
+    expect(parseRange("bytes=-", 1000)).toEqual({ kind: "full" });
+    expect(parseRange("nonsense", 1000)).toEqual({ kind: "full" });
+    expect(parseRange(undefined, 1000)).toEqual({ kind: "full" });
+    expect(parseRange("", 1000)).toEqual({ kind: "full" });
   });
 });

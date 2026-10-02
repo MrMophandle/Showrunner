@@ -148,6 +148,10 @@ export function Board() {
                     {elapsed(row.lastEventAt, now)} since the last event
                   </span>
                 )}
+                {/* A log the store could not read to its end: this row is derived from the bytes
+                    before the bad one and has stopped moving. Said here because the alternative is
+                    a row that looks current and is not. */}
+                {row.logError !== undefined && <span className="row-log-error">{row.logError}</span>}
               </div>
 
               <div className="row-actions">
