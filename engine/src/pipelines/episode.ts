@@ -333,9 +333,16 @@ export function episodePipeline(opts: EpisodePipelineOptions): Pipeline {
     },
     { kind: "script", id: "build-timeline", dependsOn: ["nas-mounted"], argv: py("build-timeline.py"), inputs: [manifest, ttsScript, prompts, script, mix], outputs: [timeline], timeoutMs: 5 * MIN },
     {
-      kind: "script", id: "render", dependsOn: ["build-timeline"], cwd: renderDir, timeoutMs: 4 * HOUR,
-      argv: (ctx) => ["npx", "remotion", "render", compositionId, path.join(ctx.showRoot, video), "--log=error"],
-      env: (ctx) => ({ REMOTION_EPISODE: ctx.episodeId }), inputs: [timeline], outputs: [video],
+      // Wrapped rather than spawned directly, because Remotion with `--log=error` printed nothing
+      // for the ten to forty minutes it ran and the run view could show no evidence of life.
+      // `render-video.py` spawns Remotion itself and turns its frame counter into `::progress`
+      // lines, so the render directory, the composition id, the output path and REMOTION_EPISODE
+      // all travel in argv now; the step keeps the executor's default cwd (the show root), which
+      // is what the scripts' convention requires of every Python step.
+      kind: "script", id: "render", dependsOn: ["build-timeline"], timeoutMs: 4 * HOUR,
+      argv: (ctx) => py("render-video.py", "--render-dir", renderDir, "--composition", compositionId,
+        "--out", path.join(ctx.showRoot, video))(),
+      inputs: [timeline], outputs: [video],
     },
     { kind: "script", id: "master", dependsOn: ["render"], argv: py("master-video.py"), inputs: [video], outputs: [mastered], timeoutMs: 15 * MIN },
     {

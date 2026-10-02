@@ -23,8 +23,8 @@ import type { Executors, Pipeline } from "../src/steps.js";
  *  What it proves, which no fake can: `uv` finds the engine's scripts project with the show root as
  *  cwd, a script's `::progress` lines become step_progress and its other lines become script_line,
  *  its last stdout line becomes the step's result, a hundred-megabyte output is hashed, the render
- *  runs from render/ under REMOTION_EPISODE, and a gate opens with its message rendered from the
- *  show's own prompt file. */
+ *  runs through render-video.py (which supplies render/ as Remotion's cwd and REMOTION_EPISODE in
+ *  its environment), and a gate opens with its message rendered from the show's own prompt file. */
 
 const exec = promisify(execFile);
 const engineRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -149,8 +149,11 @@ describe.skipIf(skipReason !== "")(`ep98 exercise (real scripts, no agents)${ski
       }
       expect(String(events.find((e) => e.kind === "step_completed" && e.stepId === "build-timeline")?.payload["result"])).toMatch(/^TIMELINE_OK /);
       expect(String(events.find((e) => e.kind === "step_completed" && e.stepId === "master")?.payload["result"])).toMatch(/^MASTER_OK /);
+      // argv[5] is the script path in `uv run --project <scripts> python <script> …`: the render
+      // reaches Remotion through render-video.py, which is what turns its frame counter into the
+      // step_progress events this run's log carries for the render.
       const renderStarted = events.find((e) => e.kind === "step_started" && e.stepId === "render");
-      expect((renderStarted?.payload["argv"] as string[])[1]).toBe("remotion");
+      expect((renderStarted?.payload["argv"] as string[])[5]).toMatch(/render-video\.py$/);
       // The mastered file is checked by stat rather than read: it is hundreds of megabytes, and
       // what matters is that THIS run wrote it. An mtime older than the run's start would mean the
       // assertion was passing on a leftover from an earlier render.

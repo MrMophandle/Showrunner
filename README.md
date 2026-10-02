@@ -491,7 +491,7 @@ A run restarts by replaying its log; there is no separate state file to reconcil
 
 ## Scripts
 
-`scripts/` holds the pipeline's deterministic steps: twenty-five Python programs the engine runs
+`scripts/` holds the pipeline's deterministic steps: twenty-six Python programs the engine runs
 as argv arrays, never as shell strings. **A script belongs to the engine, and the show it is run
 for reaches it through argv and `showrunner.json`** — no script contains a show's name.
 
@@ -570,9 +570,30 @@ Two of the programs exist for the pipeline's own bookkeeping rather than for a c
   deliberately, because the Evidence cell carries `(<pass> pass, run <runId>)` and would never
   match across the outline pass and the script pass of one deviation.
 
+One further program exists because a step was silent rather than because a step was missing:
+
+- **`render-video.py <episode> --render-dir <path> --composition <id> --out <path>
+  [--progress-interval <seconds>] [--show-root <path>]`** is the `render` step. It spawns
+  `npx remotion render <composition> <out> --log=info` with the render directory as that child's
+  working directory and `REMOTION_EPISODE=<episode>` in its environment, reads the child's output,
+  and turns Remotion's own frame counter into the progress contract's lines —
+  `::progress {"done":N,"total":M,"unit":"frames"}`, at most one per `--progress-interval` second
+  (default one). Every other line Remotion prints is forwarded unchanged, the last line is
+  `RENDER_OK <out>`, and a failed render **exits with Remotion's exit code rather than 1**,
+  carrying Remotion's own last line as the reason. **The step passes the render directory and the
+  output path in argv and keeps the executor's default working directory, the show root**, because
+  the scripts' convention requires it: `showrunner.json` has to be findable without a flag.
+  Remotion is given the output path absolute, because Remotion itself runs in the engine's
+  `render/` directory where a show-relative path would resolve inside the engine checkout.
+  The parser was written against a measurement rather than a guess, which the script's docstring
+  records: under a pipe, Remotion 4.0.487 prints `Rendered 1/63280, time remaining: 3h 33m 2s`,
+  newline-separated with no carriage returns, once per frame, and `--log=info` is the lowest level
+  that prints the counter at all (`--log=error`, which this step passed before, prints nothing for
+  the whole render, which is the silence this program exists to end).
+
     cd scripts && uv run pytest
 
-runs the hermetic suite: twenty-three test files under `scripts/tests/`, none of which synthesizes
+runs the hermetic suite: twenty-four test files under `scripts/tests/`, none of which synthesizes
 audio, generates an image or renders anything. `scripts/pyproject.toml` lists the union of every
 script's inline dependency block once and sets `package = false`, so uv treats the directory as a
 virtual project and installs only the dependencies; each script keeps its own inline
