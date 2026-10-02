@@ -49,12 +49,18 @@ they are still writing.
 ## Running it
 
     cd <engine repository> && npm run build
-    node console/dist/server/main.js --show <show repository> --port 4400
+    node console/dist/server/main.js --show <show repository> --port 4410
+
+**The default port is 4410 and the Vite dev server's is 5193, which are deliberately not console
+v1's 4400 and 5183.** The two consoles' defaults differ so that both run side by side through the
+transition (the showrunner's ruling of 2026-10-02): v1 still serves the Season 1 archive in the
+show repository while this console is brought up on the same machine. Plan F retires v1 and frees
+4400.
 
 | Flag | Default | What it does |
 |---|---|---|
 | `--show <path>` | **required** | The show repository the server reads and the only tree it writes into. Without it the server prints its usage line and exits 64. |
-| `--port <n>` | `4400` | The port to listen on. A value that is not an integer in 1–65535 exits 64. |
+| `--port <n>` | `4410` | The port to listen on (`DEFAULT_PORT`, `server/main.ts`). A value that is not an integer in 1–65535 exits 64. |
 | `--host` | absent | A presence, not a value. **Absent, the server binds `127.0.0.1` and is reachable only from the machine it runs on; given, it binds `0.0.0.0` and is on the network.** The console has no authentication of its own and it spawns processes, so `--host` is the operator saying "this is my home network" and must never be given on a network that is not. |
 | `--operator <name>` | `console:<username>` | Who the server acts as. The string is stamped on every gate answer as `by`, on every reset, and as the `trigger` of every run it launches. |
 | `--worker <path>` | the console's own compiled worker | The worker entry to spawn. A test points it at a fake worker; an operator has no reason to set it. |
@@ -65,7 +71,7 @@ In development, Vite serves the client on its own port and proxies `/api` to the
 
     cd console && SHOWRUNNER_SHOW_ROOT=<show repository> npm run dev
 
-`npm run dev` starts `tsx watch server/main.ts --show $SHOWRUNNER_SHOW_ROOT` and `vite --port 5183`
+`npm run dev` starts `tsx watch server/main.ts --show $SHOWRUNNER_SHOW_ROOT` and `vite --port 5193`
 together, and the browser goes to the Vite port. The variable has no default, because a default
 would have to spell a show's directory name.
 

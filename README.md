@@ -477,7 +477,7 @@ then spawns a detached worker, so the event log stays the only thing that decide
 The console names no show. It is pointed at a show repository with `--show <path>` and reads that
 repository's `showrunner.json`, exactly as the engine does.
 
-    npm run build && node console/dist/server/main.js --show <show repository> --port 4400
+    npm run build && node console/dist/server/main.js --show <show repository> --port 4410
 
 **`console/README.md` is the console's own documentation**: the four surfaces and what is deferred,
 the three processes, every file the console writes, the flags and the home-network rule for
@@ -726,7 +726,7 @@ The console's own commands, for working on it alone:
 
     cd console && SHOWRUNNER_SHOW_ROOT=<show repository> npm run dev
 
-`npm run dev` runs the server under `tsx watch` and Vite on port 5183 together, with Vite serving
+`npm run dev` runs the server under `tsx watch` and Vite on port 5193 together, with Vite serving
 the client and proxying `/api` to the server. `SHOWRUNNER_SHOW_ROOT` has no default, for the same
 reason the `ep98` exercise's copy of it has none: a default would have to spell a show's directory
 name. `console/README.md` documents the console itself.
