@@ -85,3 +85,77 @@ describe("episodeRow", () => {
     store.close();
   });
 });
+
+/** The archive marker: `<episodesDir>/<id>/archive.json`, which is how an episode finished outside
+ *  the engine — Season 1, made by console v1, with no run logs and no `premise.md` — is shown as
+ *  the finished thing it is rather than as NEEDS_IDEA · no runs.
+ *
+ *  The fourth test is the load-bearing one. A marker that could outrank a run log would let a file
+ *  an operator edited by hand hide an open gate, a failure or a live worker, and the Board offers
+ *  no gate link and no continue button for a row whose status is "archived". */
+describe("the archive marker", () => {
+  const NOTE = "Season 1, made by console v1; final on the NAS 2026-09-16";
+
+  it("shows an episode with a marker and no runs at the marker's stage, archived and needing nothing", async () => {
+    const { root, store } = await appWith(await makeShow());
+    await writeIn(root, "Episodes/s02e07/archive.json", JSON.stringify({ stage: "COMPLETE", note: NOTE }));
+    const row = await store.episodeRow("s02e07");
+    expect(row).toMatchObject({
+      id: "s02e07", stage: "COMPLETE", status: "archived", archiveNote: NOTE,
+      needs: { ideaMissing: false, refsMissing: [], imagesMissing: [] },
+    });
+    expect(row.runId).toBeUndefined();
+    expect(row.logError).toBeUndefined();
+    store.close();
+  });
+
+  it("leaves an episode with no marker exactly as it was", async () => {
+    const { root, store } = await appWith(await makeShow());
+    await mkdir(path.join(root, "Episodes", "s02e08"), { recursive: true });
+    const row = await store.episodeRow("s02e08");
+    expect(row).toMatchObject({ stage: "NEEDS_IDEA", status: "none", needs: { ideaMissing: true, refsMissing: [], imagesMissing: [] } });
+    expect(row.archiveNote).toBeUndefined();
+    expect(row.logError).toBeUndefined();
+    store.close();
+  });
+
+  it("ignores a marker beside a run log: the run is the truth", async () => {
+    const { root, store } = await appWith(await makeShow());
+    await writeIn(root, "Episodes/s02e09/archive.json", JSON.stringify({ stage: "COMPLETE", note: NOTE }));
+    await writeIn(root, "Episodes/s02e09/outline.md", "# The Long Haul\n");
+    // The premise is here so the derived stage is DRAFT_OUTLINE rather than NEEDS_IDEA: the point
+    // of the test is that the marker lost to a gate's own stage, not to a missing premise.
+    await writeIn(root, "Episodes/s02e09/premise.md", "A long tow north.\n");
+    await seedRun(root, "s02e09", "r1", [
+      { kind: "run_started", payload: { pipeline: "episode", episodeId: "s02e09" } },
+      { stepId: "outline", kind: "step_started", payload: { kind: "agent" } }, { stepId: "outline", kind: "step_completed", payload: {} },
+      { stepId: "outline-gate", kind: "gate_opened", payload: { attempt: 1, message: "approve the outline" } },
+    ]);
+    const row = await store.episodeRow("s02e09");
+    expect(row).toMatchObject({ runId: "r1", stage: "DRAFT_OUTLINE", status: "waiting" });
+    expect(row.archiveNote).toBeUndefined();
+    expect(row.openGate).toMatchObject({ stepId: "outline-gate", attempt: 1 });
+    store.close();
+  });
+
+  it("reports a marker it cannot read on the row, keeping the derived stage", async () => {
+    const { root, store } = await appWith(await makeShow());
+    await writeIn(root, "Episodes/s02e10/archive.json", '{"stage": "COMPLETE",');
+    await writeIn(root, "Episodes/s02e11/archive.json", JSON.stringify({ stage: "complete", note: NOTE }));
+    await writeIn(root, "Episodes/s02e12/premise.md", "A long tow north.\n");
+    await writeIn(root, "Episodes/s02e12/archive.json", JSON.stringify({ note: NOTE }));
+
+    const broken = await store.episodeRow("s02e10");
+    expect(broken).toMatchObject({ stage: "NEEDS_IDEA", status: "none" });
+    expect(broken.logError).toMatch(/^archive\.json: not valid JSON — /);
+
+    const notAStage = await store.episodeRow("s02e11");
+    expect(notAStage).toMatchObject({ stage: "NEEDS_IDEA", status: "none", logError: 'archive.json: "complete" is not a stage' });
+
+    const noStage = await store.episodeRow("s02e12");
+    expect(noStage).toMatchObject({ stage: "IDEA", status: "none" });
+    expect(noStage.logError).toBe('archive.json: no stage — the marker needs {"stage": "COMPLETE", "note": "\u2026"}');
+    expect(noStage.needs.ideaMissing).toBe(false);
+    store.close();
+  });
+});

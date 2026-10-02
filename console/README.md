@@ -26,6 +26,25 @@ tool. It does not rotate its logs. The season map, the desk, discuss, notes and 
 step buttons of the rewrite design's §7.2 are not built. Nothing in the console edits a prompt or
 a canon file.
 
+## The archive marker — an episode the engine never ran
+
+**`<episodesDir>/<id>/archive.json` is how an episode finished before this engine existed is shown
+as finished: `{"stage": "COMPLETE", "note": "one line about where it is"}`.** `stage` must be a
+`Stage` string the engine's `isStage` accepts (`"complete"` is not one) and `note` is optional.
+The row then reads at the marker's stage, in that stage's ordinary colour, with an "archived"
+status chip carrying the note, no reasons beside it — an archived episode needs nothing, whatever
+is or is not on disk — and **no launch button**: what a run over a finished episode should do is
+Plan F's question, so the row says "archived; launch is not offered" instead of offering it. **The
+marker is read only for an episode with no run logs at all** (`idleEpisodeRow`, `server/episodes.ts`,
+which `RunStore.episodeRow` calls only when the episode has no runs), because a run once launched
+is the truth and a hand-written file must never be able to hide a gate that is open, a run that
+failed or a worker that is alive. A marker that cannot be read — bad JSON, a `stage` that is not a
+stage — leaves the derived stage and status exactly as they were and says so on the row as
+`archive.json: <reason>`, rather than disappearing and letting a finished season quietly read
+NEEDS_IDEA again. The showrunner's first season carries ten of these markers, written by a pull
+request on the show repository; Plan F carries those ten files through the Season 1 rename and
+decides what the test-bed episodes should show.
+
 ## The three processes
 
 | Process | Entry point | What it owns |

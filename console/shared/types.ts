@@ -13,12 +13,14 @@
  *  `type` keyword on it. */
 import type { PipelineDescription } from "@showrunner/engine";
 
-/** What the console reports for an episode's latest run, or for a run it is showing. Six states,
- *  and only two of them are not in the run log: "none" is an episode that has never run, and
+/** What the console reports for an episode's latest run, or for a run it is showing. Seven
+ *  states, and three of them are not in the run log: "none" is an episode that has never run,
  *  "crashed" is a run whose log stops mid-step with no `run_finished` — the worker died, or its
- *  `run()` rejected. The worker's own `WorkerOutcome.status` is the four of these a finished
- *  `runOnce` can report: `Exclude<RunStatus, "none" | "running">`. */
-export type RunStatus = "none" | "running" | "waiting" | "failed" | "crashed" | "completed";
+ *  `run()` rejected — and "archived" is an episode that was finished outside the engine, which
+ *  says so in an `archive.json` marker beside its files rather than in a log it never had. The
+ *  worker's own `WorkerOutcome.status` is the four of these a finished `runOnce` can report:
+ *  `Exclude<RunStatus, "none" | "running" | "archived">`. */
+export type RunStatus = "none" | "running" | "waiting" | "failed" | "crashed" | "completed" | "archived";
 
 /** The worker holding a run, as a reader of the run's `<runId>.lock` sees it. `pid`,
  *  `heartbeatAt` and `groups` are the lock's own fields, written by the worker on every beat;
@@ -39,7 +41,12 @@ export interface WorkerInfo {
  *  episode has never run. The type is a plain string rather than the engine's `Stage` union
  *  because this file is imported by the client, which must not pull the engine (and `node:fs`
  *  with it) into its bundle. `needs` carries the reasons and not only the flags: a row that says
- *  NEEDS_REFS without naming the three references that are missing sends the operator looking. */
+ *  NEEDS_REFS without naming the three references that are missing sends the operator looking.
+ *
+ *  **An archived episode is `status: "archived"` with `stage` taken from its `archive.json`
+ *  marker, `archiveNote` carrying the marker's one line, and every list in `needs` empty** — it
+ *  was finished outside the engine and needs nothing. The marker is read only for an episode with
+ *  no run logs (`idleEpisodeRow`, `server/episodes.ts`), so it can never contradict a log. */
 export interface EpisodeRow {
   id: string;
   /** The `# ` heading of the episode's outline, else of its script, else the id itself. */
@@ -54,14 +61,19 @@ export interface EpisodeRow {
   /** Why the episode is blocked, in the operator's words: whether the premise is missing, and
    *  the exact references and showrunner-made shots that are not on disk. */
   needs: { ideaMissing: boolean; refsMissing: string[]; imagesMissing: string[] };
+  /** The one line of the episode's `archive.json` marker, shown beside the "archived" chip —
+   *  where the finished episode is and what made it. Set only for `status: "archived"`. */
+  archiveNote?: string;
   /** The timestamp of the last event in the latest run's log — the "time since anything moved"
    *  the Board sorts and colours by. */
   lastEventAt?: string;
   worker?: WorkerInfo;
-  /** Set when the store could not read this run's log to its end: "this run's log could not be
-   *  read past byte N: <message>". Everything else on the row is then derived from the bytes
-   *  before N, which is a row that has stopped moving — and a row that has stopped moving without
-   *  saying so is the worst thing the Board can show. */
+  /** Set when the store could not read this row's own data to the end, in either of the two ways
+   *  that happens. For a run: "this run's log could not be read past byte N: <message>" —
+   *  everything else on the row is then derived from the bytes before N, which is a row that has
+   *  stopped moving, and a row that has stopped moving without saying so is the worst thing the
+   *  Board can show. For an episode with no runs: "archive.json: <reason>" — the archive marker
+   *  is there and unreadable, and the stage beside it is the derived one, not the marker's. */
   logError?: string;
 }
 

@@ -477,6 +477,11 @@ then spawns a detached worker, so the event log stays the only thing that decide
 The console names no show. It is pointed at a show repository with `--show <path>` and reads that
 repository's `showrunner.json`, exactly as the engine does.
 
+**An episode that was finished before the engine existed says so in a marker,
+`<episodesDir>/<id>/archive.json` — `{"stage": "COMPLETE", "note": "…"}` — which the Board reads
+only for an episode with no run logs, and shows at that stage with an "archived" chip, no needs
+and no launch button.**
+
     npm run build && node console/dist/server/main.js --show <show repository> --port 4410
 
 **`console/README.md` is the console's own documentation**: the four surfaces and what is deferred,

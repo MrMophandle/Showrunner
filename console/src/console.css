@@ -155,6 +155,9 @@ h3 { font-size: 0.95rem; margin: 1.25rem 0 0.4rem; font-weight: 600; color: var(
 .chip-failed, .chip-crashed { color: var(--danger); border-color: var(--danger); }
 .chip-completed { color: var(--approved); border-color: var(--approved); }
 .chip-none { color: var(--text-dim); }
+/* An archived episode: finished outside the engine, so the chip is dim and dashed rather than a
+   state of a run, while the stage chip beside it keeps the ordinary approved green. */
+.chip-archived { color: var(--text-dim); border-style: dashed; }
 
 .error-line { color: var(--danger); margin: 0.5rem 0; }
 .notice-line { color: var(--ok); margin: 0.5rem 0; }
@@ -222,6 +225,9 @@ select { min-height: var(--tap); }
 .row-running { border-left-color: var(--draft); }
 .row-failed, .row-crashed { border-left-color: var(--danger); }
 .row-completed { border-left-color: var(--approved); }
+/* An archived episode is finished, so its left border is the approved green of a completed run,
+   dimmed: the row is a record rather than a run this console can act on. */
+.row-archived { border-left-color: color-mix(in srgb, var(--approved) 55%, transparent); }
 
 .row-title { display: block; min-height: var(--tap); display: flex; align-items: center; gap: 0.5rem; font-weight: 600; }
 .row-id { color: var(--text-dim); font-weight: 400; }

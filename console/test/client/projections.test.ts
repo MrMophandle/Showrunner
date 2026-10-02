@@ -152,6 +152,17 @@ describe("titleFor", () => {
     expect(titleFor(show, rows, new Date("2026-10-02T10:03:40Z"))).toBe("● s02e02 DRAFT_AUDIO · 3m — Harbor Light");
   });
 
+  it("ignores an archived episode: a finished season is not something the tab can ask for", () => {
+    const rows = [
+      row({ id: "ep01", status: "archived", stage: "COMPLETE", archiveNote: "Season 1, made by console v1; final on the NAS 2026-07-18" }),
+      row({ id: "ep10", status: "archived", stage: "COMPLETE" }),
+    ];
+    expect(titleFor(show, rows)).toBe("Harbor Light console");
+    // An archived row beside a waiting one leaves the waiting one's claim on the title intact.
+    expect(titleFor(show, [...rows, row({ id: "s02e01", status: "waiting", stage: "DRAFT_OUTLINE" })]))
+      .toBe("⏸ s02e01 NEEDS YOU — Harbor Light");
+  });
+
   it("falls back to the show's console for an idle, empty or unread board", () => {
     expect(titleFor(show, [row({ status: "completed" })])).toBe("Harbor Light console");
     expect(titleFor(show, [])).toBe("Harbor Light console");

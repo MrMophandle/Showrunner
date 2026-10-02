@@ -189,6 +189,11 @@ export function composeNotesWithFlags(
  *  Each form names the first row in Board order that matches, so a show with two waiting episodes
  *  names the earlier one and the title does not flicker between them.
  *
+ *  **An archived row matches no form and so is ignored.** Its status is "archived" — not waiting,
+ *  not broken, not running — so a show whose whole first season is archived reads as idle, which
+ *  it is: an archived episode was finished outside the engine and there is nothing for the person
+ *  at the tab to do about it.
+ *
  *  `showName` comes from `GET /api/show` and never from code: this repository names no show. */
 export function titleFor(showName: string, rows: EpisodeRow[] | null, now: Date | number = Date.now()): string {
   const idle = `${showName} console`;
