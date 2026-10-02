@@ -1,5 +1,5 @@
 import path from "node:path";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { stream as streamText, streamSSE } from "hono/streaming";
@@ -309,7 +309,13 @@ export function createApp(ctx: ShowContext, store: RunStore, deps: AppDeps = {})
    *  second and appends four random characters, so two launches inside one second can collide,
    *  and a collision would not be a new run at all but a second worker appending to an existing
    *  run's history. An `EEXIST` here is that collision, caught atomically rather than in the gap
-   *  between a test and a create. */
+   *  between a test and a create.
+   *
+   *  **A spawn that fails takes the log with it**, answering 500 with the spawner's own message.
+   *  The log exists to name a run a worker is about to pick up; with no worker there is no run,
+   *  and the file left behind would be the episode's latest run, empty and so unfinished —
+   *  refusing every later launch while Continue refused it too. The episode would be wedged by a
+   *  misconfiguration, which is a worse failure than the misconfiguration. */
   app.post("/api/episodes/:id/runs", async (c) => {
     const id = c.req.param("id");
     const valid = checkEpisodeId(id);
@@ -323,6 +329,7 @@ export function createApp(ctx: ShowContext, store: RunStore, deps: AppDeps = {})
       if (!state.finished) return c.json({ error: `run ${latest} is not finished; continue it, answer its gate, or resume it` }, 409);
     }
     let runId: string | undefined;
+    let logFile: string | undefined;
     for (let attempt = 0; attempt < 3 && runId === undefined; attempt++) {
       const candidate = mintRunId();
       const file = EventLog.logPath(ctx.showRoot, id, candidate, ctx.productionDir);
@@ -330,13 +337,26 @@ export function createApp(ctx: ShowContext, store: RunStore, deps: AppDeps = {})
       try {
         await writeFile(file, "", { encoding: "utf8", flag: "wx" });
         runId = candidate;
+        logFile = file;
       } catch (err) {
         if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
       }
     }
-    if (runId === undefined) return c.json({ error: `could not mint a free run id for ${id}: three candidates already had logs` }, 409);
-    const { pid } = await spawnWorker(ctx, id, runId);
-    return c.json({ runId, pid });
+    if (runId === undefined || logFile === undefined) {
+      return c.json({ error: `could not mint a free run id for ${id}: three candidates already had logs` }, 409);
+    }
+    try {
+      const { pid } = await spawnWorker(ctx, id, runId);
+      return c.json({ runId, pid });
+    } catch (err) {
+      // The spawn failed, so the run the log was created for does not exist and never will. The
+      // log has to go with it: left behind it would be the episode's **latest** run — empty, and
+      // therefore unfinished — and the refusal above would then turn every later launch away
+      // while Continue refused it too (an empty log is `has no log; launch a run instead`). An
+      // episode wedged by a failed spawn is a worse failure than the spawn's own.
+      await rm(logFile, { force: true });
+      return c.json({ error: (err as Error).message }, 500);
+    }
   });
 
   /** Answers the open gate — approve, or reject with notes — and sets the run going again.

@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { mkdir, readFile, stat } from "node:fs/promises";
+import { mkdir, readFile, readdir, stat } from "node:fs/promises";
 import path from "node:path";
 import { RUN_ID } from "@showrunner/engine";
+import { createApp } from "../server/app.js";
 import type { EventBatch, EpisodeRow, RunView } from "../shared/types.js";
 import { appWith, makeShow, seedRun, waitFor, writeIn, writeLock } from "./helpers.js";
 
@@ -175,6 +176,27 @@ describe("the actions", () => {
     ]);
     const allowed = await app.request("/api/episodes/s02e01/runs", { method: "POST" });
     expect(allowed.status).toBe(200);
+    store.close();
+  });
+
+  it("POST /api/episodes/:id/runs leaves no run behind when the spawn fails", async () => {
+    const { root, app, ctx, store } = await appWith(await makeShow());
+    // A context whose worker cannot be spawned at all: `spawnWorker` throws before any process
+    // starts. The log for the minted run was already created — that is what makes the run the
+    // episode's latest — so it has to be removed, or the episode is wedged: the launch refusal
+    // would turn every later launch away as "not finished" while Continue refused the same run as
+    // having no log.
+    const broken = createApp({ ...ctx, workerCommand: [] }, store);
+    const failed = await broken.request("/api/episodes/s02e01/runs", { method: "POST" });
+    expect(failed.status).toBe(500);
+    expect(await failed.json()).toMatchObject({ error: expect.stringContaining("workerCommand is empty") });
+
+    const runsDir = path.join(root, "Production", "s02e01", "runs");
+    expect((await readdir(runsDir)).filter((n) => n.endsWith(".jsonl"))).toEqual([]);
+
+    // And the episode is still launchable: nothing is the latest run, so no refusal applies.
+    const after = await app.request("/api/episodes/s02e01/runs", { method: "POST" });
+    expect(after.status).toBe(200);
     store.close();
   });
 
