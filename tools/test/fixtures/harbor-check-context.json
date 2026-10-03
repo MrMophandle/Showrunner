@@ -158,11 +158,16 @@
       "verdict": "DRAFT PASSED",
       "issues": []
     },
+    "hand-edits-outline": "{\"handEdited\": [\"Episodes/s01e01/outline.md\"]}",
+    "hand-edits-script": "{\"handEdited\": []}",
     "image-audit-verdict": "s01-lamp-room: pass; s04-quay-bench: fixed (prompt rewritten positively, seed +1000); s07-vale-still-corner: character-note — visible corner watermark, re-export clean.",
     "image-gate:rejection": "The showrunner rejected this step: the ending does not pay off the cold open, and the Warden's scale is wrong in two shots. Fix both and resubmit.",
     "master": "MASTER OK: episode-mastered.mp4, 00:21:08, -14.0 LUFS.",
     "nano-banana-gate:rejection": "The showrunner rejected this step: the ending does not pay off the cold open, and the Warden's scale is wrong in two shots. Fix both and resubmit.",
     "nano-banana-generate": "NANO_OK: 14 of 14 character shots generated, 0 audit failures.",
+    "outline-gate:rejections": [
+      "The showrunner rejected this step: beat 4 has the Warden opening the conversation. He answers; he does not open. Rewrite the beat and keep the length."
+    ],
     "populator-check": "POPULATORS_BAD: s05-galley-supper — \"the crew\" (banned substring); s09-dock-argument — \"background figures\" (banned substring).",
     "propose": "Proposed canon edits: two ledger threads advanced, one character sheet amended.",
     "publish-copy": "A keeper takes a winter contract on a stretch of coast whose light still burns, and finds out who has been tending it.",
@@ -172,6 +177,7 @@
       "issues": []
     },
     "review-gate": "no",
+    "script-gate:rejections": [],
     "structure-check": {
       "pass": true,
       "verdict": "DRAFT PASSED",
