@@ -106,7 +106,13 @@ export function renderPrompt(template: string, ctx: TemplateContext, extra: Rend
       const name = expr.slice("vars.".length);
       if (name === "" || name.includes(".")) return fail("malformed var name");
       if (!Object.prototype.hasOwnProperty.call(extra.vars, name)) return fail(`no var ${JSON.stringify(name)}`);
-      return extra.vars[name] as string;
+      // Through `renderValue`, as the `results` and `show` branches are. `vars` is typed
+      // Record<string, string>, but the type is not a run-time guarantee: a caller that builds a
+      // step's vars from untyped data — check-prompts' context file, an interview answer parsed
+      // from JSON — can hand over null, or an object, and returning it unchecked would put the
+      // literal text "null" or "[object Object]" into a prompt or into a gate message a
+      // showrunner approves. Every hole in this module is an error; this is one of them.
+      return renderValue(extra.vars[name], fail);
     }
     if (expr === "results" || !expr.startsWith("results.")) return fail("unknown variable");
     const rest = expr.slice("results.".length);

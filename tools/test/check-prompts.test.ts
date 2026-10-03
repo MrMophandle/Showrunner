@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
 import path from "node:path";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { checkPrompts } from "../src/check-prompts.js";
+import { asCheckContext, checkPrompts } from "../src/check-prompts.js";
 
 describe("checkPrompts", () => {
   it("renders every prompt and reports the ones with holes", async () => {
@@ -45,5 +45,40 @@ describe("checkPrompts", () => {
     await writeFile(path.join(dir, "bad.md"), "{{results.missing}}");
     const errors = await checkPrompts({ promptsDir: dir, context: { episodeId: "s02e01", runId: "r", showRoot: "/s", results: {} } });
     expect(errors).toEqual([{ file: "bad.md", error: expect.stringContaining("{{results.missing}}") }]);
+  });
+});
+
+describe("asCheckContext: the context file's vars", () => {
+  /** Writes `body` as the context file the CLI would read, then parses it the way the CLI does. */
+  async function parsed(body: unknown): Promise<ReturnType<typeof asCheckContext>> {
+    const dir = await mkdtemp(path.join(tmpdir(), "chk-ctx-"));
+    const file = path.join(dir, "context.json");
+    await writeFile(file, JSON.stringify(body));
+    return asCheckContext(JSON.parse(await readFile(file, "utf8")) as unknown, file);
+  }
+  const base = { episodeId: "s02e01", runId: "r", showRoot: "/s", results: {} };
+
+  it("accepts vars of string values and renders them into a prompt", async () => {
+    const context = await parsed({ ...base, vars: { file: "Canon/x.md", heading: "Voice" } });
+    expect(context.vars).toEqual({ file: "Canon/x.md", heading: "Voice" });
+    const dir = await mkdtemp(path.join(tmpdir(), "chk-"));
+    await writeFile(path.join(dir, "write.md"), "Write {{vars.file}} under {{vars.heading}}.");
+    expect(await checkPrompts({ promptsDir: dir, context })).toEqual([]);
+  });
+
+  it("refuses a vars that is not an object of string values, naming the file and the key", async () => {
+    // The refusal is deliberate, and stricter than this function's own handling of `season` and
+    // `show`: a silently dropped `vars` would report every var-naming prompt as a hole.
+    await expect(parsed({ ...base, vars: { file: 7 } })).rejects.toThrow(/context\.json: vars\.file must be a string/);
+    await expect(parsed({ ...base, vars: { file: null } })).rejects.toThrow(/vars\.file must be a string/);
+    await expect(parsed({ ...base, vars: { file: { nested: "x" } } })).rejects.toThrow(/vars\.file must be a string/);
+    await expect(parsed({ ...base, vars: ["Canon/x.md"] })).rejects.toThrow(/vars must be an object of string values/);
+    await expect(parsed({ ...base, vars: "Canon/x.md" })).rejects.toThrow(/vars must be an object of string values/);
+    await expect(parsed({ ...base, vars: null })).rejects.toThrow(/vars must be an object of string values/);
+  });
+
+  it("accepts a context file with no vars at all, leaving the field absent", async () => {
+    const context = await parsed(base);
+    expect("vars" in context).toBe(false);
   });
 });

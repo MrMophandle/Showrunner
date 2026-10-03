@@ -115,7 +115,10 @@ export function parseArgs(argv: string[]): ParsedArgs {
   return parsed;
 }
 
-function asCheckContext(value: unknown, file: string): CheckContext {
+/** The context file's accepted shape, as a parser: the CLI reads the file, `JSON.parse`s it, and
+ *  hands the result here, so this function is where "what a context file may contain" is defined.
+ *  Exported so that shape has tests of its own — the CLI is the only other way to reach it. */
+export function asCheckContext(value: unknown, file: string): CheckContext {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new Error(`context file ${file} must hold a JSON object`);
   }
@@ -130,9 +133,10 @@ function asCheckContext(value: unknown, file: string): CheckContext {
   const season = record["season"];
   const show = record["show"];
   // Only string values: `{{vars.<name>}}` substitutes its value verbatim, so a number or a nested
-  // object in the context file would be a var the engine's own type does not permit. A malformed
-  // `vars` is refused rather than dropped, because dropping it would report every prompt that
-  // names a var as a hole and send the reader to the prompts instead of to the context file.
+  // object in the context file would be a var the engine's own type does not permit.
+  // Deliberately stricter than `season` and `show` above, which drop a malformed value silently:
+  // a dropped `vars` would report every prompt that names a var as a hole and send the reader to
+  // the prompts instead of to the context file, which is the one file at fault.
   const vars = record["vars"];
   if (vars !== undefined) {
     if (typeof vars !== "object" || vars === null || Array.isArray(vars)) {

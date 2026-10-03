@@ -97,4 +97,20 @@ describe("{{vars.<name>}}", () => {
   it("fails on a bare {{vars}}", () => {
     expect(() => renderPrompt("{{vars}}", ctx, { vars: {} })).toThrow(/vars needs a name/);
   });
+  it("renders a var's value by the same rules as a result's, so a null is a hole and an object is JSON", () => {
+    // `vars` is typed Record<string, string>; the casts below are the untyped caller the type
+    // cannot stop at run time — a value read out of check-prompts' context file, or an interview
+    // answer parsed from JSON. The assertions are the `results` branch's own behaviour, because
+    // one `renderValue` serves both and the rules must not drift between them.
+    const varsOf = (v: unknown): { vars: Record<string, string> } => ({ vars: { x: v } as unknown as Record<string, string> });
+    expect(() => renderPrompt("{{vars.x}}", ctx, varsOf(null))).toThrow(/\{\{vars\.x\}\}: value is null/);
+    expect(() => renderPrompt("{{vars.x}}", ctx, varsOf(undefined))).toThrow(/\{\{vars\.x\}\}: value is null/);
+    expect(() => renderPrompt("{{vars.x}}", ctx, varsOf(() => 1))).toThrow(/\{\{vars\.x\}\}: value is not serializable/);
+    expect(renderPrompt("{{vars.x}}", ctx, varsOf({ a: 1 }))).toBe(JSON.stringify({ a: 1 }, null, 2));
+    expect(renderPrompt("{{vars.x}}", ctx, varsOf(7))).toBe("7");
+    expect(renderPrompt("{{vars.x}}", ctx, varsOf(false))).toBe("false");
+    // The results branch, side by side, on the same values: one set of rules, not two.
+    expect(() => renderPrompt("{{results.x}}", { ...ctx, results: { x: null } })).toThrow(/\{\{results\.x\}\}: value is null/);
+    expect(renderPrompt("{{results.x}}", { ...ctx, results: { x: { a: 1 } } })).toBe(JSON.stringify({ a: 1 }, null, 2));
+  });
 });

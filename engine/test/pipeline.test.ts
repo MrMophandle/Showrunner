@@ -148,4 +148,25 @@ describe("describePipeline: vars", () => {
     // from the same step described before vars existed.
     expect("vars" in describePipeline({ name: "p", steps: [agent("a")] }).steps[0]!).toBe(false);
   });
+
+  it("records a nested step's vars too, so a gate's fix prompt and a loop body move the hash", () => {
+    // A gate's onReject and a loop's body carry vars through NestedAgentStep. They are rendered by
+    // the same renderer as any other prompt, so a changed var there is a changed pipeline.
+    const nested = (vars: Record<string, string>): Pipeline => ({ name: "p", steps: [
+      { kind: "gate", id: "gn", message: () => "approve?", onReject: { ...agent("gn-fix"), vars } },
+      { kind: "loop", id: "ln", dependsOn: ["gn"], until: "DONE", maxIterations: 2, body: { ...agent("ln-body"), vars } },
+    ] });
+    const d = nested({ heading: "Voice", file: "Canon/x.md" });
+    const described = describePipeline(d);
+    expect(described.steps[0]!.onReject).toEqual({ id: "gn-fix", promptFile: "p.md", model: "m", vars: { file: "Canon/x.md", heading: "Voice" } });
+    expect(described.steps[1]!.body).toEqual({ id: "ln-body", promptFile: "p.md", model: "m", vars: { file: "Canon/x.md", heading: "Voice" } });
+    // Sorted there as well, so the nested vars cannot move the hash by their source order alone.
+    expect(Object.keys(described.steps[0]!.onReject!.vars!)).toEqual(["file", "heading"]);
+    expect(pipelineHash(nested({ file: "Canon/x.md" }))).toBe(pipelineHash(nested({ file: "Canon/x.md" })));
+    expect(pipelineHash(nested({ file: "Canon/x.md" }))).not.toBe(pipelineHash(nested({ file: "Canon/y.md" })));
+    // A nested step with no vars carries no `vars` key, as a top-level one does not.
+    const bare = describePipeline({ name: "p", steps: [gate("gb", "gb-fix"), loop("lb", "lb-body")] });
+    expect(bare.steps[0]!.onReject).toEqual({ id: "gb-fix", promptFile: "p.md", model: "m" });
+    expect(bare.steps[1]!.body).toEqual({ id: "lb-body", promptFile: "p.md", model: "m" });
+  });
 });
