@@ -1,0 +1,23 @@
+{
+  "type": "object",
+  "properties": {
+    "pass": { "type": "boolean" },
+    "verdict": { "type": "string", "enum": ["CANON PASSED", "CANON FAILED"] },
+    "issues": { "type": "array", "items": { "type": "string" } },
+    "deviations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "where": { "type": "string" },
+          "deviation": { "type": "string" },
+          "canon": { "type": "string" },
+          "provenance": { "type": "string", "enum": ["premise", "locked-beats", "rejection-note", "hand-edit"] },
+          "evidence": { "type": "string" }
+        },
+        "required": ["where", "deviation", "canon", "provenance", "evidence"]
+      }
+    }
+  },
+  "required": ["pass", "verdict", "issues", "deviations"]
+}

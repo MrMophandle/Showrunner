@@ -1,0 +1,188 @@
+{
+  "episodeId": "s01e01",
+  "runId": "check-prompts",
+  "showRoot": "/shows/HarborLights",
+  "season": 1,
+  "show": {
+    "showName": "Harbor Lights",
+    "showSlug": "HarborLights",
+    "promptsDir": "prompts",
+    "canonDir": "Canon",
+    "episodesDir": "Episodes",
+    "productionDir": "Production",
+    "models": {
+      "small": "claude-haiku-4-5",
+      "medium": "claude-sonnet-5",
+      "large": "claude-opus-4-8",
+      "writer": "claude-fable-5"
+    },
+    "airMap": {
+      "ep01": [
+        1,
+        1
+      ],
+      "ep02": [
+        1,
+        2
+      ]
+    },
+    "output": {
+      "nasMount": "/Volumes/media",
+      "nasRoot": "/Volumes/media/HarborLights",
+      "finalFilename": "{slug} S{season:02d}E{episode:02d}.mp4",
+      "mixFilename": "{slug} S{season:02d}E{episode:02d}.wav",
+      "videoFilename": "episode.mp4"
+    },
+    "audio": {
+      "sampleRate": 24000,
+      "loudness": {
+        "i": -14,
+        "tp": -1.5,
+        "lra": 11
+      },
+      "voiceDesignLoudnessI": -16,
+      "roomToneDb": -42,
+      "roomToneFundamentalHz": 55,
+      "tailOutSeconds": 1.0,
+      "titleCardGapSeconds": 7.0,
+      "titleCardGapMaxSeconds": 8.5,
+      "sceneTransitionGapSeconds": 3.5,
+      "sceneTransitionGapMaxSeconds": 4.0,
+      "authoredPauseRangeSeconds": [
+        0.2,
+        3.5
+      ],
+      "narratorSpeakerKey": "narrator",
+      "mainCast": [
+        "narrator",
+        "Maeve"
+      ],
+      "voiceRefsDir": "Production/voice-refs",
+      "guestRefsDir": "Production/{episodeId}/guest-refs",
+      "voiceRegistry": "Canon/voice-registry.md"
+    },
+    "visual": {
+      "refs": "Canon/refs.json",
+      "style": "Canon/visual-style.md",
+      "auditLaws": "Canon/visual-audit-laws.md",
+      "castingPileDir": "Canon/characters",
+      "candidatesDir": "Canon/_candidates",
+      "shotFrame": [
+        1024,
+        576
+      ],
+      "characterKinds": [
+        "human",
+        "creature",
+        "ship"
+      ],
+      "ambientPromptScaffold": [
+        "lamp room glass, ",
+        "grey sea horizon, "
+      ],
+      "styleConstants": "overcast coastal realism, hand-held framing, no text, no watermark.",
+      "collectivePopulatorBans": [
+        "the crew",
+        "a crowd",
+        "background figures"
+      ]
+    },
+    "video": {
+      "fps": 30,
+      "crossfadeSeconds": 1.0,
+      "compositionId": "Episode",
+      "titleCard": {
+        "text": "HARBOR LIGHTS",
+        "fontFamily": "Georgia, 'Times New Roman', serif",
+        "colors": {
+          "background": "#05070a",
+          "type": "#d4d8b8",
+          "glow": "rgba(152, 160, 96, 0.25)",
+          "stage": "#0f1004"
+        },
+        "fadeSeconds": 2.0
+      }
+    },
+    "publish": {
+      "channelName": "[YOUR NAME]",
+      "playlistUrl": "https://www.youtube.com/playlist?list=PLharborlights",
+      "playlistName": "Harbor Lights Season 1",
+      "tags": "audio drama, coastal fiction, lighthouse, narrated fiction",
+      "category": "Film & Animation",
+      "standingCopy": {
+        "weekly": "New episodes weekly. Self-contained stories on one stretch of coast.",
+        "aiDisclosure": "A human dreamed up this world and rules every frame of it. AI helps with the writing, the narration, and the art."
+      },
+      "guide": "Canon/publishing-guide.md"
+    }
+  },
+  "results": {
+    "audio-gate:rejection": "The showrunner rejected this step: the ending does not pay off the cold open, and the Warden's scale is wrong in two shots. Fix both and resubmit.",
+    "audio-mix": "MIX OK: HarborLights S01E01.wav, 00:21:08, -14.0 LUFS, room tone -42 dB.",
+    "canon-diff": "CANON CHANGES: 3 files changed, 24 insertions(+), 4 deletions(-).",
+    "canon-gate:rejection": "The showrunner rejected this step: the ending does not pay off the cold open, and the Warden's scale is wrong in two shots. Fix both and resubmit.",
+    "canon-review-outline": {
+      "pass": true,
+      "verdict": "CANON PASSED",
+      "issues": [],
+      "deviations": [
+        {
+          "where": "Beat 4 — the Warden answers Vale in the lamp room",
+          "deviation": "the Warden speaks before Vale asks him anything",
+          "canon": "Canon/characters/The Warden/the-warden.md — he answers, he never opens",
+          "provenance": "locked-beats",
+          "evidence": "Episodes/s01e01/locked-beats.md: \"he speaks first, and she lets him\""
+        }
+      ]
+    },
+    "canon-review-script": {
+      "pass": true,
+      "verdict": "CANON PASSED",
+      "issues": [],
+      "deviations": []
+    },
+    "casting-gate:rejection": "The showrunner rejected this step: the ending does not pay off the cold open, and the Warden's scale is wrong in two shots. Fix both and resubmit.",
+    "character-check": {
+      "pass": true,
+      "verdict": "DRAFT PASSED",
+      "issues": []
+    },
+    "environment-check": {
+      "pass": true,
+      "verdict": "DRAFT PASSED",
+      "issues": []
+    },
+    "final-gate:rejection": "The showrunner rejected this step: the ending does not pay off the cold open, and the Warden's scale is wrong in two shots. Fix both and resubmit.",
+    "flow-check": {
+      "pass": true,
+      "verdict": "DRAFT PASSED",
+      "issues": []
+    },
+    "image-audit-verdict": "s01-lamp-room: pass; s04-quay-bench: fixed (prompt rewritten positively, seed +1000); s07-vale-still-corner: character-note — visible corner watermark, re-export clean.",
+    "image-gate:rejection": "The showrunner rejected this step: the ending does not pay off the cold open, and the Warden's scale is wrong in two shots. Fix both and resubmit.",
+    "master": "MASTER OK: episode-mastered.mp4, 00:21:08, -14.0 LUFS.",
+    "nano-banana-gate:rejection": "The showrunner rejected this step: the ending does not pay off the cold open, and the Warden's scale is wrong in two shots. Fix both and resubmit.",
+    "nano-banana-generate": "NANO_OK: 14 of 14 character shots generated, 0 audit failures.",
+    "populator-check": "POPULATORS_BAD: s05-galley-supper — \"the crew\" (banned substring); s09-dock-argument — \"background figures\" (banned substring).",
+    "propose": "Proposed canon edits: two ledger threads advanced, one character sheet amended.",
+    "publish-copy": "A keeper takes a winter contract on a stretch of coast whose light still burns, and finds out who has been tending it.",
+    "repetition-check": {
+      "pass": true,
+      "verdict": "DRAFT PASSED",
+      "issues": []
+    },
+    "review-gate": "no",
+    "structure-check": {
+      "pass": true,
+      "verdict": "DRAFT PASSED",
+      "issues": []
+    },
+    "tone-check": {
+      "pass": true,
+      "verdict": "DRAFT PASSED",
+      "issues": []
+    },
+    "tts-script": "TTS script written: 5 speakers, 186 segments, 2 guest voices to design.",
+    "validate-manifest": "MANIFEST OK: 5 speakers, 186 segments, 0 warnings."
+  }
+}
