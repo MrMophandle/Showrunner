@@ -142,12 +142,14 @@ function templatePath(...segments: string[]): string {
 
 /** A cast name that is safe to use as a directory segment: it starts with a letter or a digit and
  *  carries only letters, digits, spaces, apostrophes and hyphens, up to 64 characters — "Vale",
- *  "The Warden", "O'Brien-Vale". Everything a path could be steered with is absent from the class,
+ *  "The Warden", "O'Brien-Vale", "Maève". Letter and digit are Unicode classes, not ASCII ranges,
+ *  because a name is a person's name and an author should not have to transliterate one to cast it.
+ *  Everything a path could be steered with is absent from the class,
  *  `.` and `/` first among them, so no name matching this can name a directory other than the one
  *  under `Canon/characters/`. The names reach this module as free text typed at the world-overview
  *  interview, so they are validated and not merely slugged: `slugOf` makes a safe *file* name, and
  *  the *directory* keeps the author's spelling, which is the part a traversal would ride in on. */
-const CAST_NAME = /^[A-Za-z0-9][A-Za-z0-9 '\-]{0,63}$/;
+const CAST_NAME = /^[\p{L}\p{N}][\p{L}\p{N} '\-]{0,63}$/u;
 
 /** One `Canon/characters/<Name>/<slug>.md` per cast entry, from the character entity template with
  *  the name on its `#` line and the author's one-liner as the sheet's one-line summary directly
@@ -165,20 +167,20 @@ const CAST_NAME = /^[A-Za-z0-9][A-Za-z0-9 '\-]{0,63}$/;
 export async function writeCastSheets(root: string, config: ShowConfig, cast: readonly { name: string; line: string }[]): Promise<string[]> {
   const canon = dirKey(config.canonDir, "Canon");
 
-  // Every name is checked before anything is written, so a bad name in the middle of a cast list
-  // leaves no half-written set of sheets behind — the whole call is refused, by name.
+  // Every name is checked, slugged and resolved before anything at all is written, so a name this
+  // function will not accept — wherever it sits in the cast list — leaves no half-written set of
+  // sheets behind. The whole call is refused, naming the member that caused it.
+  const charactersRoot = path.resolve(root, canon, "characters");
+  const planned: { name: string; line: string; rel: string }[] = [];
   for (const member of cast) {
     if (!CAST_NAME.test(member.name)) {
       throw new Error(
         `cast name ${JSON.stringify(member.name)} is not a usable directory name: a name may carry only letters, digits, spaces, apostrophes and hyphens, must start with a letter or a digit, and must be at most 64 characters`,
       );
     }
-  }
-
-  const charactersRoot = path.resolve(root, canon, "characters");
-  const template = await readFile(templatePath("canon", "characters", "_TEMPLATE.md"), "utf8");
-  const written: string[] = [];
-  for (const member of cast) {
+    // `slugOf` throws for a name with no Latin letter or digit in it, which `CAST_NAME` admits:
+    // the name class is Unicode and the file name is not. Calling it here rather than in the write
+    // loop is what keeps that case all-or-nothing too.
     const rel = `${canon}/characters/${member.name}/${slugOf(member.name)}.md`;
     // Belt and braces over CAST_NAME: the path that is about to be written is resolved and
     // required to lie under Canon/characters/, so a future change to the name class, or a
@@ -187,8 +189,14 @@ export async function writeCastSheets(root: string, config: ShowConfig, cast: re
     if (!abs.startsWith(charactersRoot + path.sep)) {
       throw new Error(`cast sheet for ${JSON.stringify(member.name)} would be written at ${abs}, outside ${charactersRoot}`);
     }
+    planned.push({ ...member, rel });
+  }
+
+  const template = await readFile(templatePath("canon", "characters", "_TEMPLATE.md"), "utf8");
+  const written: string[] = [];
+  for (const member of planned) {
     const sheet = template.replace(/^#[ \t]+.*$/m, `# ${member.name}\n\n${member.line.trim()}`);
-    written.push(await writeNew(root, rel, sheet));
+    written.push(await writeNew(root, member.rel, sheet));
   }
   return written.sort();
 }

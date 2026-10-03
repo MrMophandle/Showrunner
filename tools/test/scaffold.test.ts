@@ -169,6 +169,24 @@ describe("writeCastSheets", () => {
     }
   });
 
+  it("refuses a name that has no file name, before it writes the sheets that come before it", async () => {
+    const root = await tempRoot();
+    try {
+      const config = await harborConfig();
+      // The name class is Unicode, so this passes CAST_NAME; the file name is Latin, so slugOf
+      // refuses it. The refusal must still be all-or-nothing.
+      await expect(
+        writeCastSheets(root, config, [
+          { name: "Vale", line: "The keeper." },
+          { name: "山田", line: "No Latin letter in the name." },
+        ]),
+      ).rejects.toThrow(/has no alphanumeric character/);
+      await expect(readFile(path.join(root, "Canon/characters/Vale/vale.md"), "utf8")).rejects.toThrow(/ENOENT/);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("refuses a name that would traverse out of the show root entirely", async () => {
     const root = await tempRoot();
     try {
@@ -181,13 +199,18 @@ describe("writeCastSheets", () => {
     }
   });
 
-  it("accepts a name with an apostrophe and a hyphen", async () => {
+  it("accepts a name with an apostrophe, a hyphen or an accent", async () => {
     const root = await tempRoot();
     try {
       const config = await harborConfig();
-      const written = await writeCastSheets(root, config, [{ name: "O'Brien-Vale", line: "The relief keeper." }]);
-      expect(written).toEqual(["Canon/characters/O'Brien-Vale/o-brien-vale.md"]);
+      const written = await writeCastSheets(root, config, [
+        { name: "O'Brien-Vale", line: "The relief keeper." },
+        { name: "Maève", line: "The harbourmaster." },
+      ]);
+      expect(written).toEqual(["Canon/characters/Maève/maeve.md", "Canon/characters/O'Brien-Vale/o-brien-vale.md"]);
       expect(await readFile(path.join(root, "Canon/characters/O'Brien-Vale/o-brien-vale.md"), "utf8")).toContain("# O'Brien-Vale");
+      // The accent survives in the directory the author sees and is dropped from the file name.
+      expect(await readFile(path.join(root, "Canon/characters/Maève/maeve.md"), "utf8")).toContain("# Maève");
     } finally {
       await rm(root, { recursive: true, force: true });
     }

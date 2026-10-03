@@ -44,7 +44,7 @@ TTS mispronounces.)
 really about underneath.)
 
 ## Key relationships
-(One line PER crew member they interact with, each with a usable tell — who
+(One line per cast member they interact with, each with a usable tell — who
 teases whom, who defers, who's exempt from what.)
 
 ## Continuity notes
