@@ -438,3 +438,19 @@ describe("run", () => {
     expect(started?.payload).toMatchObject({ pipeline: "p", episodeId: "s02e01", engineVersion: ENGINE_VERSION, pipelineHash: pipelineHash(pipeline) });
   });
 });
+
+describe("run: a gate's vars", () => {
+  it("hands the gate's own vars to the message renderer", async () => {
+    const root = await show();
+    const pipeline: Pipeline = { name: "p", steps: [{ kind: "gate", id: "g", messageFile: "gate.md", vars: { file: "Canon/x.md" } }] };
+    const log = new EventLog(EventLog.logPath(root, "s02e01", "r1"));
+    const r = await run({
+      pipeline, ctx: { runId: "r1", episodeId: "s02e01", showRoot: root }, log, executors: okExecutors([]),
+      renderGateMessage: async (file, ctx, vars) => `${file}:${vars?.file}`,
+    });
+    expect(r.status).toBe("waiting");
+    if (r.status !== "waiting") return;
+    expect(r.gate.message).toBe("gate.md:Canon/x.md");
+    expect((await log.read()).find((e) => e.kind === "gate_opened")?.payload["message"]).toBe("gate.md:Canon/x.md");
+  });
+});

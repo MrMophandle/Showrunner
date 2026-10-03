@@ -37,6 +37,9 @@ const LEFTOVER_BRACE = /\{\{|\}\}/;
 export interface RenderExtra {
   season?: number;
   show?: Record<string, unknown>;
+  /** The step's own `vars` (steps.ts); `{{vars.<name>}}` fails when the step declared none, or
+   *  none by that name. */
+  vars?: Record<string, string>;
 }
 
 /** Renders one resolved value as prompt text. Shared by the `results` and the `show` branches so
@@ -59,10 +62,13 @@ function renderValue(value: unknown, fail: (why: string) => never): string {
  *  as written, because a prompt with a hole in it lies to the model quietly.
  *
  *  The variables are `{{episodeId}}`, `{{runId}}`, `{{showRoot}}`, `{{results.<stepId>[.path]}}`,
- *  `{{season}}` (the numeric season, unpadded) and `{{show.<path>}}` (a dotted path into the show
- *  config, so `{{show.video.fps}}`). The last two read `extra`, and each fails when the caller did
- *  not supply what it names — `{{season}}` for an episode with no season, `{{show.*}}` for an
- *  executor built without a show config.
+ *  `{{season}}` (the numeric season, unpadded), `{{show.<path>}}` (a dotted path into the show
+ *  config, so `{{show.video.fps}}`) and `{{vars.<name>}}` (one of the step's own `vars`, a flat
+ *  name and never a path, so one prompt file can be run for several targets). The last three read
+ *  `extra`, and each fails when the caller did not supply what it names — `{{season}}` for an
+ *  episode with no season, `{{show.*}}` for an executor built without a show config, `{{vars.*}}`
+ *  for a step that declared no vars at all, which is a different fault from a step that declared
+ *  some but not that name and is worded differently for that reason.
  *
  *  A doubled brace surviving the substitution is the one hole VARIABLE cannot see — its character
  *  class matches no brace, so `{{results.{x}}}` and an unterminated `{{results.setup` match nothing
@@ -93,6 +99,14 @@ export function renderPrompt(template: string, ctx: TemplateContext, extra: Rend
         value = (value as Record<string, unknown>)[seg];
       }
       return renderValue(value, fail);
+    }
+    if (expr === "vars" || expr.startsWith("vars.")) {
+      if (expr === "vars") return fail("vars needs a name");
+      if (extra.vars === undefined) return fail("vars are not available");
+      const name = expr.slice("vars.".length);
+      if (name === "" || name.includes(".")) return fail("malformed var name");
+      if (!Object.prototype.hasOwnProperty.call(extra.vars, name)) return fail(`no var ${JSON.stringify(name)}`);
+      return extra.vars[name] as string;
     }
     if (expr === "results" || !expr.startsWith("results.")) return fail("unknown variable");
     const rest = expr.slice("results.".length);

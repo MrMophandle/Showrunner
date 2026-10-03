@@ -129,3 +129,23 @@ describe("describePipeline", () => {
     expect(pipelineHash(p)).not.toBe(pipelineHash({ ...p, name: "q" }));
   });
 });
+
+describe("describePipeline: vars", () => {
+  it("records an agent's and a gate's vars with sorted keys, so the hash tracks the values and not the order they were written in", () => {
+    const withVars = (vars: Record<string, string>): Pipeline => ({ name: "p", steps: [
+      { kind: "agent", id: "a", promptFile: "write.md", model: "m", allowedTools: [], context: "fresh", vars },
+      { kind: "gate", id: "gv", dependsOn: ["a"], messageFile: "g.gate.md", vars },
+    ] });
+    const d = describePipeline(withVars({ heading: "Voice", file: "Canon/x.md" }));
+    expect(d.steps[0]).toMatchObject({ id: "a", vars: { file: "Canon/x.md", heading: "Voice" } });
+    expect(d.steps[1]).toMatchObject({ id: "gv", vars: { file: "Canon/x.md", heading: "Voice" } });
+    expect(Object.keys(d.steps[0]!.vars!)).toEqual(["file", "heading"]);
+    // The same vars written in the other order are one pipeline, and hash as one.
+    expect(pipelineHash(withVars({ file: "Canon/x.md", heading: "Voice" }))).toBe(pipelineHash(withVars({ heading: "Voice", file: "Canon/x.md" })));
+    // A changed value is a changed prompt, and so a changed pipeline.
+    expect(pipelineHash(withVars({ file: "Canon/x.md", heading: "Voice" }))).not.toBe(pipelineHash(withVars({ file: "Canon/y.md", heading: "Voice" })));
+    // A step that declares no vars carries no `vars` key, so nothing distinguishes it in the hash
+    // from the same step described before vars existed.
+    expect("vars" in describePipeline({ name: "p", steps: [agent("a")] }).steps[0]!).toBe(false);
+  });
+});

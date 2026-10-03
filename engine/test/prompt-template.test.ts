@@ -82,3 +82,19 @@ describe("renderPrompt: season and show", () => {
     expect(() => renderPrompt("{{show}}", ctx, { show })).toThrow(TemplateError);
   });
 });
+
+describe("{{vars.<name>}}", () => {
+  const ctx = { episodeId: "setup", runId: "r1", showRoot: "/show", results: {} };
+  it("renders a declared var", () => {
+    expect(renderPrompt("file: {{vars.file}}", ctx, { vars: { file: "Canon/style-guide.md" } })).toBe("file: Canon/style-guide.md");
+  });
+  it("fails on an undeclared var, naming it", () => {
+    expect(() => renderPrompt("{{vars.nope}}", ctx, { vars: { file: "x" } })).toThrow(/\{\{vars\.nope\}\}: no var "nope"/);
+  });
+  it("fails when the step declares no vars at all", () => {
+    expect(() => renderPrompt("{{vars.file}}", ctx, {})).toThrow(/vars are not available/);
+  });
+  it("fails on a bare {{vars}}", () => {
+    expect(() => renderPrompt("{{vars}}", ctx, { vars: {} })).toThrow(/vars needs a name/);
+  });
+});

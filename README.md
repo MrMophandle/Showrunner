@@ -195,11 +195,15 @@ or queried.
 | `{{results.<stepId>.<field>}}` | a field of that step's result object, at any depth (`{{results.review.notes.tone}}`) |
 | `{{season}}` | the episode's numeric season, unpadded (`Canon/season-{{season}}.md`) — read off an aired id, or from the show config's `airMap` for a production id |
 | `{{show.<path>}}` | a dotted path into the show config (`{{show.showName}}`, `{{show.video.fps}}`), by the same value rules as `{{results.*}}` |
+| `{{vars.<name>}}` | one of the step's own `vars` (`AgentStep.vars`, `GateStep.vars`): a flat name, never a path, so one prompt file can be run for several targets — a pipeline that writes fourteen files with one `write.md` names each target in the step rather than in fourteen prompt files |
 
 **Every hole is an error.** An unknown variable, a step with no result, a path through a non-object,
 a missing key, a null value, or a value `JSON.stringify` cannot represent throws `TemplateError`
 naming the variable as written — `{{results.missing}}: no result for step "missing"` — and the step
-fails before the query is made. A `{{` or `}}` still in the text after substitution is refused too,
+fails before the query is made. A `{{vars.*}}` hole is worded two ways, because the two faults have
+different repairs: `vars are not available` when the step declares no `vars` at all, which is a
+wiring or declaration fault, and `no var "<name>"` when the step declares some but not that one,
+which is a fault in the step's own `vars`. A `{{` or `}}` still in the text after substitution is refused too,
 by a different message that quotes the text rather than a variable, because there is no
 well-formed variable to name: `unbalanced or malformed template braces near: <40 characters>`.
 A prompt with a hole in it lies to the model quietly, which is the failure this refuses to ship.
@@ -671,12 +675,16 @@ same inputs produces byte-identical outputs.
   approval and a hole in one misleads the single person the pipeline cannot afford to mislead.
   **`README.md` is the one exception and is skipped**: it is written by a person, never by the
   extractor, and it documents the template syntax, so it quotes forms such as `{{show.<path>}}`
-  that are deliberately not renderable.
+  that are deliberately not renderable. The context file holds `episodeId`, `runId`, `showRoot` and
+  `results`, and optionally `season`, `show` and **`vars`** — the last being the sample
+  `{{vars.<name>}}` values, which belong to a pipeline step and so cannot be derived by a checker
+  that has no pipeline.
 
     node tools/dist/extract-prompts.js --workflows <dir> --out <show-root>/prompts \
         [--overrides tools/show-data/<show>-overrides.json] [--force]
     node tools/dist/check-prompts.js --prompts <show-root>/prompts \
         --context tools/show-data/<show>-check-context.json
+        # the context file: { episodeId, runId, showRoot, results, season?, show?, vars? }
 
 **`tools/show-data/` is the one place under `tools/` that carries a show's name, and what it holds
 is data, not code.** Both programs are show-agnostic and take their show-specific inputs as files —

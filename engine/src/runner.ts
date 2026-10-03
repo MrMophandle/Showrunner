@@ -554,7 +554,7 @@ async function runGateStep(
       return failGate(`gate ${JSON.stringify(step.id)}: messageFile needs RunOptions.renderGateMessage`);
     }
     try {
-      message = await renderGateMessage(step.messageFile, ctx);
+      message = await renderGateMessage(step.messageFile, ctx, step.vars);
     } catch (err) {
       return failGate(`gate ${JSON.stringify(step.id)}: ${step.messageFile} did not render: ${err instanceof Error ? err.message : String(err)}`);
     }

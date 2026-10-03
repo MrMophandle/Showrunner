@@ -123,11 +123,25 @@ export interface StepDescription {
   idleTimeoutMs?: number; messageFile?: string; maxAttempts?: number; rerunOnReject?: StepId[];
   onReject?: { id: StepId; promptFile: string; model: string }; body?: { id: StepId; promptFile: string; model: string };
   until?: string; maxIterations?: number; cwd?: string;
+  /** The step's `{{vars.<name>}}` values (agent and gate steps), keys sorted. Described because a
+   *  changed var changes what the step's prompt says and so must change the pipeline hash. */
+  vars?: Record<string, string>;
 }
 
 /** A whole pipeline as plain data — the name a run records and its steps in declaration order.
  *  This is the shape `pipelineHash` hashes and the shape a console or a report renders. */
 export interface PipelineDescription { name: string; steps: StepDescription[] }
+
+/** A step's `vars` copied with its keys in sorted order. `pipelineHash` hashes the description
+ *  through JSON.stringify, which emits an object's keys in insertion order, so copying the
+ *  author's object as it was written would make two pipelines that declare the same vars in a
+ *  different source order hash differently — a pipeline change the log would report when nothing
+ *  about the pipeline changed. Sorting makes the hash a function of the values alone. */
+function describeVars(vars: Record<string, string>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const key of Object.keys(vars).sort()) out[key] = vars[key] as string;
+  return out;
+}
 
 /** The pipeline as a document: every name, edge, file and bound a step declares, with each
  *  function reduced to "present". A pipeline is live TypeScript — argv, when, check, progress are
@@ -143,12 +157,14 @@ export function describePipeline(p: Pipeline): PipelineDescription {
       d.promptFile = s.promptFile; d.model = s.model; d.allowedTools = [...s.allowedTools]; d.context = s.context;
       if (s.schemaFile !== undefined) d.schemaFile = s.schemaFile;
       if (s.idleTimeoutMs !== undefined) d.idleTimeoutMs = s.idleTimeoutMs;
+      if (s.vars !== undefined) d.vars = describeVars(s.vars);
     }
     if (s.kind === "gate") {
       if (s.messageFile !== undefined) d.messageFile = s.messageFile;
       if (s.maxAttempts !== undefined) d.maxAttempts = s.maxAttempts;
       if (s.rerunOnReject !== undefined) d.rerunOnReject = [...s.rerunOnReject];
       if (s.onReject) d.onReject = { id: s.onReject.id, promptFile: s.onReject.promptFile, model: s.onReject.model };
+      if (s.vars !== undefined) d.vars = describeVars(s.vars);
     }
     if (s.kind === "loop") {
       d.until = s.until; d.maxIterations = s.maxIterations;
