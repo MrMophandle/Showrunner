@@ -46,7 +46,7 @@ describe("the read routes", () => {
     expect(res.status).toBe(200);
     const view = await res.json() as RunView;
     expect(view).toMatchObject({ episodeId: "s02e01", runId: "r1", pipeline: { name: "episode" } });
-    expect(view.steps.length).toBe(73);
+    expect(view.steps.length).toBe(74);
     expect(view.offset).toBeGreaterThan(0);
     expect((await app.request("/api/episodes/s02e01/runs/bad.id")).status).toBe(400);
     store.close();

@@ -17,6 +17,13 @@ export const show: ShowConfig = {
   publish: { guide: "Canon/publishing-guide.md" },
 };
 
+/** Every file the `bible-ready` guard requires under `Canon/`, as basenames, for an episode of
+ *  season 2 — the season of every episode id in these fixtures. It is `BIBLE_FILES` with the
+ *  season row resolved to `season-2`. Every fixture below writes all of them because
+ *  `bible-ready` is the pipeline's second step: a fixture that omits one fails there instead of
+ *  reaching the step it asserts on. */
+const BIBLE = ["world-overview", "series-arc", "episode-formula", "story-craft", "style-guide", "technology", "timeline", "season-2", "visual-style", "visual-audit-laws", "publishing-guide", "pipeline-artifacts", "README", "continuity-ledger", "voice-registry"] as const;
+
 describe("episodePipeline", () => {
   const p = episodePipeline({ show, episodeId: "s02e01", engineRoot: "/engine" });
 
@@ -24,7 +31,7 @@ describe("episodePipeline", () => {
     expect(p.name).toBe(EPISODE_PIPELINE_NAME);
     expect(() => orderSteps(p)).not.toThrow();
     expect(() => validateStageMap(EPISODE_STAGE_MAP, p)).not.toThrow();
-    expect(p.steps).toHaveLength(73);
+    expect(p.steps).toHaveLength(74);
   });
 
   it("has the eight gates in run order, each opening its DRAFT_ stage", () => {
@@ -163,7 +170,7 @@ describe("the episode pipeline, walked", () => {
     const nas = await mkdtemp(path.join(tmpdir(), "nas-"));
     const cfg: ShowConfig = { ...show, output: { ...show.output, nasRoot: nas } };
     const { executors, calls, w } = fakeExecutors(root, { failOnce: new Set(["tts-generate"]) });
-    for (const f of ["world-overview", "technology", "timeline", "continuity-ledger", "series-arc", "episode-formula", "story-craft", "style-guide", "season-2", "visual-style", "voice-registry", "publishing-guide"]) await w(`Canon/${f}.md`, `${f}\n`);
+    for (const f of BIBLE) await w(`Canon/${f}.md`, `${f}\n`);
     await w("Canon/refs.json", JSON.stringify({ vale: { kind: "human", ref: "Canon/characters/Vale/ref.png" }, harbor: { kind: "location", ref: "Canon/locations/harbor.png" } }));
     await w("Canon/characters/Vale/ref.png", "png"); await w("Canon/locations/harbor.png", "png");
     await w("Production/voice-refs/refs.json", JSON.stringify({ cast: { Vale: { ref: "Production/voice-refs/vale.wav", status: "LOCKED" } } })); await w("Production/voice-refs/vale.wav", "wav");
@@ -271,7 +278,7 @@ describe("the episode pipeline, walked", () => {
   it("stops at NEEDS_REFS when the outline names a recurring subject the bible lacks, and continues once it exists", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "show-"));
     const { executors, w } = fakeExecutors(root);
-    for (const f of ["world-overview", "technology", "timeline", "continuity-ledger", "series-arc", "episode-formula", "story-craft", "style-guide", "season-2", "publishing-guide", "voice-registry"]) await w(`Canon/${f}.md`, `${f}\n`);
+    for (const f of BIBLE) await w(`Canon/${f}.md`, `${f}\n`);
     await w("Canon/refs.json", JSON.stringify({ harbor: { kind: "location", ref: "Canon/locations/harbor.png" } })); await w("Canon/locations/harbor.png", "png");
     await w("Production/voice-refs/refs.json", JSON.stringify({ cast: {} }));
     await w("Episodes/_TEMPLATE/outline.md", "t\n"); await w("Episodes/s02e01/premise.md", "A week.\n");
@@ -295,7 +302,7 @@ describe("the episode pipeline, walked", () => {
   it("routes a failed canon review through the outline-revise loop before the gate, and refuses to start s02e02 while s02e01 has not completed", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "show-"));
     const { executors, calls, w } = fakeExecutors(root, { reviewFailOnce: new Set(["canon-review-outline"]) });
-    for (const f of ["world-overview", "technology", "timeline", "continuity-ledger", "series-arc", "episode-formula", "story-craft", "style-guide", "season-2"]) await w(`Canon/${f}.md`, `${f}\n`);
+    for (const f of BIBLE) await w(`Canon/${f}.md`, `${f}\n`);
     await w("Episodes/_TEMPLATE/outline.md", "t\n"); await w("Episodes/s02e01/premise.md", "A week.\n"); await w("Episodes/s02e02/premise.md", "Another.\n");
     const p1 = episodePipeline({ show, episodeId: "s02e01", engineRoot: "/engine" });
     const log1 = new EventLog(EventLog.logPath(root, "s02e01", "r1"));
@@ -307,5 +314,23 @@ describe("the episode pipeline, walked", () => {
     const r = await run({ pipeline: p2, ctx: { runId: "r1", episodeId: "s02e02", showRoot: root }, log: log2, executors, renderGateMessage: async (file, c) => `${file} for ${c.episodeId}` });
     expect(r).toMatchObject({ status: "failed", stepId: "previous-episode" });
     expect(r.status === "failed" && r.error).toMatch(/s02e01 has not completed its canon update/);
+  });
+
+  it("fails at bible-ready when a bible file is absent, naming it, and runs on once it is written", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "show-"));
+    const { executors, w } = fakeExecutors(root);
+    for (const f of BIBLE.filter((b) => b !== "style-guide")) await w(`Canon/${f}.md`, `${f}\n`);
+    await w("Episodes/_TEMPLATE/outline.md", "t\n"); await w("Episodes/s02e01/premise.md", "A week.\n");
+    const pipeline = episodePipeline({ show, episodeId: "s02e01", engineRoot: "/engine" });
+    const log = new EventLog(EventLog.logPath(root, "s02e01", "r1"));
+    const go = () => run({ pipeline, ctx: { runId: "r1", episodeId: "s02e01", showRoot: root }, log, executors, renderGateMessage: async (file, c) => `${file} for ${c.episodeId}` });
+    const r = await go();
+    expect(r).toMatchObject({ status: "failed", stepId: "bible-ready" });
+    expect(r.status === "failed" && r.error).toMatch(/^BIBLE_INCOMPLETE: .*Canon\/style-guide\.md/);
+    // The guard is the write phase's own list, so writing the file it named is the whole fix: the
+    // run resumes through bible-ready and reaches the first gate.
+    await w("Canon/style-guide.md", "style-guide\n");
+    await resumeRun(log, "r1");
+    expect(await go()).toMatchObject({ status: "waiting", gate: { stepId: "outline-gate" } });
   });
 });

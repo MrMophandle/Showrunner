@@ -9,7 +9,7 @@ async function show() {
   const root = await mkdtemp(path.join(tmpdir(), "show-"));
   const w = async (rel: string, text: string) => { await mkdir(path.dirname(path.join(root, rel)), { recursive: true }); await writeFile(path.join(root, rel), text); };
   await w("showrunner.json", JSON.stringify({ showName: "Harbor Light", showSlug: "HarborLight", promptsDir: "prompts", models: { medium: "m", large: "l", writer: "w" }, airMap: {}, output: { nasRoot: path.join(root, "nas") } }));
-  for (const f of ["world-overview", "technology", "timeline", "continuity-ledger", "series-arc", "episode-formula", "story-craft", "style-guide", "season-2", "visual-style", "voice-registry", "publishing-guide"]) await w(`Canon/${f}.md`, `${f}\n`);
+  for (const f of ["world-overview", "technology", "timeline", "continuity-ledger", "series-arc", "episode-formula", "story-craft", "style-guide", "season-2", "visual-style", "visual-audit-laws", "voice-registry", "publishing-guide", "pipeline-artifacts", "README"]) await w(`Canon/${f}.md`, `${f}\n`);
   await w("Canon/refs.json", "{}"); await w("Production/voice-refs/refs.json", JSON.stringify({ cast: {} }));
   await w("Episodes/_TEMPLATE/outline.md", "t\n"); await w("Episodes/s02e01/premise.md", "A week.\n");
   await w("prompts/outline-gate.gate.md", "Outline for {{episodeId}}");

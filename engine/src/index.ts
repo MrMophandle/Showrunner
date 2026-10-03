@@ -15,5 +15,6 @@ export * from "./agent-step.js";
 export * from "./sdk-query.js";
 export * from "./stages.js";
 export * from "./needs.js";
+export * from "./bible.js";
 export * from "./provenance.js";
 export * from "./pipelines/episode.js";
