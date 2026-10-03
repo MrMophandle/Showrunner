@@ -103,18 +103,23 @@ export function headingMatches(line: string, heading: string): boolean {
   return have === want || have.startsWith(want + " ");
 }
 
-/** The files the episode pipeline reads from the bible: `BIBLE_FILES` plus the four the config
- *  names (`visual.style`, `visual.auditLaws`, `audio.voiceRegistry`, `publish.guide`) and the
- *  outline template. Each must exist and be non-empty. Returned sorted, `<path>` for an absent
- *  file and `<path> (empty)` for an empty one.
+/** Every file the episode pipeline reads from the bible, as paths relative to the show root,
+ *  de-duplicated and in the order the checks are declared: the `BIBLE_FILES` rows with
+ *  `Canon/` rewritten to the show's canon directory, the four files the config names
+ *  (`visual.style`, `visual.auditLaws`, `audio.voiceRegistry`, `publish.guide`), and the outline
+ *  template. `season` governs the season file exactly as the episode pipeline's canon spine does:
+ *  a number means `<canon>/season-<season>.md` is in the list and no other season's file is, and
+ *  `undefined` — a production id the air map does not map, for which `seasonOf` throws — means no
+ *  season file is in it at all.
  *
- *  `season` is the season of the episode being made, and it governs the season file exactly as
- *  the episode pipeline's canon spine does: a number means `Canon/season-<season>.md` is required
- *  and no other season's file is, and `undefined` — a production id the air map does not map, for
- *  which `seasonOf` throws — means no season file is required at all. The two must agree, because
- *  a guard that demanded a file the `outline` step never declares would refuse a run the pipeline
- *  could have completed. */
-export async function missingBibleFiles(showRoot: string, show: ShowConfig, season?: number): Promise<string[]> {
+ *  It is split out of `missingBibleFiles` and touches no disk so that the episode pipeline's
+ *  declared inputs can be tested against the guard's list. The two agree only by hand, and the
+ *  asymmetry matters: a `Canon/` input some step declares that this list omits hashes null and
+ *  runs that step against nothing (inventory F-01, the hole `bible-ready` exists to close), while
+ *  a file in this list that no step declares merely refuses a run that would have worked. A test
+ *  that walks the pipeline's steps can hold both lines only if the list is callable without a
+ *  show on disk. */
+export function bibleFilesFor(show: ShowConfig, season?: number): string[] {
   const canon = show.canonDir ?? "Canon";
   const episodes = show.episodesDir ?? "Episodes";
   const str = (v: unknown, fallback: string): string => (typeof v === "string" && v !== "" ? v : fallback);
@@ -133,8 +138,16 @@ export async function missingBibleFiles(showRoot: string, show: ShowConfig, seas
     str(show.publish?.["guide"], `${canon}/publishing-guide.md`),
     `${episodes}/_TEMPLATE/outline.md`,
   ]) files.add(rel);
+  return [...files];
+}
+
+/** Every file of `bibleFilesFor(show, season)` that is absent or empty: each must exist and carry
+ *  something. Returned sorted, `<path>` for an absent file and `<path> (empty)` for an empty one,
+ *  so the `bible-ready` guard's message names what to write. `season` is the season of the
+ *  episode being made and reaches `bibleFilesFor` unchanged. */
+export async function missingBibleFiles(showRoot: string, show: ShowConfig, season?: number): Promise<string[]> {
   const out: string[] = [];
-  for (const rel of files) {
+  for (const rel of bibleFilesFor(show, season)) {
     let text: string | undefined;
     try { text = await readFile(path.join(showRoot, rel), "utf8"); } catch { text = undefined; }
     if (text === undefined) out.push(rel);

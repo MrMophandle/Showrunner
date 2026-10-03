@@ -20,6 +20,17 @@ describe("headingMatches", () => {
   it("does not match a different heading that shares a word", () => {
     expect(headingMatches("## Cast", "Casting")).toBe(false);
   });
+  it("matches a longer heading that begins with the required one as whole words", () => {
+    // The stated cost of the prefix rule, in the direction that costs something: the rule is what
+    // admits "## The rules of the universe (load-bearing — do not contradict)" and "## Endings —
+    // the \"so what?\" test", and the price is that a required heading is also carried by an
+    // unrelated heading that merely starts with it. "## Beats per minute" carries "Beats", so a
+    // file with that heading and no "## Beats" passes the Beats requirement while outline.md and
+    // flow-check.md read nothing. REQUIRED_SECTIONS must therefore never require, of one file, a
+    // heading that is a whole-word prefix of another heading required of that same file; the test
+    // below is what holds that line.
+    expect(headingMatches("## Beats per minute", "Beats")).toBe(true);
+  });
 });
 
 describe("BIBLE_FILES and REQUIRED_SECTIONS", () => {
@@ -31,6 +42,19 @@ describe("BIBLE_FILES and REQUIRED_SECTIONS", () => {
     const keys = BIBLE_FILES.map((b) => b.key);
     expect(new Set(keys).size).toBe(keys.length);
     for (const k of keys) expect(k).toMatch(/^[a-z0-9-]+$/);
+  });
+  it("requires of one file no heading that is a whole-word prefix of another required of it", () => {
+    // Two requirements on one file must not be satisfiable by one heading. `headingMatches("## " +
+    // a.heading, b.heading)` is true exactly when b equals a or is a whole-word prefix of it,
+    // which is that ambiguity: the file's single "## Beats per minute" would satisfy both "Beats
+    // per minute" and "Beats", and whichever prompt wanted the other would read nothing. Checked
+    // in both directions by walking every ordered pair, which also refuses a duplicated row.
+    for (const a of REQUIRED_SECTIONS) {
+      for (const b of REQUIRED_SECTIONS) {
+        if (a === b || a.file !== b.file) continue;
+        expect(headingMatches(`## ${a.heading}`, b.heading), `${a.file}: "${b.heading}" is carried by "${a.heading}"`).toBe(false);
+      }
+    }
   });
 });
 

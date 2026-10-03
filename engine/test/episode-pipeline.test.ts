@@ -3,9 +3,11 @@ import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { episodePipeline, EPISODE_STAGE_MAP, EPISODE_PIPELINE_NAME } from "../src/pipelines/episode.js";
+import { bibleFilesFor } from "../src/bible.js";
 import { orderSteps } from "../src/pipeline.js";
 import { validateStageMap } from "../src/stages.js";
 import type { ShowConfig } from "../src/show-config.js";
+import type { Step } from "../src/steps.js";
 
 export const show: ShowConfig = {
   showName: "Harbor Light", showSlug: "HarborLight", promptsDir: "prompts",
@@ -53,6 +55,46 @@ describe("episodePipeline", () => {
     const mix = p.steps.find((s) => s.id === "audio-mix");
     expect(mix?.outputs).toEqual(["Production/s02e01/audio/HarborLight S02E01.wav"]);
     expect(episodePipeline({ show, episodeId: "ep98", engineRoot: "/engine" }).steps.find((s) => s.id === "audio-mix")?.outputs).toEqual(["Production/ep98/audio/episode.wav"]);
+  });
+
+  it("declares no bible file the bible-ready guard does not check, for an aired id and for a production id", () => {
+    // The guard's list (bibleFilesFor) and the inputs the steps declare agree only by hand, and
+    // the agreement is what closes inventory F-01: a Canon/ input the guard does not check can go
+    // absent, hash null, and run its step against nothing — an outline written against no world
+    // overview — with every other test green. This test fails if a Canon/ input is added to any
+    // step without a matching BIBLE_FILES row or config-named file.
+    //
+    // Canon/refs.json is the one deliberate exemption: it is the reference registry, and its
+    // completeness is the NEEDS_REFS probe's report (missingRefs in needs.ts), not the bible's.
+    // A new exemption belongs here only with a reader that checks the file by name.
+    const NOT_THE_BIBLE = new Set(["Canon/refs.json"]);
+    /** Every path any step declares as an input, including the nested steps a gate's `onReject`
+     *  and a loop's `body` carry. No nested step declares an input today; walking them is what
+     *  makes a future one count rather than slip past the guard. */
+    const declaredInputs = (steps: readonly Step[]): string[] => {
+      const out: string[] = [];
+      for (const s of steps) {
+        out.push(...(s.inputs ?? []));
+        if (s.kind === "gate" && s.onReject) out.push(...(s.onReject.inputs ?? []));
+        if (s.kind === "loop") out.push(...(s.body.inputs ?? []));
+      }
+      return out;
+    };
+    // Both seasons of the ruling: an aired id carries season 2, so the spine declares
+    // Canon/season-2.md and the guard must check that file; a production id the air map does not
+    // map carries no season, so the spine declares no season file and the guard checks none.
+    for (const [episodeId, season] of [["s02e01", 2], ["ep98", undefined]] as const) {
+      const guarded = new Set(bibleFilesFor(show, season));
+      const canonInputs = [...new Set(declaredInputs(episodePipeline({ show, episodeId, engineRoot: "/engine" }).steps))].filter((f) => f.startsWith("Canon/")).sort();
+      expect(canonInputs.length, episodeId).toBeGreaterThan(10);
+      for (const f of canonInputs) {
+        if (NOT_THE_BIBLE.has(f)) continue;
+        expect(guarded.has(f), `${episodeId}: ${f} is declared as a step input, and bible-ready does not check it`).toBe(true);
+      }
+      expect(canonInputs.includes("Canon/season-2.md"), episodeId).toBe(season === 2);
+      expect(guarded.has("Canon/season-2.md"), episodeId).toBe(season === 2);
+      expect([...guarded].some((f) => f.startsWith("Canon/season-")), episodeId).toBe(season === 2);
+    }
   });
 
   it("runs scripts through uv against the engine's scripts project, with the episode id first", () => {
