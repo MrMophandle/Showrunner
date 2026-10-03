@@ -1,4 +1,4 @@
-Outline ready: Episodes/{{episodeId}}/outline.md
+Outline ready: {{show.episodesDir}}/{{episodeId}}/outline.md
 Canon review: {{results.canon-review-outline.verdict}}
 Deviations logged as yours (not fixed — they go to the canon ledger):
 {{results.canon-review-outline.deviations}}

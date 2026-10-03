@@ -1,4 +1,4 @@
-Script drafted: Episodes/{{episodeId}}/script.md
+Script drafted: {{show.episodesDir}}/{{episodeId}}/script.md
 Panel verdict (review-gate all-pass): {{results.review-gate}}
 Canon: {{results.canon-review-script}}
 Tone: {{results.tone-check}}
