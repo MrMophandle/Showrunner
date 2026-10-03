@@ -58,8 +58,13 @@ export function templateWithoutQuestions(text: string): string {
 
 /** A name as a file name: lower case, every run of non-alphanumerics a single hyphen, no leading or
  *  trailing hyphen — "The Warden" becomes "the-warden". Accents are decomposed and their marks
- *  dropped rather than hyphenated, so "Maève" becomes "maeve" and not "ma-ve". A name with nothing
- *  alphanumeric in it has no file name and is refused rather than silently becoming "". */
+ *  dropped rather than hyphenated, so "Maève" becomes "maeve" and not "ma-ve".
+ *
+ *  Latin script only, by construction: the filter keeps `a-z0-9` and nothing else, so a name
+ *  written wholly in another script reduces to the empty string and is **refused** rather than
+ *  turned into a path the author cannot recognise. Failing by name is the right half of that
+ *  trade — a silent "" would collide every such name onto one file. `CAST_NAME` below refuses the
+ *  same input earlier and with a better message, so the throw here is the backstop, not the gate. */
 export function slugOf(name: string): string {
   const slug = name
     .normalize("NFKD")
@@ -71,12 +76,12 @@ export function slugOf(name: string): string {
   return slug;
 }
 
-function dirKey(value: string | undefined, fallback: string): string {
-  return typeof value === "string" && value !== "" ? value.replace(/\/+$/, "") : fallback;
-}
-
-function stringAt(group: Record<string, unknown> | undefined, key: string, fallback: string): string {
-  const value = group?.[key];
+/** A directory name out of the config: the configured value when it is a non-empty string, else the
+ *  engine's own default, in both cases without a trailing slash so callers can join with one. The
+ *  argument is `unknown` because half these keys are typed on `ShowConfig` and half live inside its
+ *  `Record<string, unknown>` groups (`visual.candidatesDir`), and the rule for reading them must
+ *  not differ by which half a key happens to be in. */
+function dirKey(value: unknown, fallback: string): string {
   return typeof value === "string" && value !== "" ? value.replace(/\/+$/, "") : fallback;
 }
 
@@ -89,7 +94,7 @@ function stringAt(group: Record<string, unknown> | undefined, key: string, fallb
  *  trailing slash. */
 export function gitignoreFor(config: ShowConfig): string {
   const production = dirKey(config.productionDir, "Production");
-  const candidates = stringAt(config.visual, "candidatesDir", "Canon/_candidates");
+  const candidates = dirKey(config.visual?.["candidatesDir"], "Canon/_candidates");
   return (
     [
       ".DS_Store",
@@ -135,6 +140,15 @@ function templatePath(...segments: string[]): string {
   return path.join(templatesDir(), ...segments);
 }
 
+/** A cast name that is safe to use as a directory segment: it starts with a letter or a digit and
+ *  carries only letters, digits, spaces, apostrophes and hyphens, up to 64 characters — "Vale",
+ *  "The Warden", "O'Brien-Vale". Everything a path could be steered with is absent from the class,
+ *  `.` and `/` first among them, so no name matching this can name a directory other than the one
+ *  under `Canon/characters/`. The names reach this module as free text typed at the world-overview
+ *  interview, so they are validated and not merely slugged: `slugOf` makes a safe *file* name, and
+ *  the *directory* keeps the author's spelling, which is the part a traversal would ride in on. */
+const CAST_NAME = /^[A-Za-z0-9][A-Za-z0-9 '\-]{0,63}$/;
+
 /** One `Canon/characters/<Name>/<slug>.md` per cast entry, from the character entity template with
  *  the name on its `#` line and the author's one-liner as the sheet's one-line summary directly
  *  under it. Separate from `writeScaffold` because the cast is not known when the scaffold is
@@ -150,11 +164,31 @@ function templatePath(...segments: string[]): string {
  *  the image prompts both read. Under the name it is true wherever the author's line lands. */
 export async function writeCastSheets(root: string, config: ShowConfig, cast: readonly { name: string; line: string }[]): Promise<string[]> {
   const canon = dirKey(config.canonDir, "Canon");
+
+  // Every name is checked before anything is written, so a bad name in the middle of a cast list
+  // leaves no half-written set of sheets behind — the whole call is refused, by name.
+  for (const member of cast) {
+    if (!CAST_NAME.test(member.name)) {
+      throw new Error(
+        `cast name ${JSON.stringify(member.name)} is not a usable directory name: a name may carry only letters, digits, spaces, apostrophes and hyphens, must start with a letter or a digit, and must be at most 64 characters`,
+      );
+    }
+  }
+
+  const charactersRoot = path.resolve(root, canon, "characters");
   const template = await readFile(templatePath("canon", "characters", "_TEMPLATE.md"), "utf8");
   const written: string[] = [];
   for (const member of cast) {
+    const rel = `${canon}/characters/${member.name}/${slugOf(member.name)}.md`;
+    // Belt and braces over CAST_NAME: the path that is about to be written is resolved and
+    // required to lie under Canon/characters/, so a future change to the name class, or a
+    // `canonDir` that is itself an escape, cannot write outside the show's own character pile.
+    const abs = path.resolve(root, rel);
+    if (!abs.startsWith(charactersRoot + path.sep)) {
+      throw new Error(`cast sheet for ${JSON.stringify(member.name)} would be written at ${abs}, outside ${charactersRoot}`);
+    }
     const sheet = template.replace(/^#[ \t]+.*$/m, `# ${member.name}\n\n${member.line.trim()}`);
-    written.push(await writeNew(root, `${canon}/characters/${member.name}/${slugOf(member.name)}.md`, sheet));
+    written.push(await writeNew(root, rel, sheet));
   }
   return written.sort();
 }

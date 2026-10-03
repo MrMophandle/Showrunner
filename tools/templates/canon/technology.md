@@ -6,7 +6,7 @@
 <!-- Q: What is the one rule that settles every question about what is possible here that you have not thought of yet? For Harbor Lights: nothing in this world is stranger than the weather, and the weather is never on anybody's side. -->
 
 ## The tiers
-<!-- Q: Is some technology out of your characters' reach — older, better, or simply not theirs? Describe the levels and who has access to which. Answer "one tier" if everybody has the same tools. -->
+<!-- Q: Is some technology out of your characters' reach — older, better, or simply not theirs? Describe the levels and who has access to which, or answer "one tier" if everybody has the same tools. -->
 
 ## Travel and distance
 <!-- Q: How do people get from one place to another, how long does it take, and what does it cost them? An outline needs this to know what a journey can do to a story. -->

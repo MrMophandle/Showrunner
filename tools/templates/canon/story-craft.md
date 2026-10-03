@@ -22,7 +22,7 @@ moving or merely continuing.
 4. **The road of trials** — complications escalate (each by BUT/THEREFORE)
 5. **Get what they came for** — the find, the answer, the thing itself
 6. **Pay the price** — the cost lands (the crisis; this is where death lives)
-7. **Return** — the way back; changed people, changed cargo
+7. **Return** — the way back; changed people, changed stakes
 8. **Changed** — the world looks the same; the characters (or the audience)
    know it isn't
 Steps 7–8 are NOT optional. Skipping the return-and-changed beats is how an

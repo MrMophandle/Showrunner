@@ -1,7 +1,7 @@
 # [Species Name]
 
 - **Canonical name:** 
-- **Tier:** 0 (peer) | 0.5 (elder mortal) | 1 (Vanished)
+- **Tier:** (where this species sits against the others — peer, elder, or something further out)
 - **Homeworld / status:** 
 - **First appearance:** Ep. ___
 
@@ -14,8 +14,8 @@
 ## Culture & values
 (What they care about, social structure, how they deal with outsiders.)
 
-## Relationship to the dark forest / the Vanished
-(What they believe about the ruins and the quiet. Fear? Denial? Reverence?)
+## Relationship to the central mystery
+(What this species believes about the thing the series is really about. Fear? Denial? Reverence? Say what they think is going on and what they do about it.)
 
 ## Notable members
 (Links to character files.)

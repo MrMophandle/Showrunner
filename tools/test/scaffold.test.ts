@@ -151,6 +151,48 @@ describe("writeCastSheets", () => {
     }
   });
 
+  it("refuses a cast name that could escape Canon/characters/, before it writes anything", async () => {
+    const root = await tempRoot();
+    try {
+      const config = await harborConfig();
+      await expect(
+        writeCastSheets(root, config, [
+          { name: "Vale", line: "The keeper." },
+          { name: "../pwn", line: "Not a character." },
+        ]),
+      ).rejects.toThrow(/\.\.\/pwn/);
+      // The whole call is refused, so the good name before the bad one wrote nothing either.
+      await expect(readFile(path.join(root, "Canon/characters/Vale/vale.md"), "utf8")).rejects.toThrow(/ENOENT/);
+      await expect(readdir(path.join(root, "Canon")), "nothing under Canon/ at all").rejects.toThrow(/ENOENT/);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a name that would traverse out of the show root entirely", async () => {
+    const root = await tempRoot();
+    try {
+      const config = await harborConfig();
+      const escape = "../../../../../../tmp/showrunner-scaffold-escape/pwn";
+      await expect(writeCastSheets(root, config, [{ name: escape, line: "hi" }])).rejects.toThrow(/not a usable directory name/);
+      await expect(readdir("/tmp/showrunner-scaffold-escape")).rejects.toThrow(/ENOENT/);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts a name with an apostrophe and a hyphen", async () => {
+    const root = await tempRoot();
+    try {
+      const config = await harborConfig();
+      const written = await writeCastSheets(root, config, [{ name: "O'Brien-Vale", line: "The relief keeper." }]);
+      expect(written).toEqual(["Canon/characters/O'Brien-Vale/o-brien-vale.md"]);
+      expect(await readFile(path.join(root, "Canon/characters/O'Brien-Vale/o-brien-vale.md"), "utf8")).toContain("# O'Brien-Vale");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("refuses to overwrite a sheet that exists", async () => {
     const root = await tempRoot();
     try {

@@ -21,11 +21,11 @@
 why they are how they are. Give the writer specifics to mine: places, incidents,
 people. Only what's canon — mark speculative bits clearly.)
 
-## Dark-forest stance
+## Stance toward the central mystery
 (REQUIRED for recurring characters — the character auditor checks it. One of:
-believer / denier / mercenary-indifferent / haunted / silent-believer — or a
-precise custom label. Include the ORIGIN of the stance: why do they hold it?
-Crew stance map lives across the crew sheets; don't duplicate an occupied slot
+believer / sceptic / indifferent / haunted / silent believer — or a precise
+custom label. Include the ORIGIN of the stance: why do they hold it? The cast's
+stance map lives across the character sheets; don't duplicate an occupied slot
 without a story reason.)
 
 ## Behavioral invariants (load-bearing — auditor checklist)

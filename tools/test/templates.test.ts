@@ -59,6 +59,20 @@ describe("prompt templates render against the invented show", () => {
  *  that is what these two patterns match. */
 const HISTORY_STAMPS: readonly RegExp[] = [/\bep\d\d\b/, /\b2026-/, /\bRyan\b/, /\b\w+-ruled\b/i, /\bruled\s+(on\s+)?\d/i];
 
+/** The first show's cosmology words — the thing its characters are afraid of, and the species tier
+ *  its entity template offered as an example. Neither is a name, which is why the repository-wide
+ *  show-name grep in `README.md` does not list them and why they survived into the templates: the
+ *  four entity `_TEMPLATE.md` files were derived from that show's, and one of them asked a new
+ *  author what their species believes about a cosmology their universe does not have. A template
+ *  may ask about "the central mystery"; it may not name whose.
+ *
+ *  Deliberately only these two. The first show's proper nouns — its characters, its ship, its
+ *  peoples — are the repository-wide grep's job, and that grep searches `tools/` including this
+ *  file, so listing them here as regex alternatives would make the grep report itself and the
+ *  plan's "no show's name in the engine" constraint could never go green again. The two lists are
+ *  complementary by construction: this scan holds what the grep cannot express, and nothing else. */
+const SHOW_CONCEPTS = /\b(vanished|dark[- ]forest)\b/i;
+
 describe("templates carry no history and no show", () => {
   it("no production id, no 2026 date, no 'Ryan', no dated or attributed ruling anywhere under tools/templates", async () => {
     const hits: string[] = [];
@@ -66,6 +80,17 @@ describe("templates carry no history and no show", () => {
       const text = await readFile(f, "utf8");
       text.split("\n").forEach((line, i) => {
         if (HISTORY_STAMPS.some((re) => re.test(line))) hits.push(`${path.relative(templatesDir(), f)}:${i + 1}: ${line.trim()}`);
+      });
+    }
+    expect(hits).toEqual([]);
+  });
+
+  it("no first-show cosmology or world word anywhere under tools/templates", async () => {
+    const hits: string[] = [];
+    for (const f of await walk(templatesDir())) {
+      const text = await readFile(f, "utf8");
+      text.split("\n").forEach((line, i) => {
+        if (SHOW_CONCEPTS.test(line)) hits.push(`${path.relative(templatesDir(), f)}:${i + 1}: ${line.trim()}`);
       });
     }
     expect(hits).toEqual([]);
