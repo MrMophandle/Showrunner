@@ -48,13 +48,24 @@ describe("prompt templates render against the invented show", () => {
   });
 });
 
+/** The shapes a history stamp took in the measured prompts and bible files: a production id, a
+ *  dated note, the first show's author by name, and a ruling — a ruling written either as a
+ *  hyphenated attribution ("Ryan-ruled", "showrunner-ruled") or as the word followed by the date
+ *  it was made ("ruled 2026-09-09", "ruled on 3 October"). The ruling patterns are deliberately
+ *  narrower than the bare word: `RULED` is the status vocabulary every interviewed bible template
+ *  carries in its header ("RULED means approved and binding. DRAFT means proposed at the
+ *  interview, pending an episode." — the plan's F-08), so refusing the bare word would refuse the
+ *  legend the plan requires. A stamp is a ruling with a date or an author attached to it, and
+ *  that is what these two patterns match. */
+const HISTORY_STAMPS: readonly RegExp[] = [/\bep\d\d\b/, /\b2026-/, /\bRyan\b/, /\b\w+-ruled\b/i, /\bruled\s+(on\s+)?\d/i];
+
 describe("templates carry no history and no show", () => {
-  it("no production id, no 2026 date, no 'Ryan', no 'ruled' anywhere under tools/templates", async () => {
+  it("no production id, no 2026 date, no 'Ryan', no dated or attributed ruling anywhere under tools/templates", async () => {
     const hits: string[] = [];
     for (const f of await walk(templatesDir())) {
       const text = await readFile(f, "utf8");
       text.split("\n").forEach((line, i) => {
-        if (/\bep\d\d\b/.test(line) || /\b2026-/.test(line) || /\bRyan\b/.test(line) || /\bruled\b/i.test(line)) hits.push(`${path.relative(templatesDir(), f)}:${i + 1}: ${line.trim()}`);
+        if (HISTORY_STAMPS.some((re) => re.test(line))) hits.push(`${path.relative(templatesDir(), f)}:${i + 1}: ${line.trim()}`);
       });
     }
     expect(hits).toEqual([]);

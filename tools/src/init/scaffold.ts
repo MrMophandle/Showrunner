@@ -1,0 +1,231 @@
+import path from "node:path";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { renderPrompt, type ShowConfig } from "@showrunner/engine";
+import { templatesDir } from "./paths.js";
+
+/** One question the interview asks, and the bible section whose answer it is. `heading` is the
+ *  template heading's text without its `#` marks, so the driver can write the answer under it and
+ *  the writer agent can find the section it belongs to. */
+export interface Question {
+  heading: string;
+  question: string;
+}
+
+/** A heading line (level 1 or 2) immediately followed — blank lines allowed between — by the HTML
+ *  comment holding its question. Level 1 is matched as well as level 2 because one bible template
+ *  is a single question with no sections at all (`visual-audit-laws.md`, whose whole body the
+ *  image-audit prompt inserts verbatim); every other template asks its questions on level 2. */
+const QUESTIONED_HEADING = /^(#{1,2})[ \t]+(.+?)[ \t]*\r?\n(?:[ \t]*\r?\n)*[ \t]*<!--[ \t]*Q:([\s\S]*?)-->/gm;
+
+/** A whole-line `<!-- Q: … -->` comment, with its own line ending, so stripping one leaves no
+ *  blank line behind where the question was. Only a `Q:` comment matches: a template's other
+ *  comments are instructions to the author and survive into the file. */
+const QUESTION_COMMENT = /^[ \t]*<!--[ \t]*Q:[\s\S]*?-->[ \t]*\r?\n?/gm;
+
+/** The first level-2 heading, which bounds the header of a template that asks nothing. */
+const FIRST_SECTION = /^##[ \t]/m;
+
+/** Splits a canon template into the header it opens with — the title and, for an interviewed file,
+ *  the RULED/DRAFT status legend — and one question per heading that carries a `<!-- Q: … -->`
+ *  comment. A heading with no comment is a section the interview does not ask about, and the
+ *  writer agent fills it with `_Not yet decided._`; a file with no comments at all is one of the
+ *  three filled defaults, which has no interview and only a gate. The header is everything before
+ *  the first questioned heading, or before the first section when nothing is questioned, so the
+ *  driver can show the author what file they are describing before it asks anything. */
+export function parseCanonTemplate(text: string): { header: string; questions: Question[] } {
+  const questions: Question[] = [];
+  let firstAt: number | undefined;
+  QUESTIONED_HEADING.lastIndex = 0;
+  for (let m = QUESTIONED_HEADING.exec(text); m !== null; m = QUESTIONED_HEADING.exec(text)) {
+    if (firstAt === undefined) firstAt = m.index;
+    questions.push({ heading: m[2]!.trim(), question: m[3]!.replace(/\s+/g, " ").trim() });
+  }
+  if (firstAt === undefined) {
+    const section = FIRST_SECTION.exec(text);
+    firstAt = section === null ? text.length : section.index;
+  }
+  return { header: text.slice(0, firstAt), questions };
+}
+
+/** The template with every question stripped and nothing else touched: the artifact written when
+ *  the author answers a gate with "I will write this one myself", and the artifact `writeScaffold`
+ *  writes for the two files the pipeline fills (the continuity ledger and the voice registry),
+ *  which have no questions and so come through unchanged. The headings stay, because a heading a
+ *  prompt reads by name must exist even before anyone has written under it. */
+export function templateWithoutQuestions(text: string): string {
+  return text.replace(QUESTION_COMMENT, "");
+}
+
+/** A name as a file name: lower case, every run of non-alphanumerics a single hyphen, no leading or
+ *  trailing hyphen — "The Warden" becomes "the-warden". Accents are decomposed and their marks
+ *  dropped rather than hyphenated, so "Maève" becomes "maeve" and not "ma-ve". A name with nothing
+ *  alphanumeric in it has no file name and is refused rather than silently becoming "". */
+export function slugOf(name: string): string {
+  const slug = name
+    .normalize("NFKD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  if (slug === "") throw new Error(`${JSON.stringify(name)} has no alphanumeric character in it, so it has no slug`);
+  return slug;
+}
+
+function dirKey(value: string | undefined, fallback: string): string {
+  return typeof value === "string" && value !== "" ? value.replace(/\/+$/, "") : fallback;
+}
+
+function stringAt(group: Record<string, unknown> | undefined, key: string, fallback: string): string {
+  const value = group?.[key];
+  return typeof value === "string" && value !== "" ? value.replace(/\/+$/, "") : fallback;
+}
+
+/** The show's `.gitignore`, derived from the config's own directory keys rather than written as a
+ *  fixed list, so a show that renames `Production` or moves its image candidates still ignores the
+ *  right paths (the inventory's F-20, where the first show's candidates directory was tracked for
+ *  months because the two were written independently). The generated binaries are ignored and the
+ *  manifests beside them are not. `Finalized` appears twice on purpose: the show's `Finalized` is a
+ *  symlink to the NAS, and git matches a symlink by the bare name and a real directory by the
+ *  trailing slash. */
+export function gitignoreFor(config: ShowConfig): string {
+  const production = dirKey(config.productionDir, "Production");
+  const candidates = stringAt(config.visual, "candidatesDir", "Canon/_candidates");
+  return (
+    [
+      ".DS_Store",
+      `${production}/*/audio/`,
+      `${production}/*/video/`,
+      `${production}/*/images/*.png`,
+      `${production}/*/images/*.jpg`,
+      `${production}/*/images/.*.bak`,
+      `${candidates}/`,
+      "Finalized",
+      "Finalized/",
+      ".superpowers/",
+    ].join("\n") + "\n"
+  );
+}
+
+/** Writes `text` at `rel` under `root` with the `wx` flag, so an existing file raises `EEXIST`
+ *  rather than being overwritten: nothing in the setup may destroy a file an author put there. The
+ *  parent directory is created first, because a cast sheet lives in a directory named after the
+ *  character and that directory cannot be known before the cast is. Returns `rel` so a caller can
+ *  collect what it wrote. */
+async function writeNew(root: string, rel: string, text: string): Promise<string> {
+  const abs = path.join(root, rel);
+  await mkdir(path.dirname(abs), { recursive: true });
+  await writeFile(abs, text, { encoding: "utf8", flag: "wx" });
+  return rel;
+}
+
+/** Every file under `dir`, as paths relative to it, sorted — so the prompt set is copied in a
+ *  stable order however the file system lists it, and a prompt set that grows a subdirectory is
+ *  copied whole without this function changing. */
+async function filesUnder(dir: string, prefix = ""): Promise<string[]> {
+  const out: string[] = [];
+  for (const entry of await readdir(dir, { withFileTypes: true })) {
+    const rel = prefix === "" ? entry.name : `${prefix}/${entry.name}`;
+    if (entry.isDirectory()) out.push(...(await filesUnder(path.join(dir, entry.name), rel)));
+    else out.push(rel);
+  }
+  return out.sort();
+}
+
+function templatePath(...segments: string[]): string {
+  return path.join(templatesDir(), ...segments);
+}
+
+/** One `Canon/characters/<Name>/<slug>.md` per cast entry, from the character entity template with
+ *  the name on its `#` line and the author's one-liner as the sheet's one-line summary directly
+ *  under it. Separate from `writeScaffold` because the cast is not known when the scaffold is
+ *  written: `init` writes the layout first and learns the cast from the world-overview interview,
+ *  the first file it interviews, and calls this afterwards (the plan's F-24). A sheet that already
+ *  exists raises `EEXIST`, because a sheet an author has filled in is not the setup's to replace.
+ *  Returns the relative paths written, sorted.
+ *
+ *  The one-liner goes under the `#` line rather than under the template's first level-2 heading,
+ *  which is `## Physical description`: the world-overview interview asks for the cast as
+ *  `Name — one line about who they are`, so the line it collects is a role and writing it under a
+ *  physical-description heading would put a wrong fact in the section the character auditor and
+ *  the image prompts both read. Under the name it is true wherever the author's line lands. */
+export async function writeCastSheets(root: string, config: ShowConfig, cast: readonly { name: string; line: string }[]): Promise<string[]> {
+  const canon = dirKey(config.canonDir, "Canon");
+  const template = await readFile(templatePath("canon", "characters", "_TEMPLATE.md"), "utf8");
+  const written: string[] = [];
+  for (const member of cast) {
+    const sheet = template.replace(/^#[ \t]+.*$/m, `# ${member.name}\n\n${member.line.trim()}`);
+    written.push(await writeNew(root, `${canon}/characters/${member.name}/${slugOf(member.name)}.md`, sheet));
+  }
+  return written.sort();
+}
+
+/** Everything a new show starts with that nobody has to be interviewed about: the directories, the
+ *  four entity templates, the outline template the outline prompt and the draft loop require, the
+ *  two reference indices with their shapes and no entries, the two bible files the pipeline itself
+ *  fills, the `.gitignore` derived from the config, the show's README rendered with its name, the
+ *  whole prompt set, and a sheet per cast member. The thirteen interviewed and default bible files
+ *  are not written here — the interview writes those, one commit each.
+ *
+ *  Every file is written with `wx`. The function is therefore not atomic: a failure part-way leaves
+ *  what it had already written on disk and throws. That is the right trade, because the alternative
+ *  to failing loudly is overwriting an author's file, and `init` refuses a directory that is not
+ *  empty before it calls this at all. Returns the relative paths written, sorted. */
+export async function writeScaffold(root: string, config: ShowConfig, cast: readonly { name: string; line: string }[]): Promise<string[]> {
+  const canon = dirKey(config.canonDir, "Canon");
+  const episodes = dirKey(config.episodesDir, "Episodes");
+  const production = dirKey(config.productionDir, "Production");
+  const prompts = dirKey(config.promptsDir, "prompts");
+
+  for (const dir of [
+    canon,
+    `${canon}/characters`,
+    `${canon}/species`,
+    `${canon}/locations`,
+    `${canon}/factions`,
+    `${episodes}/_TEMPLATE`,
+    `${production}/voice-refs`,
+    prompts,
+  ]) await mkdir(path.join(root, dir), { recursive: true });
+
+  const written: string[] = [];
+  const copy = async (rel: string, ...from: string[]): Promise<void> => {
+    written.push(await writeNew(root, rel, await readFile(templatePath(...from), "utf8")));
+  };
+
+  for (const kind of ["characters", "species", "locations", "factions"]) {
+    await copy(`${canon}/${kind}/_TEMPLATE.md`, "canon", kind, "_TEMPLATE.md");
+  }
+  await copy(`${episodes}/_TEMPLATE/outline.md`, "episodes", "_TEMPLATE", "outline.md");
+  await copy(`${canon}/refs.json`, "refs", "canon-refs.json");
+  await copy(`${production}/voice-refs/refs.json`, "refs", "voice-refs.json");
+
+  // The two bible files the pipeline fills: written with their headings and nothing under them,
+  // because `propose` appends to the ledger and the NEEDS_REFS stop fills the registry.
+  for (const key of ["continuity-ledger", "voice-registry"]) {
+    const text = await readFile(templatePath("canon", `${key}.md`), "utf8");
+    written.push(await writeNew(root, `${canon}/${key}.md`, templateWithoutQuestions(text)));
+  }
+
+  written.push(await writeNew(root, ".gitignore", gitignoreFor(config)));
+
+  const readme = await readFile(templatePath("show", "README.md"), "utf8");
+  written.push(
+    await writeNew(
+      root,
+      "README.md",
+      renderPrompt(
+        readme,
+        { episodeId: "setup", runId: "init", showRoot: root, results: {} },
+        { show: config as unknown as Record<string, unknown> },
+      ),
+    ),
+  );
+
+  const promptsRoot = templatePath("prompts");
+  for (const rel of await filesUnder(promptsRoot)) {
+    written.push(await writeNew(root, `${prompts}/${rel}`, await readFile(path.join(promptsRoot, rel), "utf8")));
+  }
+
+  written.push(...(await writeCastSheets(root, config, cast)));
+  return written.sort();
+}

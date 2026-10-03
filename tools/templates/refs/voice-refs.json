@@ -1,0 +1,5 @@
+{
+  "engine": "qwen3",
+  "note": "One entry per speaking recurring character, keyed by the name the script's [NAME] tag uses. `status` must contain LOCKED before the audio steps will speak with the voice; scripts/design-voice.py auditions a voice and writes its entry.",
+  "cast": {}
+}
