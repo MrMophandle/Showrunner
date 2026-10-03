@@ -1,5 +1,6 @@
 import path from "node:path";
 import type { AgentOutcome, AgentStep, Emit, Executors, GateMessageRenderer, JsonSchema, RunContext } from "./steps.js";
+import { isReservedEpisodeId } from "./ids.js";
 import { loadPrompt, renderPrompt, type RenderExtra } from "./prompt-template.js";
 import { resolveShowPath, seasonOf, ShowConfigError, type ShowConfig } from "./show-config.js";
 
@@ -154,12 +155,18 @@ function promptsDirFor(opts: AgentExecutorOptions, ctx: RunContext): string {
  *  renderer. A malformed episode id is an InvalidEpisodeId rather than a ShowConfigError, is not
  *  swallowed here, and fails the caller before anything is logged or queried.
  *
+ *  The reserved id the bible interview runs under (ids.ts) is not asked for a season at all: it
+ *  names no episode, so `seasonOf` would throw InvalidEpisodeId for it and every interview step
+ *  and gate message would fail to render. Skipping the lookup leaves `season` undefined, which
+ *  means `{{season}}` is simply unavailable to an interview prompt — none names it — while a
+ *  malformed id still throws here as it always did.
+ *
  *  `vars` comes from the step rather than from the executor's options — the step declares them —
  *  and is spread in only when it was given, so a step with no vars leaves the field absent and
  *  `{{vars.*}}` fails with "vars are not available" rather than with a missing name. */
 function renderExtraFor(opts: AgentExecutorOptions, ctx: RunContext, vars?: Record<string, string>): RenderExtra {
   let season: number | undefined;
-  if (opts.show) {
+  if (opts.show && !isReservedEpisodeId(ctx.episodeId)) {
     try {
       season = seasonOf(ctx.episodeId, opts.show.airMap);
     } catch (err) {

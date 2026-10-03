@@ -18,3 +18,4 @@ export * from "./needs.js";
 export * from "./bible.js";
 export * from "./provenance.js";
 export * from "./pipelines/episode.js";
+export * from "./pipelines/bible.js";

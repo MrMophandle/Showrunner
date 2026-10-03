@@ -4,7 +4,7 @@ import { downstreamOf, orderSteps, pipelineHash } from "./pipeline.js";
 import { ENGINE_VERSION } from "./version.js";
 import { BYPASS_REASON, deriveRunState, type GateState, type RunState } from "./state.js";
 import { hashFiles, sameHashes } from "./hash.js";
-import { parseEpisodeId } from "./ids.js";
+import { isReservedEpisodeId, parseEpisodeId } from "./ids.js";
 import type {
   AgentStep, Emit, Executors, GateMessageRenderer, GateStep, GuardResult, LoopStep, Pipeline,
   RunContext, ScriptStep, Step, StepId,
@@ -204,8 +204,12 @@ export async function run(opts: RunOptions): Promise<RunResult> {
 
 async function execute(opts: RunOptions): Promise<RunResult> {
   const { pipeline, log, executors } = opts;
-  // Validate the episode id at entry: every path the run touches is built from it.
-  parseEpisodeId(opts.ctx.episodeId);
+  // Validate the episode id at entry: every path the run touches is built from it. The one
+  // exemption is the reserved id the bible interview runs under (ids.ts): it names no episode,
+  // builds no episode path — the interview hands `log` a path of its own — and would otherwise
+  // fail here before a single event was written. Nothing else is exempt, so a bogus id is still
+  // refused at entry rather than halfway through a run.
+  if (!isReservedEpisodeId(opts.ctx.episodeId)) parseEpisodeId(opts.ctx.episodeId);
   const ordered = orderSteps(pipeline);
   const priorEvents: Event[][] = [];
   for (const pl of opts.priorLogs ?? []) priorEvents.push(await pl.read());

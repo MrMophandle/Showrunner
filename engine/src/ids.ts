@@ -41,6 +41,24 @@ export function isEpisodeId(raw: string): boolean {
   }
 }
 
+/** The one `RunContext.episodeId` that names no episode: the id the bible interview's per-file
+ *  pipelines run under (re-exported as `SETUP_ID` by pipelines/bible.ts). It is deliberately
+ *  outside the episode-id grammar, so `listEpisodeIds` never lists it and the console never shows
+ *  it as an episode — and so `EventLog.logPath`, `listRuns` and `runLogPaths` all refuse it, which
+ *  is why the interview builds its own log paths under `<productionDir>/setup/<key>/runs`.
+ *
+ *  It is exempted by name at the two sites a run passes through — `run`'s entry validation and the
+ *  agent executor's season resolution — rather than by widening `parseEpisodeId`, so every
+ *  genuinely malformed id still fails exactly where it failed before. */
+export const RESERVED_EPISODE_ID = "setup";
+
+/** True for the one reserved id above and nothing else. A named predicate rather than a bare
+ *  `=== "setup"` at each site, so "this run is not an episode" is one question asked in one place
+ *  and the exemptions in runner.ts and agent-step.ts cannot drift apart. */
+export function isReservedEpisodeId(id: string): boolean {
+  return id === RESERVED_EPISODE_ID;
+}
+
 /** The aired id for a season and episode number, zero-padded. A number out of range throws a
  *  plain Error naming the parameter, not InvalidEpisodeId: the caller passed two numbers, not an
  *  id, and `invalid episode id "0": season must be 1..99` would quote a number as though it were

@@ -271,3 +271,42 @@ describe("{{vars.<name>}}", () => {
     await expect(render("gate.md", ctx())).rejects.toThrow(/\{\{vars\.file\}\}: vars are not available/);
   });
 });
+
+describe("the reserved episode id has no season", () => {
+  /** The interview runs every bible file under the reserved id (ids.ts), which is not an episode:
+   *  `seasonOf` throws InvalidEpisodeId for it, and that throw used to escape renderExtraFor and
+   *  fail every interview step and gate message built with a show config — which all of them are,
+   *  because the three interview prompts open with {{show.showName}}. */
+  const show = { showName: "Harbor Lights", showSlug: "HL", promptsDir: "p", models: { medium: "m", large: "l", writer: "w" }, airMap: { ep07: [1, 7] as [number, number] }, output: { nasRoot: "/n" } };
+
+  it("renders {{show.*}} and {{vars.*}} for the reserved id, and leaves {{season}} unavailable", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "prompts-"));
+    await writeFile(path.join(dir, "write.md"), "Writer for {{show.showName}}: write {{vars.file}} in {{episodeId}}.");
+    await writeFile(path.join(dir, "seasonal.md"), "Season {{season}}.");
+    const f = fake([init, success()]);
+    const ex = createAgentExecutor({ query: f.query, promptsDir: dir, show });
+    const setupCtx = { ...ctx(), episodeId: "setup" };
+    const ok = await ex(step({ promptFile: "write.md", vars: { file: "Canon/style-guide.md" } }), setupCtx, recorder().emit);
+    expect(ok).toEqual({ ok: true, text: "final text", toolCalls: 0 });
+    expect(f.calls[0]!.prompt).toBe("Writer for Harbor Lights: write Canon/style-guide.md in setup.");
+    const seasonal = await ex(step({ promptFile: "seasonal.md" }), setupCtx, recorder().emit);
+    expect(seasonal).toMatchObject({ ok: false, error: expect.stringContaining("{{season}}: season is not available") });
+  });
+
+  it("renders a gate message for the reserved id", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "prompts-"));
+    await writeFile(path.join(dir, "gate.md"), "{{vars.file}} of {{show.showName}} is ready.");
+    const render = createGateMessageRenderer({ query: () => { throw new Error("no query may run for a gate message"); }, promptsDir: dir, show });
+    expect(await render("gate.md", { ...ctx(), episodeId: "setup" }, { file: "Canon/style-guide.md" }))
+      .toBe("Canon/style-guide.md of Harbor Lights is ready.");
+  });
+
+  it("still throws for a malformed episode id that is not the reserved one", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "prompts-"));
+    await writeFile(path.join(dir, "plain.md"), "Plain.");
+    const f = fake([init, success()]);
+    const r = await createAgentExecutor({ query: f.query, promptsDir: dir, show })(step({ promptFile: "plain.md" }), { ...ctx(), episodeId: "setups" }, recorder().emit);
+    expect(r).toMatchObject({ ok: false, error: expect.stringContaining("invalid episode id") });
+    expect(f.calls.length).toBe(0);
+  });
+});

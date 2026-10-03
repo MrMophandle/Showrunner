@@ -454,3 +454,30 @@ describe("run: a gate's vars", () => {
     expect((await log.read()).find((e) => e.kind === "gate_opened")?.payload["message"]).toBe("gate.md:Canon/x.md");
   });
 });
+
+describe("run: the reserved episode id", () => {
+  it("runs under the reserved id, whose log path the caller builds itself", async () => {
+    const root = await show();
+    const pipeline: Pipeline = { name: "bible-style-guide", steps: [{ kind: "script", id: "s", argv: () => ["true"] }] };
+    // The reserved id is not an episode, so EventLog.logPath refuses it and the interview joins
+    // its own directory: <productionDir>/setup/<key>/runs/<runId>.jsonl.
+    expect(() => EventLog.logPath(root, "setup", "r1")).toThrow(/invalid episode id/);
+    const log = new EventLog(path.join(root, "Production", "setup", "style-guide", "runs", "r1.jsonl"));
+    const calls: string[] = [];
+    const r = await run({ pipeline, ctx: { runId: "r1", episodeId: "setup", showRoot: root }, log, executors: okExecutors(calls) });
+    expect(r).toEqual({ status: "completed" });
+    expect(calls).toEqual(["script:s"]);
+    expect((await log.read())[0]?.payload["episodeId"]).toBe("setup");
+  });
+
+  it("still refuses a bogus episode id at entry, before anything is logged", async () => {
+    const root = await show();
+    const pipeline: Pipeline = { name: "p", steps: [{ kind: "script", id: "s", argv: () => ["true"] }] };
+    const log = new EventLog(path.join(root, "Production", "setup", "k", "runs", "r1.jsonl"));
+    for (const bogus of ["setups", "Setup", "ep1", "init", ""]) {
+      await expect(run({ pipeline, ctx: { runId: "r1", episodeId: bogus, showRoot: root }, log, executors: okExecutors([]) }))
+        .rejects.toThrow(/invalid episode id/);
+    }
+    expect(await log.read()).toEqual([]);
+  });
+});
