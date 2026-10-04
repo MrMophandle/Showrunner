@@ -4,6 +4,7 @@ import { EventLog } from "../events.js";
 import { deriveRunState } from "../state.js";
 import { formatAired, parseEpisodeId } from "../ids.js";
 import { mixFilename, seasonOf, type ShowConfig } from "../show-config.js";
+import { missingBibleFiles } from "../bible.js";
 import { missingRefs, missingShowrunnerImages } from "../needs.js";
 import { handEdits } from "../provenance.js";
 import type { StageMap } from "../stages.js";
@@ -158,7 +159,22 @@ export function episodePipeline(opts: EpisodePipelineOptions): Pipeline {
       },
     },
     {
-      kind: "guard", id: "premise", dependsOn: ["previous-episode"], inputs: [premise],
+      kind: "guard", id: "bible-ready", dependsOn: ["previous-episode"],
+      // Inventory F-01: nothing else checks that the bible exists, and a declared input that is
+      // absent hashes null and the step runs against nothing. The list is the pipeline's own —
+      // every bible file a step below declares — so an author who deletes one in month three gets
+      // this message rather than an outline written against nothing. The season file is governed
+      // by the same `season` the canon spine above uses, so the guard can never demand a file the
+      // `outline` step would not have declared. Sections prompts read by name are bible-check's
+      // (tools/), not this guard's.
+      check: async (ctx) => {
+        const missing = await missingBibleFiles(ctx.showRoot, show, season);
+        if (missing.length > 0) return { pass: false, message: `BIBLE_INCOMPLETE: ${missing.join(", ")}` };
+        return { pass: true, message: "bible complete" };
+      },
+    } satisfies GuardStep,
+    {
+      kind: "guard", id: "premise", dependsOn: ["bible-ready"], inputs: [premise],
       check: async (ctx) => {
         let text: string;
         try { text = await readFile(path.join(ctx.showRoot, premise), "utf8"); } catch { text = ""; }

@@ -96,6 +96,12 @@ export interface AgentStep extends StepBase {
   idleTimeoutMs?: number;
   /** Stop the query when the SDK's client-side cost estimate reaches this many US dollars. */
   maxBudgetUsd?: number;
+  /** Values a prompt may render as `{{vars.<name>}}`. They belong to the step, not the run: a
+   *  pipeline that runs one prompt file for several targets (the bible interview, which writes
+   *  fourteen files with one `write.md`) names the target here rather than in fourteen prompt
+   *  files. A prompt that names a var the step does not declare fails to render, like any other
+   *  hole. Recorded in `describePipeline`, so a changed var changes the pipeline hash. */
+  vars?: Record<string, string>;
 }
 
 /** An agent step nested inside a gate (`onReject`) or a loop (`body`). It has no `when` and no
@@ -105,8 +111,11 @@ export type NestedAgentStep = Omit<AgentStep, "when" | "dependsOn">;
 /** Renders a gate's `messageFile` into the text the showrunner is shown. The runner does not own
  *  it: resolving a file under the show's prompts directory and rendering its `{{...}}` needs the
  *  prompts directory and the show config, which the agent executor's owner has — see
- *  `createGateMessageRenderer` in agent-step.ts. */
-export type GateMessageRenderer = (file: string, ctx: RunContext) => Promise<string>;
+ *  `createGateMessageRenderer` in agent-step.ts. The third argument is the gate's own
+ *  `GateStep.vars`, which the runner passes because only the step declares them; it is optional so
+ *  a caller's two-argument renderer — the console's fakes, a gate whose message names no var —
+ *  stays assignable to this type. */
+export type GateMessageRenderer = (file: string, ctx: RunContext, vars?: Record<string, string>) => Promise<string>;
 
 export interface GateStep extends StepBase {
   kind: "gate";
@@ -132,6 +141,8 @@ export interface GateStep extends StepBase {
    *  between the step_reset writes and the re-runs does not reset again on resume. */
   rerunOnReject?: StepId[];
   maxAttempts?: number;
+  /** Rendered into `messageFile` as `{{vars.<name>}}` by the gate renderer; see AgentStep.vars. */
+  vars?: Record<string, string>;
 }
 
 export interface LoopStep extends StepBase {

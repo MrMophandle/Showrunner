@@ -35,8 +35,9 @@ export async function writeIn(root: string, rel: string, text: string): Promise<
   return file;
 }
 
-/** A temporary show repository: the config, the canon spine every agent step declares as an
- *  input, the two reference files the needs probes read, the outline template, the gate message
+/** A temporary show repository: the config, every bible file the `bible-ready` guard requires of
+ *  a season-2 episode (the canon spine the agent steps declare, plus the audit laws, the pipeline
+ *  artifacts and the index), the two reference files the needs probes read, the outline template, the gate message
  *  files, and one episode (s02e01) with a premise and an empty runs directory. The runs
  *  directory exists so `RunStore.watch()` has something to watch at once rather than waiting for
  *  its poll to notice. Returns the show root. */
@@ -47,7 +48,7 @@ export async function makeShow(): Promise<string> {
     models: { medium: "m", large: "l", writer: "w" }, airMap: {},
     output: { nasRoot: path.join(root, "nas") },
   }));
-  for (const f of ["world-overview", "technology", "timeline", "continuity-ledger", "series-arc", "episode-formula", "story-craft", "style-guide", "season-2", "visual-style", "voice-registry", "publishing-guide"]) {
+  for (const f of ["world-overview", "technology", "timeline", "continuity-ledger", "series-arc", "episode-formula", "story-craft", "style-guide", "season-2", "visual-style", "visual-audit-laws", "voice-registry", "publishing-guide", "pipeline-artifacts", "README"]) {
     await writeIn(root, `Canon/${f}.md`, `${f}\n`);
   }
   await writeIn(root, "Canon/refs.json", "{}");

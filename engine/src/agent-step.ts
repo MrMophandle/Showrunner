@@ -1,5 +1,6 @@
 import path from "node:path";
 import type { AgentOutcome, AgentStep, Emit, Executors, GateMessageRenderer, JsonSchema, RunContext } from "./steps.js";
+import { isReservedEpisodeId } from "./ids.js";
 import { loadPrompt, renderPrompt, type RenderExtra } from "./prompt-template.js";
 import { resolveShowPath, seasonOf, ShowConfigError, type ShowConfig } from "./show-config.js";
 
@@ -152,10 +153,20 @@ function promptsDirFor(opts: AgentExecutorOptions, ctx: RunContext): string {
  *  the two cannot drift. The season is resolved eagerly but is not required: an id the air map does
  *  not carry leaves it undefined, and only a template that writes {{season}} then fails, in the
  *  renderer. A malformed episode id is an InvalidEpisodeId rather than a ShowConfigError, is not
- *  swallowed here, and fails the caller before anything is logged or queried. */
-function renderExtraFor(opts: AgentExecutorOptions, ctx: RunContext): RenderExtra {
+ *  swallowed here, and fails the caller before anything is logged or queried.
+ *
+ *  The reserved id the bible interview runs under (ids.ts) is not asked for a season at all: it
+ *  names no episode, so `seasonOf` would throw InvalidEpisodeId for it and every interview step
+ *  and gate message would fail to render. Skipping the lookup leaves `season` undefined, which
+ *  means `{{season}}` is simply unavailable to an interview prompt — none names it — while a
+ *  malformed id still throws here as it always did.
+ *
+ *  `vars` comes from the step rather than from the executor's options — the step declares them —
+ *  and is spread in only when it was given, so a step with no vars leaves the field absent and
+ *  `{{vars.*}}` fails with "vars are not available" rather than with a missing name. */
+function renderExtraFor(opts: AgentExecutorOptions, ctx: RunContext, vars?: Record<string, string>): RenderExtra {
   let season: number | undefined;
-  if (opts.show) {
+  if (opts.show && !isReservedEpisodeId(ctx.episodeId)) {
     try {
       season = seasonOf(ctx.episodeId, opts.show.airMap);
     } catch (err) {
@@ -165,6 +176,7 @@ function renderExtraFor(opts: AgentExecutorOptions, ctx: RunContext): RenderExtr
   return {
     ...(season !== undefined ? { season } : {}),
     ...(opts.show ? { show: opts.show as unknown as Record<string, unknown> } : {}),
+    ...(vars !== undefined ? { vars } : {}),
   };
 }
 
@@ -173,11 +185,15 @@ function renderExtraFor(opts: AgentExecutorOptions, ctx: RunContext): RenderExtr
  *  file (refusing a path that escapes the prompts directory) and `renderPrompt` for the `{{...}}`,
  *  with the same `RenderExtra` — so a gate message and an agent prompt see one prompts directory
  *  and one set of variables. Every hole is a TemplateError, as it is for a prompt: the runner
- *  catches it and fails the gate rather than opening it with a message that lies. */
+ *  catches it and fails the gate rather than opening it with a message that lies.
+ *
+ *  `vars` is the gate's own `GateStep.vars`, handed over by the runner at the call: the renderer is
+ *  built once for a whole run and cannot know which gate it is about to render, so the per-step
+ *  values arrive as an argument rather than in `opts`. */
 export function createGateMessageRenderer(opts: AgentExecutorOptions): GateMessageRenderer {
-  return async (file: string, ctx: RunContext): Promise<string> => {
+  return async (file: string, ctx: RunContext, vars?: Record<string, string>): Promise<string> => {
     const loaded = await loadPrompt(promptsDirFor(opts, ctx), file);
-    return renderPrompt(loaded.text, ctx, renderExtraFor(opts, ctx));
+    return renderPrompt(loaded.text, ctx, renderExtraFor(opts, ctx, vars));
   };
 }
 
@@ -200,7 +216,7 @@ export function createAgentExecutor(opts: AgentExecutorOptions): Executors["agen
       const loaded = await loadPrompt(promptsDir, step.promptFile);
       promptHash = loaded.hash;
       promptPath = loaded.path;
-      prompt = renderPrompt(loaded.text, ctx, renderExtraFor(opts, ctx));
+      prompt = renderPrompt(loaded.text, ctx, renderExtraFor(opts, ctx, step.vars));
     } catch (err) {
       return { ok: false, error: errorMessage(err) };
     }

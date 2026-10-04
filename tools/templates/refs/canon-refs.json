@@ -1,0 +1,4 @@
+{
+  "_doc": "One entry per recurring subject, keyed by its name as the outline's `## Cast` section writes it. `kind` is human, creature or ship. `ref` is the reference image's path under Canon/, the one picture every prompt of that subject is built from. `identity` is the one-line description every prompt carries verbatim, so the subject reads the same in every frame. `locked` is true once the image is final; until then the pipeline falls back to an ambient shot rather than inventing a face, and the run stops at NEEDS_REFS.",
+  "_workflow": "scripts/design-visual.py writes candidate images under the directory visual.candidatesDir names; copy the one you choose to the ref path and add the entry here."
+}

@@ -3,9 +3,11 @@ import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { episodePipeline, EPISODE_STAGE_MAP, EPISODE_PIPELINE_NAME } from "../src/pipelines/episode.js";
+import { bibleFilesFor } from "../src/bible.js";
 import { orderSteps } from "../src/pipeline.js";
 import { validateStageMap } from "../src/stages.js";
 import type { ShowConfig } from "../src/show-config.js";
+import type { Step } from "../src/steps.js";
 
 export const show: ShowConfig = {
   showName: "Harbor Light", showSlug: "HarborLight", promptsDir: "prompts",
@@ -17,6 +19,13 @@ export const show: ShowConfig = {
   publish: { guide: "Canon/publishing-guide.md" },
 };
 
+/** Every file the `bible-ready` guard requires under `Canon/`, as basenames, for an episode of
+ *  season 2 — the season of every episode id in these fixtures. It is `BIBLE_FILES` with the
+ *  season row resolved to `season-2`. Every fixture below writes all of them because
+ *  `bible-ready` is the pipeline's second step: a fixture that omits one fails there instead of
+ *  reaching the step it asserts on. */
+const BIBLE = ["world-overview", "series-arc", "episode-formula", "story-craft", "style-guide", "technology", "timeline", "season-2", "visual-style", "visual-audit-laws", "publishing-guide", "pipeline-artifacts", "README", "continuity-ledger", "voice-registry"] as const;
+
 describe("episodePipeline", () => {
   const p = episodePipeline({ show, episodeId: "s02e01", engineRoot: "/engine" });
 
@@ -24,7 +33,7 @@ describe("episodePipeline", () => {
     expect(p.name).toBe(EPISODE_PIPELINE_NAME);
     expect(() => orderSteps(p)).not.toThrow();
     expect(() => validateStageMap(EPISODE_STAGE_MAP, p)).not.toThrow();
-    expect(p.steps).toHaveLength(73);
+    expect(p.steps).toHaveLength(74);
   });
 
   it("has the eight gates in run order, each opening its DRAFT_ stage", () => {
@@ -46,6 +55,46 @@ describe("episodePipeline", () => {
     const mix = p.steps.find((s) => s.id === "audio-mix");
     expect(mix?.outputs).toEqual(["Production/s02e01/audio/HarborLight S02E01.wav"]);
     expect(episodePipeline({ show, episodeId: "ep98", engineRoot: "/engine" }).steps.find((s) => s.id === "audio-mix")?.outputs).toEqual(["Production/ep98/audio/episode.wav"]);
+  });
+
+  it("declares no bible file the bible-ready guard does not check, for an aired id and for a production id", () => {
+    // The guard's list (bibleFilesFor) and the inputs the steps declare agree only by hand, and
+    // the agreement is what closes inventory F-01: a Canon/ input the guard does not check can go
+    // absent, hash null, and run its step against nothing — an outline written against no world
+    // overview — with every other test green. This test fails if a Canon/ input is added to any
+    // step without a matching BIBLE_FILES row or config-named file.
+    //
+    // Canon/refs.json is the one deliberate exemption: it is the reference registry, and its
+    // completeness is the NEEDS_REFS probe's report (missingRefs in needs.ts), not the bible's.
+    // A new exemption belongs here only with a reader that checks the file by name.
+    const NOT_THE_BIBLE = new Set(["Canon/refs.json"]);
+    /** Every path any step declares as an input, including the nested steps a gate's `onReject`
+     *  and a loop's `body` carry. No nested step declares an input today; walking them is what
+     *  makes a future one count rather than slip past the guard. */
+    const declaredInputs = (steps: readonly Step[]): string[] => {
+      const out: string[] = [];
+      for (const s of steps) {
+        out.push(...(s.inputs ?? []));
+        if (s.kind === "gate" && s.onReject) out.push(...(s.onReject.inputs ?? []));
+        if (s.kind === "loop") out.push(...(s.body.inputs ?? []));
+      }
+      return out;
+    };
+    // Both seasons of the ruling: an aired id carries season 2, so the spine declares
+    // Canon/season-2.md and the guard must check that file; a production id the air map does not
+    // map carries no season, so the spine declares no season file and the guard checks none.
+    for (const [episodeId, season] of [["s02e01", 2], ["ep98", undefined]] as const) {
+      const guarded = new Set(bibleFilesFor(show, season));
+      const canonInputs = [...new Set(declaredInputs(episodePipeline({ show, episodeId, engineRoot: "/engine" }).steps))].filter((f) => f.startsWith("Canon/")).sort();
+      expect(canonInputs.length, episodeId).toBeGreaterThan(10);
+      for (const f of canonInputs) {
+        if (NOT_THE_BIBLE.has(f)) continue;
+        expect(guarded.has(f), `${episodeId}: ${f} is declared as a step input, and bible-ready does not check it`).toBe(true);
+      }
+      expect(canonInputs.includes("Canon/season-2.md"), episodeId).toBe(season === 2);
+      expect(guarded.has("Canon/season-2.md"), episodeId).toBe(season === 2);
+      expect([...guarded].some((f) => f.startsWith("Canon/season-")), episodeId).toBe(season === 2);
+    }
   });
 
   it("runs scripts through uv against the engine's scripts project, with the episode id first", () => {
@@ -163,7 +212,7 @@ describe("the episode pipeline, walked", () => {
     const nas = await mkdtemp(path.join(tmpdir(), "nas-"));
     const cfg: ShowConfig = { ...show, output: { ...show.output, nasRoot: nas } };
     const { executors, calls, w } = fakeExecutors(root, { failOnce: new Set(["tts-generate"]) });
-    for (const f of ["world-overview", "technology", "timeline", "continuity-ledger", "series-arc", "episode-formula", "story-craft", "style-guide", "season-2", "visual-style", "voice-registry", "publishing-guide"]) await w(`Canon/${f}.md`, `${f}\n`);
+    for (const f of BIBLE) await w(`Canon/${f}.md`, `${f}\n`);
     await w("Canon/refs.json", JSON.stringify({ vale: { kind: "human", ref: "Canon/characters/Vale/ref.png" }, harbor: { kind: "location", ref: "Canon/locations/harbor.png" } }));
     await w("Canon/characters/Vale/ref.png", "png"); await w("Canon/locations/harbor.png", "png");
     await w("Production/voice-refs/refs.json", JSON.stringify({ cast: { Vale: { ref: "Production/voice-refs/vale.wav", status: "LOCKED" } } })); await w("Production/voice-refs/vale.wav", "wav");
@@ -271,7 +320,7 @@ describe("the episode pipeline, walked", () => {
   it("stops at NEEDS_REFS when the outline names a recurring subject the bible lacks, and continues once it exists", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "show-"));
     const { executors, w } = fakeExecutors(root);
-    for (const f of ["world-overview", "technology", "timeline", "continuity-ledger", "series-arc", "episode-formula", "story-craft", "style-guide", "season-2", "publishing-guide", "voice-registry"]) await w(`Canon/${f}.md`, `${f}\n`);
+    for (const f of BIBLE) await w(`Canon/${f}.md`, `${f}\n`);
     await w("Canon/refs.json", JSON.stringify({ harbor: { kind: "location", ref: "Canon/locations/harbor.png" } })); await w("Canon/locations/harbor.png", "png");
     await w("Production/voice-refs/refs.json", JSON.stringify({ cast: {} }));
     await w("Episodes/_TEMPLATE/outline.md", "t\n"); await w("Episodes/s02e01/premise.md", "A week.\n");
@@ -295,7 +344,7 @@ describe("the episode pipeline, walked", () => {
   it("routes a failed canon review through the outline-revise loop before the gate, and refuses to start s02e02 while s02e01 has not completed", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "show-"));
     const { executors, calls, w } = fakeExecutors(root, { reviewFailOnce: new Set(["canon-review-outline"]) });
-    for (const f of ["world-overview", "technology", "timeline", "continuity-ledger", "series-arc", "episode-formula", "story-craft", "style-guide", "season-2"]) await w(`Canon/${f}.md`, `${f}\n`);
+    for (const f of BIBLE) await w(`Canon/${f}.md`, `${f}\n`);
     await w("Episodes/_TEMPLATE/outline.md", "t\n"); await w("Episodes/s02e01/premise.md", "A week.\n"); await w("Episodes/s02e02/premise.md", "Another.\n");
     const p1 = episodePipeline({ show, episodeId: "s02e01", engineRoot: "/engine" });
     const log1 = new EventLog(EventLog.logPath(root, "s02e01", "r1"));
@@ -307,5 +356,23 @@ describe("the episode pipeline, walked", () => {
     const r = await run({ pipeline: p2, ctx: { runId: "r1", episodeId: "s02e02", showRoot: root }, log: log2, executors, renderGateMessage: async (file, c) => `${file} for ${c.episodeId}` });
     expect(r).toMatchObject({ status: "failed", stepId: "previous-episode" });
     expect(r.status === "failed" && r.error).toMatch(/s02e01 has not completed its canon update/);
+  });
+
+  it("fails at bible-ready when a bible file is absent, naming it, and runs on once it is written", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "show-"));
+    const { executors, w } = fakeExecutors(root);
+    for (const f of BIBLE.filter((b) => b !== "style-guide")) await w(`Canon/${f}.md`, `${f}\n`);
+    await w("Episodes/_TEMPLATE/outline.md", "t\n"); await w("Episodes/s02e01/premise.md", "A week.\n");
+    const pipeline = episodePipeline({ show, episodeId: "s02e01", engineRoot: "/engine" });
+    const log = new EventLog(EventLog.logPath(root, "s02e01", "r1"));
+    const go = () => run({ pipeline, ctx: { runId: "r1", episodeId: "s02e01", showRoot: root }, log, executors, renderGateMessage: async (file, c) => `${file} for ${c.episodeId}` });
+    const r = await go();
+    expect(r).toMatchObject({ status: "failed", stepId: "bible-ready" });
+    expect(r.status === "failed" && r.error).toMatch(/^BIBLE_INCOMPLETE: .*Canon\/style-guide\.md/);
+    // The guard is the write phase's own list, so writing the file it named is the whole fix: the
+    // run resumes through bible-ready and reaches the first gate.
+    await w("Canon/style-guide.md", "style-guide\n");
+    await resumeRun(log, "r1");
+    expect(await go()).toMatchObject({ status: "waiting", gate: { stepId: "outline-gate" } });
   });
 });

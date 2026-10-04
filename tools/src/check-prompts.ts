@@ -6,6 +6,11 @@
  *  directory through it once, against a context that names every step the pipeline will produce,
  *  turns that run-time failure into a check that can be run before anything is launched.
  *
+ *  A prompt that names `{{vars.<name>}}` renders against the context file's own `vars` object: the
+ *  vars belong to a pipeline step and the checker has no pipeline, so the context file supplies one
+ *  sample set for the whole directory. A prompt naming a var that object does not carry is reported
+ *  like any other hole.
+ *
  *  Every `.md` file in the directory is checked, with no special case for a gate message or a
  *  rejection prompt. A gate message is rendered by the same `renderPrompt` at run time and is read
  *  by the showrunner at an approval, so a hole in one misleads the one person the pipeline cannot
@@ -31,6 +36,11 @@ export interface CheckContext {
   results: Record<string, unknown>;
   season?: number;
   show?: ShowConfig | Record<string, unknown>;
+  /** The values a prompt may name as `{{vars.<name>}}`. A step declares its own vars, so the
+   *  checker cannot derive them: a prompt file run for several targets renders here against the
+   *  one sample set the context file supplies. A prompt naming a var this object does not carry is
+   *  a hole, which is the point — the check is what catches it before a run does. */
+  vars?: Record<string, string>;
 }
 
 export interface CheckOptions {
@@ -52,6 +62,7 @@ export async function checkPrompts(opts: CheckOptions): Promise<CheckError[]> {
     // ShowConfig is an interface, so it has no implicit index signature and is not assignable to
     // Record<string, unknown> without it.
     ...(context.show !== undefined ? { show: context.show as unknown as Record<string, unknown> } : {}),
+    ...(context.vars !== undefined ? { vars: context.vars } : {}),
   };
   const ctx = {
     episodeId: context.episodeId,
@@ -88,7 +99,7 @@ export async function checkPrompts(opts: CheckOptions): Promise<CheckError[]> {
 // ---------------------------------------------------------------------------------------------
 // CLI
 
-const USAGE = "usage: check-prompts --prompts <dir> --context <json-file>";
+const USAGE = "usage: check-prompts --prompts <dir> --context <json-file>\n  the context file: { episodeId, runId, showRoot, results, season?, show?, vars? }";
 
 interface ParsedArgs { prompts?: string; context?: string }
 
@@ -104,7 +115,10 @@ export function parseArgs(argv: string[]): ParsedArgs {
   return parsed;
 }
 
-function asCheckContext(value: unknown, file: string): CheckContext {
+/** The context file's accepted shape, as a parser: the CLI reads the file, `JSON.parse`s it, and
+ *  hands the result here, so this function is where "what a context file may contain" is defined.
+ *  Exported so that shape has tests of its own — the CLI is the only other way to reach it. */
+export function asCheckContext(value: unknown, file: string): CheckContext {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new Error(`context file ${file} must hold a JSON object`);
   }
@@ -118,6 +132,20 @@ function asCheckContext(value: unknown, file: string): CheckContext {
   }
   const season = record["season"];
   const show = record["show"];
+  // Only string values: `{{vars.<name>}}` substitutes its value verbatim, so a number or a nested
+  // object in the context file would be a var the engine's own type does not permit.
+  // Deliberately stricter than `season` and `show` above, which drop a malformed value silently:
+  // a dropped `vars` would report every prompt that names a var as a hole and send the reader to
+  // the prompts instead of to the context file, which is the one file at fault.
+  const vars = record["vars"];
+  if (vars !== undefined) {
+    if (typeof vars !== "object" || vars === null || Array.isArray(vars)) {
+      throw new Error(`context file ${file}: vars must be an object of string values`);
+    }
+    for (const [name, value] of Object.entries(vars as Record<string, unknown>)) {
+      if (typeof value !== "string") throw new Error(`context file ${file}: vars.${name} must be a string`);
+    }
+  }
   return {
     episodeId: record["episodeId"] as string,
     runId: record["runId"] as string,
@@ -125,6 +153,7 @@ function asCheckContext(value: unknown, file: string): CheckContext {
     results: results as Record<string, unknown>,
     ...(typeof season === "number" ? { season } : {}),
     ...(typeof show === "object" && show !== null && !Array.isArray(show) ? { show: show as Record<string, unknown> } : {}),
+    ...(vars !== undefined ? { vars: vars as Record<string, string> } : {}),
   };
 }
 

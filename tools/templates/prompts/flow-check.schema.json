@@ -1,0 +1,26 @@
+{
+  "type": "object",
+  "properties": {
+    "pass": {
+      "type": "boolean"
+    },
+    "verdict": {
+      "type": "string",
+      "enum": [
+        "DRAFT PASSED",
+        "DRAFT FAILED"
+      ]
+    },
+    "issues": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "pass",
+    "issues",
+    "verdict"
+  ]
+}

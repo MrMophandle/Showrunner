@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   parseEpisodeId, isEpisodeId, formatAired, compareEpisodeIds, InvalidEpisodeId,
+  RESERVED_EPISODE_ID, isReservedEpisodeId,
 } from "../src/ids.js";
 
 describe("parseEpisodeId", () => {
@@ -57,5 +58,19 @@ describe("compareEpisodeIds", () => {
     const ids = ["ep99", "s02e01", "s01e10", "ep98", "s01e02"].map(parseEpisodeId);
     const sorted = [...ids].sort(compareEpisodeIds).map((i) => i.raw);
     expect(sorted).toEqual(["s01e02", "s01e10", "s02e01", "ep98", "ep99"]);
+  });
+});
+
+describe("the reserved episode id", () => {
+  it("is \"setup\", and the grammar still refuses it", () => {
+    expect(RESERVED_EPISODE_ID).toBe("setup");
+    expect(() => parseEpisodeId(RESERVED_EPISODE_ID)).toThrow(InvalidEpisodeId);
+    expect(isEpisodeId(RESERVED_EPISODE_ID)).toBe(false);
+  });
+  it("is the only id isReservedEpisodeId accepts", () => {
+    expect(isReservedEpisodeId("setup")).toBe(true);
+    for (const other of ["Setup", "setup2", "setups", "s02e01", "ep07", "init", ""]) {
+      expect(isReservedEpisodeId(other), other).toBe(false);
+    }
   });
 });

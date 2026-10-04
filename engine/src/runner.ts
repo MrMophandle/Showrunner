@@ -4,7 +4,7 @@ import { downstreamOf, orderSteps, pipelineHash } from "./pipeline.js";
 import { ENGINE_VERSION } from "./version.js";
 import { BYPASS_REASON, deriveRunState, type GateState, type RunState } from "./state.js";
 import { hashFiles, sameHashes } from "./hash.js";
-import { parseEpisodeId } from "./ids.js";
+import { isReservedEpisodeId, parseEpisodeId } from "./ids.js";
 import type {
   AgentStep, Emit, Executors, GateMessageRenderer, GateStep, GuardResult, LoopStep, Pipeline,
   RunContext, ScriptStep, Step, StepId,
@@ -204,8 +204,12 @@ export async function run(opts: RunOptions): Promise<RunResult> {
 
 async function execute(opts: RunOptions): Promise<RunResult> {
   const { pipeline, log, executors } = opts;
-  // Validate the episode id at entry: every path the run touches is built from it.
-  parseEpisodeId(opts.ctx.episodeId);
+  // Validate the episode id at entry: every path the run touches is built from it. The one
+  // exemption is the reserved id the bible interview runs under (ids.ts): it names no episode,
+  // builds no episode path — the interview hands `log` a path of its own — and would otherwise
+  // fail here before a single event was written. Nothing else is exempt, so a bogus id is still
+  // refused at entry rather than halfway through a run.
+  if (!isReservedEpisodeId(opts.ctx.episodeId)) parseEpisodeId(opts.ctx.episodeId);
   const ordered = orderSteps(pipeline);
   const priorEvents: Event[][] = [];
   for (const pl of opts.priorLogs ?? []) priorEvents.push(await pl.read());
@@ -494,6 +498,11 @@ async function runGateStep(
     }
     // Rejected: run the fix agent (if any), then decide whether another attempt is allowed.
     if (attempts >= maxAttempts) {
+      // This wording is depended on outside the engine: `tools/src/init/init.ts`'s
+      // `GATE_EXHAUSTED` matches `/: gate failed: rejected \d+ times?$/` against it, so that the
+      // bible interview can treat one file's exhausted gate as a stall and carry on with the rest
+      // of the bible. Reword it and that becomes an abort. A rewording breaks a test rather than a
+      // run (`tools/test/init.test.ts` exercises exhaustion against the real engine).
       const error = `rejected ${attempts} times`;
       await emit("step_failed", { error });
       return { kind: "failed", error };
@@ -554,7 +563,7 @@ async function runGateStep(
       return failGate(`gate ${JSON.stringify(step.id)}: messageFile needs RunOptions.renderGateMessage`);
     }
     try {
-      message = await renderGateMessage(step.messageFile, ctx);
+      message = await renderGateMessage(step.messageFile, ctx, step.vars);
     } catch (err) {
       return failGate(`gate ${JSON.stringify(step.id)}: ${step.messageFile} did not render: ${err instanceof Error ? err.message : String(err)}`);
     }

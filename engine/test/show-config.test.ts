@@ -1,8 +1,9 @@
 import { describe, it, expect } from "vitest";
 import path from "node:path";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, writeFile, readFile, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { loadShowConfig, seasonOf, resolveShowPath, formatFilename, mixFilename, ShowConfigError, SHOW_CONFIG_FILE } from "../src/show-config.js";
+import { fileURLToPath } from "node:url";
+import { loadShowConfig, seasonOf, resolveShowPath, formatFilename, mixFilename, ShowConfigError, SHOW_CONFIG_FILE, SHOW_CONFIG_KEYS } from "../src/show-config.js";
 
 const good = {
   showName: "Harbor Lights", showSlug: "HarborLights", promptsDir: "prompts",
@@ -80,5 +81,45 @@ describe("filenames", () => {
     expect(mixFilename(show, "ep10")).toBe("Show S01E10.wav");
     expect(mixFilename(show, "ep98")).toBe("episode.wav");
     expect(mixFilename({ ...show, output: { nasRoot: "/nas" } }, "s02e01")).toBe("Show S02E01.wav");
+  });
+});
+
+const SCRIPTS = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../scripts");
+
+describe("SHOW_CONFIG_KEYS", () => {
+  it("carries the eight required keys as requiredBy engine or both", () => {
+    const required = ["showName", "showSlug", "promptsDir", "models.medium", "models.large", "models.writer", "airMap", "output.nasRoot"];
+    for (const p of required) {
+      const k = SHOW_CONFIG_KEYS.find((k) => k.path === p);
+      expect(k, p).toBeDefined();
+      expect(["engine", "both"]).toContain(k!.requiredBy);
+    }
+  });
+  it("names every key a script reads through sc.value or sc.path", async () => {
+    // The scripts read their config through exactly two accessors (scripts/lib/showconfig.py).
+    // Every `sc.value(cfg, "a", "b")` / `sc.path(cfg, "a", "b", root=…)` site names a dotted key;
+    // this test refuses a site whose key the list does not carry, so a new script setting cannot
+    // be added without a row here — and `init` builds its config from these rows.
+    // Either quote is accepted because a site inside an f-string writes its keys single-quoted
+    // (scripts/master-video.py:74), and a quote class that saw only `"` would miss it silently.
+    const files = (await readdir(SCRIPTS)).filter((f) => f.endsWith(".py")).map((f) => path.join(SCRIPTS, f));
+    files.push(path.join(SCRIPTS, "lib", "showconfig.py"));
+    const site = /sc\.(?:value|path)\(\s*cfg\s*,\s*((?:['"][^'"]+['"]\s*,?\s*)+)/g;
+    const seen = new Set<string>();
+    for (const f of files) {
+      const text = await readFile(f, "utf8");
+      for (const m of text.matchAll(site)) {
+        const dotted = [...m[1]!.matchAll(/['"]([^'"]+)['"]/g)].map((x) => x[1]).join(".");
+        seen.add(dotted);
+      }
+    }
+    expect(seen.size).toBeGreaterThan(40);
+    const known = new Set(SHOW_CONFIG_KEYS.map((k) => k.path));
+    const missing = [...seen].filter((k) => !known.has(k)).sort();
+    expect(missing).toEqual([]);
+  });
+  it("has no duplicate paths", () => {
+    const paths = SHOW_CONFIG_KEYS.map((k) => k.path);
+    expect(new Set(paths).size).toBe(paths.length);
   });
 });

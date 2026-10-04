@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { Pipeline, Step, StepId } from "./steps.js";
+import type { NestedAgentStep, Pipeline, Step, StepId } from "./steps.js";
 
 export class PipelineError extends Error {
   constructor(message: string) {
@@ -112,6 +112,12 @@ export function orderSteps(p: Pipeline): Step[] {
   return out;
 }
 
+/** A nested agent step as plain data — a gate's `onReject` fix agent, a loop's `body`. It is not a
+ *  whole `StepDescription` because a nested step has no edges and no `when` of its own: it runs
+ *  because its parent decided so. Its `vars` are described for the same reason a top-level step's
+ *  are — a changed var changes what that prompt says, so `pipelineHash` has to move with it. */
+export interface NestedStepDescription { id: StepId; promptFile: string; model: string; vars?: Record<string, string> }
+
 /** One step as plain data: the names, edges, files and bounds it declares, with every function it
  *  carries reduced to a flag or dropped. Separate from `Step` because `Step` holds live code —
  *  `argv`, `when`, `check`, `message`, `progress` — which neither a reader nor a hash can hold. */
@@ -121,19 +127,45 @@ export interface StepDescription {
   when: boolean;
   timeoutMs?: number; promptFile?: string; schemaFile?: string; model?: string; allowedTools?: string[]; context?: "fresh" | "shared";
   idleTimeoutMs?: number; messageFile?: string; maxAttempts?: number; rerunOnReject?: StepId[];
-  onReject?: { id: StepId; promptFile: string; model: string }; body?: { id: StepId; promptFile: string; model: string };
+  onReject?: NestedStepDescription; body?: NestedStepDescription;
   until?: string; maxIterations?: number; cwd?: string;
+  /** The step's `{{vars.<name>}}` values (agent and gate steps), keys sorted. Described because a
+   *  changed var changes what the step's prompt says and so must change the pipeline hash. */
+  vars?: Record<string, string>;
 }
 
 /** A whole pipeline as plain data — the name a run records and its steps in declaration order.
  *  This is the shape `pipelineHash` hashes and the shape a console or a report renders. */
 export interface PipelineDescription { name: string; steps: StepDescription[] }
 
+/** A step's `vars` copied with its keys in sorted order. `pipelineHash` hashes the description
+ *  through JSON.stringify, which emits an object's keys in insertion order, so copying the
+ *  author's object as it was written would make two pipelines that declare the same vars in a
+ *  different source order hash differently — a pipeline change the log would report when nothing
+ *  about the pipeline changed. Sorting makes the hash a function of the values alone. */
+function describeVars(vars: Record<string, string>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const key of Object.keys(vars).sort()) out[key] = vars[key] as string;
+  return out;
+}
+
+/** A gate's `onReject` or a loop's `body` as plain data, its `vars` described by the same helper
+ *  as a top-level step's. Shared by the two call sites so a nested step cannot be described one
+ *  way under a gate and another way under a loop. */
+function describeNested(s: NestedAgentStep): NestedStepDescription {
+  return { id: s.id, promptFile: s.promptFile, model: s.model, ...(s.vars !== undefined ? { vars: describeVars(s.vars) } : {}) };
+}
+
 /** The pipeline as a document: every name, edge, file and bound a step declares, with each
  *  function reduced to "present". A pipeline is live TypeScript — argv, when, check, progress are
  *  code — so JSON.stringify would drop every decision it makes; this is the part that can be
  *  handed to a reader or hashed. The evaluated argv of each script step is in the log already,
- *  on its step_started. */
+ *  on its step_started.
+ *
+ *  Every step's `vars` are recorded, a nested step's (a gate's `onReject`, a loop's `body`)
+ *  included, with the keys sorted: a var is part of what the step's prompt says, so the pipeline
+ *  hash moves when one changes and does not move when the same vars are merely written in another
+ *  order. */
 export function describePipeline(p: Pipeline): PipelineDescription {
   const steps = p.steps.map((s): StepDescription => {
     const d: StepDescription = { id: s.id, kind: s.kind, dependsOn: [...(s.dependsOn ?? [])], inputs: [...(s.inputs ?? [])], outputs: [...(s.outputs ?? [])], when: s.when !== undefined };
@@ -143,16 +175,18 @@ export function describePipeline(p: Pipeline): PipelineDescription {
       d.promptFile = s.promptFile; d.model = s.model; d.allowedTools = [...s.allowedTools]; d.context = s.context;
       if (s.schemaFile !== undefined) d.schemaFile = s.schemaFile;
       if (s.idleTimeoutMs !== undefined) d.idleTimeoutMs = s.idleTimeoutMs;
+      if (s.vars !== undefined) d.vars = describeVars(s.vars);
     }
     if (s.kind === "gate") {
       if (s.messageFile !== undefined) d.messageFile = s.messageFile;
       if (s.maxAttempts !== undefined) d.maxAttempts = s.maxAttempts;
       if (s.rerunOnReject !== undefined) d.rerunOnReject = [...s.rerunOnReject];
-      if (s.onReject) d.onReject = { id: s.onReject.id, promptFile: s.onReject.promptFile, model: s.onReject.model };
+      if (s.onReject) d.onReject = describeNested(s.onReject);
+      if (s.vars !== undefined) d.vars = describeVars(s.vars);
     }
     if (s.kind === "loop") {
       d.until = s.until; d.maxIterations = s.maxIterations;
-      d.body = { id: s.body.id, promptFile: s.body.promptFile, model: s.body.model };
+      d.body = describeNested(s.body);
     }
     return d;
   });
