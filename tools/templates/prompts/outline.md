@@ -33,7 +33,7 @@ scenes it still owes, so a beat written under any other heading is a beat
 the run cannot see. The comment under each heading in the template says
 what that section is for.
 
-For the rigor, Glob Episodes/*/outline.md and read the most recently
+For the rigor, Glob {{show.episodesDir}}/*/outline.md and read the most recently
 approved one when one exists; your output must match it.
 
 ## THE SCENE SYNOPSIS COMES FIRST

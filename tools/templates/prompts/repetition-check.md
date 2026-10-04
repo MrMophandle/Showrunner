@@ -6,7 +6,7 @@ there is a pattern you are hunting, inside this episode and across the
 ones before it — then:
 
 1. {{show.episodesDir}}/{{episodeId}}/script.md (the draft under audit).
-2. The PREVIOUS episodes: Glob Episodes/*/script.md and read the two most
+2. The PREVIOUS episodes: Glob {{show.episodesDir}}/*/script.md and read the two most
    recently approved scripts other than the draft under audit.
    Note their signature images and turns of phrase as you read.
 

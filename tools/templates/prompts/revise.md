@@ -27,6 +27,6 @@ only the `issues` list. A deviation is logged to the canon ledger, not revised.
 
 When — and only when — every listed issue is resolved and the script
 still reads in the register — the most recently approved script under
-Episodes/*/script.md if one exists; when none exists, the
+{{show.episodesDir}}/*/script.md if one exists; when none exists, the
 `## Register sample` section of `Canon/style-guide.md` — output exactly:
 REVISIONS_COMPLETE

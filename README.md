@@ -865,6 +865,8 @@ or `console/`.** This grep is what checks it, and it must print nothing:
       --exclude-dir=node_modules --exclude-dir=dist --exclude-dir=show-data \
       --exclude-dir=public --exclude-dir=.venv --exclude-dir=__pycache__ --exclude-dir=.pytest_cache
 
+**`tools/show-data/` is the rule's one deliberate exception, and the rule says so rather than leaving the grep's `--exclude-dir=show-data` flag as the only record of it.** That is why the paths above read `tools/src/` and `tools/templates/` rather than `tools/`: `tools/show-data/deadlight-check-context.json` and `tools/show-data/deadlight-overrides.json` name a show in their filenames and in their contents because they are one show's maintained check data — the inputs `check-prompts` is run with — and not engine source. Nothing under `tools/show-data/` is copied into a show `showrunner-init` creates.
+
 **The word list is the first show's, and it is not the whole obligation.** It names Dead Light and
 that show's characters and places because those are the literals this engine was carved out of, and
 `-w` is what keeps `remo` from matching `remotion`. A show's character and place names beyond the
