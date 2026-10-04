@@ -1,6 +1,6 @@
 # Pipeline Artifacts & Folder Convention
 
-> The canonical reference for **what artifacts the pipeline produces and where they live.** Every episode's files land in these locations identically. The pipeline steps write to these paths by contract and `check_layout.py` audits conformance. It is a house default stating the engine's own facts: edit the names if your config renames the directories, but the shape is the engine's.
+> The canonical reference for **what artifacts the pipeline produces and where they live.** Every episode's files land in these locations identically. The pipeline steps write to these paths by contract. It is a house default stating the engine's own facts: edit the names if your config renames the directories, but the shape is the engine's.
 
 ## Artifact catalog
 

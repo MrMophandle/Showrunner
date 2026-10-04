@@ -35,7 +35,8 @@ describe("episodeRow", () => {
     await writeIn(root, "Episodes/s02e02/premise.md", "A tow gone wrong.\n");
     await seedRun(root, "s02e02", "r1", [
       { kind: "run_started", payload: { pipeline: "episode", episodeId: "s02e02" } },
-      { stepId: "stamp-outline", kind: "step_started", payload: { kind: "script" } }, { stepId: "stamp-outline", kind: "step_completed", payload: {} },
+      { stepId: "outline-gate", kind: "gate_opened", payload: { attempt: 1, message: "approve the outline" } },
+      { stepId: "outline-gate", kind: "gate_answered", payload: { approved: true, attempt: 1, by: "console:test" } },
       { stepId: "draft", kind: "step_started", payload: { kind: "loop" } },
       { stepId: "draft", kind: "step_failed", payload: { error: "iteration 15: exhausted" } },
       { kind: "run_finished", payload: { status: "failed" } },
@@ -74,7 +75,8 @@ describe("episodeRow", () => {
     }));
     await seedRun(root, "s02e06", "r1", [
       { kind: "run_started", payload: { pipeline: "episode", episodeId: "s02e06" } },
-      { stepId: "stamp-audio", kind: "step_started", payload: { kind: "script" } }, { stepId: "stamp-audio", kind: "step_completed", payload: {} },
+      { stepId: "audio-gate", kind: "gate_opened", payload: { attempt: 1, message: "approve the mix" } },
+      { stepId: "audio-gate", kind: "gate_answered", payload: { approved: true, attempt: 1, by: "console:test" } },
       { stepId: "nano-banana-gate", kind: "gate_opened", payload: { attempt: 1, message: "drop in the ambient shots" } },
     ]);
     const row = await store.episodeRow("s02e06");

@@ -605,7 +605,7 @@ A run restarts by replaying its log; there is no separate state file to reconcil
 
 ## Scripts
 
-`scripts/` holds the pipeline's deterministic steps: twenty-six Python programs the engine runs
+`scripts/` holds the pipeline's deterministic steps: twenty-three Python programs the engine runs
 as argv arrays, never as shell strings. **A script belongs to the engine, and the show it is run
 for reaches it through argv and `showrunner.json`** — no script contains a show's name.
 
@@ -842,13 +842,20 @@ the file is skipped, so `npm test` stays hermetic; with it set but `SHOWRUNNER_S
 file is skipped with a message saying so. `SHOWRUNNER_SHOW_ROOT` has no built-in fallback because
 any fallback would have to spell a show's directory name, which the rule below forbids.
 
+**The show root this exercise is maintained against is the first show's retired repository,
+`SHOWRUNNER_SHOW_ROOT=/Users/ryanperkowski/GitHub/DeadLight`** — Dead Light, whose non-canon
+`ep98` the exercise was written for. That repository is read-only history: the engine's first show
+finished its first season there, and the exercise is the one thing still run against it. This
+README may name the show, because the rule below applies to `engine/`, `scripts/`, `render/`,
+`tools/src/`, `tools/templates/` and `console/` and not to this file; the engine's own source may
+not name it.
+
 The exercise writes only under the show's `Production/ep98/` and `Episodes/ep98/` — audio, video
-and images there are git-ignored — and it deletes the two run logs it wrote and restores
-`Episodes/ep98/STATUS.md` from git when it is done, so `git status` in the show repository is the
-same before and after. It never touches the NAS: the `nas-mounted` guard is one of the steps the
-seed marks completed. It also removes `render/public/ep98/`, the staging directory
-`build-timeline.py` filled, because that directory holds the show's own file names inside the
-engine checkout and the rule below forbids them there.
+and images there are git-ignored — and it deletes the two run logs it wrote when it is done, so
+`git status` in the show repository is the same before and after. It never touches the NAS: the
+`nas-mounted` guard is one of the steps the seed marks completed. It also removes
+`render/public/ep98/`, the staging directory `build-timeline.py` filled, because that directory
+holds the show's own file names inside the engine checkout and the rule below forbids them there.
 
 **No show's name may appear in `engine/`, `scripts/`, `render/`, `tools/src/`, `tools/templates/`
 or `console/`.** This grep is what checks it, and it must print nothing:

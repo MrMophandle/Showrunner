@@ -29,17 +29,23 @@ export interface EpisodePipelineOptions {
 const MIN = 60_000;
 const HOUR = 60 * MIN;
 
-/** The stage each gate opens and each completion reaches (spec §3.2). ASSEMBLY is keyed on the
- *  gate itself because nothing stamps it; PUBLISH_KIT on the later of the two steps that follow
- *  finalize; CANON on the commit rather than the gate, which carries a `when` (F-05). */
+/** The stage each gate opens and each completion reaches (spec §3.2). Each `approved` key is the
+ *  step the retired `stamp-*` step of that stage depended on, because nothing stamps a stage any
+ *  more: the six STATUS.md stamp steps retired with console v1, and each one's own dependency is
+ *  reached at the same point in the walk the stamp was. So OUTLINE, SCRIPT, CASTING and AUDIO are
+ *  keyed on their gates, and a step id appearing in both `gates` and `approved` is legal and
+ *  intended (see `validateStageMap` in engine/src/stages.ts), as ASSEMBLY already was on
+ *  final-gate; IMAGES is keyed on image-sheet-final, which is the step stamp-images depended on,
+ *  and not on image-gate three steps earlier. PUBLISH_KIT is keyed on the later of the two steps
+ *  that follow finalize; CANON on the commit rather than the gate, which carries a `when` (F-05). */
 export const EPISODE_STAGE_MAP: StageMap = {
   gates: {
     "outline-gate": "DRAFT_OUTLINE", "script-gate": "DRAFT_SCRIPT", "casting-gate": "DRAFT_CASTING", "audio-gate": "DRAFT_AUDIO",
     "nano-banana-gate": "DRAFT_IMAGES", "image-gate": "DRAFT_IMAGES", "final-gate": "DRAFT_ASSEMBLY", "canon-gate": "DRAFT_CANON",
   },
   approved: {
-    "stamp-outline": "OUTLINE", "stamp-script": "SCRIPT", "stamp-casting": "CASTING", "stamp-audio": "AUDIO",
-    "stamp-images": "IMAGES", "final-gate": "ASSEMBLY", "publish-kit": "PUBLISH_KIT", "canon-commit": "CANON",
+    "outline-gate": "OUTLINE", "script-gate": "SCRIPT", "casting-gate": "CASTING", "audio-gate": "AUDIO",
+    "image-sheet-final": "IMAGES", "final-gate": "ASSEMBLY", "publish-kit": "PUBLISH_KIT", "canon-commit": "CANON",
   },
   final: "COMPLETE",
 };
@@ -86,7 +92,6 @@ export function episodePipeline(opts: EpisodePipelineOptions): Pipeline {
   const premise = `${ep}/premise.md`;
   const lockedBeats = `${ep}/locked-beats.md`;
   const canonLedger = `${ep}/canon-ledger.md`;
-  const status = `${ep}/STATUS.md`;
   const publishJson = `${ep}/publish.json`;
   const ttsScript = `${prod}/tts-script.json`;
   const manifest = `${prod}/audio/manifest.json`;
@@ -102,9 +107,6 @@ export function episodePipeline(opts: EpisodePipelineOptions): Pipeline {
    *  with the show root as cwd (the executor's default) and the episode id first. */
   const py = (name: string, ...args: string[]) => (): string[] =>
     ["uv", "run", "--project", scriptsDir, "python", path.join(scriptsDir, name), episodeId, ...args];
-
-  const stamp = (id: StepId, dependsOn: StepId[], milestone: string, detail: string): ScriptStep =>
-    ({ kind: "script", id, dependsOn, argv: py("status.py", milestone, detail), outputs: [status], timeoutMs: 15_000 });
 
   const commit = (id: StepId, dependsOn: StepId[], message: string, paths: string[]): ScriptStep =>
     ({ kind: "script", id, dependsOn, argv: py("git-commit.py", "--message", message, "--", ...paths), timeoutMs: 30_000 });
@@ -208,9 +210,8 @@ export function episodePipeline(opts: EpisodePipelineOptions): Pipeline {
       onReject: fixAgent("outline-gate-fix", "outline-gate.reject.md", "writer", ["Read", "Edit", "Write", "Glob", "Grep"], [outline]),
       rerunOnReject: ["hand-edits-outline"],
     },
-    stamp("stamp-outline", ["outline-gate"], "outline", "approved at outline-gate"),
     {
-      kind: "loop", id: "draft", dependsOn: ["stamp-outline"], until: "DRAFT_COMPLETE", maxIterations: 15,
+      kind: "loop", id: "draft", dependsOn: ["outline-gate"], until: "DRAFT_COMPLETE", maxIterations: 15,
       inputs: [outline, `${canonDir}/style-guide.md`, `${canonDir}/story-craft.md`], outputs: [script],
       body: { kind: "agent", id: "draft-body", promptFile: "draft.md", model: "writer", allowedTools: ["Read", "Write", "Edit", "Glob", "Grep"], context: "fresh", idleTimeoutMs: 15 * MIN },
       // Spec §6.7: progress derived from disk — scene headers written against beats planned.
@@ -245,12 +246,11 @@ export function episodePipeline(opts: EpisodePipelineOptions): Pipeline {
       onReject: fixAgent("script-gate-fix", "script-gate.reject.md", "writer", ["Read", "Edit", "Write", "Glob", "Grep"], [script]),
       rerunOnReject: ["hand-edits-script", ...REVIEWERS],
     },
-    stamp("stamp-script", ["script-gate"], "script", "panel passed, showrunner approved"),
     {
       kind: "agent", id: "publish-copy", dependsOn: ["script-gate"], promptFile: "publish-copy.md", model: "medium",
       allowedTools: ["Read", "Write"], context: "fresh", timeoutMs: 10 * MIN, inputs: [script, publishingGuide], outputs: [publishJson],
     },
-    commit("write-commit", ["stamp-script", "publish-copy"], `${episodeId}: outline + script (write phase)`, [ep, runsDir]),
+    commit("write-commit", ["script-gate", "publish-copy"], `${episodeId}: outline + script (write phase)`, [ep, runsDir]),
 
     // ── assets phase ─────────────────────────────────────────────────────────────────────────
     {
@@ -271,7 +271,6 @@ export function episodePipeline(opts: EpisodePipelineOptions): Pipeline {
       onReject: fixAgent("casting-gate-fix", "casting-gate.reject.md", "medium", ["Read", "Edit", "Write", "Glob", "Grep"], [ttsScript]),
       rerunOnReject: ["validate-manifest"],
     },
-    stamp("stamp-casting", ["casting-gate"], "casting", "guest voices approved"),
     { kind: "script", id: "tts-generate", dependsOn: ["casting-gate"], argv: py("tts-generate.py"), inputs: [ttsScript], outputs: [manifest], timeoutMs: 3 * HOUR },
     { kind: "script", id: "truncation-qc", dependsOn: ["tts-generate"], argv: py("truncation-qc.py"), inputs: [ttsScript, manifest], outputs: [ttsScript, manifest], timeoutMs: 30 * MIN },
     { kind: "script", id: "pace-qc", dependsOn: ["truncation-qc"], argv: py("pace-qc.py"), inputs: [ttsScript, manifest], outputs: [ttsScript, manifest], timeoutMs: HOUR },
@@ -282,7 +281,6 @@ export function episodePipeline(opts: EpisodePipelineOptions): Pipeline {
       onReject: fixAgent("audio-gate-fix", "audio-gate.reject.md", "medium", ["Read", "Edit", "Write", "Glob", "Grep", "Bash"], [ttsScript]),
       rerunOnReject: ["tts-generate"],
     },
-    stamp("stamp-audio", ["audio-gate"], "audio", "mix approved (-14 LUFS)"),
     {
       // Rule 1.1: the Vision module takes the approved mix as an input, so the ordering cannot be
       // lost by editing a dependency list — the mix is declared here as well as depended on.
@@ -337,8 +335,7 @@ export function episodePipeline(opts: EpisodePipelineOptions): Pipeline {
     },
     { kind: "script", id: "registry-append", dependsOn: ["image-gate"], argv: py("registry-append.py"), inputs: [prompts], timeoutMs: 2 * MIN },
     { kind: "script", id: "image-sheet-final", dependsOn: ["registry-append"], argv: py("image-sheet.py"), inputs: [prompts], outputs: [imageSheet], timeoutMs: MIN },
-    stamp("stamp-images", ["image-sheet-final"], "images", "assets approved"),
-    commit("assets-commit", ["stamp-audio", "stamp-images"], `${episodeId}: assets — manifest, shot list, image sheet, casting pile (assets phase)`,
+    commit("assets-commit", ["audio-gate", "image-sheet-final"], `${episodeId}: assets — manifest, shot list, image sheet, casting pile (assets phase)`,
       [ttsScript, prompts, imageSheet, castingPileDir, visualRefs, runsDir]),
 
     // ── assemble phase ───────────────────────────────────────────────────────────────────────
@@ -369,14 +366,13 @@ export function episodePipeline(opts: EpisodePipelineOptions): Pipeline {
       rerunOnReject: ["build-timeline"],
     },
     { kind: "script", id: "finalize", dependsOn: ["final-gate"], argv: py("finalize-video.py"), inputs: [mastered], timeoutMs: 20 * MIN },
-    stamp("stamp-finalized", ["finalize"], "finalized", "pushed to NAS"),
     { kind: "script", id: "publish-kit", dependsOn: ["finalize"], argv: py("publish-kit.py"), inputs: [manifest, ttsScript, script, publishJson], outputs: [`${prod}/publish/upload.md`, `${prod}/publish/captions.srt`], timeoutMs: MIN },
     // The paths are the files this phase leaves changed and the show keeps: publish.json and
     // prompts.json because final-gate's fix agent edits exactly those two and no later commit
     // step stages them, and not the timeline, which is derived and which the show git-ignores
     // (git-commit.py skips an ignored path, but naming one here would only ever be noise).
-    commit("assemble-commit", ["stamp-finalized", "publish-kit"], `${episodeId}: assembled + finalized — publish kit, status (assemble phase)`,
-      [publishJson, prompts, `${prod}/publish`, status, runsDir]),
+    commit("assemble-commit", ["finalize", "publish-kit"], `${episodeId}: assembled + finalized — publish kit (assemble phase)`,
+      [publishJson, prompts, `${prod}/publish`, runsDir]),
 
     // ── canon phase (rule 1.2: after the publish kit) ────────────────────────────────────────
     { kind: "script", id: "canon-baseline", dependsOn: ["assemble-commit"], argv: py("canon-diff.py"), timeoutMs: 15_000 },
