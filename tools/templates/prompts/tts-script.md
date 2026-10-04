@@ -8,7 +8,7 @@ text.
    character, the reference WAV path, its exact transcript (ref_text),
    the base acting direction, registers, and fx chain. Copy these
    verbatim; never invent or alter them.
-2. `## Script dialogue attribution` of Canon/pipeline-artifacts.md — the
+2. `## Script dialogue attribution` of `Canon/pipeline-artifacts.md` — the
    square-bracket marks the script carries and what each one means. That
    section is the law for READING them; this prompt is the law for what
    they do to the manifest.
@@ -63,7 +63,7 @@ cast "direction". Rules:
   omitted — they are visual, not narrated.)
 - **AUTHORING MARKS — the script carries two kinds of square-bracket
   mark, both stated in `## Script dialogue attribution` of
-  Canon/pipeline-artifacts.md. NEITHER IS EVER SPOKEN. Strip both from
+  `Canon/pipeline-artifacts.md`. NEITHER IS EVER SPOKEN. Strip both from
   every `text` field; a bracket mark reaching `text` is a defect, not a
   reading.**
 
@@ -120,9 +120,10 @@ cast "direction". Rules:
   reads as "the narrator speeds up." Deliberate elegiac/climactic
   single sentences may exceed the cap; nothing else may.
 - **Scene transitions:** the FIRST segment of each `## SCENE` (after the
-  cold open) gets gap_before 3.5 — a deliberate held "pregnant pause."
-  EXCEPTION: the first segment of SCENE TWO (right after the cold open)
-  instead gets gap_before 7.0 AND "title_card_before": true — that 7.0s
+  cold open) gets gap_before {{show.audio.sceneTransitionGapSeconds}} — a
+  deliberate held "pregnant pause." EXCEPTION: the first segment of SCENE
+  TWO (right after the cold open) instead gets gap_before
+  {{show.audio.titleCardGapSeconds}} AND "title_card_before": true — that
   window is where the title card shows. Exactly one title_card_before
   per episode.
 - Segment "i" starts at 1, increments by 1, no gaps.

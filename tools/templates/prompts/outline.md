@@ -5,17 +5,17 @@ a beat skeleton (outline).
 The premise for this episode is in {{show.episodesDir}}/{{episodeId}}/premise.md. Read it first; it is the request.
 
 ## Load canon FIRST (read all of these)
-- Canon/world-overview.md — `## Logline`, `## Premise`, `## Tone and genre`,
+- `Canon/world-overview.md` — `## Logline`, `## Premise`, `## Tone and genre`,
   `## The rules of the universe` (load-bearing — never contradict), and
   `## Recurring engine for stories`
 - Canon/series-arc.md
-- Canon/episode-formula.md — `## Target` (runtime and word budget) and
+- `Canon/episode-formula.md` — `## Target` (runtime and word budget) and
   `## Beats` (the structure every episode shares)
 - Canon/story-craft.md      (causality, endings, setup/payoff — LAW)
 - Canon/continuity-ledger.md (open threads; honor and, where apt, advance them)
 - Canon/style-guide.md
 - Canon/timeline.md
-- Canon/season-{{season}}.md — `## Season laws` bind every episode of the season
+- `Canon/season-{{season}}.md` — `## Season laws` bind every episode of the season
 - Canon/species/ , Canon/locations/ , Canon/factions/
   (read every file relevant to the premise; use Glob to list them)
 - Read every sheet under Canon/characters/, and Canon/technology.md wherever
@@ -58,14 +58,15 @@ detailed beat outline below it is for the drafting agent. Write the
 synopsis LAST (after the beats exist) but PLACE it first.
 
 ## Rules
-- Runtime and word budget: apply `## Target` of Canon/episode-formula.md.
+- Runtime and word budget: apply `## Target` of `Canon/episode-formula.md`.
   The outline gate refuses an outline that cannot reach it.
-- Hold the episode shape that `## Beats` of Canon/episode-formula.md sets,
-  pay whatever `## Serialized thread` of that file requires of every
-  episode, and log what this episode opens under "Threads opened".
+- Hold the episode shape that `## Beats` of `Canon/episode-formula.md`
+  sets, pay whatever `## Serialized thread` of `Canon/episode-formula.md`
+  requires of every episode, and log what this episode opens under
+  "Threads opened".
 - Vary the per-episode variables against the episodes already made — the
   slots are the ones `## Per-episode variables` of
-  Canon/episode-formula.md lists.
+  `Canon/episode-formula.md` lists.
 - Cite canon by file path wherever a beat depends on it.
 - **Arc beats must be declared.** If any beat requires a character to act
   against their Canon/characters/ sheet (out-of-character courage, a
@@ -100,7 +101,7 @@ synopsis LAST (after the beats exist) but PLACE it first.
   introduce retroactive canon in passing as settled fact; the showrunner
   must be able to veto it before it load-bears a plot.
 - **Death rules are law** — apply `## Death rules` of
-  Canon/episode-formula.md. Declare every death the outline contains and
+  `Canon/episode-formula.md`. Declare every death the outline contains and
   show how it satisfies every rule that section states; a death that
   section does not license is a defect.
 

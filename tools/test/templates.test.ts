@@ -97,6 +97,23 @@ describe("templates carry no history and no show", () => {
   });
 });
 
+/** A backticked level-2 heading as a prompt writes it: `` `## Cadence` ``. */
+const CITED_HEADING = /`##\s+([^`]+)`/g;
+
+/** A section citation in the house form -- one or more backticked `## <Heading>` spans, optionally
+ *  followed by "section"/"sections", then "of" and the file, which may be backticked or bare:
+ *  `` `## Narration` and `## Cadence` of `Canon/style-guide.md` ``. A line break may fall anywhere
+ *  inside one, because these prompts are hard-wrapped. */
+const CITATION = /((?:`##\s+[^`]+`(?:,\s*|\s+and\s+)?)+)\s*(?:sections?\s+)?of\s+`?(Canon\/[A-Za-z0-9_.{}-]+\.md)`?/g;
+
+/** True for a script's OWN scene header rather than a bible section: the draft prompt writes those
+ *  upper case (`## COLD OPEN`, `## SCENE TWO — <name>`, `## SCENE`) and every bible heading is
+ *  sentence case, so case alone separates the two. Placeholders are dropped before the test. */
+const isScriptHeading = (heading: string): boolean => {
+  const bare = heading.replace(/<[^>]*>/g, "");
+  return bare === bare.toUpperCase();
+};
+
 describe("the canon templates carry every required section, and the prompts read nothing else by name", () => {
   it("each REQUIRED_SECTIONS row has its heading in the canon template for that file", async () => {
     const missing: string[] = [];
@@ -118,6 +135,33 @@ describe("the canon templates carry every required section, and the prompts read
         const rel = `Canon/${m[1]}`;
         if (known.has(rel) || /^Canon\/(characters|species|locations|factions)\//.test(rel) || rel === "Canon/refs.json" || /^Canon\/season-\{\{season\}\}\.md$/.test(rel)) continue;
         bad.push(`${name}: ${rel}`);
+      }
+    }
+    expect(bad).toEqual([]);
+  });
+  it("every bible section a prompt template cites is a REQUIRED_SECTIONS row", async () => {
+    // The guard the whole named-section design rests on. A prompt that cites `## X` of a bible
+    // file reads that section by name, and `bible-check` refuses a show whose file lacks a
+    // REQUIRED_SECTIONS heading -- so a citation that names no row is a silent partial read
+    // waiting to happen, and a bible heading renamed out from under a citation must break a test
+    // rather than a run. Two assertions, because prompts cite in more than one shape: the
+    // heading-only one holds for every form (a dash list, a parenthetical), and the pair one adds
+    // the file wherever the citation states it.
+    const required = (file: string | undefined, heading: string): boolean =>
+      REQUIRED_SECTIONS.some((r) => (file === undefined || r.file === file.replace("season-{{season}}", "season-{season}")) && headingMatches(`## ${heading}`, r.heading));
+    const bad: string[] = [];
+    for (const name of await mdFiles(PROMPTS)) {
+      const text = await readFile(path.join(PROMPTS, name), "utf8");
+      for (const m of text.matchAll(CITED_HEADING)) {
+        const heading = m[1]!.trim();
+        if (isScriptHeading(heading)) continue;
+        if (!required(undefined, heading)) bad.push(`${name}: \`## ${heading}\` is no REQUIRED_SECTIONS heading`);
+      }
+      for (const m of text.matchAll(CITATION)) {
+        for (const h of m[1]!.matchAll(CITED_HEADING)) {
+          const heading = h[1]!.trim();
+          if (!required(m[2]!, heading)) bad.push(`${name}: \`## ${heading}\` of ${m[2]} is no REQUIRED_SECTIONS row`);
+        }
       }
     }
     expect(bad).toEqual([]);

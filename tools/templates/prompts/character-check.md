@@ -11,11 +11,11 @@ other reviewers; ignore them.
    script (Glob Canon/characters/**/*.md — each character is a folder
    holding its bible + reference images). For guests without a bible,
    check the outline's description of them instead.
-3. `## The primary cast` of Canon/world-overview.md — the stances it
+3. `## The primary cast` of `Canon/world-overview.md` — the stances it
    records are what each recurring character is for. Stance drift is the
    most damaging drift, and the cast's disagreement with each other is
    the show's engine.
-4. `## Character voices` of Canon/style-guide.md for the personality
+4. `## Character voices` of `Canon/style-guide.md` for the personality
    keywords.
 
 ## Audit each character's every scene for
@@ -28,8 +28,8 @@ other reviewers; ignore them.
 - **Role dynamics**: authority and deference patterns must hold — who
   commands and is obeyed, who needles, who overreaches, who steadies.
   Measure them against the stances in `## The primary cast` of
-  Canon/world-overview.md and the voices in `## Character voices` of
-  Canon/style-guide.md.
+  `Canon/world-overview.md` and the voices in `## Character voices` of
+  `Canon/style-guide.md`.
 - **Competence domains**: characters are good at THEIR jobs; a character
   suddenly expert outside their domain is drift.
 - **Interpersonal patterns**: who teases whom, who protects whom, who

@@ -5,20 +5,20 @@ on. Prose quality, canon facts, tone, and character belong to other
 reviewers; ignore them.
 
 Read {{show.episodesDir}}/{{episodeId}}/script.md, {{show.episodesDir}}/{{episodeId}}/outline.md,
-Canon/technology.md (`## Environment rules` is your rubric, and
+`Canon/technology.md` (`## Environment rules` is your rubric, and
 `## Governing principle` settles anything those rules do not cover), and
 any Canon/locations/ files for places in the script.
 
 ## Step 1 — classify every scene (and every mid-scene transition)
 For each scene, decide which of the environments `## Environment rules` of
-Canon/technology.md names it takes place in, and whether it is MIXED
+`Canon/technology.md` names it takes place in, and whether it is MIXED
 (characters in two of them at once — some in one, some in the other, in
 contact). Note what the text says vs. what it merely implies: a place the
 canon files class as hostile is hostile even when the prose forgets to say
 so.
 
 ## Step 2 — audit each character in each scene against it
-Apply `## Environment rules` of Canon/technology.md as law, one rule at a
+Apply `## Environment rules` of `Canon/technology.md` as law, one rule at a
 time, to every character present:
 - GEAR AND BODY: whatever that section says a person needs to survive the
   scene's environment, every present character must have — and every
@@ -31,9 +31,9 @@ time, to every character present:
   text must frame it as such. No one hears what the environment cannot
   deliver.
 - COMMS: characters in different environments reach each other only the
-  way `## Communication` of Canon/technology.md allows, never "across the
-  room." Whispering and shouting dynamics only work where both characters
-  share the same air.
+  way `## Environment rules` of `Canon/technology.md` allows, never
+  "across the room." Whispering and shouting dynamics only work where
+  both characters share the same air.
 - TRANSITIONS: moving from one environment to another costs what the
   rules say it costs; flag silent teleports between states.
 - OUT-OF-PLACE BEHAVIOR: flag conduct that belongs to another

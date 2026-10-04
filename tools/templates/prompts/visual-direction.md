@@ -3,7 +3,7 @@ list, tagging which shots are generated locally vs by the showrunner in
 Nano Banana.
 
 Read (LIVE — these are the law and they grow):
-- Canon/visual-style.md — `## The look`, `## Palette`,
+- `Canon/visual-style.md` — `## The look`, `## Palette`,
   `## Composition rules`, and `## Mandatory prompt scaffolding`. Every
   law those sections state applies to every prompt you write, and the
   scaffolding section is text your prompts must carry.
@@ -34,17 +34,15 @@ Write {{show.productionDir}}/{{episodeId}}/images/prompts.json:
        WHOLE RUN — every shot, zero images — on a single hit anywhere, so
        one careless word costs the entire episode's image spend):
 
-       BANNED OUTRIGHT, anywhere in a brief, in any sense — these are
-       matched as literal substrings and the guard cannot tell a populator
-       from furniture or from dialogue:
-         the crew · the others · other figures · a few figures ·
-         several figures · some figures · some people · onlookers ·
-         bystanders · patrons · a crowd · crowd of · background figures
+       BANNED OUTRIGHT, anywhere in a brief, in any sense — the show's own
+       configured list, matched as literal substrings, and the guard cannot
+       tell a populator from furniture or from dialogue:
+       {{show.visual.collectivePopulatorBans}}
        The ONLY exemption is the capping idiom 'no other figures in the
-       frame' (the word 'no' immediately before it).
+       frame' ('no', or 'no other/more/additional', immediately before it).
 
        ALLOWED ONLY AFTER AN EXPLICIT HEADCOUNT (a digit, or one/two/
-       three/four/five/six/exactly):
+       three/four/five/six/both/exactly):
          people · figures · crew members
        So 'three people: Vale, Pim and Maeve' PASSES; 'people' alone
        FAILS. Do not reach for 'people' as a safe substitute — it is a
