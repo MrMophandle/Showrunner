@@ -98,14 +98,15 @@ synopsis LAST (after the beats exist) but PLACE it first.
   changed) are mandatory; the outline's `## Ending duties` section must
   name how all FIVE ending duties are paid, including the exact final
   button.
-- **Declare invented canon UP TOP.** If the outline introduces any NEW
-  asset, location, character, or fact — especially RETROACTIVE ones
-  (things that "were always there," like a never-mentioned room under a
-  building the show has used all season) — declare it in a
-  `## New canon proposed` section near the TOP of the outline, before
-  first use: what it is, why it's plausible, why it never came up. Never
-  introduce retroactive canon in passing as settled fact; the showrunner
-  must be able to veto it before it load-bears a plot.
+- **Declare invented canon, every piece of it.** If the outline
+  introduces any NEW asset, location, character, or fact — especially
+  RETROACTIVE ones (things that "were always there," like a
+  never-mentioned room under a building the show has used all season) —
+  declare it in the outline's last section,
+  `## New canon proposed`, which is where the template places it: what it
+  is, why it's plausible, why it never came up. Never introduce
+  retroactive canon in passing as settled fact; the showrunner must be
+  able to veto it before it load-bears a plot.
 - **Death rules are law** — apply `## Death rules` of
   `Canon/episode-formula.md`. Declare every death the outline contains and
   show how it satisfies every rule that section states; a death that
