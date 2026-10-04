@@ -13,6 +13,7 @@ import {
   type Executors, type QueryFn, type ShowConfig,
 } from "@showrunner/engine";
 import { templatesDir } from "../src/init/paths.js";
+import { parseCanonTemplate } from "../src/init/scaffold.js";
 import type { InitIO } from "../src/init/interview.js";
 import { readmeSection, runInit, slugFrom, type InitOptions } from "../src/init/init.js";
 import { USAGE, defaultEngineRoot, parseArgs, terminalIO } from "../src/init/main.js";
@@ -236,35 +237,211 @@ describe("runInit --resume", () => {
 });
 
 describe("runInit with --import", () => {
-  it("offers the import first with the path filled in, and imports what the author accepts", async () => {
-    const root = await emptyDir();
+  /** A show to import from, holding whatever files a test names. */
+  async function sourceShow(files: Record<string, string>): Promise<string> {
     const source = await emptyDir();
-    await mkdir(path.join(source, "Canon"), { recursive: true });
-    await writeFile(path.join(source, "Canon/timeline.md"), "# Timeline\n\n## Eras\n\nthe old coast.\n", "utf8");
+    for (const [rel, text] of Object.entries(files)) {
+      await mkdir(path.dirname(path.join(source, rel)), { recursive: true });
+      await writeFile(path.join(source, rel), text, "utf8");
+    }
+    return source;
+  }
 
-    const offered: { question: string; default?: string }[] = [];
-    const firstChoices: string[] = [];
+  /** An author who takes the **pre-loop** import offer wherever it appears — the two-way choice
+   *  whose keys are `import` and `ask` — and approves at every gate. It must not reach for the
+   *  gate's own `import`, which would ask for a path this fake has no answer for. Every question
+   *  and every set of choices is recorded. */
+  function importingIO(answer = "Vale — the keeper of the light"): {
+    io: InitIO; said: string[]; asked: { question: string; default?: string }[]; offers: string[][];
+  } {
+    const said: string[] = [];
+    const asked: { question: string; default?: string }[] = [];
+    const offers: string[][] = [];
+    const io: InitIO = {
+      say: (text) => { said.push(text); },
+      ask: async (question, opts) => {
+        asked.push(opts?.default === undefined ? { question } : { question, default: opts.default });
+        return opts?.default ?? answer;
+      },
+      choose: async <T extends string>(_q: string, choices: readonly { key: T; label: string }[]) => {
+        const keys = choices.map((c) => c.key as string);
+        offers.push(keys);
+        const want = keys.includes("ask")
+          ? choices.find((c) => c.key === "import")
+          : choices.find((c) => c.key === "approve");
+        if (!want) throw new Error(`nothing to pick from: ${keys.join(", ")}`);
+        return want.key;
+      },
+    };
+    return { io, said, asked, offers };
+  }
+
+  it("offers the import before any question, and an accepted import asks nothing and runs no writer", async () => {
+    const root = await emptyDir();
+    const source = await sourceShow({ "Canon/timeline.md": "# Timeline\n\n## Eras\n\nthe old coast.\n" });
+    const io = importingIO();
+    const d = await deps();
+
+    const report = await runInit(options(root, { importFrom: source }), io.io, d);
+    expect(await readFile(path.join(root, "Canon/timeline.md"), "utf8")).toContain("the old coast.");
+    expect(report.files.find((f) => f.key === "timeline")?.outcome).toBe("imported");
+
+    // The offer came as a two-way choice before the questions, and the gate's four answers after.
+    expect(io.offers).toContainEqual(["import", "ask"]);
+    // No question of the timeline template was asked: its three questions are the ones this
+    // import skipped, and the writer agent never ran for it either. The questions are matched by
+    // a phrase of their own wording, taken from `tools/templates/canon/timeline.md`.
+    const timelineQuestions = parseCanonTemplate(await readFile(path.join(templatesDir(), "canon", "timeline.md"), "utf8")).questions;
+    expect(timelineQuestions).toHaveLength(3);
+    for (const q of timelineQuestions) expect(io.asked.map((a) => a.question)).not.toContain(q.question);
+    expect(d.ran).not.toContain("write:timeline");
+    // Every other gated file still went through its writer.
+    for (const entry of GATED.filter((b) => b.key !== "timeline" && b.mode === "interview")) {
+      expect(d.ran).toContain(`write:${entry.key}`);
+    }
+  }, 120_000);
+
+  it("asks the questions when the import is declined, and keeps the path filled in at the gate", async () => {
+    const root = await emptyDir();
+    const source = await sourceShow({ "Canon/timeline.md": "# Timeline\n\n## Eras\n\nthe old coast.\n" });
+    const asked: { question: string; default?: string }[] = [];
+    const offers: string[][] = [];
     const base = autoIO();
     const io: InitIO = {
       say: base.io.say,
       ask: async (question, opts) => {
-        offered.push(opts?.default === undefined ? { question } : { question, default: opts.default });
+        asked.push(opts?.default === undefined ? { question } : { question, default: opts.default });
         return opts?.default ?? "Vale — the keeper of the light";
       },
       choose: async <T extends string>(question: string, choices: readonly { key: T; label: string }[]) => {
-        firstChoices.push(choices[0]!.key);
-        const want = choices.find((c) => c.key === (question.includes("timeline") ? "import" : "approve"));
+        offers.push(choices.map((c) => c.key as string));
+        // Decline the pre-loop offer, then take the import at the gate.
+        const want = choices.find((c) => c.key === (choices.some((o) => o.key === "ask") ? "ask" : question.includes("timeline") ? "import" : "approve"));
         return (want ?? choices[0]!).key;
       },
     };
+    const d = await deps();
 
-    const report = await runInit(options(root, { importFrom: source }), io, await deps());
-    expect(await readFile(path.join(root, "Canon/timeline.md"), "utf8")).toContain("the old coast.");
+    const report = await runInit(options(root, { importFrom: source }), io, d);
+    // The pre-loop offer was made, and declined.
+    expect(offers).toContainEqual(["import", "ask"]);
+    // The questions were asked and the writer ran, because the pre-loop offer was declined.
+    expect(asked.some((a) => /era/i.test(a.question))).toBe(true);
+    expect(d.ran).toContain("write:timeline");
+    // The gate's import still carries the candidate as the path question's default.
+    expect(asked.some((a) => /import/i.test(a.question) && a.default === path.join(source, "Canon/timeline.md"))).toBe(true);
     expect(report.files.find((f) => f.key === "timeline")?.outcome).toBe("imported");
-    // The one gate that had an import available was offered it first; every other gate was not.
-    expect(firstChoices.filter((k) => k === "import")).toHaveLength(1);
-    expect(offered.some((o) => /import/i.test(o.question) && o.default === path.join(source, "Canon/timeline.md"))).toBe(true);
+    expect(await readFile(path.join(root, "Canon/timeline.md"), "utf8")).toContain("the old coast.");
   }, 120_000);
+
+  it("imports the two scaffold files with no gate, under the scaffold-import message", async () => {
+    const root = await emptyDir();
+    const source = await sourceShow({
+      "Canon/continuity-ledger.md": "# Ledger\n\n## Open threads\n- the light that should be dark\n\n## Episode log\n- S01E01\n",
+      "Canon/voice-registry.md": "# Voices\n\nVale is a low voice.\n",
+    });
+    const io = autoIO();
+    const report = await runInit(options(root, { importFrom: source }), io.io, await deps());
+
+    expect(await readFile(path.join(root, "Canon/continuity-ledger.md"), "utf8")).toContain("the light that should be dark");
+    expect(await readFile(path.join(root, "Canon/voice-registry.md"), "utf8")).toContain("Vale is a low voice.");
+    // No gate was opened for either: neither is in the report's interviewed files.
+    expect(report.files.map((f) => f.key)).not.toContain("continuity-ledger");
+    expect(report.files.map((f) => f.key)).not.toContain("voice-registry");
+    // Each has its own commit, with the scaffold-import subject, and both are the first commits
+    // after the scaffold's own.
+    const log = (await run("git", ["log", "--format=%s"], { cwd: root })).stdout.split("\n");
+    expect(log).toContain(`canon: Canon/continuity-ledger.md — imported from ${path.join(source, "Canon/continuity-ledger.md")}`);
+    expect(log).toContain(`canon: Canon/voice-registry.md — imported from ${path.join(source, "Canon/voice-registry.md")}`);
+  }, 120_000);
+
+  it("leaves a scaffold file alone on a resume when it has been written to since", async () => {
+    const root = await emptyDir();
+    const source = await sourceShow({ "Canon/continuity-ledger.md": "# Ledger\n\n## Open threads\n- imported\n" });
+    const io = autoIO();
+    await runInit(options(root), io.io, await deps());
+    await writeFile(path.join(root, "Canon/continuity-ledger.md"), "# Ledger\n\n## Open threads\n- written by hand\n", "utf8");
+
+    const second = autoIO();
+    await runInit(options(root, { importFrom: source, resume: true }), second.io, await deps());
+    expect(await readFile(path.join(root, "Canon/continuity-ledger.md"), "utf8")).toContain("written by hand");
+    expect(second.said.join("\n")).toContain("has been written to since the scaffold was created");
+  }, 180_000);
+
+  it("asks for the cast when an imported world-overview's cast section is prose, and records the answer", async () => {
+    const root = await emptyDir();
+    // A `## The primary cast` section written as prose, with a spaced em dash in it — which
+    // `CAST_LINE` matches, and whose "name" the cast-name rule refuses.
+    const source = await sourceShow({
+      "Canon/world-overview.md": [
+        "# World overview", "",
+        "## The primary cast",
+        "A crew of peers, all with different motives, sharing one hull — the friction is built in.", "",
+        "## Recurring engine for stories", "A new contract on a new stretch of coast.", "",
+      ].join("\n"),
+    });
+    const io = importingIO("Vale — the keeper\nthe Warden — the one who was here first");
+    const report = await runInit(options(root, { importFrom: source }), io.io, await deps());
+
+    expect(report.files.find((f) => f.key === "world-overview")?.outcome).toBe("imported");
+    expect(io.said.join("\n")).toContain("holds no `Name — one line` line");
+    // The cast came from the one question asked at that gate, and the sheets and the config follow.
+    const config = JSON.parse(await readFile(path.join(root, "showrunner.json"), "utf8")) as { audio: { mainCast: string[] } };
+    expect(config.audio.mainCast).toEqual(["narrator", "Vale", "the Warden"]);
+    expect(existsSync(path.join(root, "Canon/characters/Vale/vale.md"))).toBe(true);
+    expect(existsSync(path.join(root, "Canon/characters/the Warden/the-warden.md"))).toBe(true);
+    // And it is in the answers file under the cast heading, so a resume offers it back.
+    const answers = await readFile(path.join(root, "Production/setup/world-overview/answers.md"), "utf8");
+    expect(answers).toContain("## The primary cast");
+    expect(answers).toContain("Vale — the keeper");
+  }, 120_000);
+
+  it("takes the cast from an imported world-overview that lists it, and asks nothing", async () => {
+    const root = await emptyDir();
+    const source = await sourceShow({
+      "Canon/world-overview.md": [
+        "# World overview", "",
+        "## The primary cast",
+        "- Pim — the one who keeps the books",
+        "- Maeve — the one who keeps the boat", "",
+      ].join("\n"),
+    });
+    const io = importingIO();
+    await runInit(options(root, { importFrom: source }), io.io, await deps());
+
+    const config = JSON.parse(await readFile(path.join(root, "showrunner.json"), "utf8")) as { audio: { mainCast: string[] } };
+    expect(config.audio.mainCast).toEqual(["narrator", "Pim", "Maeve"]);
+    expect(io.said.join("\n")).toContain("The cast is read from `## The primary cast` of the imported Canon/world-overview.md");
+    // Not one question of the world-overview template was put.
+    expect(io.asked.some((a) => /recurs/i.test(a.question))).toBe(false);
+  }, 120_000);
+});
+
+describe("runInit --resume when the scaffold was never committed", () => {
+  it("makes the scaffold commit, so the prompts and the README are not left out of the repository", async () => {
+    const root = await emptyDir();
+    const io = autoIO();
+    await runInit(options(root), io.io, await deps());
+
+    // A whole show on disk in a git repository with no commit at all: what a run whose scaffold
+    // commit failed — no git identity, or `commit.gpgsign` on with no key — leaves behind. The
+    // run logs are there, so `--resume` finds every bible file approved and would otherwise make
+    // no commit that could ever carry the prompts, the README or the `.gitignore`.
+    const stranded = await emptyDir();
+    await run("cp", ["-R", `${root}/.`, stranded]);
+    await run("rm", ["-rf", path.join(stranded, ".git")]);
+    await run("git", ["init", "-q"], { cwd: stranded });
+
+    const second = autoIO();
+    await runInit(options(stranded, { resume: true }), second.io, await deps());
+    expect(second.said.join("\n")).toContain("This repository has no commit yet");
+
+    const subjects = (await run("git", ["log", "--reverse", "--format=%s"], { cwd: stranded })).stdout.trim().split("\n");
+    expect(subjects[0]).toBe("init: Harbor Lights — the house layout, the prompts, the scaffolds");
+    // The scaffold's own files are in that first commit, which is the whole point of the fix.
+    const inFirst = (await run("git", ["show", "--name-only", "--format=", subjects.length === 1 ? "HEAD" : `HEAD~${subjects.length - 1}`], { cwd: stranded })).stdout;
+    for (const rel of ["prompts/outline.md", "README.md", ".gitignore"]) expect(inFirst).toContain(rel);
+  }, 300_000);
 });
 
 describe("runInit's bible-check", () => {

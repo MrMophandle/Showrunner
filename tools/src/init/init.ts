@@ -7,10 +7,10 @@ import {
 } from "@showrunner/engine";
 import { bibleCheck, bibleCheckLines } from "../bible-check.js";
 import { buildShowConfig, showConfigText } from "./config.js";
-import { ghAuthOk, ghRepoCreate, gitCommit, gitDirty, gitInit, gitRemotes, type GitDeps } from "./git.js";
-import { interviewFile, isApproved, type InitIO, type InterviewDeps, type InterviewResult } from "./interview.js";
+import { ghAuthOk, ghRepoCreate, gitCommit, gitDirty, gitHasHead, gitInit, gitRemotes, type GitDeps } from "./git.js";
+import { CAST_KEY, interviewFile, isApproved, type InitIO, type InterviewDeps, type InterviewResult } from "./interview.js";
 import { templatesDir } from "./paths.js";
-import { writeCastSheets, writeScaffold } from "./scaffold.js";
+import { templateWithoutQuestions, writeCastSheets, writeScaffold } from "./scaffold.js";
 
 /** What `init` was asked to make. `name` is the show's name as it is written; `slug` defaults to
  *  the name with every non-alphanumeric character removed; `path` is the directory the show
@@ -73,12 +73,6 @@ const NAS_PARENT = "/Volumes/media";
 
 /** The README section `init` reads back and prints as the next steps. */
 const NEXT_STEPS_HEADING = "Your first episode";
-
-/** The one bible file whose interview also yields the cast, mirroring the driver's own `CAST_KEY`
- *  (`tools/src/init/interview.ts`). `init` has to know it by name and not only by
- *  `result.cast !== undefined`: the catch-up commit a resume makes has no interview result to
- *  read, because the interview it is cleaning up after finished in an earlier process. */
-const CAST_FILE_KEY = "world-overview";
 
 /** The interview's own prompt directory: `write.md`, `gate.md` and `revise.md` ship with the
  *  engine's templates rather than being copied into the show, because they are the setup's prompts
@@ -181,7 +175,7 @@ function commitPaths(root: string, entry: BibleFile, dirs: { productionDir: stri
     answersPath(entry.key, dirs.productionDir),
     path.relative(root, bibleLogDir(root, entry.key, dirs.productionDir)),
   ];
-  if (entry.key === CAST_FILE_KEY) paths.push("showrunner.json", `${dirs.canonDir}/characters`);
+  if (entry.key === CAST_KEY) paths.push("showrunner.json", `${dirs.canonDir}/characters`);
   return paths;
 }
 
@@ -255,24 +249,47 @@ async function existing(root: string, rels: readonly string[]): Promise<string[]
   return out;
 }
 
-/** The author's own terminal, with the import of one file made the easy answer: `import` is moved
- *  to the front of the gate's choices, where a terminal offers the first choice as the default, and
- *  the question that asks for the path is pre-filled with the file found in the imported show.
+/** The file in `--import`'s show that could be copied over `entry.file`, or `undefined` when that
+ *  show has no such file. The driver offers it before it asks anything (`interviewFile`'s fifth
+ *  argument), which is the whole of finding I5: an import run used to answer every question and
+ *  pay for a writer agent per file before the import was so much as mentioned. */
+async function importCandidate(importFrom: string | undefined, entry: BibleFile): Promise<string | undefined> {
+  if (importFrom === undefined) return undefined;
+  const candidate = path.join(importFrom, entry.file);
+  return (await isFile(candidate)) ? candidate : undefined;
+}
+
+/** Copies `--import`'s copy of a scaffold bible file over the scaffold, and returns the source when
+ *  it did.
  *
- *  It is a wrapper around the `InitIO` rather than an argument to `interviewFile` because the gate
- *  loop belongs to the driver: the driver offers four answers and asks for a path when one of them
- *  is picked, and which answer is the obvious one for *this* file is `init`'s knowledge, not the
- *  driver's. The path question is recognised by its wording carrying "import", which is the one
- *  question the driver asks with that word in it — the notes question does not. */
-function withImportOffer(io: InitIO, candidate: string): InitIO {
-  return {
-    say: (text) => { io.say(text); },
-    ask: (question, opts) => io.ask(question, /\bimport\b/i.test(question) ? { ...opts, default: candidate } : opts),
-    choose: <T extends string>(question: string, choices: readonly { key: T; label: string }[]) => {
-      const first = choices.filter((c) => (c.key as string) === "import");
-      return io.choose(question, [...first, ...choices.filter((c) => (c.key as string) !== "import")]);
-    },
-  };
+ *  The two `mode: "scaffold"` rows — `Canon/continuity-ledger.md` and `Canon/voice-registry.md` —
+ *  have no interview and no gate, because the pipeline fills them: `propose` appends to the ledger
+ *  and the NEEDS_REFS stop fills the registry. That is right for a new show and wrong for a fresh
+ *  instance of an existing one, which used to start with a ledger of four empty headings while
+ *  `prompts/propose.md` and `prompts/outline.md` read it for the open threads every episode must
+ *  honour, and `prompts/tts-script.md` read the registry for pronunciation. There is nothing for a
+ *  gate to be asked about — the author is importing their own ledger, not reviewing a draft of it —
+ *  so this is a copy and a commit and no agent at all (finding I6).
+ *
+ *  The destination is only overwritten while it is still the untouched scaffold. On a `--resume`,
+ *  days may have passed and the ledger may hold an episode's worth of threads; copying over that
+ *  would destroy work no gate ever showed anyone. */
+async function importScaffold(root: string, entry: BibleFile, importFrom: string | undefined, io: InitIO): Promise<string | undefined> {
+  const source = await importCandidate(importFrom, entry);
+  if (source === undefined) return undefined;
+  const destination = path.join(root, entry.file);
+  const scaffold = templateWithoutQuestions(await readFile(path.join(templatesDir(), "canon", `${entry.key}.md`), "utf8"));
+  const onDisk = await readFile(destination, "utf8").catch(() => "");
+  const wanted = await readFile(source, "utf8");
+  // Already imported — a `--resume` of a run that did this before. Nothing to say and nothing to
+  // commit: the file is the file.
+  if (onDisk === wanted) return undefined;
+  if (onDisk !== "" && onDisk !== scaffold) {
+    io.say(`${entry.file} has been written to since the scaffold was created, so ${source} was not copied over it. Merge it by hand if you still want it.`);
+    return undefined;
+  }
+  await writeFile(destination, wanted, "utf8");
+  return source;
 }
 
 /** Writes `showrunner.json` and returns the config as every reader will see it — through
@@ -333,6 +350,16 @@ export async function runInit(opts: InitOptions, io: InitIO, deps: InitDeps = {}
     if (config.showName !== name) {
       io.say(`showrunner.json names this show ${config.showName}, so that is the name used: on a resume the config on disk is what every step reads, and --name ${name} is ignored.`);
     }
+    // A run whose scaffold commit failed — no git identity, or `commit.gpgsign` on with no key —
+    // left a repository with no commit at all, and `--resume` only ever makes per-file commits
+    // over `commitPaths`' lists. Now that `gitCommit` passes `--only`, nothing would ever sweep
+    // the scaffold's prompts, README and `.gitignore` in by accident, and `gh repo create --push`
+    // would publish an incomplete repository. So the resume asks whether there is a HEAD, and
+    // makes the scaffold commit when there is not (finding I8).
+    if (!(await gitHasHead(root, deps.git))) {
+      io.say("This repository has no commit yet, so the scaffold's own commit — which an earlier run could not make — is made now.");
+      commits.push(await gitCommit(root, `init: ${config.showName} — the house layout, the prompts, the scaffolds`, ["."], deps.git));
+    }
   } else {
     const slug = (opts.slug ?? slugFrom(name)).trim();
     if (!SLUG_OK.test(slug)) {
@@ -358,11 +385,23 @@ export async function runInit(opts: InitOptions, io: InitIO, deps: InitDeps = {}
     ...(deps.now !== undefined ? { now: deps.now } : {}),
   };
 
+  // The scaffold rows, before any interview: an imported continuity ledger is what the first
+  // episode of a fresh instance proposes against, and the author should not have to answer
+  // thirteen files' worth of questions to find out whether it came across.
+  for (const entry of BIBLE_FILES) {
+    if (entry.mode !== "scaffold") continue;
+    const source = await importScaffold(root, entry, importFrom, io);
+    if (source === undefined) continue;
+    io.say(`${entry.file} is ${source}, copied here. It has no gate: the pipeline writes this file, so there is no draft to review.`);
+    commits.push(await gitCommit(root, `canon: ${entry.file} — imported from ${source}`, [entry.file], deps.git));
+  }
+
   const files: InterviewResult[] = [];
   const stalled: string[] = [];
   for (const entry of BIBLE_FILES) {
     // A scaffold file has no gate: the pipeline fills the continuity ledger and the NEEDS_REFS
-    // stop fills the voice registry, and the scaffold has already written both with their headings.
+    // stop fills the voice registry, and the scaffold has already written both with their
+    // headings. The loop above has already offered an import for one.
     if (entry.mode === "scaffold") continue;
     const staged = commitPaths(root, entry, { productionDir, canonDir });
 
@@ -381,18 +420,11 @@ export async function runInit(opts: InitOptions, io: InitIO, deps: InitDeps = {}
       continue;
     }
 
-    let entryIO = io;
-    if (importFrom !== undefined) {
-      const candidate = path.join(importFrom, entry.file);
-      if (await isFile(candidate)) {
-        io.say(`${candidate} exists, so this file can be imported instead of interviewed: "import" is offered first and the path is filled in for you.`);
-        entryIO = withImportOffer(io, candidate);
-      }
-    }
+    const candidate = await importCandidate(importFrom, entry);
 
     let result: InterviewResult;
     try {
-      result = await interviewFile(root, entry, entryIO, interviewDeps);
+      result = await interviewFile(root, entry, io, interviewDeps, candidate);
     } catch (err) {
       if (err instanceof Error && GATE_EXHAUSTED.test(err.message)) {
         // Ten rejections. The file on disk is the writer's last revision, which is worth keeping

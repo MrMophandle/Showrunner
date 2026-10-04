@@ -3,7 +3,7 @@ import { EventEmitter } from "node:events";
 import { PassThrough, Readable } from "node:stream";
 import type { spawn as nodeSpawn } from "node:child_process";
 import {
-  COMMIT_TRAILER, ghAuthOk, ghRepoCreate, gitCommit, gitDirty, gitInit, gitRemotes,
+  COMMIT_TRAILER, ghAuthOk, ghRepoCreate, gitCommit, gitDirty, gitHasHead, gitInit, gitRemotes,
 } from "../src/init/git.js";
 
 interface Reply {
@@ -77,9 +77,11 @@ describe("gitCommit", () => {
     expect(sha).toBe("9f1c0de4ab");
     expect(fake.calls.map((c) => c.args)).toEqual([
       ["add", "--", "Canon/style-guide.md", "Production/setup/style-guide"],
-      ["commit", "-q", "-F", "-"],
+      ["commit", "--only", "-q", "-F", "-", "--", "Canon/style-guide.md", "Production/setup/style-guide"],
       ["rev-parse", "HEAD"],
     ]);
+    // `--only` with the paths repeated is what keeps an author's own staged work out of a bible
+    // commit: `git add` followed by a bare `git commit` commits the whole index.
     expect(fake.calls.every((c) => c.cmd === "git" && c.cwd === "/shows/harbor")).toBe(true);
     expect(fake.calls[1]?.stdin).toBe(`canon: Canon/style-guide.md — approved\n\n${COMMIT_TRAILER}\n`);
   });
@@ -93,7 +95,7 @@ describe("gitCommit", () => {
 
   it("throws naming the command and git's message when the commit fails", async () => {
     const fake = fakeSpawn([{ code: 0 }, { code: 1, stdout: "nothing to commit, working tree clean\n" }]);
-    await expect(gitCommit("/r", "m", ["."], { spawn: fake.spawn })).rejects.toThrow(/git commit -q -F -.*nothing to commit/s);
+    await expect(gitCommit("/r", "m", ["."], { spawn: fake.spawn })).rejects.toThrow(/git commit --only -q -F - -- \..*nothing to commit/s);
   });
 });
 
@@ -166,5 +168,23 @@ describe("gitRemotes and gitDirty", () => {
 
     const clean = fakeSpawn([{ code: 0, stdout: "" }]);
     expect(await gitDirty("/r", ["Canon/style-guide.md"], { spawn: clean.spawn })).toBe(false);
+  });
+});
+
+describe("gitHasHead", () => {
+  it("asks git rev-parse --verify HEAD and is true only when it exits 0", async () => {
+    const yes = fakeSpawn([{ code: 0, stdout: "9f1c0de4ab\n" }]);
+    expect(await gitHasHead("/shows/harbor", { spawn: yes.spawn })).toBe(true);
+    expect(yes.calls[0]).toMatchObject({ cmd: "git", args: ["rev-parse", "--verify", "HEAD"], cwd: "/shows/harbor" });
+  });
+
+  it("is false in a repository with no commit, and never throws", async () => {
+    const none = fakeSpawn([{ code: 128, stderr: "fatal: Needed a single revision\n" }]);
+    expect(await gitHasHead("/r", { spawn: none.spawn })).toBe(false);
+  });
+
+  it("is false when git itself cannot be run", async () => {
+    const missing = fakeSpawn([{ error: "spawn git ENOENT" }]);
+    expect(await gitHasHead("/r", { spawn: missing.spawn })).toBe(false);
   });
 });

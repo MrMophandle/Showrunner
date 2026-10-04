@@ -91,16 +91,36 @@ export async function gitInit(root: string, deps?: GitDeps): Promise<void> {
  *  mangle a dash, a quote or a newline in them. `COMMIT_TRAILER` is appended as the last
  *  paragraph unless the message already carries it.
  *
- *  Only the named paths are staged — never `git commit -a` — because `init` commits one bible file
- *  at a time and an author may well have other work in the tree while the interview runs. The
- *  commit's identity is git's own: whatever `user.name` and `user.email` the author's git is
+ *  **Only the named paths reach the commit**, which is what `--only` is for and why `git add`
+ *  alone was not enough. `git add -- <paths>` followed by a bare `git commit` commits the whole
+ *  index, so an author who had staged their own work before starting the interview would have
+ *  found it inside a commit whose subject says "canon: Canon/world-overview.md — approved". `init`
+ *  commits one bible file at a time and an interview runs for an hour, so there is every reason
+ *  for other work to be in that tree. The `add` stays because `--only` refuses a pathspec git has
+ *  never heard of, and every path here is a file the setup has just created.
+ *
+ *  The commit's identity is git's own: whatever `user.name` and `user.email` the author's git is
  *  configured with, since the show's history is theirs and not the setup's. */
 export async function gitCommit(root: string, message: string, paths: string[], deps?: GitDeps): Promise<string> {
   await must("git", ["add", "--", ...paths], { cwd: root }, deps);
   const body = message.includes(COMMIT_TRAILER) ? message : `${message.trimEnd()}\n\n${COMMIT_TRAILER}\n`;
-  await must("git", ["commit", "-q", "-F", "-"], { cwd: root, stdin: body }, deps);
+  await must("git", ["commit", "--only", "-q", "-F", "-", "--", ...paths], { cwd: root, stdin: body }, deps);
   const head = await must("git", ["rev-parse", "HEAD"], { cwd: root }, deps);
   return head.stdout.trim();
+}
+
+/** Whether the repository has a commit. `init --resume` asks before it does anything else: a run
+ *  whose scaffold commit failed — git with no `user.name`, or `commit.gpgsign` on with no key —
+ *  leaves a repository with no HEAD, and every commit `--resume` makes names only its own bible
+ *  file's paths, so the scaffold's prompt set, README and `.gitignore` would never be committed by
+ *  anything and `gh repo create --push` would publish an incomplete show.
+ *
+ *  It answers with a boolean and never throws for the ordinary no: `git rev-parse --verify HEAD`
+ *  exits non-zero in a repository with no commits, which is the state this question is asked
+ *  about. `--verify` is what makes the exit code the answer rather than the output. */
+export async function gitHasHead(root: string, deps?: GitDeps): Promise<boolean> {
+  const result = await capture("git", ["rev-parse", "--verify", "HEAD"], { cwd: root }, deps);
+  return result.failure === undefined && result.code === 0;
 }
 
 /** The names of the repository's remotes, in the order git lists them. `init` asks before it

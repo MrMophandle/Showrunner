@@ -7,7 +7,7 @@ import {
   type BibleFile, type Executors, type GateMessageRenderer, type RunResult,
 } from "@showrunner/engine";
 import { templatesDir } from "./paths.js";
-import { parseCanonTemplate, templateWithoutQuestions } from "./scaffold.js";
+import { CAST_NAME, parseCanonTemplate, templateWithoutQuestions, type Question } from "./scaffold.js";
 
 /** The terminal the interview talks through, injected so the driver is testable without a TTY:
  *  `init` passes a readline-backed implementation (Task 8) and the tests pass scripted answers.
@@ -76,8 +76,13 @@ const GATE_ID = "gate";
 const JSONL = ".jsonl";
 
 /** The one interviewed file that also collects the cast, because its `## The primary cast` section
- *  is where the recurring characters are named (`BIBLE_FILES`, `engine/src/bible.ts`). */
-const CAST_KEY = "world-overview";
+ *  is where the recurring characters are named (`BIBLE_FILES`, `engine/src/bible.ts`).
+ *
+ *  Exported because `init` needs it too and had a second copy of the literal. `init` cannot ask
+ *  `result.cast !== undefined` instead: the catch-up commit a `--resume` makes has no interview
+ *  result to read, because the interview it is cleaning up after finished in an earlier process,
+ *  and that commit's path list is longer for this one file. */
+export const CAST_KEY = "world-overview";
 
 /** The heading whose answer carries the cast. The cast is collected from that one answer and is
  *  never asked for twice: the template's question already asks for it one per line as
@@ -253,7 +258,15 @@ function parsePriorAnswers(text: string, headings: readonly string[]): Map<strin
 
 /** The cast the author listed, and the lines that were not in the form the question asked for.
  *  The unparsed lines are returned rather than dropped: a name the driver silently ignored would
- *  be a character with no sheet and no speaker key, discovered episodes later. */
+ *  be a character with no sheet and no speaker key, discovered episodes later.
+ *
+ *  **A line whose name `CAST_NAME` refuses is an unparsed line, not a cast member.** `CAST_LINE`'s
+ *  first group is lazy, so it matches at the first spaced dash on the line — which any prose
+ *  paragraph with an em dash in it has. That is how a `## The primary cast` section written as
+ *  prose rather than as a list (an imported bible file's, read by `castSectionOf`) yielded a
+ *  hundred-character "name" carrying asterisks and commas, which `writeCastSheets` then refused
+ *  with a throw that ended the whole setup. The one rule that decides what is a usable name lives
+ *  in `scaffold.ts` beside the function that writes the sheet, and is applied here first. */
 function parseCast(text: string): { cast: { name: string; line: string }[]; ignored: string[] } {
   const cast: { name: string; line: string }[] = [];
   const ignored: string[] = [];
@@ -261,10 +274,40 @@ function parseCast(text: string): { cast: { name: string; line: string }[]; igno
     const line = raw.trim().replace(/^[-*+]\s+/, "");
     if (line === "") continue;
     const m = CAST_LINE.exec(line);
-    if (m) cast.push({ name: m[1]!.trim(), line: m[2]!.trim() });
+    const name = m === null ? "" : m[1]!.trim();
+    if (m !== null && CAST_NAME.test(name)) cast.push({ name, line: m[2]!.trim() });
     else ignored.push(line);
   }
   return { cast, ignored };
+}
+
+/** The `## The primary cast` section of a bible file on disk, parsed with the same two rules a
+ *  typed answer is parsed with — `undefined` when the file is not there or carries no such
+ *  section, so the caller can tell "the section holds no names" from "there is no section".
+ *
+ *  This is what an **imported** `world-overview.md` is read with. Before it existed, `init` wrote
+ *  `audio.mainCast = ["narrator"]` over a config that should have named every speaker of an
+ *  imported show, no character sheet was written, and `scripts/validate-manifest.py` then refused
+ *  every TTS manifest whose speaker was a cast member with no guest WAV. The heading is found
+ *  through the engine's `headingMatches`, so an imported file whose heading carries a
+ *  parenthetical still matches; the section ends at the next level-1 or level-2 heading. */
+async function castSectionOf(abs: string): Promise<{ cast: { name: string; line: string }[]; ignored: string[] } | undefined> {
+  let text: string;
+  try {
+    text = await readFile(abs, "utf8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw err;
+  }
+  const lines = text.split("\n");
+  const at = lines.findIndex((l) => headingMatches(l, CAST_HEADING));
+  if (at === -1) return undefined;
+  const body: string[] = [];
+  for (let i = at + 1; i < lines.length; i++) {
+    if (/^##?\s/.test(lines[i] as string)) break;
+    body.push(lines[i] as string);
+  }
+  return parseCast(body.join("\n"));
 }
 
 /** The file as the author is shown it at the gate, with its path above and below so a long file
@@ -392,7 +435,7 @@ async function resolveImport(showRoot: string, entry: BibleFile, typed: string, 
  *  leaves the run unfinished rather than failed, so the next `run()` reads the answer out of the
  *  log and carries on by itself — the same two steps the console takes (`answerGate`, then a
  *  worker that calls `run()`). A run that really did fail is thrown from here, with the step. */
-export async function interviewFile(showRoot: string, entry: BibleFile, io: InitIO, deps: InterviewDeps): Promise<InterviewResult> {
+export async function interviewFile(showRoot: string, entry: BibleFile, io: InitIO, deps: InterviewDeps, candidate?: string): Promise<InterviewResult> {
   if (entry.mode === "scaffold") {
     throw new Error(`${entry.key} is a scaffold file: the pipeline fills it and it has no gate, so it is not interviewed`);
   }
@@ -400,20 +443,52 @@ export async function interviewFile(showRoot: string, entry: BibleFile, io: Init
   const productionDir = deps.productionDir ?? DEFAULT_PRODUCTION_DIR;
   const templatePath = canonTemplatePath(entry.key);
   const template = await readFile(templatePath, "utf8");
+  const parsed = parseCanonTemplate(template);
+  const headings = parsed.questions.map((q) => q.heading);
   const destination = path.resolve(showRoot, entry.file);
   const answers = answersPath(entry.key, productionDir);
+  const abs = path.resolve(showRoot, answers);
   const staged: string[] = [entry.file];
 
   io.say(entry.purpose);
 
+  // **The import is offered before a single question is asked.** An author who already has this
+  // file is otherwise asked every one of its questions and then charged for a writer agent whose
+  // output the import overwrites at the gate — measured at roughly $2.24 a file on the writer
+  // model, and thirteen files for a whole bible — and is left with an answers file on disk that
+  // contradicts the file beside it. Declining here puts the author back on the path they were on
+  // before: the questions are asked, the writer runs, and `import` is still one of the gate's
+  // four answers with this path filled in.
+  let imported: string | undefined;
+  if (candidate !== undefined) {
+    const offered = await io.choose<"import" | "ask">(`${entry.file}: how do you want this file written?`, [
+      { key: "import", label: `Import ${candidate} — copy it over ${entry.file} and review it` },
+      { key: "ask", label: entry.mode === "interview" ? "Answer the questions, and let the writer draft it from your answers" : "Keep the house default, and review it" },
+    ]);
+    if (offered === "import") {
+      try {
+        imported = await resolveImport(showRoot, entry, candidate, productionDir);
+      } catch (err) {
+        if (!(err instanceof ImportRefused)) throw err;
+        io.say(`${err.message}. Nothing was imported; the questions are asked instead, and the import is still offered at the gate.`);
+      }
+      if (imported !== undefined) {
+        await mkdir(path.dirname(destination), { recursive: true });
+        await copyFile(imported, destination);
+        io.say(`${entry.file} is ${imported}, copied here. No question was asked and the writer agent did not run: the gate below is over the imported file.`);
+      }
+    }
+  }
+
   let cast: { name: string; line: string }[] | undefined;
-  if (entry.mode === "interview") {
-    const parsed = parseCanonTemplate(template);
+  const given: string[] = [];
+  // An interviewed file whose import was taken is not interviewed: its questions would be asked
+  // about a file that is already written, and the answers would contradict it.
+  const interviewed = entry.mode === "interview" && imported === undefined;
+  if (interviewed) {
     if (parsed.header.trim() !== "") io.say(parsed.header.trim());
     // What an earlier, unfinished sitting answered. The answers file is rewritten below, so it is
     // read before anything is asked: this is the only place the earlier text still exists.
-    const abs = path.resolve(showRoot, answers);
-    const headings = parsed.questions.map((q) => q.heading);
     let earlier = new Map<string, string>();
     try {
       earlier = parsePriorAnswers(await readFile(abs, "utf8"), headings);
@@ -425,7 +500,6 @@ export async function interviewFile(showRoot: string, entry: BibleFile, io: Init
     }
     await mkdir(path.dirname(abs), { recursive: true });
     staged.push(answers);
-    const given: string[] = [];
     // The answers file is rewritten after **every** answer and not once after the last one. An
     // author nine multiline answers into a file who presses Ctrl-C, closes the terminal or runs
     // out of piped stdin keeps every word they typed, which is what `main.ts`'s "what was written
@@ -451,30 +525,12 @@ export async function interviewFile(showRoot: string, entry: BibleFile, io: Init
       given.push(await io.ask(q.question, prior === undefined ? { multiline: true } : { multiline: true, default: prior }));
       await record();
     }
-    if (entry.key === CAST_KEY) {
-      // The cast is read out of the answer to the template's own cast question, never asked for
-      // a second time: two questions would be two lists with no rule for which one wins. The
-      // question is found by the same heading rule the answers file is parsed with — the
-      // template's own headings, compared through `headingMatches` — and never by a bare string.
-      const at = questionIndexFor(headings, CAST_HEADING);
-      if (at === -1) {
-        cast = [];
-        io.say(`This template has no \`## ${CAST_HEADING}\` question, so no cast was recorded and no character sheet is created.`);
-      } else {
-        const listed = parseCast(given[at] ?? "");
-        cast = listed.cast;
-        io.say(cast.length === 0
-          ? "No cast was recorded, so no character sheet is created; add sheets under the bible's characters directory when you have them."
-          : `${cast.length} recorded: ${cast.map((c) => c.name).join(", ")}. A sheet is created for each.`);
-        if (listed.ignored.length > 0) {
-          io.say(`These lines of that answer were not in the form \`Name — one line\`, so no sheet is created for them: ${listed.ignored.join(" / ")}`);
-        }
-      }
-    }
-  } else {
+  } else if (imported === undefined) {
     // A default file's gate opens over a file that must already be there. `wx` so a second
     // attempt — a crash, or a rejection whose fix agent has since edited the file — keeps what is
-    // on disk rather than overwriting the work the gate is about to show.
+    // on disk rather than overwriting the work the gate is about to show. An imported file skips
+    // this: the import *is* the file, and writing the house default over it first and then being
+    // overwritten would put a file the author never sees on disk for the length of one gate.
     await mkdir(path.dirname(destination), { recursive: true });
     try {
       await writeFile(destination, templateWithoutQuestions(template), { encoding: "utf8", flag: "wx" });
@@ -491,7 +547,12 @@ export async function interviewFile(showRoot: string, entry: BibleFile, io: Init
     templatePath,
     date: localDate(now()),
   };
-  const pipeline = bibleFilePipeline({ entry, vars, productionDir });
+  // An imported file's pipeline is the gate alone. `bibleFilePipeline` pushes the `write` step for
+  // an `interview` entry and not for a `default` one, so handing it the entry with its mode
+  // rewritten is how the writer agent is skipped — the one thing I5 asks for — without the engine
+  // needing to know that an import happened. The gate keeps its `onReject` fix agent, so an
+  // author who rejects an imported file with notes still gets it revised.
+  const pipeline = bibleFilePipeline({ entry: imported === undefined ? entry : { ...entry, mode: "default" }, vars, productionDir });
   const dir = bibleLogDir(showRoot, entry.key, productionDir);
   const runId = mintRunId(now());
   const log = new EventLog(path.join(dir, `${runId}.jsonl`));
@@ -507,7 +568,12 @@ export async function interviewFile(showRoot: string, entry: BibleFile, io: Init
   });
 
   let result = await once();
-  let outcome: InterviewResult["outcome"] = "approved";
+  // The outcome the commit message is worded from. A file that was imported before the questions
+  // and then simply approved was recorded as "approved", which told the show's history that an
+  // agent had written from the author's answers a file nobody had answered anything about. A
+  // rejection hands the file to the fix agent, so from that point it is no longer the import.
+  let untouchedImport = imported !== undefined;
+  let outcome: InterviewResult["outcome"] = untouchedImport ? "imported" : "approved";
   while (result.status === "waiting") {
     const gate = result.gate;
     io.say(gate.message);
@@ -521,11 +587,12 @@ export async function interviewFile(showRoot: string, entry: BibleFile, io: Init
       switch (choice) {
         case "approve":
           await answerGate(log, runId, GATE_ID, { approved: true, ...stamp });
-          outcome = "approved";
+          outcome = untouchedImport ? "imported" : "approved";
           break answering;
         case "reject": {
           const notes = await io.ask("Notes for the writer", { multiline: true });
           await answerGate(log, runId, GATE_ID, { approved: false, notes, ...stamp });
+          untouchedImport = false;
           break answering;
         }
         case "myself":
@@ -536,13 +603,19 @@ export async function interviewFile(showRoot: string, entry: BibleFile, io: Init
         case "import": {
           let source: string;
           try {
-            source = await resolveImport(showRoot, entry, await io.ask("Path of the file to import"), productionDir);
+            // The candidate `init` found in the imported show is this question's default, so an
+            // author who declined the import before the questions and changed their mind at the
+            // gate does not have to type the path out.
+            const typed = await io.ask("Path of the file to import", candidate === undefined ? undefined : { default: candidate });
+            source = await resolveImport(showRoot, entry, typed, productionDir);
           } catch (err) {
             if (err instanceof ImportRefused) { io.say(err.message); continue answering; }
             throw err;
           }
           await copyFile(source, destination);
           await answerGate(log, runId, GATE_ID, { approved: true, notes: `imported from ${source}`, ...stamp });
+          imported = source;
+          untouchedImport = true;
           outcome = "imported";
           break answering;
         }
@@ -551,6 +624,58 @@ export async function interviewFile(showRoot: string, entry: BibleFile, io: Init
     result = await once();
   }
   if (result.status === "failed") throw new Error(`${entry.key}: ${result.stepId} failed: ${result.error}`);
+
+  // **The cast, from whichever source yielded names.** It is resolved after the gate rather than
+  // in the question loop because the gate is where a file can still become an imported one, and
+  // because an import run never reaches the question loop at all. The order of preference is the
+  // author's typed answer, then the file on disk when that file was imported, then one question
+  // asked here — never two of them at once, because two lists would be two casts with no rule for
+  // which wins. The cast question is found by heading through `headingMatches` and never by a
+  // bare string, the same way the answers file is parsed.
+  if (entry.key === CAST_KEY) {
+    const at = questionIndexFor(headings, CAST_HEADING);
+    if (at === -1) {
+      cast = [];
+      io.say(`This template has no \`## ${CAST_HEADING}\` question, so no cast was recorded and no character sheet is created.`);
+    } else {
+      let listed = interviewed ? parseCast(given[at] ?? "") : { cast: [] as { name: string; line: string }[], ignored: [] as string[] };
+      if (listed.cast.length === 0 && imported !== undefined) {
+        const inFile = await castSectionOf(destination);
+        if (inFile !== undefined && inFile.cast.length > 0) {
+          listed = inFile;
+          io.say(`The cast is read from \`## ${CAST_HEADING}\` of the imported ${entry.file}.`);
+        } else if (!interviewed) {
+          // Nothing usable in the imported file and no question was ever asked. Asking it here is
+          // the difference between a config that names every speaker of the show and one that
+          // names only the narrator, which `scripts/validate-manifest.py` then refuses every
+          // manifest against.
+          io.say(inFile === undefined
+            ? `The imported ${entry.file} carries no \`## ${CAST_HEADING}\` section, so no cast could be read from it.`
+            : `The \`## ${CAST_HEADING}\` section of the imported ${entry.file} holds no \`Name — one line\` line, so no cast could be read from it.`);
+          if (inFile !== undefined && inFile.ignored.length > 0) {
+            io.say(`What that section holds instead: ${inFile.ignored.join(" / ")}`);
+          }
+          const question = parsed.questions[at] as Question;
+          const typed = await io.ask(question.question, { multiline: true });
+          listed = parseCast(typed);
+          // Recorded under the cast heading, so a `--resume` of this file offers it back as the
+          // default rather than asking for the cast a second time. The file holds this one
+          // question and nothing else: no other question was asked in this sitting, and a file of
+          // `(blank)` answers would claim the author had skipped questions they were never put.
+          await mkdir(path.dirname(abs), { recursive: true });
+          await writeFile(abs, answersFileFor([question], [typed]), "utf8");
+          staged.push(answers);
+        }
+      }
+      cast = listed.cast;
+      io.say(cast.length === 0
+        ? "No cast was recorded, so no character sheet is created; add sheets under the bible's characters directory when you have them."
+        : `${cast.length} recorded: ${cast.map((c) => c.name).join(", ")}. A sheet is created for each.`);
+      if (listed.ignored.length > 0) {
+        io.say(`These lines were not in the form \`Name — one line\`, so no sheet is created for them: ${listed.ignored.join(" / ")}`);
+      }
+    }
+  }
 
   const done: InterviewResult = { key: entry.key, outcome, runId, commits: [...new Set(staged)].sort() };
   if (cast !== undefined) done.cast = cast;

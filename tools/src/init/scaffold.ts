@@ -148,8 +148,18 @@ function templatePath(...segments: string[]): string {
  *  `.` and `/` first among them, so no name matching this can name a directory other than the one
  *  under `Canon/characters/`. The names reach this module as free text typed at the world-overview
  *  interview, so they are validated and not merely slugged: `slugOf` makes a safe *file* name, and
- *  the *directory* keeps the author's spelling, which is the part a traversal would ride in on. */
-const CAST_NAME = /^[\p{L}\p{N}][\p{L}\p{N} '\-]{0,63}$/u;
+ *  the *directory* keeps the author's spelling, which is the part a traversal would ride in on.
+ *
+ *  **Exported because the interview driver must refuse a name this function would refuse, before
+ *  it ever gets here.** `writeCastSheets` throws on a name outside this class, and that throw is
+ *  not caught by `runInit`, so it ends the whole setup. The driver reads a cast out of prose it
+ *  did not write — the `## The primary cast` section of an imported bible file — and
+ *  `CAST_LINE`'s lazy first group matches at the first spaced dash in any paragraph, so a prose
+ *  sentence yields a hundred-character "name" with asterisks and commas in it. The driver filters
+ *  every candidate name through this one rule and reports a refused line back to the author as a
+ *  line it could not read, which leaves this throw as the backstop it was written to be rather
+ *  than the way an import ends an interview. */
+export const CAST_NAME = /^[\p{L}\p{N}][\p{L}\p{N} '\-]{0,63}$/u;
 
 /** One `Canon/characters/<Name>/<slug>.md` per cast entry, from the character entity template with
  *  the name on its `#` line and the author's one-liner as the sheet's one-line summary directly
