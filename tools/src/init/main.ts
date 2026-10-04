@@ -186,6 +186,13 @@ export function terminalIO(rl: Interface = createInterface({ input: process.stdi
    *  the block does not reach is refused. The prompt is written here rather than by readline,
    *  which no longer asks the questions. */
   const askLine = (prompt: string): Promise<string> => {
+    // readline redraws the line it is collecting as `<its own prompt><buffer>` whenever an edit
+    // forces a refresh — a plain backspace is enough — and its prompt is `"> "` whether or not
+    // anything ever set it. So the string written here and the string readline redraws with have
+    // to be the same one: without this call a multiline continuation line, which is written with
+    // no prompt at all, gained a `"> "` it was never shown the moment the author backspaced in it,
+    // and the single-line reads agreed with readline only by the coincidence of both being `"> "`.
+    rl.setPrompt(prompt);
     if (prompt !== "") process.stdout.write(prompt);
     const line = queued.shift();
     if (line !== undefined) return Promise.resolve(line);

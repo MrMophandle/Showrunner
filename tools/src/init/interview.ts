@@ -115,6 +115,20 @@ const GATE_CHOICES: readonly { key: GateChoice; label: string }[] = [
  *  A line that matches nothing is ignored and reported back to the author. */
 const CAST_LINE = /^(.+?)\s+[—–-]+\s+(.+)$/;
 
+/** A moment as the author's own calendar date, `YYYY-MM-DD`.
+ *
+ *  The interview stamps every law it writes `— DRAFT (interview <date>)`
+ *  (`tools/templates/interview/write.md`), and that date is the day the author sat down, which is
+ *  their calendar's day and not Greenwich's. `toISOString().slice(0, 10)` is UTC, so an interview
+ *  run on any evening west of Greenwich stamped tomorrow's date on every law in the bible — a
+ *  retrospective stamp (the plan's F-08) that disagrees with the author's own memory of when they
+ *  said it. The run id keeps its UTC stamp: a run id is the engine's, and sorting run logs by time
+ *  across machines is what it is for. */
+function localDate(now: Date): string {
+  const pad = (n: number): string => String(n).padStart(2, "0");
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+}
+
 /** Refusal of a path the author offered to import. A class of its own so the gate loop can tell
  *  "that path will not do, ask again" from a real I/O fault, which is not the author's to fix. */
 class ImportRefused extends Error {
@@ -409,10 +423,33 @@ export async function interviewFile(showRoot: string, entry: BibleFile, io: Init
     if (earlier.size > 0) {
       io.say(`${earlier.size} answer(s) from an earlier sitting are offered back as you go; keep one as it is, or type over it.`);
     }
+    await mkdir(path.dirname(abs), { recursive: true });
+    staged.push(answers);
     const given: string[] = [];
+    // The answers file is rewritten after **every** answer and not once after the last one. An
+    // author nine multiline answers into a file who presses Ctrl-C, closes the terminal or runs
+    // out of piped stdin keeps every word they typed, which is what `main.ts`'s "what was written
+    // is committed; run again with --resume" promises them: `--resume` reads this file back and
+    // offers each answer as that question's default (`parsePriorAnswers`).
+    //
+    // The whole file is rewritten rather than appended to, because `answersFileFor` emits every
+    // one of the template's headings with `(blank)` under the questions not yet reached — the
+    // shape the writer agent and `bible-check` both need — and a truncated rewrite loses at most
+    // the answer in flight where a truncated append would leave a half-written heading block for
+    // `parsePriorAnswers` to read as part of the answer above it.
+    //
+    // A question this sitting has not reached is written back from `earlier`, not blanked: on a
+    // resumed interview the first rewrite would otherwise erase every answer below the one being
+    // typed, which is the very loss this fix exists to prevent.
+    const record = (): Promise<void> => writeFile(
+      abs,
+      answersFileFor(parsed.questions, parsed.questions.map((q, i) => given[i] ?? earlier.get(q.heading) ?? "")),
+      "utf8",
+    );
     for (const q of parsed.questions) {
       const prior = earlier.get(q.heading);
       given.push(await io.ask(q.question, prior === undefined ? { multiline: true } : { multiline: true, default: prior }));
+      await record();
     }
     if (entry.key === CAST_KEY) {
       // The cast is read out of the answer to the template's own cast question, never asked for
@@ -434,9 +471,6 @@ export async function interviewFile(showRoot: string, entry: BibleFile, io: Init
         }
       }
     }
-    await mkdir(path.dirname(abs), { recursive: true });
-    await writeFile(abs, answersFileFor(parsed.questions, given), "utf8");
-    staged.push(answers);
   } else {
     // A default file's gate opens over a file that must already be there. `wx` so a second
     // attempt — a crash, or a rejection whose fix agent has since edited the file — keeps what is
@@ -455,7 +489,7 @@ export async function interviewFile(showRoot: string, entry: BibleFile, io: Init
     purpose: entry.purpose,
     answersPath: answers,
     templatePath,
-    date: now().toISOString().slice(0, 10),
+    date: localDate(now()),
   };
   const pipeline = bibleFilePipeline({ entry, vars, productionDir });
   const dir = bibleLogDir(showRoot, entry.key, productionDir);

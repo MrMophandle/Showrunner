@@ -606,3 +606,82 @@ describe("interviewFile: a prior answer that contains a `## ` line of its own", 
     expect(second.asked[1]?.default).toBe(quoting);
   });
 });
+
+describe("interviewFile: an interrupted question loop", () => {
+  it("leaves on disk every answer already typed, and blanks only the questions not reached", async () => {
+    const root = await tempRoot();
+    const template = await readFile(path.join(templatesDir(), "canon", "style-guide.md"), "utf8");
+    const questions = parseCanonTemplate(template).questions;
+    expect(questions.length).toBeGreaterThan(3);
+
+    // Three answers for eight questions: `scriptedIO` throws at the fourth, which is what a closed
+    // stdin or a Ctrl-C does to the driver in the middle of the loop.
+    const io = scriptedIO(["first answer", "second answer", "third answer"], []);
+    await expect(interviewFile(root, styleGuide, io.io, await deps(root))).rejects.toThrow(/no scripted answer/);
+
+    const written = await readFile(path.join(root, answersPath("style-guide")), "utf8");
+    expect(written).toContain("first answer");
+    expect(written).toContain("second answer");
+    expect(written).toContain("third answer");
+    // Every heading is present, and only the five questions the author never reached are blank.
+    for (const q of questions) expect(written).toContain(`## ${q.heading}`);
+    expect(written.split("(blank)").length - 1).toBe(questions.length - 3);
+  });
+
+  it("offers the kept answers back on resume, and a second interruption keeps the ones it never asked", async () => {
+    const root = await tempRoot();
+    const template = await readFile(path.join(templatesDir(), "canon", "style-guide.md"), "utf8");
+    const questions = parseCanonTemplate(template).questions;
+
+    const first = scriptedIO(["one", "two", "three"], []);
+    await expect(interviewFile(root, styleGuide, first.io, await deps(root))).rejects.toThrow(/no scripted answer/);
+
+    // The resume types over the first answer and is interrupted at the second. The answer the
+    // first sitting left for question two and question three must still be on disk afterwards:
+    // rewriting the file after each answer must not blank what this sitting has not reached.
+    const second = scriptedIO(["one, rewritten"], []);
+    await expect(interviewFile(root, styleGuide, second.io, await deps(root, { now: (): Date => new Date("2030-04-02T09:00:00.000Z") })))
+      .rejects.toThrow(/no scripted answer/);
+    // Two questions were put: the first answered, the second asked with its earlier default and
+    // interrupted before an answer came back.
+    expect(second.asked.map((a) => a.default)).toEqual(["one", "two"]);
+
+    const written = await readFile(path.join(root, answersPath("style-guide")), "utf8");
+    expect(written).toContain("one, rewritten");
+    expect(written).toContain("two");
+    expect(written).toContain("three");
+    expect(written).not.toContain("\none\n");
+    expect(written.split("(blank)").length - 1).toBe(questions.length - 3);
+  });
+});
+
+describe("interviewFile: the DRAFT stamp's date", () => {
+  it("is the author's own calendar date and not Greenwich's", async () => {
+    const root = await tempRoot();
+    const template = await readFile(path.join(templatesDir(), "canon", "timeline.md"), "utf8");
+    const questions = parseCanonTemplate(template).questions;
+    const timeline: BibleFile = { key: "timeline", file: "Canon/timeline.md", mode: "interview", purpose: "The world's history." };
+
+    // Half past eleven at night, in the author's own time zone. `toISOString()` reports the next
+    // day for every zone west of Greenwich, which is what the stamp used to carry.
+    const when = new Date(2030, 3, 2, 23, 30, 0);
+    const seen: Record<string, string>[] = [];
+    const recording: Executors = {
+      script: async () => ({ ok: true }),
+      agent: async (step, ctx) => {
+        if (step.vars !== undefined) seen.push(step.vars);
+        const file = step.outputs?.[0];
+        if (file !== undefined) await writeFile(path.join(ctx.showRoot, file), "# T\n\n## H\na\n", "utf8");
+        return { ok: true, text: "done", toolCalls: 1 };
+      },
+    };
+    const io = scriptedIO(questions.map((_, i) => `answer ${i}`), ["approve"]);
+    await interviewFile(root, timeline, io.io, await deps(root, { executors: recording, now: () => when }));
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.["date"]).toBe("2030-04-02");
+    expect(seen[0]?.["date"]).toBe(
+      `${when.getFullYear()}-${String(when.getMonth() + 1).padStart(2, "0")}-${String(when.getDate()).padStart(2, "0")}`,
+    );
+  });
+});
