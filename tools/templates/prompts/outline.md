@@ -22,7 +22,7 @@ The premise for this episode is in {{show.episodesDir}}/{{episodeId}}/premise.md
   the premise touches what is and is not possible in this world
 
 ## Exemplar
-Episodes/_TEMPLATE/outline.md is the format. Read it, and write every one
+{{show.episodesDir}}/_TEMPLATE/outline.md is the format. Read it, and write every one
 of its sections, in its order: `## Scene synopsis`, `## Arc beats`,
 `## Cast`, one `### Beat <n>` heading per beat, `## Ending duties`,
 `## Threads opened`, `## New canon proposed`.
