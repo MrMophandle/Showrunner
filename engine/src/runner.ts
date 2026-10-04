@@ -498,6 +498,11 @@ async function runGateStep(
     }
     // Rejected: run the fix agent (if any), then decide whether another attempt is allowed.
     if (attempts >= maxAttempts) {
+      // This wording is depended on outside the engine: `tools/src/init/init.ts`'s
+      // `GATE_EXHAUSTED` matches `/: gate failed: rejected \d+ times?$/` against it, so that the
+      // bible interview can treat one file's exhausted gate as a stall and carry on with the rest
+      // of the bible. Reword it and that becomes an abort. A rewording breaks a test rather than a
+      // run (`tools/test/init.test.ts` exercises exhaustion against the real engine).
       const error = `rejected ${attempts} times`;
       await emit("step_failed", { error });
       return { kind: "failed", error };

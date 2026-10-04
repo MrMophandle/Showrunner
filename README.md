@@ -869,7 +869,8 @@ moves to the invented show the fixtures use.
 templates are what every new show is built from — the prompt set, the thirteen bible templates,
 the four entity templates and the show's own README — so a noun left in one of them would be
 copied into every show `showrunner-init` ever creates, and the copy would be the author's file and
-no longer the engine's to fix. First, **the show-name grep printed at the head of this rule
+no longer the engine's to fix. First, **the show-name grep printed under "No show's name may
+appear in `engine/`, `scripts/`, `render/`, `tools/src/`, `tools/templates/` or `console/`" above
 searches it**: `tools/templates/` sits under `tools/`, and none of that grep's `--exclude-dir`
 flags names it. Second, `tools/test/templates.test.ts` **refuses a history stamp anywhere under
 `tools/templates/`** — a production id such as `ep07`, a `2026-` date, the first show's author by

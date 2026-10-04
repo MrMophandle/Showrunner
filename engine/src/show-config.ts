@@ -30,7 +30,11 @@ export interface ShowConfig {
 /** One key of `showrunner.json`, as a dotted path, with who requires it and the default where one
  *  exists. `requiredBy: "both"` is one of the eight keys both loaders refuse to run without;
  *  `"engine"` and `"scripts"` name a reader that fails by name when the key is absent and no default
- *  applies; `"none"` is a key with a default on every reader. `readBy` names the readers in prose
+ *  applies; `"none"` is a key with a default on every reader. **No row is `"engine"` today** — the
+ *  sixty rows are eight `both`, forty-four `scripts` and eight `none` — and the member is kept
+ *  rather than dropped because the asymmetry is an accident of which reader grew first: the engine
+ *  reads its own keys through optional accessors with fallbacks, and the first engine key that
+ *  refuses a run by name belongs in this class rather than in a widened `"both"`. `readBy` names the readers in prose
  *  (a file name, or "engine"), so an author who sees the key in a config can find what it feeds.
  *  `init` writes every key here, and the test beside this file greps every `sc.value`/`sc.path`
  *  site in scripts/ to refuse a key the list does not carry. */
@@ -81,7 +85,7 @@ export const SHOW_CONFIG_KEYS: readonly ShowConfigKey[] = [
   { path: "audio.narratorSpeakerKey", requiredBy: "scripts", readBy: "scripts/audio-mix.py:50, scripts/breath-qc.py:109, scripts/pace-qc.py:46" },
   { path: "audio.mainCast", requiredBy: "scripts", readBy: "scripts/validate-manifest.py:73 (the speaker keys a manifest may use without a guest WAV)" },
   { path: "audio.voiceRefsDir", requiredBy: "none", default: "Production/voice-refs", readBy: "engine/src/pipelines/episode.ts:67, engine/src/needs.ts:47 (both defaulted); no script site names it" },
-  { path: "audio.guestRefsDir", requiredBy: "none", readBy: "nothing yet: engine/src/needs.ts:77 hardcodes <productionDir>/<episodeId>/guest-refs instead of reading the key" },
+  { path: "audio.guestRefsDir", requiredBy: "none", readBy: "nothing yet: engine/src/needs.ts:77 hardcodes <productionDir>/<episodeId>/guest-refs instead of reading the key. The value carries a literal `{episodeId}` placeholder, which nothing substitutes because nothing reads it; a reader that wires this key must replace that token with the run's episode id, and the value is written with it so the key records that it is per-episode" },
   { path: "audio.voiceRegistry", requiredBy: "scripts", default: "Canon/voice-registry.md", readBy: "engine/src/pipelines/episode.ts:68 (defaulted to <canonDir>/voice-registry.md); scripts/validate-manifest.py:74 (sc.path, no default)" },
   { path: "visual.refs", requiredBy: "scripts", default: "Canon/refs.json", readBy: "engine/src/pipelines/episode.ts:69, engine/src/needs.ts:48 (defaulted); scripts/design-visual.py:61, scripts/image-generate.py:78, scripts/nano-banana-generate.py:423, scripts/registry-append.py:117 (sc.path, no default)" },
   { path: "visual.style", requiredBy: "scripts", default: "Canon/visual-style.md", readBy: "engine/src/pipelines/episode.ts:70 (defaulted); scripts/image-sheet.py:72, scripts/nano-banana-generate.py:426, scripts/populator-check.py:69 (no default)" },
