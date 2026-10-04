@@ -62,9 +62,10 @@ def main() -> None:
         sys.exit("canon-diff: episode id missing "
                  "(usage: canon-diff.py <episode> [--show-root <path>])")
     canon_dir = str(sc.value(cfg, "canonDir"))
+    prod = sc.production_dir(cfg)
 
     patch = git_diff(canon_dir, root)
-    out_dir = f"Production/{ep}"
+    out_dir = f"{prod}/{ep}"
     os.makedirs(out_dir, exist_ok=True)
     out_path = f"{out_dir}/canon-diff.patch"
     with open(out_path, "w", encoding="utf-8") as fh:

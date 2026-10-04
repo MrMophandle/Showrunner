@@ -44,7 +44,8 @@ def main() -> None:
     # not the times the render will use.
     fps = int(sc.value(cfg, "video", "fps"))
     crossfade_s = float(sc.value(cfg, "video", "crossfadeSeconds"))
-    base = f"Production/{ep}"
+    prod = sc.production_dir(cfg)
+    base = f"{prod}/{ep}"
     for need in (f"{base}/audio/manifest.json", f"{base}/tts-script.json",
                  f"{base}/images/prompts.json", f"Episodes/{ep}/script.md"):
         if not os.path.exists(need):
@@ -157,7 +158,7 @@ def main() -> None:
             A(f"## {p['scene']}")
             A("")
             last_scene = p["scene"]
-        png = f"Production/{ep}/images/{s['id']}.png"
+        png = f"{base}/images/{s['id']}.png"
         have = "on disk" if os.path.exists(png) else "**MISSING**"
         kind = "character (Nano Banana)" if s.get("type") == "character" else "ambient (local engine)"
         A(f"### `{s['id']}`")

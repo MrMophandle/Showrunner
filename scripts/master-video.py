@@ -70,7 +70,8 @@ def main():
     target = dict(I=str(sc.value(cfg, "audio", "loudness", "i")),
                   TP=str(sc.value(cfg, "audio", "loudness", "tp")),
                   LRA=str(sc.value(cfg, "audio", "loudness", "lra")))
-    video_dir = f"Production/{ep}/video"
+    prod = sc.production_dir(cfg)
+    video_dir = f"{prod}/{ep}/video"
     src = f"{video_dir}/{sc.value(cfg, 'output', 'videoFilename')}"
     if not os.path.exists(src): sys.exit(f"master-video: {src} not found")
     dst = f"{video_dir}/{MASTERED_FILENAME}"

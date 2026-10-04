@@ -51,15 +51,17 @@ def main():
     # The engine runs this with the show root as the working directory; --show-root <path> is for
     # an operator running it from somewhere else.
     root = os.path.abspath(sc.show_root(sys.argv))
-    sc.load(root)
+    cfg = sc.load(root)
     os.chdir(root)
+    prod = sc.production_dir(cfg)
     ep = sys.argv[1] if len(sys.argv) > 1 else ""
     if not ep:
         sys.exit("image-qc: episode id missing "
                  "(usage: image-qc.py <episode> [--show-root <path>])")
-    paths = sorted(glob.glob(f"Production/{ep}/images/*.png"))
+    images = f"{prod}/{ep}/images"
+    paths = sorted(glob.glob(f"{images}/*.png"))
     if not paths:
-        sys.exit(f"image-qc: no images under Production/{ep}/images/")
+        sys.exit(f"image-qc: no images under {images}/")
 
     rows = []
     for pos, p in enumerate(paths, 1):

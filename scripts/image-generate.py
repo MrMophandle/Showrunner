@@ -72,7 +72,8 @@ def main() -> None:
     # The show says where its reference index lives and what shape a frame is; a shot may still
     # override the frame per image.
     frame = list(sc.value(cfg, "visual", "shotFrame"))
-    base = f"Production/{ep}/images"
+    prod = sc.production_dir(cfg)
+    base = f"{prod}/{ep}/images"
     doc = json.load(open(f"{base}/prompts.json"))
     shots = doc["shots"]
     bible = load_bible(sc.path(cfg, "visual", "refs", root=root))

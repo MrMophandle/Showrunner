@@ -45,14 +45,17 @@ def ensure_mounted(mount: str, dest: str) -> None:
                  f"Connect to the media share, then re-run. Nothing written.")
 
 
-def find_video(ep: str, video_filename: str):
+def find_video(ep: str, video_filename: str, *, prod: str):
     """The file to finalize: the mastered MP4 when master-video.py has written one, else the
     raw render. Explicit rather than a glob's sort order, because which of the two ships is a
-    decision (F-09), not an alphabetical accident."""
-    mastered = f"Production/{ep}/video/{MASTERED_FILENAME}"
+    decision (F-09), not an alphabetical accident.
+
+    `prod` is the show's production directory (sc.production_dir), passed in rather than read
+    here because this function takes no config and the caller already holds one."""
+    mastered = f"{prod}/{ep}/video/{MASTERED_FILENAME}"
     if os.path.exists(mastered):
         return mastered
-    raw = f"Production/{ep}/video/{video_filename}"
+    raw = f"{prod}/{ep}/video/{video_filename}"
     return raw if os.path.exists(raw) else None
 
 
@@ -121,6 +124,7 @@ def resolve_slot(cfg: dict, ep: str, canon_dir: str):
 
 
 def finalize(cfg: dict, ep: str, *, dest: str, canon_dir: str, video_filename: str) -> bool:
+    prod = sc.production_dir(cfg)
     slot = resolve_slot(cfg, ep, canon_dir)
     if not slot:
         # Under the engine this script finalizes ONE episode, so "nothing resolved" is a failure
@@ -129,11 +133,11 @@ def finalize(cfg: dict, ep: str, *, dest: str, canon_dir: str, video_filename: s
         sys.exit(f"finalize-video: {ep} has no air slot — it is not in airMap, and no RULED row "
                  f"in any season document under {canon_dir}/ defaults to it. Add an airMap entry "
                  f"for {ep}, then re-run. Nothing written.")
-    src = find_video(ep, video_filename)
+    src = find_video(ep, video_filename, prod=prod)
     if not src:
         sys.exit(f"finalize-video: no video to finalize for {ep} — expected "
-                 f"Production/{ep}/video/{MASTERED_FILENAME} or "
-                 f"Production/{ep}/video/{video_filename}. Nothing written.")
+                 f"{prod}/{ep}/video/{MASTERED_FILENAME} or "
+                 f"{prod}/{ep}/video/{video_filename}. Nothing written.")
     season, episode = slot
     name = sc.format_filename(str(sc.value(cfg, "output", "finalFilename")),
                               slug=str(sc.value(cfg, "showSlug")),

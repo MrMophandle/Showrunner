@@ -107,10 +107,11 @@ def main():
     os.chdir(root)
     # Which speaker key carries the narration is the show's to say (audio.narratorSpeakerKey).
     narrator = str(sc.value(cfg, "audio", "narratorSpeakerKey"))
+    prod = sc.production_dir(cfg)
     ep = sys.argv[1] if len(sys.argv) > 1 else ""
     if not ep:
         sys.exit("breath-qc: episode id missing (usage: breath-qc.py <episode> [--show-root <path>])")
-    base = f"Production/{ep}"
+    base = f"{prod}/{ep}"
     doc = json.load(open(f"{base}/tts-script.json"))
     narr = {s["i"] for s in doc["segments"] if s["speaker"] == narrator}
     if doc.get("engine", "kokoro") != "qwen3":

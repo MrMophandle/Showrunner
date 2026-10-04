@@ -70,7 +70,8 @@ def main():
     pre, post = scaffold_patterns(sc.value(cfg, "visual", "ambientPromptScaffold", default=[]))
     casting_dir = str(sc.value(cfg, "visual", "castingPileDir"))
     style_doc = os.path.basename(str(sc.value(cfg, "visual", "style")))
-    base = f"Production/{ep}/images"
+    prod = sc.production_dir(cfg)
+    base = f"{prod}/{ep}/images"
     doc = json.load(open(f"{base}/prompts.json"))
     shots = doc["shots"]
     def present(sid): return os.path.exists(f"{base}/{sid}.png")
@@ -99,7 +100,7 @@ def main():
     L.append("")
     L.append("Make each in Nano Banana using the named reference sheet(s) from "
              f"`{casting_dir}/` (they carry the likeness — the brief describes the "
-             f"shot). Save as **exactly** the filename shown into `Production/{ep}/images/`.")
+             f"shot). Save as **exactly** the filename shown into `{base}/`.")
     L.append("")
     L.append(f"### To make  ({len(todo)})")
     L.append("")

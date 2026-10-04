@@ -84,6 +84,23 @@ describe("missingRefs", () => {
     ]);
   });
 
+  it("reads the guest-reference directory from audio.guestRefsDir, substituting {episodeId}", async () => {
+    // Every other test here omits the key and so exercises the <productionDir>/<episodeId>/guest-refs
+    // default; this one is the only proof that a show which names the directory is obeyed, and that
+    // the refusal names the directory the probe actually read rather than the old literal.
+    const renamed: ShowConfig = { ...show, productionDir: "Prod", audio: { ...show.audio, guestRefsDir: "Voices/{episodeId}/guests" } };
+    const { root, w } = await show1();
+    await w("Episodes/s02e01/outline.md", "## Cast\n- Dock Hand Pim (guest, speaks)\n");
+    await w("Voices/s02e01/guests/dock-hand-pim-1.wav", "wav");
+    expect(await missingRefs(root, "s02e01", renamed)).toEqual([]);
+    // The WAV that satisfies s02e01 is in s02e01's directory, so s02e02 is still missing one — and
+    // the line names Voices/s02e02/guests, not Prod/s02e02/guest-refs.
+    await w("Episodes/s02e02/outline.md", "## Cast\n- Dock Hand Pim (guest, speaks)\n");
+    expect(await missingRefs(root, "s02e02", renamed)).toEqual([
+      "Dock Hand Pim: no guest voice at Voices/s02e02/guests/dock-hand-pim*.wav",
+    ]);
+  });
+
   it("finds a guest voice by slug prefix, and is empty without a cast section", async () => {
     const { root, w } = await show1();
     await w("Episodes/s02e01/outline.md", "## Cast\n- Dock Hand Pim (guest, speaks)\n");

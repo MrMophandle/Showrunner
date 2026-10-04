@@ -117,9 +117,10 @@ def main():
     refs_path = sc.path(cfg, "visual", "refs", root=root)
     casting_root = sc.path(cfg, "visual", "castingPileDir", root=root)
     kinds = sc.value(cfg, "visual", "characterKinds")
+    prod = sc.production_dir(cfg)
     bible = {k: v for k, v in
              json.load(open(refs_path)).items() if not k.startswith("_")}
-    copied = append(ep, f"Production/{ep}/images/prompts.json", bible, casting_root, kinds)
+    copied = append(ep, f"{prod}/{ep}/images/prompts.json", bible, casting_root, kinds)
     for p in copied:
         print(f"  + {p}")
     print(f"REGISTRY_OK {len(copied)} still(s) appended")

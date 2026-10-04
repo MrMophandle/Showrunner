@@ -143,16 +143,18 @@ def resynth(ep: str) -> None:
 
 def main() -> None:
     # The engine runs this with the show root as the working directory; --show-root <path> is for
-    # an operator running it from somewhere else. This step reads no show-config KEY of its own --
-    # every threshold above is an engine setting -- but it still loads the config, so a wrong
-    # --show-root fails here by naming showrunner.json instead of failing three lines later.
+    # an operator running it from somewhere else. Every threshold above is an engine setting, so
+    # the one key this step reads is the production directory its input sits under; loading the
+    # config here also means a wrong --show-root fails by naming showrunner.json rather than by
+    # failing to find a tts-script.json three lines later.
     root = os.path.abspath(sc.show_root(sys.argv))
-    sc.load(root)
+    cfg = sc.load(root)
     os.chdir(root)
+    prod = sc.production_dir(cfg)
     ep = sys.argv[1] if len(sys.argv) > 1 else ""
     if not ep:
         sys.exit("truncation-qc: episode id missing (usage: truncation-qc.py <episode> [--show-root <path>])")
-    base = f"Production/{ep}"
+    base = f"{prod}/{ep}"
     doc = json.load(open(f"{base}/tts-script.json"))
     if doc.get("engine", "kokoro") != "qwen3":
         # A skipped pass is a FINISHED pass: report the bar full before the result line, so a

@@ -51,7 +51,8 @@ def main() -> None:
     TARGET = dict(I=str(sc.value(cfg, "audio", "loudness", "i")),
                   TP=str(sc.value(cfg, "audio", "loudness", "tp")),
                   LRA=str(sc.value(cfg, "audio", "loudness", "lra")))
-    base = f"Production/{ep}/audio"
+    prod = sc.production_dir(cfg)
+    base = f"{prod}/{ep}/audio"
     with open(f"{base}/manifest.json") as f:
         man = json.load(f)
     sr = man["sr"]

@@ -31,7 +31,7 @@ export interface ShowConfig {
  *  exists. `requiredBy: "both"` is one of the eight keys both loaders refuse to run without;
  *  `"engine"` and `"scripts"` name a reader that fails by name when the key is absent and no default
  *  applies; `"none"` is a key with a default on every reader. **No row is `"engine"` today** — the
- *  sixty rows are eight `both`, forty-four `scripts` and eight `none` — and the member is kept
+ *  sixty rows are eight `both`, forty-three `scripts` and nine `none` — and the member is kept
  *  rather than dropped because the asymmetry is an accident of which reader grew first: the engine
  *  reads its own keys through optional accessors with fallbacks, and the first engine key that
  *  refuses a run by name belongs in this class rather than in a widened `"both"`. `readBy` names the readers in prose
@@ -58,7 +58,7 @@ export const SHOW_CONFIG_KEYS: readonly ShowConfigKey[] = [
   { path: "promptsDir", requiredBy: "both", readBy: "engine/src/agent-step.ts:148 (where every agent step finds its prompt); no script reads it, and the scripts' loader requires it" },
   { path: "canonDir", requiredBy: "scripts", default: "Canon", readBy: "engine/src/pipelines/episode.ts:60 (defaulted); scripts/canon-diff.py:64, scripts/finalize-video.py:166 (no default)" },
   { path: "episodesDir", requiredBy: "scripts", default: "Episodes", readBy: "engine/src/pipelines/episode.ts:61, engine/src/needs.ts:45 (defaulted); scripts/publish-kit.py:98 (no default); scripts/canon-ledger.py:66 defaults it" },
-  { path: "productionDir", requiredBy: "scripts", default: "Production", readBy: "engine/src/pipelines/episode.ts:62, engine/src/needs.ts:46 (defaulted); no script reads it since check_layout.py and season-status.py retired" },
+  { path: "productionDir", requiredBy: "none", default: "Production", readBy: "engine/src/pipelines/episode.ts:62, engine/src/needs.ts:46 (defaulted); every Python step that builds an episode path, through scripts/lib/showconfig.py's production_dir(cfg), which defaults to \"Production\" so the two loaders agree about a config that omits the key. requiredBy is \"none\" rather than \"scripts\" because the helper defaults where the two retired scripts (check_layout.py, season-status.py) read the key with none; buildShowConfig writes every row regardless of requiredBy, so init's output does not change" },
   { path: "models.small", requiredBy: "none", readBy: "nothing yet: engine/src/agent-step.ts:252 resolves a step's tier name through models, and no step declares the small tier" },
   { path: "models.medium", requiredBy: "both", readBy: "engine/src/agent-step.ts:251-252 (the tier seven steps declare); console/server/what-happened.ts:223" },
   { path: "models.large", requiredBy: "both", readBy: "engine/src/agent-step.ts:251-252 (the tier one step declares)" },
@@ -85,7 +85,7 @@ export const SHOW_CONFIG_KEYS: readonly ShowConfigKey[] = [
   { path: "audio.narratorSpeakerKey", requiredBy: "scripts", readBy: "scripts/audio-mix.py:50, scripts/breath-qc.py:109, scripts/pace-qc.py:46" },
   { path: "audio.mainCast", requiredBy: "scripts", readBy: "scripts/validate-manifest.py:73 (the speaker keys a manifest may use without a guest WAV)" },
   { path: "audio.voiceRefsDir", requiredBy: "none", default: "Production/voice-refs", readBy: "engine/src/pipelines/episode.ts:67, engine/src/needs.ts:47 (both defaulted); no script site names it" },
-  { path: "audio.guestRefsDir", requiredBy: "none", readBy: "nothing yet: engine/src/needs.ts:77 hardcodes <productionDir>/<episodeId>/guest-refs instead of reading the key. The value carries a literal `{episodeId}` placeholder, which nothing substitutes because nothing reads it; a reader that wires this key must replace that token with the run's episode id, and the value is written with it so the key records that it is per-episode" },
+  { path: "audio.guestRefsDir", requiredBy: "none", default: "<productionDir>/<episodeId>/guest-refs", readBy: "engine/src/needs.ts (missingRefs: the directory one episode's guest-voice WAVs sit in, and the directory its refusal names). The value's literal `{episodeId}` placeholder is substituted with the run's episode id through formatFilename, which is why the key is written with the token rather than resolved: it is the one show path that is per-episode" },
   { path: "audio.voiceRegistry", requiredBy: "scripts", default: "Canon/voice-registry.md", readBy: "engine/src/pipelines/episode.ts:68 (defaulted to <canonDir>/voice-registry.md); scripts/validate-manifest.py:74 (sc.path, no default)" },
   { path: "visual.refs", requiredBy: "scripts", default: "Canon/refs.json", readBy: "engine/src/pipelines/episode.ts:69, engine/src/needs.ts:48 (defaulted); scripts/design-visual.py:61, scripts/image-generate.py:78, scripts/nano-banana-generate.py:423, scripts/registry-append.py:117 (sc.path, no default)" },
   { path: "visual.style", requiredBy: "scripts", default: "Canon/visual-style.md", readBy: "engine/src/pipelines/episode.ts:70 (defaulted); scripts/image-sheet.py:72, scripts/nano-banana-generate.py:426, scripts/populator-check.py:69 (no default)" },

@@ -158,6 +158,43 @@ def test_path_names_a_missing_key(show_root: Path) -> None:
     assert "audio.nope" in str(err.value)
 
 
+def test_production_dir_reads_the_config_and_defaults_to_production(show_root: Path) -> None:
+    """The one answer every step's paths are built on, in its three states.
+
+    The default matters more than the configured value: `productionDir` is optional in both
+    loaders, so a show that omits it must get "Production" here rather than a ShowConfigError,
+    which is what engine/src/show-config.ts records as the key's default.
+    """
+    assert sc.production_dir(sc.load(str(show_root))) == "Production"
+
+    cfg = _config(show_root)
+    cfg["productionDir"] = "Work"
+    _write(show_root, cfg)
+    assert sc.production_dir(sc.load(str(show_root))) == "Work"
+
+    del cfg["productionDir"]
+    _write(show_root, cfg)
+    assert sc.production_dir(sc.load(str(show_root))) == "Production"
+
+
+@pytest.mark.parametrize("bad", ["", 7, None, ["Production"]])
+def test_production_dir_refuses_a_value_that_is_not_a_non_empty_string(
+    show_root: Path, bad: object
+) -> None:
+    """A present-but-wrong value fails by naming the key, the way sc.path does.
+
+    Absent is a default and present-but-wrong is a mistake in showrunner.json; the two must not
+    collapse into the same silent "Production", or a show that typed `"productionDir": ""` would
+    write its episodes into a directory it never named.
+    """
+    cfg = _config(show_root)
+    cfg["productionDir"] = bad
+    _write(show_root, cfg)
+    with pytest.raises(sc.ShowConfigError) as err:
+        sc.production_dir(sc.load(str(show_root)))
+    assert "productionDir" in str(err.value)
+
+
 def test_format_filename() -> None:
     assert (
         sc.format_filename("{slug} S{season:02d}E{episode:02d}.wav", slug="HL", season=1, episode=3)

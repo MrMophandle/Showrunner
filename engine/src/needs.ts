@@ -1,6 +1,6 @@
 import path from "node:path";
 import { readFile, readdir, stat } from "node:fs/promises";
-import { resolveShowPath, type ShowConfig } from "./show-config.js";
+import { formatFilename, resolveShowPath, type ShowConfig } from "./show-config.js";
 import type { Needs } from "./stages.js";
 
 export interface CastEntry { name: string; tags: string[] }
@@ -49,6 +49,19 @@ function dirs(show: ShowConfig) {
   };
 }
 
+/** One episode's guest-reference directory, show-relative: `audio.guestRefsDir` with its
+ *  `{episodeId}` token replaced by the run's id, through the same `formatFilename` grammar the
+ *  output filenames use, so a config that writes `{epId}` fails by name instead of leaving a brace
+ *  in a path. A function rather than a field of `dirs()` because this is the only show path that is
+ *  per-episode, and `dirs()` takes no id. Defaulted to `<productionDir>/<episodeId>/guest-refs` --
+ *  the literal this probe hardcoded before Plan F -- rather than required, because a show that
+ *  never casts a speaking guest should not have to name a directory it will never fill. */
+function guestRefsDir(show: ShowConfig, episodeId: string): string {
+  const configured = show.audio?.["guestRefsDir"];
+  if (typeof configured === "string" && configured !== "") return formatFilename(configured, { episodeId });
+  return path.posix.join(dirs(show).production, episodeId, "guest-refs");
+}
+
 /** One line per reference the outline's cast needs and the show does not have: a recurring
  *  subject without an entry or an image in the visual bible, a speaking recurring character
  *  whose voice is not LOCKED or whose WAV is absent, a speaking guest with no WAV under the
@@ -74,7 +87,10 @@ export async function missingRefs(showRoot: string, episodeId: string, show: Sho
   const voices: Record<string, Record<string, unknown>> = {};
   if (isRecord(voicesRaw) && isRecord(voicesRaw["cast"])) for (const [k, v] of Object.entries(voicesRaw["cast"])) if (isRecord(v)) voices[k] = v;
 
-  const guestDir = path.join(showRoot, d.production, episodeId, "guest-refs");
+  // One value for the directory the probe reads and the directory its refusal names, so the two
+  // can never disagree about where a guest WAV belongs.
+  const guests = guestRefsDir(show, episodeId);
+  const guestDir = resolveShowPath(showRoot, guests);
   const guestWavs = (await exists(guestDir)) ? (await readdir(guestDir)).filter((f) => f.toLowerCase().endsWith(".wav")).map((f) => f.toLowerCase()) : [];
 
   const missing: string[] = [];
@@ -114,7 +130,7 @@ export async function missingRefs(showRoot: string, episodeId: string, show: Sho
     }
     if (tags.has("guest") && speaks) {
       if (!guestWavs.some((f) => f.startsWith(slug))) {
-        missing.push(`${entry.name}: no guest voice at ${path.posix.join(d.production, episodeId, "guest-refs")}/${slug}*.wav`);
+        missing.push(`${entry.name}: no guest voice at ${guests}/${slug}*.wav`);
       }
     }
   }

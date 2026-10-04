@@ -96,16 +96,17 @@ def main():
     ai_disclosure = str(sc.value(cfg, "publish", "standingCopy", "aiDisclosure"))
     guide = str(sc.value(cfg, "publish", "guide"))
     episodes_dir = str(sc.value(cfg, "episodesDir"))
+    prod = sc.production_dir(cfg)
 
     script_path = f"{episodes_dir}/{ep}/script.md"
     logline = load_logline(f"{episodes_dir}/{ep}/publish.json")
 
-    man = json.load(open(f"Production/{ep}/audio/manifest.json"))
-    doc = json.load(open(f"Production/{ep}/tts-script.json"))
+    man = json.load(open(f"{prod}/{ep}/audio/manifest.json"))
+    doc = json.load(open(f"{prod}/{ep}/tts-script.json"))
     txt = {s["i"]: s["text"] for s in doc["segments"]}
     season, episode = sc.season_of(cfg, ep)
     slug = f"S{season:02d}E{episode:02d}"
-    out = f"Production/{ep}/publish"; os.makedirs(out, exist_ok=True)
+    out = f"{prod}/{ep}/publish"; os.makedirs(out, exist_ok=True)
     title_str = ep_title(script_path)
     # the pilot is often named the same as the show; don't repeat it
     title_line = (f"{show_name} — {slug}"
@@ -186,7 +187,7 @@ Then in the Subtitles section, upload:  {out}/captions.srt
 - Recording date & location: leave blank (fiction)
 
 ## Files
-- Video:    Production/{ep}/video/{title_line}.mp4   (once rendered)  OR the master under Production/{ep}/video/
+- Video:    {prod}/{ep}/video/{title_line}.mp4   (once rendered)  OR the master under {prod}/{ep}/video/
 - Captions: {out}/captions.srt
 """
     open(f"{out}/upload.md", "w").write(sheet)

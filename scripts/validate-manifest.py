@@ -72,7 +72,8 @@ def main():
     pause_min, pause_max = (float(x) for x in sc.value(cfg, "audio", "authoredPauseRangeSeconds"))
     mains = set(sc.value(cfg, "audio", "mainCast"))
     registry_path = sc.path(cfg, "audio", "voiceRegistry", root=root)
-    doc = json.load(open(f"Production/{ep}/tts-script.json"))
+    prod = sc.production_dir(cfg)
+    doc = json.load(open(f"{prod}/{ep}/tts-script.json"))
     cast, segs = doc["cast"], doc["segments"]
     fails, warns = [], []
 

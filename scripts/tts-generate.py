@@ -71,10 +71,11 @@ def main() -> None:
     cfg = sc.load(root)
     os.chdir(root)
     sr = int(sc.value(cfg, "audio", "sampleRate"))
+    prod = sc.production_dir(cfg)
     ep = sys.argv[1] if len(sys.argv) > 1 else ""
     if not ep:
         sys.exit("tts-generate: episode id missing (usage: tts-generate.py <episode> [--show-root <path>])")
-    base = f"Production/{ep}"
+    base = f"{prod}/{ep}"
     with open(f"{base}/tts-script.json") as f:
         doc = json.load(f)
     cast, segs = doc["cast"], doc["segments"]
