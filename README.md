@@ -554,8 +554,9 @@ to write. The engine's `bible-ready` guard runs the same two functions before an
 answer is a refusal rather than a report.
 
 **A show registry and the console's own "New show" surface are Plan H, not this plan.** Until Plan H
-lands, a new show is started from the command line as above, and the console is then pointed at the
-directory it created with `--show`.
+lands, a new show is started with the `node tools/dist/init/main.js` command line at the top of
+this **Starting a show** section, and the console is then pointed with `--show` at the directory
+`showrunner-init` created.
 
 ## The progress contract
 
@@ -865,23 +866,23 @@ reviewer who sees a test fixture or a comment naming a real show's cast must say
 moves to the invented show the fixtures use.
 
 **`tools/templates/` is inside the guarded paths, and three checks keep a show out of it.** The
-templates are what every new show is built from — the prompt set, the thirteen bible templates, the
-four entity templates and the show's own README — so a noun left in one of them would be copied
-into every show `showrunner-init` ever creates, and the copy would be the author's file and no
-longer the engine's to fix. First, **the grep above searches it**: `tools/templates/` sits under
-`tools/`, and none of the grep's `--exclude-dir` flags names it. Second,
-`tools/test/templates.test.ts` **refuses a history stamp anywhere under `tools/templates/`** — a
-production id such as `ep07`, a `2026-` date, the first show's author by name, or a ruling written
-with a date or an attribution (`showrunner-ruled`, `ruled 2026-09-09`) — because a template
-carrying one is a copy of a finished show's file rather than a template. The ruling patterns are
-narrower than the bare word on purpose: `RULED` is the status vocabulary every interviewed bible
-template's header carries, so refusing the bare word would refuse the legend the templates are
-required to have. Third, the same test file **refuses the first show's cosmology words** —
-`vanished` and `dark forest` — which are concepts rather than proper nouns and so cannot be written
-as word-boundary alternatives in the grep's list. The two lists are complementary by construction:
-that scan holds what the grep cannot express, and nothing else, because the grep searches
-`tools/test/templates.test.ts` too and a proper noun written there as a regex alternative would
-make the grep report itself.
+templates are what every new show is built from — the prompt set, the thirteen bible templates,
+the four entity templates and the show's own README — so a noun left in one of them would be
+copied into every show `showrunner-init` ever creates, and the copy would be the author's file and
+no longer the engine's to fix. First, **the show-name grep printed at the head of this rule
+searches it**: `tools/templates/` sits under `tools/`, and none of that grep's `--exclude-dir`
+flags names it. Second, `tools/test/templates.test.ts` **refuses a history stamp anywhere under
+`tools/templates/`** — a production id such as `ep07`, a `2026-` date, the first show's author by
+name, or a ruling written with a date or an attribution (`showrunner-ruled`, `ruled 2026-09-09`) —
+because a template carrying one is a copy of a finished show's file rather than a template. The
+ruling patterns are narrower than the bare word on purpose: `RULED` is the status vocabulary every
+interviewed bible template's header carries, so refusing the bare word would refuse the legend the
+templates are required to have. Third, the same test file **refuses the first show's cosmology
+words** — `vanished` and `dark forest` — which are concepts rather than proper nouns and so
+cannot be written as word-boundary alternatives in the grep's list. The two lists are complementary
+by construction: that scan holds what the grep cannot express, and nothing else, because the grep
+searches `tools/test/templates.test.ts` too and a proper noun written there as a regex alternative
+would make the grep report itself.
 
 `tools/show-data/` is excluded because that directory holds a show's own data, as the **Tools**
 section above explains. `render/public/` is excluded because it is a staging directory, not
