@@ -5,7 +5,9 @@
   "type": "module",
   "bin": {
     "extract-prompts": "./dist/extract-prompts.js",
-    "check-prompts": "./dist/check-prompts.js"
+    "check-prompts": "./dist/check-prompts.js",
+    "showrunner-init": "./dist/init/main.js",
+    "bible-check": "./dist/bible-check.js"
   },
   "scripts": {
     "test": "vitest run",
