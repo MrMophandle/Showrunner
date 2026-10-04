@@ -42,6 +42,33 @@ describe("episodePipeline", () => {
     expect(Object.keys(EPISODE_STAGE_MAP.gates).sort()).toEqual([...gates].sort());
   });
 
+  it("keys each stage to the step that reaches it: the real map's eight gates, eight approved rows and final, exhaustively", () => {
+    // The stage map is the Board's only source for "how far along is this episode", and the only
+    // automated check on it is validateStageMap, which refuses a key naming no step and a value of
+    // the wrong kind -- never a value keyed to the wrong step. Before this test, five of the eight
+    // approved rows were asserted nowhere against the real map (OUTLINE, SCRIPT, IMAGES,
+    // PUBLISH_KIT, CANON), and the gate assertion above checks the key set only, not which DRAFT_
+    // stage each gate opens, so a row re-keyed three steps early would leave the whole suite green
+    // and the Board reporting an episode further along than it is (SR-1).
+    //
+    // toEqual over each whole object rather than row by row, so an added row and a deleted row fail
+    // here too. engine/test/stages.test.ts's local `map` is a deliberately smaller synthetic map
+    // for the derivation tests, not a second copy of this one to keep in step -- see its comment.
+    expect(EPISODE_STAGE_MAP.gates).toEqual({
+      "outline-gate": "DRAFT_OUTLINE", "script-gate": "DRAFT_SCRIPT", "casting-gate": "DRAFT_CASTING", "audio-gate": "DRAFT_AUDIO",
+      "nano-banana-gate": "DRAFT_IMAGES", "image-gate": "DRAFT_IMAGES", "final-gate": "DRAFT_ASSEMBLY", "canon-gate": "DRAFT_CANON",
+    });
+    expect(EPISODE_STAGE_MAP.approved).toEqual({
+      "outline-gate": "OUTLINE", "script-gate": "SCRIPT", "casting-gate": "CASTING", "audio-gate": "AUDIO",
+      "image-sheet-final": "IMAGES", "final-gate": "ASSEMBLY", "publish-kit": "PUBLISH_KIT", "canon-commit": "CANON",
+    });
+    expect(EPISODE_STAGE_MAP.final).toBe("COMPLETE");
+    // IMAGES is reached when the image sheet is final, not when the image gate is answered: the
+    // gate's approval opens the sheet's last step. The two are three steps apart and the pair is
+    // the one divergence stages.test.ts's synthetic map carries, so it is named here by value.
+    expect(EPISODE_STAGE_MAP.approved["image-gate"]).toBeUndefined();
+  });
+
   it("keeps the ordering rules as dependencies: images wait for the audio gate, canon waits for the publish kit", () => {
     const by = new Map(p.steps.map((s) => [s.id, s]));
     expect(by.get("visual-direction")?.dependsOn).toEqual(["audio-gate"]);
