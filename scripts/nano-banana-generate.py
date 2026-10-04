@@ -395,7 +395,7 @@ def check_no_collective_populators(shots: list[dict], phrases, style_path: str) 
         return
     sys.exit(
         "COLLECTIVE POPULATOR(S) in character brief(s) — refusing to spend "
-        f"({style_path}, \"No collective populators\"):\n"
+        f"({style_path}, visual.collectivePopulatorBans):\n"
         + "\n".join(populators.report_lines(found)) + "\n"
         "Every person in frame must be named and present in refs — "
         "name them or cap the headcount, then re-run."
@@ -426,8 +426,9 @@ def run(ep, cfg, root, only=None, notes="", no_audit=False):
     style_path = str(sc.value(cfg, "visual", "style"))
     bans = list(sc.value(cfg, "visual", "collectivePopulatorBans"))
     show_name = str(sc.value(cfg, "showName"))
+    prod = sc.production_dir(cfg)
 
-    base = f"Production/{ep}/images"
+    base = f"{prod}/{ep}/images"
     doc = json.load(open(f"{base}/prompts.json"))
     bible = load_bible(bible_path)
     # A character shot whose `source` is "showrunner" is the showrunner's to make by hand, so it

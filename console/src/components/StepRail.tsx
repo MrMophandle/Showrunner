@@ -18,7 +18,15 @@ import { ProgressBar } from "./ProgressBar.js";
 
 /** A step's result as one line. The result is whatever the step returned — a verdict object, a
  *  guard's message, a script's stdout summary — so this reads the shapes the pipeline actually
- *  produces and falls back to compact JSON rather than printing nothing. */
+ *  produces and falls back to compact JSON rather than printing nothing.
+ *
+ *  The key list below is `message` and `summary` only. It also carried `milestone` and `detail`,
+ *  the two fields on the six retired `stamp-*` steps' results
+ *  (`{ milestone: "outline", detail: "approved at outline-gate" }`); no step in any pipeline
+ *  returns either key now, so both branches were unreachable, and a future step whose result
+ *  happens to carry a `detail` field would have been absorbed into a dead stamp-era branch
+ *  instead of being read as a new shape worth a branch of its own. A result carrying neither
+ *  `message` nor `summary` falls through to the compact JSON below, which is what it should do. */
 export function resultLine(result: unknown): string {
   if (result === undefined || result === null) return "";
   if (typeof result === "string") return firstLine(result);
@@ -30,7 +38,7 @@ export function resultLine(result: unknown): string {
     if (typeof record["pass"] === "boolean") parts.push(record["pass"] === true ? "pass" : "fail");
     const issues = record["issues"];
     if (Array.isArray(issues) && issues.length > 0) parts.push(`${issues.length} ${issues.length === 1 ? "issue" : "issues"}`);
-    for (const key of ["message", "summary", "milestone", "detail"]) {
+    for (const key of ["message", "summary"]) {
       const value = record[key];
       if (typeof value === "string" && value !== "") { parts.push(firstLine(value)); break; }
     }

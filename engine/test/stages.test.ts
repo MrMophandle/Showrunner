@@ -3,6 +3,22 @@ import { STAGES, deriveStage, isStage, stageIndex, compareStages, validateStageM
 import type { RunState } from "../src/state.js";
 import type { Pipeline } from "../src/steps.js";
 
+/** A deliberately small, synthetic stage map for the derivation tests below: five gates, five
+ *  approved rows, and keys that need name no real step, because deriveStage takes no pipeline and
+ *  the validateStageMap block at the foot of this file builds its own three-step one.
+ *
+ *  It is NOT engine/src/pipelines/episode.ts's EPISODE_STAGE_MAP and is not a copy of it to keep in
+ *  step. The real map's eight gates, eight approved rows and final are asserted directly in
+ *  engine/test/episode-pipeline.test.ts; this file tests the derivation algebra in
+ *  engine/src/stages.ts and imports nothing from the episode pipeline on purpose, so that a
+ *  legitimate re-key of the real map breaks that one assertion rather than the fourteen tests here.
+ *
+ *  The divergence is the point, not drift: `image-gate` is here both the gate that opens
+ *  DRAFT_IMAGES and the approved step that reaches IMAGES -- one step in two roles, which is what
+ *  makes the NEEDS_IMAGES window's upper edge testable ("stops reporting ... NEEDS_IMAGES exactly
+ *  at IMAGES", and the DRAFT_IMAGES/NEEDS_IMAGES pair with the gate open). In the real pipeline
+ *  IMAGES comes from image-sheet-final, a script step that can never be an open gate, so that
+ *  boundary cannot be written against the real map. */
 const map: StageMap = {
   gates: { "outline-gate": "DRAFT_OUTLINE", "script-gate": "DRAFT_SCRIPT", "casting-gate": "DRAFT_CASTING", "audio-gate": "DRAFT_AUDIO", "image-gate": "DRAFT_IMAGES" },
   approved: { "outline-gate": "OUTLINE", "script-gate": "SCRIPT", "casting-gate": "CASTING", "audio-gate": "AUDIO", "image-gate": "IMAGES" },

@@ -1,6 +1,6 @@
 import path from "node:path";
 import { readFile, readdir, stat } from "node:fs/promises";
-import { resolveShowPath, type ShowConfig } from "./show-config.js";
+import { SHOW_CONFIG_FILE, ShowConfigError, formatFilename, resolveShowPath, type ShowConfig } from "./show-config.js";
 import type { Needs } from "./stages.js";
 
 export interface CastEntry { name: string; tags: string[] }
@@ -49,6 +49,51 @@ function dirs(show: ShowConfig) {
   };
 }
 
+/** One episode's guest-reference directory, show-relative: `audio.guestRefsDir` with its
+ *  `{episodeId}` token replaced by the run's id, through the same `formatFilename` grammar the
+ *  output filenames use, so a config that writes `{epId}` fails by name instead of leaving a brace
+ *  in a path. A function rather than a field of `dirs()` because this is the only show path that is
+ *  per-episode, and `dirs()` takes no id. Defaulted to `<productionDir>/<episodeId>/guest-refs` --
+ *  the literal this probe hardcoded before Plan F -- rather than required, because a show that
+ *  never casts a speaking guest should not have to name a directory it will never fill.
+ *
+ *  Two configured values are refused by name instead of honoured, because both would make the
+ *  probe below report a check it did not perform.
+ *
+ *  A value with no `{episodeId}` gives every episode one shared directory, and the probe matches a
+ *  guest WAV by slug prefix (`guestWavs.some((f) => f.startsWith(slug))` in missingRefs), so one
+ *  episode's `dock-hand-pim-1.wav` would satisfy every other episode's Dock Hand Pim and
+ *  `refs-ready` would pass having proved nothing. A show that wants one shared guest-references
+ *  directory is therefore not supported, and the refusal says so.
+ *
+ *  An empty string is a mistake in showrunner.json, not a default: absent means "use
+ *  `<productionDir>/<episodeId>/guest-refs`" and `""` means a scaffolding or templating step left
+ *  the field blank, and collapsing the two would write an episode's guest WAVs into a directory the
+ *  show never named. This matches scripts/lib/showconfig.py's production_dir, which refuses `""`
+ *  for productionDir by name for the same reason. */
+function guestRefsDir(show: ShowConfig, episodeId: string): string {
+  const configured = show.audio?.["guestRefsDir"];
+  if (typeof configured === "string") {
+    if (configured === "") {
+      throw new ShowConfigError(`${SHOW_CONFIG_FILE}: audio.guestRefsDir is empty — an empty value is a mistake, not a default: omit the key to get <productionDir>/<episodeId>/guest-refs`);
+    }
+    if (!configured.includes("{episodeId}")) {
+      throw new ShowConfigError(`${SHOW_CONFIG_FILE}: audio.guestRefsDir ${JSON.stringify(configured)} names no {episodeId} — one shared guest-references directory for every episode is not supported: the probe matches a guest WAV by slug prefix, so a shared directory would accept another episode's guest and pass refs-ready`);
+    }
+    return stripTrailingSlash(formatFilename(configured, { episodeId }));
+  }
+  return path.posix.join(dirs(show).production, episodeId, "guest-refs");
+}
+
+/** `"Voices/s02e01/guests/"` → `"Voices/s02e01/guests"`. Every caller of a show directory builds
+ *  its paths by concatenation (`${guests}/${slug}*.wav` in the refusal line below), and nothing
+ *  downstream collapses a double slash, so a trailing slash in the config would otherwise reach a
+ *  refusal message and a readdir as `Voices/s02e01/guests//`. Mirrors the same trim in
+ *  scripts/lib/showconfig.py's production_dir. */
+function stripTrailingSlash(dir: string): string {
+  return dir.replace(/\/+$/, "");
+}
+
 /** One line per reference the outline's cast needs and the show does not have: a recurring
  *  subject without an entry or an image in the visual bible, a speaking recurring character
  *  whose voice is not LOCKED or whose WAV is absent, a speaking guest with no WAV under the
@@ -74,7 +119,10 @@ export async function missingRefs(showRoot: string, episodeId: string, show: Sho
   const voices: Record<string, Record<string, unknown>> = {};
   if (isRecord(voicesRaw) && isRecord(voicesRaw["cast"])) for (const [k, v] of Object.entries(voicesRaw["cast"])) if (isRecord(v)) voices[k] = v;
 
-  const guestDir = path.join(showRoot, d.production, episodeId, "guest-refs");
+  // One value for the directory the probe reads and the directory its refusal names, so the two
+  // can never disagree about where a guest WAV belongs.
+  const guests = guestRefsDir(show, episodeId);
+  const guestDir = resolveShowPath(showRoot, guests);
   const guestWavs = (await exists(guestDir)) ? (await readdir(guestDir)).filter((f) => f.toLowerCase().endsWith(".wav")).map((f) => f.toLowerCase()) : [];
 
   const missing: string[] = [];
@@ -114,7 +162,7 @@ export async function missingRefs(showRoot: string, episodeId: string, show: Sho
     }
     if (tags.has("guest") && speaks) {
       if (!guestWavs.some((f) => f.startsWith(slug))) {
-        missing.push(`${entry.name}: no guest voice at ${path.posix.join(d.production, episodeId, "guest-refs")}/${slug}*.wav`);
+        missing.push(`${entry.name}: no guest voice at ${guests}/${slug}*.wav`);
       }
     }
   }

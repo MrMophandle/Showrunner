@@ -1,8 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { execFile } from "node:child_process";
 import { mkdir, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { createGateMessageRenderer } from "../src/agent-step.js";
 import { EventLog } from "../src/events.js";
@@ -26,7 +24,6 @@ import type { Executors, Pipeline } from "../src/steps.js";
  *  runs through render-video.py (which supplies render/ as Remotion's cwd and REMOTION_EPISODE in
  *  its environment), and a gate opens with its message rendered from the show's own prompt file. */
 
-const exec = promisify(execFile);
 const engineRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const EP = "ep98";
 
@@ -166,7 +163,6 @@ describe.skipIf(skipReason !== "")(`ep98 exercise (real scripts, no agents)${ski
     } finally {
       report(runId, events, elapsedMs);
       await rm(logPath, { force: true });
-      await exec("git", ["checkout", "--", `Episodes/${EP}/STATUS.md`], { cwd: showRoot }).catch(() => undefined);
       // build-timeline stages the episode's stills and mix into render/public/<episode>/ for the
       // renderer, which leaves the show's own file names inside the engine checkout. Nothing under
       // render/ may name a show (README, Develop), so the exercise takes its staging back out, the

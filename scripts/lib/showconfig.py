@@ -7,7 +7,8 @@ One convention, for every script in this directory:
 
     root = os.path.abspath(sc.show_root(sys.argv))   # strips --show-root; else the working dir
     cfg = sc.load(root)               # <root>/showrunner.json, required keys checked
-    os.chdir(root)                    # show-relative paths (Production/<ep>/...) resolve from here
+    os.chdir(root)                    # show-relative paths resolve from here
+    prod = sc.production_dir(cfg)     # the show's production directory; "Production" by default
 
 The root is made absolute BEFORE anything else, because a relative --show-root would otherwise mean
 one directory to load() and a different one to every path resolved after the chdir. load() runs
@@ -200,6 +201,47 @@ def path(cfg: dict, *keys: str, root: str) -> str:
     if not isinstance(node, str) or node == "":
         raise ShowConfigError(f"{SHOW_CONFIG_FILE}: {dotted} must be a non-empty string")
     return node if os.path.isabs(node) else os.path.join(root, node)
+
+
+PRODUCTION_DIR_DEFAULT = "Production"
+
+
+def production_dir(cfg: dict) -> str:
+    """The show's production directory, as the SHOW-RELATIVE name every step builds its paths on.
+
+    Show-relative rather than resolved against the show root -- which is what path() would do --
+    for two reasons measured across the twenty-seven sites that call it. A step runs with the show
+    root as its working directory (see this module's docstring), so a relative name opens the same
+    file an absolute one would. And seven of those sites PRINT the path: four into a result line or
+    a refusal (image-qc.py, master-video.py, publish-kit.py, shot-sheet.py), three into a markdown
+    sheet the show repository commits (IMAGE-SHEET.md, SHOT-SHEET.md, upload.md). An absolute path
+    there would record the operator's home directory in the show's own history.
+
+    A show whose productionDir is itself absolute is still honoured, because every caller
+    concatenates onto this value rather than joining it to the root a second time.
+
+    `productionDir` is optional: absent, the answer is "Production", which is the default
+    engine/src/show-config.ts records for the key, so the two loaders agree about a config that
+    omits it. Present but not a non-empty string raises ShowConfigError naming the key, the way
+    path() refuses the same fault. engine/src/needs.ts's guestRefsDir refuses an empty configured
+    value by name for the same reason, so the two loaders agree about that fault too.
+
+    A trailing slash is trimmed. Every one of the twenty-seven sites builds its path by f-string
+    concatenation (f"{prod}/{ep}/...") rather than os.path.join, and nothing downstream collapses
+    a double slash, so a config reading "Production/" would otherwise make every site open
+    Production//ep01/... -- and three of them write the path they used into a markdown file the
+    show repository commits (image-sheet.py into IMAGE-SHEET.md, shot-sheet.py into SHOT-SHEET.md,
+    publish-kit.py into upload.md), recording the doubled slash in the show's own history. A value
+    of nothing but slashes trims to the empty string and is refused like any other empty value,
+    because "/" is a mistake and not a request for the default.
+    """
+    node = value(cfg, "productionDir", default=PRODUCTION_DIR_DEFAULT)
+    if not isinstance(node, str) or node == "":
+        raise ShowConfigError(f"{SHOW_CONFIG_FILE}: productionDir must be a non-empty string")
+    trimmed = node.rstrip("/")
+    if trimmed == "":
+        raise ShowConfigError(f"{SHOW_CONFIG_FILE}: productionDir must be a non-empty string")
+    return trimmed
 
 
 def format_filename(

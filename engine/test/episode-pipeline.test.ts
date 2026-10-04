@@ -33,7 +33,7 @@ describe("episodePipeline", () => {
     expect(p.name).toBe(EPISODE_PIPELINE_NAME);
     expect(() => orderSteps(p)).not.toThrow();
     expect(() => validateStageMap(EPISODE_STAGE_MAP, p)).not.toThrow();
-    expect(p.steps).toHaveLength(74);
+    expect(p.steps).toHaveLength(68);
   });
 
   it("has the eight gates in run order, each opening its DRAFT_ stage", () => {
@@ -42,12 +42,39 @@ describe("episodePipeline", () => {
     expect(Object.keys(EPISODE_STAGE_MAP.gates).sort()).toEqual([...gates].sort());
   });
 
+  it("keys each stage to the step that reaches it: the real map's eight gates, eight approved rows and final, exhaustively", () => {
+    // The stage map is the Board's only source for "how far along is this episode", and the only
+    // automated check on it is validateStageMap, which refuses a key naming no step and a value of
+    // the wrong kind -- never a value keyed to the wrong step. Before this test, five of the eight
+    // approved rows were asserted nowhere against the real map (OUTLINE, SCRIPT, IMAGES,
+    // PUBLISH_KIT, CANON), and the gate assertion above checks the key set only, not which DRAFT_
+    // stage each gate opens, so a row re-keyed three steps early would leave the whole suite green
+    // and the Board reporting an episode further along than it is (SR-1).
+    //
+    // toEqual over each whole object rather than row by row, so an added row and a deleted row fail
+    // here too. engine/test/stages.test.ts's local `map` is a deliberately smaller synthetic map
+    // for the derivation tests, not a second copy of this one to keep in step -- see its comment.
+    expect(EPISODE_STAGE_MAP.gates).toEqual({
+      "outline-gate": "DRAFT_OUTLINE", "script-gate": "DRAFT_SCRIPT", "casting-gate": "DRAFT_CASTING", "audio-gate": "DRAFT_AUDIO",
+      "nano-banana-gate": "DRAFT_IMAGES", "image-gate": "DRAFT_IMAGES", "final-gate": "DRAFT_ASSEMBLY", "canon-gate": "DRAFT_CANON",
+    });
+    expect(EPISODE_STAGE_MAP.approved).toEqual({
+      "outline-gate": "OUTLINE", "script-gate": "SCRIPT", "casting-gate": "CASTING", "audio-gate": "AUDIO",
+      "image-sheet-final": "IMAGES", "final-gate": "ASSEMBLY", "publish-kit": "PUBLISH_KIT", "canon-commit": "CANON",
+    });
+    expect(EPISODE_STAGE_MAP.final).toBe("COMPLETE");
+    // IMAGES is reached when the image sheet is final, not when the image gate is answered: the
+    // gate's approval opens the sheet's last step. The two are three steps apart and the pair is
+    // the one divergence stages.test.ts's synthetic map carries, so it is named here by value.
+    expect(EPISODE_STAGE_MAP.approved["image-gate"]).toBeUndefined();
+  });
+
   it("keeps the ordering rules as dependencies: images wait for the audio gate, canon waits for the publish kit", () => {
     const by = new Map(p.steps.map((s) => [s.id, s]));
     expect(by.get("visual-direction")?.dependsOn).toEqual(["audio-gate"]);
     expect(by.get("visual-direction")?.inputs).toContain("Production/s02e01/audio/HarborLight S02E01.wav");
     expect(by.get("canon-baseline")?.dependsOn).toEqual(["assemble-commit"]);
-    expect(by.get("assemble-commit")?.dependsOn).toEqual(["stamp-finalized", "publish-kit"]);
+    expect(by.get("assemble-commit")?.dependsOn).toEqual(["finalize", "publish-kit"]);
   });
 
   it("never declares a directory as an input or output, and names the mix by the show's pattern", () => {
@@ -99,8 +126,8 @@ describe("episodePipeline", () => {
 
   it("runs scripts through uv against the engine's scripts project, with the episode id first", () => {
     const ctx = { runId: "r", episodeId: "s02e01", showRoot: "/show", results: {} };
-    const stamp = p.steps.find((s) => s.id === "stamp-outline");
-    expect(stamp?.kind === "script" && stamp.argv(ctx)).toEqual(["uv", "run", "--project", "/engine/scripts", "python", "/engine/scripts/status.py", "s02e01", "outline", "approved at outline-gate"]);
+    const validate = p.steps.find((s) => s.id === "validate-manifest");
+    expect(validate?.kind === "script" && validate.argv(ctx)).toEqual(["uv", "run", "--project", "/engine/scripts", "python", "/engine/scripts/validate-manifest.py", "s02e01"]);
     // The render goes through render-video.py, which spawns Remotion itself so its frame counter
     // becomes `::progress` lines. The render directory, the composition id and the output path
     // therefore travel in argv, and REMOTION_EPISODE is set by the wrapper from the episode id:
@@ -314,7 +341,6 @@ describe("the episode pipeline, walked", () => {
     expect(state.results["script-gate:rejections"]).toEqual(["scene two is flat"]);
     expect(state.results["audio-gate:rejections"]).toEqual(["segment 12 is rushed"]);
     expect(Object.values(state.steps).filter((s) => s === "bypassed").length).toBeGreaterThan(0);
-    expect(await readFile(path.join(root, "Episodes/s02e01/STATUS.md"), "utf8")).toContain("stamp-finalized");
   });
 
   it("stops at NEEDS_REFS when the outline names a recurring subject the bible lacks, and continues once it exists", async () => {

@@ -86,6 +86,27 @@ def test_a_dirty_episode_names_the_shows_style_document(show_root: Path) -> None
     assert "Canon/visual-style.md" in r.stderr
 
 
+def test_a_renamed_production_directory_is_honoured(show_root: Path) -> None:
+    """The input is read from `productionDir`, not from a hardcoded "Production".
+
+    One script standing in for the eighteen that build a path on sc.production_dir: every other
+    test here leaves the fixture's `"productionDir": "Production"` in place, so only this one would
+    notice a step that went back to the literal. The refusal names the configured directory too,
+    because the operator has to open the file the step actually read.
+    """
+    cfg = json.loads((show_root / "showrunner.json").read_text())
+    cfg["productionDir"] = "Work"
+    (show_root / "showrunner.json").write_text(json.dumps(cfg))
+    base = show_root / "Work" / "ep01" / "images"
+    base.mkdir(parents=True)
+    (base / "prompts.json").write_text(json.dumps({"shots": DIRTY}))
+
+    r = _run(show_root, "ep01")
+    assert r.returncode == 2, (r.returncode, r.stdout, r.stderr)
+    assert "Work/ep01/images/prompts.json" in r.stderr
+    assert "Production/ep01" not in r.stderr
+
+
 def test_progress_reports_one_unit_per_brief(show_root: Path) -> None:
     _episode(show_root, "ep01", CLEAN)
     lines = [l for l in _run(show_root, "ep01").stdout.splitlines() if l.startswith("::progress")]

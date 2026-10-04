@@ -4,7 +4,7 @@ iteration, novel-quality, for the ear.
 ## Every iteration, in order:
 1. Read `Canon/style-guide.md` — it is law, and `## Narration` and
    `## Rules of voice` are the voice itself. The register is the most
-   recently approved script under Episodes/*/script.md if one exists;
+   recently approved script under {{show.episodesDir}}/*/script.md if one exists;
    when none exists, the `## Register sample` section of
    `Canon/style-guide.md` is the register's only demonstration.
 2. Read Canon/story-craft.md — the scene disciplines are YOURS, not
@@ -17,7 +17,7 @@ iteration, novel-quality, for the ear.
 3. Read {{show.episodesDir}}/{{episodeId}}/outline.md.
 4. Read {{show.episodesDir}}/{{episodeId}}/script.md if it exists (the scenes
    written so far).
-5. FIRST iteration only: Glob Episodes/*/script.md and skim the most
+5. FIRST iteration only: Glob {{show.episodesDir}}/*/script.md and skim the most
    recently approved one — note its signature images and turns of
    phrase. Those are SPENT; do not reuse them here.
 6. Identify the NEXT outline beat that has no scene yet.

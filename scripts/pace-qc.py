@@ -45,10 +45,11 @@ def main() -> None:
     # show's to say (audio.narratorSpeakerKey, audio.sampleRate).
     narrator = str(sc.value(cfg, "audio", "narratorSpeakerKey"))
     sr = int(sc.value(cfg, "audio", "sampleRate"))
+    prod = sc.production_dir(cfg)
     ep = sys.argv[1] if len(sys.argv) > 1 else ""
     if not ep:
         sys.exit("pace-qc: episode id missing (usage: pace-qc.py <episode> [--show-root <path>])")
-    base = f"Production/{ep}"
+    base = f"{prod}/{ep}"
     doc = json.load(open(f"{base}/tts-script.json"))
     if doc.get("engine", "kokoro") != "qwen3":
         # A skipped pass is a FINISHED pass: report the bar full before the result line, so a

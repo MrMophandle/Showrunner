@@ -46,7 +46,7 @@ describe("the read routes", () => {
     expect(res.status).toBe(200);
     const view = await res.json() as RunView;
     expect(view).toMatchObject({ episodeId: "s02e01", runId: "r1", pipeline: { name: "episode" } });
-    expect(view.steps.length).toBe(74);
+    expect(view.steps.length).toBe(68);
     expect(view.offset).toBeGreaterThan(0);
     expect((await app.request("/api/episodes/s02e01/runs/bad.id")).status).toBe(400);
     store.close();
@@ -296,7 +296,7 @@ describe("the actions", () => {
       { kind: "run_started", payload: { pipeline: "episode", episodeId: "s02e01" } },
       { stepId: "outline-gate", kind: "gate_opened", payload: { attempt: 1, message: "approve it" } },
       { stepId: "outline-gate", kind: "gate_answered", payload: { approved: true, attempt: 1, by: "console:test" } },
-      { stepId: "stamp-outline", kind: "step_completed", payload: { result: "ok" } },
+      { stepId: "draft", kind: "step_completed", payload: { result: "ok" } },
       { kind: "run_finished", payload: { status: "completed" } },
     ]);
     const res = await app.request("/api/episodes/s02e01/runs/r1/withdraw", json({ stepId: "outline-gate", notes: "the cast list is wrong" }));
@@ -304,7 +304,7 @@ describe("the actions", () => {
     const events = await logEvents(root, "r1");
     const withdrawn = events.filter((e) => e.kind === "gate_answered").at(-1);
     expect(withdrawn?.payload).toMatchObject({ approved: false, withdrawn: true, notes: "the cast list is wrong", by: "console:test" });
-    expect(events.filter((e) => e.kind === "step_reset").map((e) => e.stepId)).toEqual(["stamp-outline"]);
+    expect(events.filter((e) => e.kind === "step_reset").map((e) => e.stepId)).toEqual(["draft"]);
     // A gate that was never approved cannot be withdrawn.
     const nope = await app.request("/api/episodes/s02e01/runs/r1/withdraw", json({ stepId: "script-gate", notes: "no" }));
     expect(nope.status).toBe(409);
@@ -324,7 +324,7 @@ describe("the actions", () => {
     await seedRun(root, "s02e01", "r1", [
       { kind: "run_started", payload: { pipeline: "episode", episodeId: "s02e01" } },
       ...approved("outline-gate"),
-      { stepId: "stamp-outline", kind: "step_completed", payload: { result: "ok" } },
+      { stepId: "draft", kind: "step_completed", payload: { result: "ok" } },
       ...approved("script-gate"),
       ...approved("casting-gate"),
       { kind: "run_finished", payload: { status: "completed" } },
@@ -334,7 +334,7 @@ describe("the actions", () => {
     const body = await res.json() as { reset: string[]; survivingGates: string[] };
     expect(body.survivingGates).toEqual(["script-gate", "casting-gate"]);
     // The gates are not in `reset`: the engine resets only non-gate steps downstream.
-    expect(body.reset).toEqual(["stamp-outline"]);
+    expect(body.reset).toEqual(["draft"]);
 
     // The latest approved gate has nothing downstream of it that was approved, which is the one
     // case the rail offers — and the one that spends no approval the operator cannot see.

@@ -22,7 +22,7 @@ The premise for this episode is in {{show.episodesDir}}/{{episodeId}}/premise.md
   the premise touches what is and is not possible in this world
 
 ## Exemplar
-Episodes/_TEMPLATE/outline.md is the format. Read it, and write every one
+{{show.episodesDir}}/_TEMPLATE/outline.md is the format. Read it, and write every one
 of its sections, in its order: `## Scene synopsis`, `## Arc beats`,
 `## Cast`, one `### Beat <n>` heading per beat, `## Ending duties`,
 `## Threads opened`, `## New canon proposed`.
@@ -33,7 +33,7 @@ scenes it still owes, so a beat written under any other heading is a beat
 the run cannot see. The comment under each heading in the template says
 what that section is for.
 
-For the rigor, Glob Episodes/*/outline.md and read the most recently
+For the rigor, Glob {{show.episodesDir}}/*/outline.md and read the most recently
 approved one when one exists; your output must match it.
 
 ## THE SCENE SYNOPSIS COMES FIRST

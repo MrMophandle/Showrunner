@@ -67,8 +67,9 @@ def main() -> None:
                  "(usage: populator-check.py <episode> [--report-only] [--show-root <path>])")
     phrases = list(sc.value(cfg, "visual", "collectivePopulatorBans"))
     style_path = str(sc.value(cfg, "visual", "style"))
+    prod = sc.production_dir(cfg)
 
-    prompts_path = f"Production/{ep}/images/prompts.json"
+    prompts_path = f"{prod}/{ep}/images/prompts.json"
     with open(prompts_path, encoding="utf-8") as fh:
         doc = json.load(fh)
     shots, found = check(doc.get("shots", []), phrases,
@@ -76,7 +77,7 @@ def main() -> None:
 
     if found:
         print(f"COLLECTIVE POPULATOR(S) in {len(found)} character brief(s) of {prompts_path} "
-              f"({style_path}, \"No collective populators\"):", file=sys.stderr)
+              f"({style_path}, visual.collectivePopulatorBans):", file=sys.stderr)
         for line in populators.report_lines(found):
             print(line, file=sys.stderr)
         print("Every person in frame must be named and present in refs — name them or cap the "

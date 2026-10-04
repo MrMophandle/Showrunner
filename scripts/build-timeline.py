@@ -100,8 +100,9 @@ def main() -> None:
     crossfade_s = float(sc.value(cfg, "video", "crossfadeSeconds"))
     tail_out_s = float(sc.value(cfg, "audio", "tailOutSeconds"))
     frame = list(sc.value(cfg, "visual", "shotFrame"))
+    prod = sc.production_dir(cfg)
 
-    base = f"Production/{ep}"
+    base = f"{prod}/{ep}"
     man = json.load(open(f"{base}/audio/manifest.json"))
     tts = json.load(open(f"{base}/tts-script.json"))
     prompts = json.load(open(f"{base}/images/prompts.json"))

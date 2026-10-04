@@ -1,6 +1,6 @@
 # Pipeline Artifacts & Folder Convention
 
-> The canonical reference for **what artifacts the pipeline produces and where they live.** Every episode's files land in these locations identically. The pipeline steps write to these paths by contract and `check_layout.py` audits conformance. It is a house default stating the engine's own facts: edit the names if your config renames the directories, but the shape is the engine's.
+> The canonical reference for **what artifacts the pipeline produces and where they live.** Every episode's files land in these locations identically. The pipeline steps write to these paths by contract. It is a house default stating the engine's own facts: edit the names if your config renames the directories, but the shape is the engine's.
 
 ## Artifact catalog
 
@@ -20,7 +20,6 @@ Each pipeline step's output is a named artifact with a fixed home. `<ep>` below 
 | video | `timeline.json`, `episode.mp4` | `Production/<ep>/video/` | timeline ✅, mp4 ⛔ |
 | publish | `upload.md`, `captions.srt` | `Production/<ep>/publish/` | ✅ |
 | final | the finished episode, named by `output.finalFilename` | **NAS**, at `output.nasRoot` | ⛔ (backed-up storage) |
-| notes | `scene-<n>.md`/`episode.md` (submitted-note record, append-only) · `scene-<n>.draft.md`/`episode.draft.md` (autosave, overwrite) · `scene-<n>.thread.md`/`episode.thread.md` (the showrunner's dialogue with the editor, append-only) | `Production/<ep>/notes/` | ✅ (small) |
 | setup | the bible interview's event log and answers | `Production/setup/<file-key>/` | ✅ (the interview's record) |
 
 ## Folder convention — three homes, one rule each
@@ -83,7 +82,7 @@ cleanly.
 
 ## Storage policy
 
-- **NEVER Git LFS.** A finished episode is hundreds of megabytes; git never holds it. Finals go to the NAS (multiply-backed-up); the repository's `Finalized` symlink points there for browsing.
+- **NEVER Git LFS.** A finished episode is hundreds of megabytes; git never holds it. `finalize-video.py` copies the final to the NAS, at `output.nasRoot` under the mount `output.nasMount`, named by `output.finalFilename` — that copy is where a finished episode lives, and the repository carries neither it nor a link to it. Browse the finals on the NAS. If you want a path inside the checkout that reaches them, make it yourself and gitignore it; no step creates one.
 - **Binaries are gitignored and regenerable** (audio segments and the mix, image PNGs, the video MP4). Delete one and the pipeline re-creates it deterministically (pinned per-segment seeds; pinned image seeds).
 - **Guest-reference WAVs ARE committed** — voice design is non-deterministic, so a guest voice cannot be regenerated identically; the WAV is the source of truth.
 - Manifests (`tts-script.json`, `images/prompts.json`), the timeline, and publish kits are small and committed.

@@ -84,6 +84,54 @@ describe("missingRefs", () => {
     ]);
   });
 
+  it("reads the guest-reference directory from audio.guestRefsDir, substituting {episodeId}", async () => {
+    // Every other test here omits the key and so exercises the <productionDir>/<episodeId>/guest-refs
+    // default; this one is the only proof that a show which names the directory is obeyed, and that
+    // the refusal names the directory the probe actually read rather than the old literal.
+    const renamed: ShowConfig = { ...show, productionDir: "Prod", audio: { ...show.audio, guestRefsDir: "Voices/{episodeId}/guests" } };
+    const { root, w } = await show1();
+    await w("Episodes/s02e01/outline.md", "## Cast\n- Dock Hand Pim (guest, speaks)\n");
+    await w("Voices/s02e01/guests/dock-hand-pim-1.wav", "wav");
+    expect(await missingRefs(root, "s02e01", renamed)).toEqual([]);
+    // The WAV that satisfies s02e01 is in s02e01's directory, so s02e02 is still missing one — and
+    // the line names Voices/s02e02/guests, not Prod/s02e02/guest-refs.
+    await w("Episodes/s02e02/outline.md", "## Cast\n- Dock Hand Pim (guest, speaks)\n");
+    expect(await missingRefs(root, "s02e02", renamed)).toEqual([
+      "Dock Hand Pim: no guest voice at Voices/s02e02/guests/dock-hand-pim*.wav",
+    ]);
+  });
+
+  it("refuses a configured guest-reference directory that names no {episodeId}, and an empty one", async () => {
+    // A show whose audio.guestRefsDir is one shared directory gets no guest check at all: the probe
+    // matches a WAV by slug prefix, so s02e01's dock-hand-pim-1.wav would satisfy s02e02's Dock Hand
+    // Pim and refs-ready would report "all references present" having proved nothing (SR-3). The
+    // refusal is the only thing standing between that config and a silent pass, so it is asserted
+    // by message as well as by type -- the message has to say the shared case is unsupported, or an
+    // author reads the throw as a bug rather than as a ruling.
+    const { root, w } = await show1();
+    await w("Episodes/s02e01/outline.md", "## Cast\n- Dock Hand Pim (guest, speaks)\n");
+    const shared: ShowConfig = { ...show, audio: { ...show.audio, guestRefsDir: "Production/guest-refs" } };
+    await expect(missingRefs(root, "s02e01", shared)).rejects.toThrow(/audio\.guestRefsDir "Production\/guest-refs" names no \{episodeId\}/);
+    await expect(missingRefs(root, "s02e01", shared)).rejects.toThrow(/one shared guest-references directory for every episode is not supported/);
+
+    // Absent is a default and present-but-empty is a mistake: the two must not collapse into the
+    // same silent <productionDir>/<episodeId>/guest-refs, or a show whose scaffolding left the
+    // field blank writes its guest WAVs into a directory it never named. scripts/lib/showconfig.py's
+    // production_dir refuses "" for productionDir by name for the same reason.
+    const blank: ShowConfig = { ...show, audio: { ...show.audio, guestRefsDir: "" } };
+    await expect(missingRefs(root, "s02e01", blank)).rejects.toThrow(/audio\.guestRefsDir is empty/);
+
+    // A trailing slash is honoured rather than refused, and trimmed, because nothing downstream
+    // collapses a double slash: without the trim the refusal below would name
+    // Voices/s02e01/guests//dock-hand-pim*.wav.
+    const slashed: ShowConfig = { ...show, audio: { ...show.audio, guestRefsDir: "Voices/{episodeId}/guests/" } };
+    expect(await missingRefs(root, "s02e01", slashed)).toEqual([
+      "Dock Hand Pim: no guest voice at Voices/s02e01/guests/dock-hand-pim*.wav",
+    ]);
+    await w("Voices/s02e01/guests/dock-hand-pim-1.wav", "wav");
+    expect(await missingRefs(root, "s02e01", slashed)).toEqual([]);
+  });
+
   it("finds a guest voice by slug prefix, and is empty without a cast section", async () => {
     const { root, w } = await show1();
     await w("Episodes/s02e01/outline.md", "## Cast\n- Dock Hand Pim (guest, speaks)\n");
