@@ -195,6 +195,30 @@ def test_production_dir_refuses_a_value_that_is_not_a_non_empty_string(
     assert "productionDir" in str(err.value)
 
 
+def test_production_dir_trims_a_trailing_slash(show_root: Path) -> None:
+    """`"Production/"` is honoured and trimmed, not passed through.
+
+    All twenty-seven sites build their paths by f-string concatenation (f"{prod}/{ep}/...") and
+    nothing downstream collapses a double slash, so an untrimmed value makes every site read
+    Production//s02e01/... -- and image-sheet.py, shot-sheet.py and publish-kit.py write the path
+    they used into IMAGE-SHEET.md, SHOT-SHEET.md and upload.md, which the show repository commits.
+    """
+    cfg = _config(show_root)
+    for configured, expected in [("Production/", "Production"), ("Work//", "Work"), ("/mnt/prod/", "/mnt/prod")]:
+        cfg["productionDir"] = configured
+        _write(show_root, cfg)
+        assert sc.production_dir(sc.load(str(show_root))) == expected
+
+    # A value of nothing but slashes trims to the empty string, which is the refusal above, not the
+    # default: "/" is a mistake in showrunner.json the same way "" is.
+    for configured in ["/", "///"]:
+        cfg["productionDir"] = configured
+        _write(show_root, cfg)
+        with pytest.raises(sc.ShowConfigError) as err:
+            sc.production_dir(sc.load(str(show_root)))
+        assert "productionDir" in str(err.value)
+
+
 def test_format_filename() -> None:
     assert (
         sc.format_filename("{slug} S{season:02d}E{episode:02d}.wav", slug="HL", season=1, episode=3)

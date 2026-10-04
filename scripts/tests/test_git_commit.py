@@ -97,16 +97,20 @@ def test_an_ignored_path_is_skipped_and_the_real_one_is_still_committed(tmp_path
     subprocess.run(["git", "commit", "-q", "-m", "ignore rules"], cwd=root, check=True)
     (root / "Production" / "s02e01" / "video").mkdir(parents=True)
     (root / "Production" / "s02e01" / "video" / "timeline.json").write_text("{}\n")
+    # publish.json rather than an arbitrary name: it is the first of the four paths
+    # `assemble-commit` actually stages (engine/src/pipelines/episode.ts:375 --
+    # [publishJson, prompts, Production/<ep>/publish, runs]), so the not-ignored half of this
+    # test names a file the pipeline really writes into that commit.
     (root / "Episodes" / "s02e01").mkdir(parents=True)
-    (root / "Episodes" / "s02e01" / "STATUS.md").write_text("status\n")
+    (root / "Episodes" / "s02e01" / "publish.json").write_text("{}\n")
     r = run(root, "s02e01", "--message", "s02e01: assembled + finalized (assemble phase)",
-            "--", "Production/s02e01/video/timeline.json", "Episodes/s02e01/STATUS.md")
+            "--", "Production/s02e01/video/timeline.json", "Episodes/s02e01/publish.json")
     assert r.returncode == 0, r.stderr
     lines = r.stdout.strip().splitlines()
     assert "skip Production/s02e01/video/timeline.json (ignored)" in lines
     assert lines[-1].startswith("COMMIT_OK ")
     files = subprocess.run(["git", "show", "--name-only", "--format=", "HEAD"], cwd=root, capture_output=True, text=True).stdout
-    assert "Episodes/s02e01/STATUS.md" in files
+    assert "Episodes/s02e01/publish.json" in files
     assert "timeline.json" not in files
 
 def test_every_listed_path_ignored_degrades_to_nothing_staged(tmp_path):

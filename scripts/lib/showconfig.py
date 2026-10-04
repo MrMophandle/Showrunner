@@ -223,12 +223,25 @@ def production_dir(cfg: dict) -> str:
     `productionDir` is optional: absent, the answer is "Production", which is the default
     engine/src/show-config.ts records for the key, so the two loaders agree about a config that
     omits it. Present but not a non-empty string raises ShowConfigError naming the key, the way
-    path() refuses the same fault.
+    path() refuses the same fault. engine/src/needs.ts's guestRefsDir refuses an empty configured
+    value by name for the same reason, so the two loaders agree about that fault too.
+
+    A trailing slash is trimmed. Every one of the twenty-seven sites builds its path by f-string
+    concatenation (f"{prod}/{ep}/...") rather than os.path.join, and nothing downstream collapses
+    a double slash, so a config reading "Production/" would otherwise make every site open
+    Production//ep01/... -- and three of them write the path they used into a markdown file the
+    show repository commits (image-sheet.py into IMAGE-SHEET.md, shot-sheet.py into SHOT-SHEET.md,
+    publish-kit.py into upload.md), recording the doubled slash in the show's own history. A value
+    of nothing but slashes trims to the empty string and is refused like any other empty value,
+    because "/" is a mistake and not a request for the default.
     """
     node = value(cfg, "productionDir", default=PRODUCTION_DIR_DEFAULT)
     if not isinstance(node, str) or node == "":
         raise ShowConfigError(f"{SHOW_CONFIG_FILE}: productionDir must be a non-empty string")
-    return node
+    trimmed = node.rstrip("/")
+    if trimmed == "":
+        raise ShowConfigError(f"{SHOW_CONFIG_FILE}: productionDir must be a non-empty string")
+    return trimmed
 
 
 def format_filename(
