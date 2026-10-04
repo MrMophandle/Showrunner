@@ -3,7 +3,7 @@ import { execFile, spawn as realSpawn } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { PassThrough, Readable } from "node:stream";
 import { existsSync } from "node:fs";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -22,6 +22,27 @@ const INTERVIEW = path.join(templatesDir(), "interview");
  *  `tools/`, which is where `templatesDir()` sits two levels down. */
 const ENGINE_ROOT = path.resolve(templatesDir(), "..", "..");
 const GATED = BIBLE_FILES.filter((b) => b.mode !== "scaffold");
+/** The built CLI. The EOF test below drives the real binary, because what it is testing — what
+ *  happens when stdin ends while readline is waiting — only exists in a real process. */
+const BIN = path.join(ENGINE_ROOT, "tools", "dist", "init", "main.js");
+
+/** A child process that never ran a program: it replies from a script and closes. Used to fail one
+ *  particular git or gh call inside an otherwise real run. */
+function fakeChild(reply: { code?: number; stdout?: string; stderr?: string; error?: string }): EventEmitter {
+  const child = new EventEmitter() as EventEmitter & { stdout: Readable; stderr: Readable; stdin: PassThrough };
+  child.stdin = new PassThrough();
+  child.stdout = Readable.from([reply.stdout ?? ""]);
+  child.stderr = Readable.from([reply.stderr ?? ""]);
+  if (reply.error !== undefined) {
+    setImmediate(() => child.emit("error", Object.assign(new Error(reply.error as string), { code: "ENOENT" })));
+  } else {
+    let ended = 0;
+    const done = (): void => { if (++ended === 2) child.emit("close", reply.code ?? 0); };
+    child.stdout.on("end", done);
+    child.stderr.on("end", done);
+  }
+  return child;
+}
 
 /** An author who answers every question the same way and approves every file. The one answer is
  *  in the form the cast question asks for, so the `world-overview` interview records a cast from
@@ -78,8 +99,10 @@ async function deps(): Promise<{ executors: Executors; renderGateMessage: Return
   };
 }
 
+/** An empty temp directory, with its symlinks resolved — `/var` is a link to `/private/var` on
+ *  macOS — so a test's own `root` is the path `runInit` resolves it to and reports. */
 async function emptyDir(): Promise<string> {
-  return mkdtemp(path.join(tmpdir(), "showrunner-init-"));
+  return realpath(await mkdtemp(path.join(tmpdir(), "showrunner-init-")));
 }
 
 function options(root: string, over: Partial<InitOptions> = {}): InitOptions {
@@ -137,6 +160,7 @@ describe("runInit on an empty directory", () => {
     // Every gated bible file was interviewed, exists, and is in the report.
     expect(report.files.map((f) => f.key)).toEqual(GATED.map((b) => b.key));
     expect(report.files).toHaveLength(13);
+    expect(report.stalled).toEqual([]);
     for (const entry of GATED) expect(existsSync(path.join(root, entry.file)), entry.file).toBe(true);
 
     // The cast the world-overview answer named: a sheet, and the config's main cast.
@@ -267,6 +291,15 @@ describe("the showrunner-init command's arguments", () => {
     expect(() => parseArgs(["--nmae", "x"])).toThrow(/unrecognised argument "--nmae"/);
   });
 
+  it("refuses a flag offered as another flag's value, and names the flag that is short of one", () => {
+    // --resume used to be swallowed as the path to import from, with no error at all.
+    expect(() => parseArgs(["--path", "/tmp/foo", "--import", "--resume"])).toThrow(/--import needs a value/);
+    // A flag at the end of argv used to be reported as an unrecognised argument naming itself.
+    expect(() => parseArgs(["--name", "Harbor Lights", "--path"])).toThrow(/--path needs a value/);
+    expect(() => parseArgs(["--github"])).toThrow(/--github needs a value/);
+    expect(() => parseArgs(["--slug", "--name", "Harbor Lights"])).toThrow(/--slug needs a value/);
+  });
+
   it("documents every flag it accepts in the usage", () => {
     for (const flag of ["--name", "--path", "--slug", "--nas-root", "--github", "--engine-root", "--import", "--resume"]) {
       expect(USAGE, flag).toContain(flag);
@@ -285,14 +318,14 @@ describe("the terminal InitIO", () => {
   function fakeReadline(answers: readonly string[]): { rl: Parameters<typeof terminalIO>[0]; asked: string[] } {
     const asked: string[] = [];
     let next = 0;
-    const rl = {
+    const rl = Object.assign(new EventEmitter(), {
       question: async (prompt: string) => {
         asked.push(prompt);
         if (next >= answers.length) throw new Error("the terminal asked one question too many");
         return answers[next++] as string;
       },
       close: () => undefined,
-    };
+    });
     return { rl: rl as unknown as Parameters<typeof terminalIO>[0], asked };
   }
 
@@ -380,6 +413,7 @@ describe("runInit when a gate is rejected to exhaustion", () => {
 
     // The interview carried on: every other gated file was approved and is in the report.
     expect(report.files.map((f) => f.key)).toEqual(GATED.slice(1).map((b) => b.key));
+    expect(report.stalled).toEqual([first.key]);
     expect(said.join("\n")).toContain("rejected ten times");
     expect(said.join("\n")).toContain(`1 file(s) are waiting on you: ${first.key}`);
 
@@ -402,19 +436,7 @@ describe("runInit's GitHub step", () => {
     const spawn = ((cmd: string, args: readonly string[], opts?: object) => {
       if (cmd !== "gh") return realSpawn(cmd, args as string[], opts as never);
       gh.push([...args]);
-      const child = new EventEmitter() as EventEmitter & { stdout: Readable; stderr: Readable; stdin: PassThrough };
-      child.stdin = new PassThrough();
-      child.stdout = Readable.from([reply.stdout ?? ""]);
-      child.stderr = Readable.from([""]);
-      if (reply.error !== undefined) {
-        setImmediate(() => child.emit("error", Object.assign(new Error(reply.error as string), { code: "ENOENT" })));
-      } else {
-        let ended = 0;
-        const done = (): void => { if (++ended === 2) child.emit("close", reply.code ?? 0); };
-        child.stdout.on("end", done);
-        child.stderr.on("end", done);
-      }
-      return child;
+      return fakeChild(reply);
     }) as unknown as typeof realSpawn;
     return { spawn, gh };
   }
@@ -455,4 +477,93 @@ describe("runInit's GitHub step", () => {
     expect(report.remote).toBeUndefined();
     expect(io.said.join("\n")).toContain(`gh repo create HarborLights --source ${root} --push --private`);
   }, 120_000);
+});
+
+describe("runInit after a crash between the world-overview interview and its commit", () => {
+  it("commits the character sheets and the rewritten config on the next --resume", async () => {
+    const root = await emptyDir();
+    // The crash: the second `git commit` — world-overview's, the scaffold's being the first —
+    // fails, which is the window in which the cast sheets and the config rewrite are on disk,
+    // the run log already says the file is approved, and no commit carries either.
+    let commits = 0;
+    const crashing = ((cmd: string, args: readonly string[], opts?: object) => {
+      if (cmd === "git" && args[0] === "commit" && ++commits === 2) return fakeChild({ code: 1, stderr: "fatal: the machine lost power\n" });
+      return realSpawn(cmd, args as string[], opts as never);
+    }) as unknown as typeof realSpawn;
+    await expect(runInit(options(root), autoIO().io, { ...(await deps()), git: { spawn: crashing } }))
+      .rejects.toThrow(/git commit/);
+
+    // The state a crash leaves: approved in the log, written on disk, in no commit.
+    expect(existsSync(path.join(root, "Canon/characters/Vale/vale.md"))).toBe(true);
+    expect((await loadShowConfig(root)).audio?.["mainCast"]).toEqual(["narrator", "Vale"]);
+    expect(await logLines(root)).toHaveLength(1);
+
+    const io = autoIO();
+    const report = await runInit(options(root, { resume: true }), io.io, await deps());
+
+    // The catch-up commit carries all four: the bible file, the answers, the sheets and the config.
+    const sha = (await run("git", ["log", "--format=%H", "--grep=committed on resume"], { cwd: root })).stdout.trim();
+    expect(sha).not.toBe("");
+    const staged = (await run("git", ["show", "--name-only", "--format=", sha], { cwd: root })).stdout;
+    expect(staged).toContain("Canon/world-overview.md");
+    expect(staged).toContain("Canon/characters/Vale/vale.md");
+    expect(staged).toContain("showrunner.json");
+    expect(staged).toContain("Production/setup/world-overview/answers.md");
+
+    // Nothing is left orphaned, which is the whole point.
+    expect((await run("git", ["status", "--porcelain"], { cwd: root })).stdout).toBe("");
+    expect(report.files.map((f) => f.key)).toEqual(GATED.slice(1).map((b) => b.key));
+    expect(io.said.join("\n")).toContain("was approved but not committed");
+  }, 120_000);
+});
+
+describe("runInit's --path", () => {
+  it("follows a symlinked directory into the real one and reports the real path", async () => {
+    const real = await emptyDir();
+    const link = path.join(await emptyDir(), "by-link");
+    await symlink(real, link);
+
+    const report = await runInit(options(link), autoIO().io, await deps());
+
+    expect(report.root).toBe(real);
+    expect(existsSync(path.join(real, "showrunner.json"))).toBe(true);
+    expect((await loadShowConfig(real)).showSlug).toBe("HarborLights");
+  }, 120_000);
+
+  it("resolves a path that does not exist yet through its symlinked parent", async () => {
+    const real = await emptyDir();
+    const link = path.join(await emptyDir(), "by-link");
+    await symlink(real, link);
+
+    const report = await runInit(options(path.join(link, "show")), autoIO().io, await deps());
+
+    expect(report.root).toBe(path.join(real, "show"));
+    expect(existsSync(path.join(real, "show/showrunner.json"))).toBe(true);
+  }, 120_000);
+
+  it("refuses a path that exists and is not a directory", async () => {
+    const file = path.join(await emptyDir(), "notes.md");
+    await writeFile(file, "mine\n", "utf8");
+    await expect(runInit(options(file), autoIO().io, await deps())).rejects.toThrow(/is not a directory/);
+  });
+});
+
+describe("the showrunner-init command on a closed stdin", () => {
+  it("exits 1 saying so, rather than exiting 0 in silence", async () => {
+    expect(existsSync(BIN), `${BIN} is missing — run \`npm run build -w tools\` before the suite`).toBe(true);
+    const target = path.join(await emptyDir(), "show");
+    const child = realSpawn(process.execPath, [BIN, "--path", target], { stdio: ["pipe", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (c: Buffer) => { stdout += c.toString("utf8"); });
+    child.stderr.on("data", (c: Buffer) => { stderr += c.toString("utf8"); });
+    child.stdin.end();
+    const code = await new Promise<number | null>((resolve) => { child.on("close", resolve); });
+
+    expect(stdout).toContain("What is the show called?");
+    expect(stderr.trim()).toBe("init: stdin closed before the interview finished; run again with --resume");
+    expect(code).toBe(1);
+    // Nothing was created, so there is nothing to clean up before running it again.
+    expect(existsSync(target)).toBe(false);
+  }, 30_000);
 });

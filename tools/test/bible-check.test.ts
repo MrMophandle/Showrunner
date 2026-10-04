@@ -106,6 +106,21 @@ describe("bible-check's usage", () => {
     expect(cap.text()).toContain("--shoe");
   });
 
+  it("exits 64 when a flag is offered another flag as its value, or no value at all", async () => {
+    const noValue = captured();
+    expect(await main(["--show"], noValue.io)).toBe(64);
+    expect(noValue.text()).toContain("--show needs a value");
+
+    // --season used to be read as the show root, and the fault reported as an unreadable config.
+    const flagAsValue = captured();
+    expect(await main(["--show", "--season"], flagAsValue.io)).toBe(64);
+    expect(flagAsValue.text()).toContain("--show needs a value");
+
+    const seasonless = captured();
+    expect(await main(["--show", "/x", "--season"], seasonless.io)).toBe(64);
+    expect(seasonless.text()).toContain("--season needs a value");
+  });
+
   it("exits 64 on a season that is not a positive integer", async () => {
     const cap = captured();
     expect(await main(["--show", "/x", "--season", "zero"], cap.io)).toBe(64);

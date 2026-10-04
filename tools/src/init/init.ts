@@ -1,9 +1,9 @@
 import path from "node:path";
-import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, realpath, stat, writeFile } from "node:fs/promises";
 import {
   BIBLE_FILES, answersPath, bibleLogDir, createAgentExecutor, createGateMessageRenderer,
   loadShowConfig, scriptExecutor, sdkQuery,
-  type Executors, type GateMessageRenderer, type ShowConfig,
+  type BibleFile, type Executors, type GateMessageRenderer, type ShowConfig,
 } from "@showrunner/engine";
 import { bibleCheck, bibleCheckLines } from "../bible-check.js";
 import { buildShowConfig, showConfigText } from "./config.js";
@@ -45,13 +45,19 @@ export interface InitDeps {
   operator?: string;
 }
 
-/** What `init` did. `files` is one entry per bible file that reached an approval, in interview
- *  order; `commits` is every sha it made, the scaffold's first; `remote` is the GitHub URL when one
- *  was created; `nextSteps` is the show README's own "Your first episode" section, read back from
- *  the show on disk so the instructions the author is left with are the ones in their repository. */
+/** What `init` did. `root` is the show's directory with every symlink in it resolved, which is
+ *  where the files actually are. `files` is one entry per bible file that reached an approval, in
+ *  interview order. `stalled` is the key of every bible file whose gate was rejected to
+ *  exhaustion — empty on a clean run; those files are on disk as the writer last revised them and
+ *  are the author's to finish or to re-run with `--resume`, and they are not in `files` because
+ *  they never reached an approval. `commits` is every sha `init` made, the scaffold's first.
+ *  `remote` is the GitHub URL when one was created. `nextSteps` is the show README's own "Your
+ *  first episode" section, read back from the show on disk so the instructions the author is left
+ *  with are the ones in their own repository. */
 export interface InitReport {
   root: string;
   files: InterviewResult[];
+  stalled: string[];
   commits: string[];
   remote?: string;
   nextSteps: string;
@@ -67,6 +73,12 @@ const NAS_PARENT = "/Volumes/media";
 
 /** The README section `init` reads back and prints as the next steps. */
 const NEXT_STEPS_HEADING = "Your first episode";
+
+/** The one bible file whose interview also yields the cast, mirroring the driver's own `CAST_KEY`
+ *  (`tools/src/init/interview.ts`). `init` has to know it by name and not only by
+ *  `result.cast !== undefined`: the catch-up commit a resume makes has no interview result to
+ *  read, because the interview it is cleaning up after finished in an earlier process. */
+const CAST_FILE_KEY = "world-overview";
 
 /** The interview's own prompt directory: `write.md`, `gate.md` and `revise.md` ship with the
  *  engine's templates rather than being copied into the show, because they are the setup's prompts
@@ -118,6 +130,59 @@ function realInterviewDeps(config: ShowConfig): { executors: Executors; renderGa
     executors: { agent: createAgentExecutor(options), script: scriptExecutor },
     renderGateMessage: createGateMessageRenderer(options),
   };
+}
+
+/** `--path`, as an absolute path with every symlink in it resolved, which is the path everything
+ *  after this uses: the show root, the commit's `cwd`, the `gh repo create --source`, the report.
+ *
+ *  A symlinked directory is followed and not refused — a home directory tree is often reached
+ *  through one, and an author who points `--path` at a link means the directory it names. What is
+ *  refused is a `--path` that exists and is not a directory. Resolving it up front is what keeps
+ *  every later path honest: `--import`'s refusals compare the source against the show root
+ *  (`resolveImport` in `tools/src/init/interview.ts`), and two spellings of one directory would
+ *  make a file that is inside the show look as though it were outside it.
+ *
+ *  A path that does not exist yet has its *parent* resolved instead, so a new directory under a
+ *  symlinked parent lands in the real tree too. When the parent does not exist either, the path is
+ *  returned as given and `mkdir -p` makes the whole chain. */
+async function resolveRoot(given: string): Promise<string> {
+  const abs = path.resolve(given);
+  try {
+    const real = await realpath(abs);
+    if (!(await stat(real)).isDirectory()) throw new Error(`${abs} is not a directory, so it cannot hold a show`);
+    return real;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+  }
+  try {
+    return path.join(await realpath(path.dirname(abs)), path.basename(abs));
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+    return abs;
+  }
+}
+
+/** The paths one bible file's commit stages — the one list both of the commits that can carry a
+ *  file are built from: the commit made as soon as its gate is answered, and the catch-up commit
+ *  `--resume` makes for a file whose approval is in its run log and whose commit a crash swallowed.
+ *  The two must stage the same list, because the catch-up commit is the only one that will ever
+ *  look at that file again: every other commit names only its own paths.
+ *
+ *  `world-overview`'s list is longer by two, and that is the whole reason this is a function. Its
+ *  interview also yields the cast, so `init` writes the character sheets and rewrites
+ *  `showrunner.json`'s `audio.mainCast` *after* the driver has returned — which is to say after
+ *  `isApproved` already reports the file done — and before the commit. Without those two paths
+ *  here, a crash in that window would leave the sheets and the config rewrite uncommitted forever.
+ *  The sheets are staged as the characters *directory* and not as file names because after a crash
+ *  nobody knows which names were written. */
+function commitPaths(root: string, entry: BibleFile, dirs: { productionDir: string; canonDir: string }): string[] {
+  const paths = [
+    entry.file,
+    answersPath(entry.key, dirs.productionDir),
+    path.relative(root, bibleLogDir(root, entry.key, dirs.productionDir)),
+  ];
+  if (entry.key === CAST_FILE_KEY) paths.push("showrunner.json", `${dirs.canonDir}/characters`);
+  return paths;
 }
 
 /** Refuses the path unless it can hold a new show: it must not exist, or be an empty directory.
@@ -256,7 +321,7 @@ export async function runInit(opts: InitOptions, io: InitIO, deps: InitDeps = {}
   const resume = opts.resume === true;
   const name = opts.name.trim();
   if (name === "") throw new Error("the show needs a name");
-  const root = path.resolve(opts.path);
+  const root = await resolveRoot(opts.path);
   await checkRoot(root, resume);
   const importFrom = opts.importFrom === undefined ? undefined : await checkImportFrom(opts.importFrom);
 
@@ -283,6 +348,7 @@ export async function runInit(opts: InitOptions, io: InitIO, deps: InitDeps = {}
   }
 
   const productionDir = config.productionDir ?? "Production";
+  const canonDir = config.canonDir ?? "Canon";
   const built = realInterviewDeps(config);
   const interviewDeps: InterviewDeps = {
     executors: deps.executors ?? built.executors,
@@ -298,14 +364,16 @@ export async function runInit(opts: InitOptions, io: InitIO, deps: InitDeps = {}
     // A scaffold file has no gate: the pipeline fills the continuity ledger and the NEEDS_REFS
     // stop fills the voice registry, and the scaffold has already written both with their headings.
     if (entry.mode === "scaffold") continue;
-    const logDir = path.relative(root, bibleLogDir(root, entry.key, productionDir));
+    const staged = commitPaths(root, entry, { productionDir, canonDir });
 
     if (resume && (await isApproved(root, entry, productionDir))) {
       io.say(`${entry.file} is already approved; skipping it.`);
       // The approval is in the run log and the commit that was to carry it is a later step, so a
       // crash can land between the two. What that leaves is committed now, under its own message:
-      // every other commit names only its own paths, so nothing else would ever pick it up.
-      const candidates = await existing(root, [entry.file, answersPath(entry.key, productionDir), logDir]);
+      // every other commit names only its own paths, so nothing else would ever pick it up. The
+      // list is `commitPaths`' list and not a shorter one, so a crash after the `world-overview`
+      // interview also commits the character sheets and the config's rewritten main cast.
+      const candidates = await existing(root, staged);
       if (await gitDirty(root, candidates, deps.git)) {
         io.say(`${entry.file} was approved but not committed, so it is committed now.`);
         commits.push(await gitCommit(root, `canon: ${entry.file} — approved, committed on resume`, candidates, deps.git));
@@ -332,7 +400,7 @@ export async function runInit(opts: InitOptions, io: InitIO, deps: InitDeps = {}
         // moves on, because the rest of the bible is still worth doing in this sitting.
         stalled.push(entry.key);
         io.say(`${entry.file} was rejected ten times, so the interview has stopped asking about it. The file on disk is the writer's last revision: finish it by hand, or run init again with --resume to interview it afresh. The rest of the bible carries on.`);
-        const paths = await existing(root, [entry.file, answersPath(entry.key, productionDir), logDir]);
+        const paths = await existing(root, staged);
         if (await gitDirty(root, paths, deps.git)) {
           commits.push(await gitCommit(root, `canon: ${entry.file} — not approved, rejected ten times`, paths, deps.git));
         }
@@ -341,19 +409,19 @@ export async function runInit(opts: InitOptions, io: InitIO, deps: InitDeps = {}
       throw err;
     }
 
-    const paths = new Set([...result.commits, logDir]);
     if (result.cast !== undefined) {
       // The cast is known only after the first interviewed file, so the character sheets and the
-      // config's main-cast list are written here and committed with that file.
+      // config's main-cast list are written here, between the driver returning and the commit.
+      // Both are in `commitPaths`' list for this entry, so a crash in this window is recoverable:
+      // `--resume` makes the same commit from the same list.
       const sheets = await writeCastSheets(root, config, result.cast);
-      for (const sheet of sheets) paths.add(sheet);
       const mainCast = ["narrator", ...result.cast.map((c) => c.name)];
       await writeMainCast(root, mainCast);
       if (config.audio !== undefined) config.audio["mainCast"] = mainCast;
-      paths.add("showrunner.json");
       io.say(`${sheets.length} character sheet(s) written, and audio.mainCast is now ${mainCast.join(", ")}.`);
     }
-    commits.push(await gitCommit(root, `canon: ${entry.file} — ${result.outcome}`, [...paths], deps.git));
+    const paths = await existing(root, [...new Set([...result.commits, ...staged])]);
+    commits.push(await gitCommit(root, `canon: ${entry.file} — ${result.outcome}`, paths, deps.git));
     files.push(result);
   }
 
@@ -391,5 +459,5 @@ export async function runInit(opts: InitOptions, io: InitIO, deps: InitDeps = {}
   io.say(nextSteps);
   io.say(`In that command, <this directory> is ${root} and <the engine repository> is ${opts.engineRoot}.`);
 
-  return { root, files, commits, nextSteps, ...(remote !== undefined ? { remote } : {}) };
+  return { root, files, stalled, commits, nextSteps, ...(remote !== undefined ? { remote } : {}) };
 }

@@ -12,14 +12,21 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { loadShowConfig, missingBibleFiles, missingSections, type RequiredSection } from "@showrunner/engine";
 
+/** What the command prints for a usage fault: the one statement of what it takes and what it
+ *  reports. Exported so the tests assert against the same string the author is shown. */
 export const USAGE = "usage: bible-check --show <show root> [--season <n>]\n  names every bible file that is missing or empty and every section a prompt reads by name that a file does not carry";
 
+/** One run of the check. The two lists are kept apart rather than flattened into messages because
+ *  `init` and the CLI both report them and the engine's `bible-ready` guard refuses a run over the
+ *  same two questions: a file that is not there at all, and a file that is there without a section
+ *  some prompt reads by name. `ok` is the exit code in a word. */
 export interface BibleCheckResult {
   /** Each absent file as its path, each present-but-empty file as `<path> (empty)`, sorted. */
   missingFiles: string[];
   /** Each required section a file that exists does not carry, with the prompt that reads it. An
    *  absent file's sections are not listed: that is one fault, reported once, by `missingFiles`. */
   missingSections: RequiredSection[];
+  /** True when both lists are empty: the bible is complete for this season. */
   ok: boolean;
 }
 
@@ -72,11 +79,20 @@ interface ParsedArgs {
  *  is incomplete". */
 export function parseArgs(argv: string[]): ParsedArgs {
   const parsed: ParsedArgs = {};
+  /** The value of a flag that takes one: the next token, unless there is no next token or the next
+   *  token is itself a flag. Both are usage faults that name the flag, because reading a flag as a
+   *  value is worse than refusing it — `--show --season` would have gone looking for a show root
+   *  called "--season" and reported that its config could not be read. */
+  const valueOf = (flag: string, value: string | undefined): string => {
+    if (value === undefined || value.startsWith("--")) throw new Error(`${flag} needs a value\n${USAGE}`);
+    return value;
+  };
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i];
-    const value = argv[i + 1];
-    if (flag === "--show" && value !== undefined) { parsed.show = value; i++; }
-    else if (flag === "--season" && value !== undefined) {
+    const next = argv[i + 1];
+    if (flag === "--show") { parsed.show = valueOf(flag, next); i++; }
+    else if (flag === "--season") {
+      const value = valueOf(flag, next);
       if (!/^[1-9][0-9]*$/.test(value)) throw new Error(`--season must be a positive whole number, not ${JSON.stringify(value)}\n${USAGE}`);
       parsed.season = Number(value);
       i++;

@@ -10,6 +10,9 @@ import type { InitIO } from "./interview.js";
 import { runInit, type InitOptions } from "./init.js";
 import { templatesDir } from "./paths.js";
 
+/** What the command prints for `--help` and for a usage fault, and the one statement of what every
+ *  flag means. It lives here rather than in a README because it is what an author reads at the
+ *  moment they need it, and a test asserts that every flag `parseArgs` accepts appears in it. */
 export const USAGE = `usage: showrunner-init --name <show name> --path <directory> [options]
 
   --name <text>        What the show is called, as it is written on the title card.
@@ -34,6 +37,10 @@ export const USAGE = `usage: showrunner-init --name <show name> --path <director
 --name and --path are asked for at the terminal when they are not given.
 A multiline answer ends with a line holding only a period.`;
 
+/** The command line, parsed. Every field is optional because this is the shape of what was
+ *  *given*: `main` fills the defaults and asks for a missing `name` or `path` at the terminal, so
+ *  "absent" and "empty" have to stay tellable apart until then. `importFrom` carries `--import`
+ *  under the name `InitOptions` uses for it, so nothing has to be renamed between the two. */
 export interface ParsedArgs {
   name?: string;
   path?: string;
@@ -50,16 +57,26 @@ export interface ParsedArgs {
  *  parse has tests of its own, since the CLI is otherwise only reachable with a terminal attached. */
 export function parseArgs(argv: string[]): ParsedArgs {
   const parsed: ParsedArgs = {};
+  /** The value of a flag that takes one: the next token, unless there is no next token or the next
+   *  token is itself a flag. Both of those are usage faults that name the flag, because the two
+   *  ways they used to be read were worse than an error — `--import --resume` swallowed `--resume`
+   *  as the path to import from and never set `resume` at all, and a flag at the end of argv was
+   *  reported as an unrecognised argument naming the very flag that was missing its value. */
+  const valueOf = (flag: string, value: string | undefined): string => {
+    if (value === undefined || value.startsWith("--")) throw new Error(`${flag} needs a value\n${USAGE}`);
+    return value;
+  };
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i];
-    const value = argv[i + 1];
-    if (flag === "--name" && value !== undefined) { parsed.name = value; i++; }
-    else if (flag === "--path" && value !== undefined) { parsed.path = value; i++; }
-    else if (flag === "--slug" && value !== undefined) { parsed.slug = value; i++; }
-    else if (flag === "--nas-root" && value !== undefined) { parsed.nasRoot = value; i++; }
-    else if (flag === "--engine-root" && value !== undefined) { parsed.engineRoot = value; i++; }
-    else if (flag === "--import" && value !== undefined) { parsed.importFrom = value; i++; }
-    else if (flag === "--github" && value !== undefined) {
+    const next = argv[i + 1];
+    if (flag === "--name") { parsed.name = valueOf(flag, next); i++; }
+    else if (flag === "--path") { parsed.path = valueOf(flag, next); i++; }
+    else if (flag === "--slug") { parsed.slug = valueOf(flag, next); i++; }
+    else if (flag === "--nas-root") { parsed.nasRoot = valueOf(flag, next); i++; }
+    else if (flag === "--engine-root") { parsed.engineRoot = valueOf(flag, next); i++; }
+    else if (flag === "--import") { parsed.importFrom = valueOf(flag, next); i++; }
+    else if (flag === "--github") {
+      const value = valueOf(flag, next);
       if (value !== "private" && value !== "public" && value !== "none") {
         throw new Error(`--github must be private, public or none, not ${JSON.stringify(value)}\n${USAGE}`);
       }
@@ -86,6 +103,21 @@ export function defaultEngineRoot(): string {
  *  their scrollback and needs to see where it starts and stops. */
 const FILE_RULE = /^--- (.+) ---$/;
 
+/** Thrown when stdin ends while a question is waiting for an answer: `init` was run with its input
+ *  closed or piped from something that ran out, and there is nobody to ask. A class of its own so
+ *  `main` can say that in one sentence and exit 1, rather than doing what it used to do — the
+ *  `rl.question()` promise simply never settles, and once stdin's handle is gone Node has nothing
+ *  keeping the loop alive, so the process exited 0 with no message at all. Exiting 0 is the one
+ *  outcome a script could mistake for a finished setup. */
+class StdinClosed extends Error {
+  override readonly name = "StdinClosed";
+}
+
+/** The sentence `main` prints on stderr when stdin ends mid-question. Nothing is lost when it
+ *  happens: every bible file that reached an approval was committed as it was approved, so a
+ *  re-run with `--resume` picks up at the file that was being asked about. */
+const STDIN_CLOSED = "init: stdin closed before the interview finished; run again with --resume";
+
 /** Indents a block so a default answer or a file is visibly not the question. */
 function indent(text: string): string {
   return text.split("\n").map((l) => `    ${l}`).join("\n");
@@ -109,6 +141,23 @@ function indent(text: string): string {
  *  quit. */
 export function terminalIO(rl: Interface = createInterface({ input: process.stdin, output: process.stdout })): InitIO & { close(): void } {
   const write = (text: string): void => { process.stdout.write(`${text}\n`); };
+  /** One line read from the author, with the end of stdin turned into a `StdinClosed` rejection.
+   *  `readline` emits `close` when its input stream ends, and the `question` promise it has
+   *  outstanding at that moment never settles on its own; this races the two, so the caller always
+   *  gets either an answer or an error. Whichever arrives first wins and the other is dropped. */
+  const askLine = (prompt: string): Promise<string> => new Promise<string>((resolve, reject) => {
+    let settled = false;
+    const onClose = (): void => {
+      if (settled) return;
+      settled = true;
+      reject(new StdinClosed(STDIN_CLOSED));
+    };
+    rl.once("close", onClose);
+    rl.question(prompt).then(
+      (answer) => { if (!settled) { settled = true; rl.off("close", onClose); resolve(answer); } },
+      (err: unknown) => { if (!settled) { settled = true; rl.off("close", onClose); reject(err instanceof Error ? err : new Error(String(err))); } },
+    );
+  });
   return {
     say: (text) => {
       write(text.split("\n").map((line) => {
@@ -129,7 +178,7 @@ export function terminalIO(rl: Interface = createInterface({ input: process.stdi
         }
         const lines: string[] = [];
         for (;;) {
-          const line = await rl.question("");
+          const line = await askLine("");
           if (line.trim() === ".") break;
           lines.push(line);
         }
@@ -138,7 +187,7 @@ export function terminalIO(rl: Interface = createInterface({ input: process.stdi
       }
       write("");
       write(opts?.default === undefined ? question : `${question} [${opts.default}]`);
-      const answer = (await rl.question("> ")).trim();
+      const answer = (await askLine("> ")).trim();
       return answer === "" && opts?.default !== undefined ? opts.default : answer;
     },
     choose: async <T extends string>(question: string, choices: readonly { key: T; label: string }[]) => {
@@ -150,7 +199,7 @@ export function terminalIO(rl: Interface = createInterface({ input: process.stdi
         for (const [i, choice] of choices.entries()) {
           write(`  ${i + 1}. ${choice.label}${i === 0 ? "  (Enter)" : ""}`);
         }
-        const answer = (await rl.question("> ")).trim();
+        const answer = (await askLine("> ")).trim();
         if (answer === "") return first.key;
         const byKey = choices.find((c) => (c.key as string).toLowerCase() === answer.toLowerCase());
         if (byKey !== undefined) return byKey.key;
@@ -199,8 +248,15 @@ export async function main(argv: string[]): Promise<number> {
     };
     const report = await runInit(options, terminal);
     terminal.say(`${report.root} is ready: ${report.files.length} bible file(s) approved, ${report.commits.length} commit(s)${report.remote === undefined ? "" : `, ${report.remote}`}.`);
+    if (report.stalled.length > 0) {
+      terminal.say(`${report.stalled.length} file(s) are yours to finish: ${report.stalled.join(", ")}. Each is on disk as the writer last revised it.`);
+    }
     return 0;
   } catch (err) {
+    if (err instanceof StdinClosed) {
+      process.stderr.write(`${STDIN_CLOSED}\n`);
+      return 1;
+    }
     process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
     return 1;
   } finally {
