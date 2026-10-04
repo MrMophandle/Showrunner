@@ -1,9 +1,9 @@
 import path from "node:path";
 import { homedir } from "node:os";
-import { copyFile, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { copyFile, lstat, mkdir, readFile, readdir, realpath, writeFile } from "node:fs/promises";
 import {
   EventLog, RUN_ID, SETUP_ID, answerGate, answersPath, bibleFilePipeline, bibleLogDir,
-  deriveRunState, mintRunId, run,
+  deriveRunState, headingMatches, mintRunId, run,
   type BibleFile, type Executors, type GateMessageRenderer, type RunResult,
 } from "@showrunner/engine";
 import { templatesDir } from "./paths.js";
@@ -13,10 +13,16 @@ import { parseCanonTemplate, templateWithoutQuestions } from "./scaffold.js";
  *  `init` passes a readline-backed implementation (Task 8) and the tests pass scripted answers.
  *  `say` prints a block of text; `ask` asks one question and returns the answer, with
  *  `multiline: true` for the answers that are paragraphs or lists; `choose` offers the gate's
- *  four answers and returns the key of the one picked. */
+ *  four answers and returns the key of the one picked.
+ *
+ *  `ask`'s `default` is the answer this question already has — the text a previous, unfinished
+ *  interview of the same file left in its answers file. An implementation that offers a default
+ *  owes the driver one thing: when the author accepts it unchanged, return the default text.
+ *  The driver records exactly what `ask` returns and nothing else, so an implementation that
+ *  showed a default and then returned an empty string would silently erase the earlier answer. */
 export interface InitIO {
   say(text: string): void;
-  ask(question: string, opts?: { multiline?: boolean }): Promise<string>;
+  ask(question: string, opts?: { multiline?: boolean; default?: string }): Promise<string>;
   choose<T extends string>(question: string, choices: readonly { key: T; label: string }[]): Promise<T>;
 }
 
@@ -31,12 +37,19 @@ export type GateChoice = "approve" | "reject" | "myself" | "import";
  *  `promptsDir` pointed at `<templatesDir()>/interview`, which is where this task's three prompt
  *  files live — and fakes in the tests. `now` is the clock the run id and the interview's date
  *  stamp are minted from. `operator` is who is answering: it is recorded as the run's trigger and
- *  as the `by` on every gate answer, so the log says who approved the bible. */
+ *  as the `by` on every gate answer, so the log says who approved the bible.
+ *
+ *  `productionDir` is the show's production directory, defaulting to `Production`. Every path the
+ *  interview writes hangs off it — the answers, the run logs, and the one directory an import is
+ *  refused from — so a show that renames the key in its config must pass it here, or the interview
+ *  would log under a tree the rest of the show does not use and `isApproved` would be asked about
+ *  the right one. */
 export interface InterviewDeps {
   executors: Executors;
   renderGateMessage: GateMessageRenderer;
   now?: () => Date;
   operator: string;
+  productionDir?: string;
 }
 
 /** What one interviewed file leaves behind. `outcome` is the last answer the gate took, so `init`
@@ -53,10 +66,9 @@ export interface InterviewResult {
   cast?: { name: string; line: string }[];
 }
 
-/** The production directory the interview logs and answers under. `interviewFile` takes no
- *  production directory of its own, so a show that renames the key in its config would need this
- *  threaded through — `bibleLogDir`, `answersPath` and `isApproved` all already take it. */
-const PRODUCTION_DIR = "Production";
+/** The production directory used when `InterviewDeps.productionDir` is absent — the same default
+ *  `bibleLogDir`, `answersPath` and the engine's own paths carry. */
+const DEFAULT_PRODUCTION_DIR = "Production";
 
 /** The gate's step id, as `bibleFilePipeline` declares it: `answerGate` names the step it answers. */
 const GATE_ID = "gate";
@@ -67,14 +79,14 @@ const JSONL = ".jsonl";
  *  is where the recurring characters are named (`BIBLE_FILES`, `engine/src/bible.ts`). */
 const CAST_KEY = "world-overview";
 
-/** The extra question the `world-overview` interview asks after the template's own: the cast as a
- *  list this setup can parse. It is asked separately from the section's question because its
- *  answer is not only prose in a file — `init` makes a character sheet per name and puts the names
- *  in the show config — so it has to come back as data rather than as a paragraph. */
-const CAST_QUESTION =
-  "Finally, the recurring cast as a list this setup can read: one per line, `Name — one line about who they are`. " +
-  "A character sheet is created for each name you give, and each name becomes a speaker key in the show's config. " +
-  "Repeat the names you gave for the primary cast above, or amend them.";
+/** The heading whose answer carries the cast. The cast is collected from that one answer and is
+ *  never asked for twice: the template's question already asks for it one per line as
+ *  `Name — one line about who they are`, and a second question would have given the author two
+ *  places to name the cast and the driver no rule for which of the two wins. The heading is
+ *  matched through the engine's own `headingMatches`, so punctuation or a parenthetical in the
+ *  template's wording does not break the lookup. It is the heading `REQUIRED_SECTIONS`
+ *  (`engine/src/bible.ts`) already requires of this file for the character auditor. */
+const CAST_HEADING = "The primary cast";
 
 /** What an unanswered question records in the answers file. The writer agent is told that a
  *  heading whose question was left blank gets `_Not yet decided._`, so the blank has to be visible
@@ -92,11 +104,16 @@ const GATE_CHOICES: readonly { key: GateChoice; label: string }[] = [
   { key: "import", label: "Import a file I already have — copy it over this one and approve" },
 ];
 
-/** A name — one line, as the cast question asks for it. The separator is an em dash, an en dash, a
- *  hyphen or a colon, because an author types whichever their keyboard offers; a dash has to carry
- *  whitespace before it so that a hyphenated name ("Jean-Luc — the keeper") is not split at its
- *  own hyphen, while a colon may sit tight against the name ("Jean-Luc: the keeper"). */
-const CAST_LINE = /^(.+?)(?:\s+[—–-]+|\s*:)\s+(.+)$/;
+/** A name — one line, as the cast question asks for it: an em dash, an en dash or a plain hyphen,
+ *  with whitespace on both sides of it, because an author types whichever their keyboard offers.
+ *  The name is everything before the separator, trimmed. The whitespace is required so that a
+ *  hyphenated name ("Jean-Luc — the keeper") is not split at its own hyphen.
+ *
+ *  Deliberately no colon, now that this is read out of the prose answer to one of the template's
+ *  own questions rather than out of a question of its own: a line like "Note: these five recur"
+ *  would otherwise become a character called "Note", with a sheet and a speaker key of its own.
+ *  A line that matches nothing is ignored and reported back to the author. */
+const CAST_LINE = /^(.+?)\s+[—–-]+\s+(.+)$/;
 
 /** Refusal of a path the author offered to import. A class of its own so the gate loop can tell
  *  "that path will not do, ask again" from a real I/O fault, which is not the author's to fix. */
@@ -146,6 +163,36 @@ function answersFileFor(questions: readonly { heading: string; question: string 
     .join("\n");
 }
 
+/** The answers an earlier, unfinished interview of this file left behind, by heading — the inverse
+ *  of `answersFileFor`, read back so a resumed interview can offer each answer as the default and
+ *  the author need not retype a bible they already described. `(blank)` comes back as no answer at
+ *  all, because it records a question that was skipped rather than an answer to keep.
+ *
+ *  A heading the current template no longer carries is simply never looked up, and a heading the
+ *  file does not carry yields no default: both are what a template that changed between the two
+ *  sittings should do. */
+function parsePriorAnswers(text: string): Map<string, string> {
+  const out = new Map<string, string>();
+  let heading: string | undefined;
+  let body: string[] = [];
+  const close = (): void => {
+    if (heading !== undefined) {
+      const answer = body.join("\n").trim();
+      if (answer !== "" && answer !== BLANK) out.set(heading, answer);
+    }
+    body = [];
+  };
+  for (const line of text.split("\n")) {
+    const m = /^##[ \t]+(.+?)[ \t]*$/.exec(line);
+    if (m) { close(); heading = m[1] as string; continue; }
+    // The question comment is the file's record of what was asked; it is not part of the answer.
+    if (/^[ \t]*<!--[ \t]*Q:/.test(line)) continue;
+    if (heading !== undefined) body.push(line);
+  }
+  close();
+  return out;
+}
+
 /** The cast the author listed, and the lines that were not in the form the question asked for.
  *  The unparsed lines are returned rather than dropped: a name the driver silently ignored would
  *  be a character with no sheet and no speaker key, discovered episodes later. */
@@ -175,47 +222,98 @@ async function fileForReview(abs: string, rel: string): Promise<string> {
   }
 }
 
+/** A path with every symlink in it resolved, or the path itself when it does not exist. The show
+ *  root's own anchors go through this before they are compared against anything: a temporary
+ *  directory under `/tmp` or `/var` is reached through a symlink on macOS, so a real path and a
+ *  resolved-but-not-dereferenced path can name one directory in two spellings and `inside` would
+ *  find neither inside the other. */
+async function realPathOf(p: string): Promise<string> {
+  try {
+    return await realpath(p);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+    // The file itself may not exist yet — a bible file whose writer agent failed — but its
+    // directory does, and that is where the symlinks would be.
+    try {
+      return path.join(await realpath(path.dirname(p)), path.basename(p));
+    } catch {
+      return p;
+    }
+  }
+}
+
 /** The path to import from, resolved and checked, or an `ImportRefused` naming what is wrong with
  *  it. Every check happens before the gate is answered, because an answer is appended to the log
  *  and a refusal afterwards would leave an approval recorded for a copy that never happened.
  *
- *  Four refusals. A path under the show's production directory, because that is where the
+ *  The refusals. A path under the show's production directory, because that is where the
  *  interview's own record lives — the answers the author just typed and the run logs — so such a
  *  path imports the interview's input as its output and makes the record its own source; it is
  *  also where the episode pipeline writes every generated artifact. The destination itself, and
  *  anything beside it in the bible's own directory, because that copies one bible file over
  *  another (or a file over itself, which `copyFile` performs as a no-op, leaving an approval that
- *  records an import that did nothing). A path that does not exist. And a path that is not a
- *  regular file, since `copyFile` from a directory fails after the gate has been answered.
+ *  records an import that did nothing). A path that does not exist. A path that is not a regular
+ *  file, since `copyFile` from a directory fails after the gate has been answered. And a symlink,
+ *  outright.
+ *
+ *  **A symlink is refused, and every refusal is applied to the dereferenced path as well as to
+ *  the typed one.** `copyFile` and `stat` follow links; the refusals above compare paths. So a
+ *  link named anywhere outside the show would otherwise satisfy every one of them while the bytes
+ *  copied were the interview's own `answers.md`, the destination itself, or a sibling bible file —
+ *  the three outcomes the refusals exist to prevent, laundered through one indirection. An import
+ *  is a copy of a file the author names, and a link is not that file, so a link is refused by
+ *  `lstat` before anything else is asked; `realpath` then covers the case the link check cannot,
+ *  where a *parent directory* on the way to a real file is itself a link.
+ *
+ *  Returns the dereferenced path — what was actually read — so the gate's notes record the file
+ *  the bytes came from rather than a spelling of it.
  *
  *  A leading `~` is expanded: the author types this path at a prompt rather than in a shell, so
  *  nothing else expands it for them. A relative path resolves against the process's directory,
  *  which is where the author is standing. */
-async function resolveImport(showRoot: string, entry: BibleFile, typed: string): Promise<string> {
+async function resolveImport(showRoot: string, entry: BibleFile, typed: string, productionDir: string): Promise<string> {
   const raw = typed.trim();
   if (raw === "") throw new ImportRefused("no path was given, so there is nothing to import");
   const expanded = raw === "~" ? homedir() : raw.startsWith(`~${path.sep}`) || raw.startsWith("~/") ? path.join(homedir(), raw.slice(2)) : raw;
   const abs = path.resolve(expanded);
-  const destination = path.resolve(showRoot, entry.file);
-  const production = path.resolve(showRoot, PRODUCTION_DIR);
-  if (inside(abs, production)) {
-    throw new ImportRefused(`${abs} is under ${production}, which holds this interview's own answers and run logs; import a file from outside the show instead`);
-  }
-  if (abs === destination) {
-    throw new ImportRefused(`${abs} is the file being written, so importing it over itself would record an import that copied nothing`);
-  }
-  if (inside(abs, path.dirname(destination))) {
-    throw new ImportRefused(`${abs} is beside ${entry.file} in the show's own bible, so importing it would copy one bible file over another`);
-  }
-  let regular: boolean;
+
+  // lstat, not stat: the question is what the author named, not what it points at.
+  let named: { symlink: boolean; file: boolean };
   try {
-    regular = (await stat(abs)).isFile();
+    const st = await lstat(abs);
+    named = { symlink: st.isSymbolicLink(), file: st.isFile() };
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") throw new ImportRefused(`${abs} does not exist`);
     throw err;
   }
-  if (!regular) throw new ImportRefused(`${abs} is not a regular file`);
-  return abs;
+  if (named.symlink) {
+    throw new ImportRefused(`${abs} is a symbolic link, and an import copies the file you name; give the path of the file itself`);
+  }
+  if (!named.file) throw new ImportRefused(`${abs} is not a regular file`);
+
+  const real = await realPathOf(abs);
+  const destination = path.resolve(showRoot, entry.file);
+  const production = path.resolve(showRoot, productionDir);
+  const productions = [production, await realPathOf(production)];
+  const destinations = [destination, await realPathOf(destination)];
+  // Both spellings of the source are checked against both spellings of each anchor: a link
+  // anywhere along either path must not be able to put the source outside a directory it is in.
+  for (const candidate of new Set([abs, real])) {
+    for (const p of productions) {
+      if (inside(candidate, p)) {
+        throw new ImportRefused(`${candidate} is under ${p}, which holds this interview's own answers and run logs; import a file from outside the show instead`);
+      }
+    }
+    for (const d of destinations) {
+      if (candidate === d) {
+        throw new ImportRefused(`${candidate} is the file being written, so importing it over itself would record an import that copied nothing`);
+      }
+      if (inside(candidate, path.dirname(d))) {
+        throw new ImportRefused(`${candidate} is beside ${entry.file} in the show's own bible, so importing it would copy one bible file over another`);
+      }
+    }
+  }
+  return real;
 }
 
 /** One bible file's interview, end to end: the questions, the pipeline, and the gate.
@@ -241,10 +339,11 @@ export async function interviewFile(showRoot: string, entry: BibleFile, io: Init
     throw new Error(`${entry.key} is a scaffold file: the pipeline fills it and it has no gate, so it is not interviewed`);
   }
   const now = deps.now ?? ((): Date => new Date());
+  const productionDir = deps.productionDir ?? DEFAULT_PRODUCTION_DIR;
   const templatePath = canonTemplatePath(entry.key);
   const template = await readFile(templatePath, "utf8");
   const destination = path.resolve(showRoot, entry.file);
-  const answers = answersPath(entry.key, PRODUCTION_DIR);
+  const answers = answersPath(entry.key, productionDir);
   const staged: string[] = [entry.file];
 
   io.say(entry.purpose);
@@ -253,19 +352,41 @@ export async function interviewFile(showRoot: string, entry: BibleFile, io: Init
   if (entry.mode === "interview") {
     const parsed = parseCanonTemplate(template);
     if (parsed.header.trim() !== "") io.say(parsed.header.trim());
+    // What an earlier, unfinished sitting answered. The answers file is rewritten below, so it is
+    // read before anything is asked: this is the only place the earlier text still exists.
+    const abs = path.resolve(showRoot, answers);
+    let earlier = new Map<string, string>();
+    try {
+      earlier = parsePriorAnswers(await readFile(abs, "utf8"));
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+    }
+    if (earlier.size > 0) {
+      io.say(`${earlier.size} answer(s) from an earlier sitting are offered back as you go; keep one as it is, or type over it.`);
+    }
     const given: string[] = [];
-    for (const q of parsed.questions) given.push(await io.ask(q.question, { multiline: true }));
+    for (const q of parsed.questions) {
+      const prior = earlier.get(q.heading);
+      given.push(await io.ask(q.question, prior === undefined ? { multiline: true } : { multiline: true, default: prior }));
+    }
     if (entry.key === CAST_KEY) {
-      const listed = parseCast(await io.ask(CAST_QUESTION, { multiline: true }));
-      cast = listed.cast;
-      io.say(cast.length === 0
-        ? "No cast was recorded, so no character sheet is created; add sheets under the bible's characters directory when you have them."
-        : `${cast.length} recorded: ${cast.map((c) => c.name).join(", ")}. A sheet is created for each.`);
-      if (listed.ignored.length > 0) {
-        io.say(`These lines were not in the form \`Name — one line\`, so no sheet is created for them: ${listed.ignored.join(" / ")}`);
+      // The cast is read out of the answer to the template's own cast question, never asked for
+      // a second time: two questions would be two lists with no rule for which one wins.
+      const at = parsed.questions.findIndex((q) => headingMatches(`## ${q.heading}`, CAST_HEADING));
+      if (at === -1) {
+        cast = [];
+        io.say(`This template has no \`## ${CAST_HEADING}\` question, so no cast was recorded and no character sheet is created.`);
+      } else {
+        const listed = parseCast(given[at] ?? "");
+        cast = listed.cast;
+        io.say(cast.length === 0
+          ? "No cast was recorded, so no character sheet is created; add sheets under the bible's characters directory when you have them."
+          : `${cast.length} recorded: ${cast.map((c) => c.name).join(", ")}. A sheet is created for each.`);
+        if (listed.ignored.length > 0) {
+          io.say(`These lines of that answer were not in the form \`Name — one line\`, so no sheet is created for them: ${listed.ignored.join(" / ")}`);
+        }
       }
     }
-    const abs = path.resolve(showRoot, answers);
     await mkdir(path.dirname(abs), { recursive: true });
     await writeFile(abs, answersFileFor(parsed.questions, given), "utf8");
     staged.push(answers);
@@ -289,8 +410,8 @@ export async function interviewFile(showRoot: string, entry: BibleFile, io: Init
     templatePath,
     date: now().toISOString().slice(0, 10),
   };
-  const pipeline = bibleFilePipeline({ entry, vars, productionDir: PRODUCTION_DIR });
-  const dir = bibleLogDir(showRoot, entry.key, PRODUCTION_DIR);
+  const pipeline = bibleFilePipeline({ entry, vars, productionDir });
+  const dir = bibleLogDir(showRoot, entry.key, productionDir);
   const runId = mintRunId(now());
   const log = new EventLog(path.join(dir, `${runId}.jsonl`));
   // Every earlier run of this file, oldest first, and never this run's own log: the runner reads
@@ -334,7 +455,7 @@ export async function interviewFile(showRoot: string, entry: BibleFile, io: Init
         case "import": {
           let source: string;
           try {
-            source = await resolveImport(showRoot, entry, await io.ask("Path of the file to import"));
+            source = await resolveImport(showRoot, entry, await io.ask("Path of the file to import"), productionDir);
           } catch (err) {
             if (err instanceof ImportRefused) { io.say(err.message); continue answering; }
             throw err;

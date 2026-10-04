@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, realpath, symlink, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -9,7 +9,7 @@ import {
   type BibleFile, type Event, type Executors, type QueryFn, type ShowConfig,
 } from "@showrunner/engine";
 import { templatesDir } from "../src/init/paths.js";
-import { templateWithoutQuestions } from "../src/init/scaffold.js";
+import { parseCanonTemplate, templateWithoutQuestions } from "../src/init/scaffold.js";
 import { interviewFile, isApproved, type GateChoice, type InitIO, type InterviewDeps } from "../src/init/interview.js";
 
 const FIXTURE = fileURLToPath(new URL("fixtures/harbor-check-context.json", import.meta.url));
@@ -36,13 +36,13 @@ async function tempRoot(): Promise<string> {
  *  real terminal. */
 function scriptedIO(answers: readonly string[], choices: readonly GateChoice[], onChoose?: () => void) {
   const said: string[] = [];
-  const asked: string[] = [];
+  const asked: { question: string; default?: string }[] = [];
   let a = 0;
   let c = 0;
   const io: InitIO = {
     say: (text) => { said.push(text); },
-    ask: async (question) => {
-      asked.push(question);
+    ask: async (question, opts) => {
+      asked.push(opts?.default === undefined ? { question } : { question, default: opts.default });
       if (a >= answers.length) throw new Error(`no scripted answer for: ${question}`);
       return answers[a++] as string;
     },
@@ -95,8 +95,8 @@ async function deps(root: string, over: Partial<InterviewDeps> = {}): Promise<In
   };
 }
 
-async function logEvents(root: string, entry: BibleFile, runId: string): Promise<Event[]> {
-  return new EventLog(path.join(bibleLogDir(root, entry.key), `${runId}.jsonl`)).read();
+async function logEvents(root: string, entry: BibleFile, runId: string, productionDir?: string): Promise<Event[]> {
+  return new EventLog(path.join(bibleLogDir(root, entry.key, productionDir), `${runId}.jsonl`)).read();
 }
 
 const kindsOf = (events: Event[]): string[] => events.map((e) => `${e.kind}:${e.stepId ?? "-"}`);
@@ -220,7 +220,7 @@ describe("interviewFile: import this file", () => {
     expect(result.outcome).toBe("imported");
     expect(await readFile(path.join(root, "Canon/style-guide.md"))).toEqual(await readFile(source));
     const events = await logEvents(root, styleGuide, result.runId);
-    expect(events.find((e) => e.kind === "gate_answered")?.payload).toMatchObject({ approved: true, notes: `imported from ${source}` });
+    expect(events.find((e) => e.kind === "gate_answered")?.payload).toMatchObject({ approved: true, notes: `imported from ${await realpath(source)}` });
   });
 
   it("refuses a path under the show's production directory, the file itself, a sibling bible file, and a directory — and asks again", async () => {
@@ -289,32 +289,58 @@ describe("interviewFile: a default file", () => {
   });
 });
 
+/** The answers for an interviewed template, with one answer placed under the heading it belongs
+ *  to: the cast is read out of the answer to the template's own cast question, so a test that is
+ *  about the cast has to put its list at that question's index and not at an arbitrary one. */
+async function answersFor(key: string, byHeading: Record<string, string>, fill = "a"): Promise<string[]> {
+  const template = await readFile(path.join(templatesDir(), "canon", `${key}.md`), "utf8");
+  return parseCanonTemplate(template).questions.map((q) => byHeading[q.heading] ?? fill);
+}
+
 describe("interviewFile: the cast", () => {
-  it("is parsed from the world-overview interview's extra question, and the unparsable lines are named", async () => {
+  it("is parsed from the answer to the template's own cast question, which is asked only once", async () => {
     const root = await tempRoot();
-    const template = await readFile(path.join(templatesDir(), "canon", "world-overview.md"), "utf8");
-    const questions = template.match(/<!--[ \t]*Q:/g)?.length ?? 0;
-    const cast = "Mira Vale — the keeper who took the contract\n- Jean-Luc Ardent — the relief keeper\nTheo: the harbourmaster\nsomebody with no line at all\n";
-    const io = scriptedIO([...Array.from({ length: questions }, () => "a"), cast], ["approve"]);
+    const list = [
+      "Mira Vale — the keeper who took the contract",
+      "Jean-Luc Ardent - the relief keeper",
+      "Theo Ash — the harbourmaster who signs the contracts",
+      "They have all known each other since before the winter.",
+    ].join("\n");
+    const answers = await answersFor("world-overview", { "The primary cast": list });
+    const io = scriptedIO(answers, ["approve"]);
     const result = await interviewFile(root, worldOverview, io.io, await deps(root));
+
     expect(result.cast).toEqual([
       { name: "Mira Vale", line: "the keeper who took the contract" },
       { name: "Jean-Luc Ardent", line: "the relief keeper" },
-      { name: "Theo", line: "the harbourmaster" },
+      { name: "Theo Ash", line: "the harbourmaster who signs the contracts" },
     ]);
-    expect(io.said.some((s) => s.includes("somebody with no line at all"))).toBe(true);
-    expect(io.asked.at(-1)).toContain("recurring cast");
+    // Asked once: one question per template heading and not one more, and no question mentions
+    // the cast a second time.
+    expect(io.asked.length).toBe(answers.length);
+    expect(io.answersUsed()).toBe(answers.length);
+    expect(io.said.some((s) => s.includes("They have all known each other since before the winter."))).toBe(true);
+    // The list the author typed is in the answers file, under the heading it answers.
+    expect(await readFile(path.join(root, answersPath("world-overview")), "utf8")).toContain("Mira Vale — the keeper");
+  });
+
+  it("is empty, and says so, when the cast answer holds no line in the asked-for form", async () => {
+    const root = await tempRoot();
+    const answers = await answersFor("world-overview", { "The primary cast": "Nobody recurs yet." });
+    const io = scriptedIO(answers, ["approve"]);
+    const result = await interviewFile(root, worldOverview, io.io, await deps(root));
+    expect(result.cast).toEqual([]);
+    expect(io.said.some((s) => s.includes("No cast was recorded"))).toBe(true);
   });
 
   it("is not collected by any other file's interview", async () => {
     const root = await tempRoot();
-    const template = await readFile(path.join(templatesDir(), "canon", "series-arc.md"), "utf8");
-    const questions = template.match(/<!--[ \t]*Q:/g)?.length ?? 0;
     const arc: BibleFile = { key: "series-arc", file: "Canon/series-arc.md", mode: "interview", purpose: "The long thread." };
-    const io = scriptedIO(Array.from({ length: questions }, () => "a"), ["approve"]);
+    const answers = await answersFor("series-arc", {});
+    const io = scriptedIO(answers, ["approve"]);
     const result = await interviewFile(root, arc, io.io, await deps(root));
     expect("cast" in result).toBe(false);
-    expect(io.answersUsed()).toBe(questions);
+    expect(io.answersUsed()).toBe(answers.length);
   });
 });
 
@@ -341,16 +367,18 @@ describe("isApproved", () => {
 
   it("is false while a run is still waiting at its gate, and true again after a later run completes", async () => {
     const root = await tempRoot();
-    // A run that stops at the gate: the log holds gate_opened and nothing after it.
-    const dir = bibleLogDir(root, "story-craft");
-    const stuck = new EventLog(path.join(dir, "20300401T090000Z-aaaa.jsonl"));
-    await stuck.append({ runId: "20300401T090000Z-aaaa", kind: "run_started", payload: { pipeline: "bible-story-craft" } });
-    await stuck.append({ runId: "20300401T090000Z-aaaa", stepId: "gate", kind: "gate_opened", payload: { attempt: 1, message: "m" } });
+    // A run that stops at the gate: the log holds gate_opened and nothing after it. Its id is
+    // stamped the day before the run this test makes, because `mintRunId` ends in four random
+    // characters: two ids minted in the same second sort either way, so "the latest run" is only
+    // unambiguous for ids stamped at different times.
+    const stuck = new EventLog(path.join(bibleLogDir(root, "story-craft"), "20300331T235959Z-zzzz.jsonl"));
+    await stuck.append({ runId: "20300331T235959Z-zzzz", kind: "run_started", payload: { pipeline: "bible-story-craft" } });
+    await stuck.append({ runId: "20300331T235959Z-zzzz", stepId: "gate", kind: "gate_opened", payload: { attempt: 1, message: "m" } });
     expect(await isApproved(root, storyCraft)).toBe(false);
     const io = scriptedIO([], ["approve"]);
     const result = await interviewFile(root, storyCraft, io.io, await deps(root));
-    // The new run's id sorts after the stuck one, so it is the latest.
-    expect(result.runId > "20300401T090000Z-aaaa").toBe(true);
+    // The new run is stamped 2030-04-01, so it sorts after the stuck one whatever its suffix is.
+    expect(result.runId > "20300331T235959Z-zzzz").toBe(true);
     expect(await isApproved(root, storyCraft)).toBe(true);
   });
 });
@@ -361,5 +389,171 @@ describe("interviewFile: a scaffold file", () => {
     const ledger: BibleFile = { key: "continuity-ledger", file: "Canon/continuity-ledger.md", mode: "scaffold", purpose: "What happened." };
     const io = scriptedIO([], []);
     await expect(interviewFile(root, ledger, io.io, await deps(root))).rejects.toThrow(/scaffold file/);
+  });
+});
+
+describe("interviewFile: an import follows no symlink", () => {
+  /** Every refusal is applied to the path the author typed and to the path it dereferences to,
+   *  and a symlink is refused outright: `copyFile` follows a link, so a link named outside the
+   *  show would otherwise satisfy every path comparison while the bytes copied were the
+   *  interview's own answers, the destination itself, or a sibling bible file. */
+  it("refuses a symlink to the interview's own answers file, and copies nothing from it", async () => {
+    const root = await tempRoot();
+    const outside = await mkdtemp(path.join(tmpdir(), "author-"));
+    const template = await readFile(path.join(templatesDir(), "canon", "style-guide.md"), "utf8");
+    const questions = template.match(/<!--[ \t]*Q:/g)?.length ?? 0;
+    const honest = path.join(outside, "mine.md");
+    await writeFile(honest, "# Mine\n", "utf8");
+    const link = path.join(outside, "innocuous.md");
+    // The answers file exists by the time the gate opens, so the link has a real target.
+    const io = scriptedIO([...Array.from({ length: questions }, () => "a"), link, honest], ["import", "import"]);
+    const d = await deps(root);
+    // Link it before the gate: the answers are written before the run starts.
+    const answersAbs = path.join(root, answersPath("style-guide"));
+    await mkdir(path.dirname(answersAbs), { recursive: true });
+    await writeFile(answersAbs, "## H\nanswer\n", "utf8");
+    await symlink(answersAbs, link);
+    const result = await interviewFile(root, styleGuide, io.io, d);
+    expect(result.outcome).toBe("imported");
+    expect(io.said.join("\n")).toContain("is a symbolic link");
+    expect(await readFile(path.join(root, "Canon/style-guide.md"), "utf8")).toBe("# Mine\n");
+    const events = await logEvents(root, styleGuide, result.runId);
+    // One answer only — the refusal appended nothing — and it is the honest import.
+    expect(events.filter((e) => e.kind === "gate_answered").length).toBe(1);
+    expect(events.find((e) => e.kind === "gate_answered")?.payload["notes"]).toBe(`imported from ${await realpath(honest)}`);
+  });
+
+  it("refuses a symlink to the destination and a symlink to a sibling bible file, before any answer is logged", async () => {
+    const root = await tempRoot();
+    const outside = await mkdtemp(path.join(tmpdir(), "author-"));
+    const template = await readFile(path.join(templatesDir(), "canon", "style-guide.md"), "utf8");
+    const questions = template.match(/<!--[ \t]*Q:/g)?.length ?? 0;
+    await writeFile(path.join(root, "Canon/world-overview.md"), "# Theirs\n", "utf8");
+    const honest = path.join(outside, "mine.md");
+    await writeFile(honest, "# Mine\n", "utf8");
+    const toSelf = path.join(outside, "self.md");
+    const toSibling = path.join(outside, "sibling.md");
+    const d = await deps(root);
+    // The destination is written by the write agent, so both links are made against paths that
+    // exist by the time the gate opens.
+    await writeFile(path.join(root, "Canon/style-guide.md"), "# T\n", "utf8");
+    await symlink(path.join(root, "Canon/style-guide.md"), toSelf);
+    await symlink(path.join(root, "Canon/world-overview.md"), toSibling);
+    const io = scriptedIO([...Array.from({ length: questions }, () => "a"), toSelf, toSibling, honest], ["import", "import", "import"]);
+    const result = await interviewFile(root, styleGuide, io.io, d);
+    expect(result.outcome).toBe("imported");
+    expect(io.said.join("\n").match(/is a symbolic link/g)?.length).toBe(2);
+    expect(await readFile(path.join(root, "Canon/style-guide.md"), "utf8")).toBe("# Mine\n");
+    expect(await readFile(path.join(root, "Canon/world-overview.md"), "utf8")).toBe("# Theirs\n");
+    const events = await logEvents(root, styleGuide, result.runId);
+    expect(events.filter((e) => e.kind === "gate_answered").length).toBe(1);
+  });
+
+  it("refuses a real file reached through a symlinked parent directory", async () => {
+    const root = await tempRoot();
+    const outside = await mkdtemp(path.join(tmpdir(), "author-"));
+    const template = await readFile(path.join(templatesDir(), "canon", "style-guide.md"), "utf8");
+    const questions = template.match(/<!--[ \t]*Q:/g)?.length ?? 0;
+    const honest = path.join(outside, "mine.md");
+    await writeFile(honest, "# Mine\n", "utf8");
+    // A link to the bible directory itself: the path typed is a real file through it.
+    const linkedCanon = path.join(outside, "canon");
+    await symlink(path.join(root, "Canon"), linkedCanon);
+    await writeFile(path.join(root, "Canon/world-overview.md"), "# Theirs\n", "utf8");
+    const io = scriptedIO([...Array.from({ length: questions }, () => "a"), path.join(linkedCanon, "world-overview.md"), honest], ["import", "import"]);
+    const result = await interviewFile(root, styleGuide, io.io, await deps(root));
+    expect(result.outcome).toBe("imported");
+    expect(io.said.join("\n")).toContain("in the show's own bible");
+    expect(await readFile(path.join(root, "Canon/style-guide.md"), "utf8")).toBe("# Mine\n");
+  });
+});
+
+describe("interviewFile: a renamed production directory", () => {
+  it("writes the answers and the run log under the directory it is given", async () => {
+    const root = await tempRoot();
+    const template = await readFile(path.join(templatesDir(), "canon", "style-guide.md"), "utf8");
+    const questions = template.match(/<!--[ \t]*Q:/g)?.length ?? 0;
+    const io = scriptedIO(Array.from({ length: questions }, () => "a"), ["approve"]);
+    const d = await deps(root, { productionDir: "Out" });
+    const result = await interviewFile(root, styleGuide, io.io, d);
+
+    expect(result.outcome).toBe("approved");
+    expect(result.commits).toEqual([
+      "Canon/style-guide.md",
+      "Out/setup/style-guide/answers.md",
+      path.join("Out", "setup", "style-guide", "runs", `${result.runId}.jsonl`),
+    ]);
+    expect(await readFile(path.join(root, "Out/setup/style-guide/answers.md"), "utf8")).toContain("answer");
+    expect(kindsOf(await logEvents(root, styleGuide, result.runId, "Out"))).toEqual([
+      "run_started:-", "step_started:write", "step_completed:write",
+      "gate_opened:gate", "gate_answered:gate", "run_finished:-",
+    ]);
+    // The write step reads the answers from the same directory.
+    const events = await logEvents(root, styleGuide, result.runId, "Out");
+    expect(Object.keys(events.find((e) => e.kind === "step_started" && e.stepId === "write")?.payload["inputHashes"] as object))
+      .toEqual(["Out/setup/style-guide/answers.md"]);
+    expect(await isApproved(root, styleGuide, "Out")).toBe(true);
+    expect(await isApproved(root, styleGuide)).toBe(false);
+  });
+
+  it("refuses an import from the renamed production directory", async () => {
+    const root = await tempRoot();
+    const template = await readFile(path.join(templatesDir(), "canon", "style-guide.md"), "utf8");
+    const questions = template.match(/<!--[ \t]*Q:/g)?.length ?? 0;
+    const outside = await mkdtemp(path.join(tmpdir(), "author-"));
+    const honest = path.join(outside, "mine.md");
+    await writeFile(honest, "# Mine\n", "utf8");
+    const io = scriptedIO([...Array.from({ length: questions }, () => "a"), path.join(root, "Out/setup/style-guide/answers.md"), honest], ["import", "import"]);
+    const result = await interviewFile(root, styleGuide, io.io, await deps(root, { productionDir: "Out" }));
+    expect(result.outcome).toBe("imported");
+    expect(io.said.join("\n")).toContain("holds this interview's own answers and run logs");
+  });
+});
+
+describe("interviewFile: a resumed file offers its earlier answers back", () => {
+  it("hands each question the answer the earlier sitting left, and keeps what the author returns", async () => {
+    const root = await tempRoot();
+    const template = await readFile(path.join(templatesDir(), "canon", "style-guide.md"), "utf8");
+    const questions = parseCanonTemplate(template).questions;
+
+    // A crashed sitting: the answers file written, no run completed.
+    const first = scriptedIO(questions.map((q) => `first pass: ${q.heading}`), []);
+    const crashing: Executors = { script: async () => ({ ok: true }), agent: async () => ({ ok: false, error: "killed", toolCalls: 0 }) };
+    await expect(interviewFile(root, styleGuide, first.io, await deps(root, { executors: crashing }))).rejects.toThrow(/write failed/);
+    expect(await isApproved(root, styleGuide)).toBe(false);
+    expect(first.asked.every((a) => a.default === undefined)).toBe(true);
+
+    // The resume, a day later: every question arrives with the earlier answer as its default. The
+    // clock moves because `mintRunId` ends in four random characters, so two runs minted in one
+    // second sort either way and "the latest run" would be a coin toss.
+    const second = scriptedIO(questions.map((q, i) => (i === 0 ? "typed over" : `first pass: ${q.heading}`)), ["approve"]);
+    const later = { now: (): Date => new Date("2030-04-02T09:00:00.000Z") };
+    const result = await interviewFile(root, styleGuide, second.io, await deps(root, later));
+    expect(result.outcome).toBe("approved");
+    expect(second.asked.map((a) => a.default)).toEqual(questions.map((q) => `first pass: ${q.heading}`));
+    expect(second.said.some((s) => s.includes("from an earlier sitting"))).toBe(true);
+
+    // What the author returned is what the file holds: the first answer typed over, the rest kept.
+    const answers = await readFile(path.join(root, answersPath("style-guide")), "utf8");
+    expect(answers).toContain("typed over");
+    expect(answers).toContain(`first pass: ${questions[1]?.heading}`);
+    expect(answers).not.toContain(`first pass: ${questions[0]?.heading}`);
+    // Two runs in the directory now, and the latest is the approved one.
+    expect(await isApproved(root, styleGuide)).toBe(true);
+  });
+
+  it("offers no default for a question the earlier sitting left blank, and none at all for a first sitting", async () => {
+    const root = await tempRoot();
+    const template = await readFile(path.join(templatesDir(), "canon", "timeline.md"), "utf8");
+    const questions = parseCanonTemplate(template).questions;
+    const timeline: BibleFile = { key: "timeline", file: "Canon/timeline.md", mode: "interview", purpose: "The world's history." };
+
+    const first = scriptedIO(questions.map((_, i) => (i === 1 ? "   " : `kept ${i}`)), []);
+    const crashing: Executors = { script: async () => ({ ok: true }), agent: async () => ({ ok: false, error: "killed", toolCalls: 0 }) };
+    await expect(interviewFile(root, timeline, first.io, await deps(root, { executors: crashing }))).rejects.toThrow(/write failed/);
+
+    const second = scriptedIO(questions.map((_, i) => `second ${i}`), ["approve"]);
+    await interviewFile(root, timeline, second.io, await deps(root, { now: (): Date => new Date("2030-04-02T09:00:00.000Z") }));
+    expect(second.asked.map((a) => a.default)).toEqual(questions.map((_, i) => (i === 1 ? undefined : `kept ${i}`)));
   });
 });
