@@ -103,20 +103,29 @@ export function defaultEngineRoot(): string {
  *  their scrollback and needs to see where it starts and stops. */
 const FILE_RULE = /^--- (.+) ---$/;
 
-/** Thrown when stdin ends while a question is waiting for an answer: `init` was run with its input
- *  closed or piped from something that ran out, and there is nobody to ask. A class of its own so
- *  `main` can say that in one sentence and exit 1, rather than doing what it used to do — the
- *  `rl.question()` promise simply never settles, and once stdin's handle is gone Node has nothing
- *  keeping the loop alive, so the process exited 0 with no message at all. Exiting 0 is the one
- *  outcome a script could mistake for a finished setup. */
+/** Thrown when stdin has ended and a question still needs an answer: `init` was run with its input
+ *  closed, or piped from something that ran out, and there is nobody left to ask. A class of its
+ *  own so `main` can say that in one sentence and exit 1.
+ *
+ *  It is thrown in both orders, which is the part that took two attempts to get right. Stdin can
+ *  end *while a question is waiting*, and it can end *before a question is ever asked* — the
+ *  second happens on every run where `--name` and `--path` are both given, because `runInit` then
+ *  writes the scaffold, runs `git init` and makes the scaffold commit before the first interview
+ *  question, which is ample time for a closed stdin's `close` event to have come and gone. The IO
+ *  therefore records the closed state from the moment it is built rather than listening for it per
+ *  question; a question asked afterwards is refused from that flag. Before that, the second order
+ *  surfaced as Node's own `readline was closed`, which is not this class, so `main` printed the raw
+ *  message instead of the sentence below. */
 class StdinClosed extends Error {
   override readonly name = "StdinClosed";
 }
 
-/** The sentence `main` prints on stderr when stdin ends mid-question. Nothing is lost when it
- *  happens: every bible file that reached an approval was committed as it was approved, so a
- *  re-run with `--resume` picks up at the file that was being asked about. */
-const STDIN_CLOSED = "init: stdin closed before the interview finished; run again with --resume";
+/** The sentence `main` prints on stderr when stdin ends before the interview is finished, in either
+ *  order. Its middle clause is the honest one: a run that got as far as the scaffold has the
+ *  scaffold committed — `init` commits each piece as it finishes it — and a run that got further
+ *  has every approved bible file committed too, so `--resume` continues from wherever it stopped
+ *  and nothing has to be cleaned up first. */
+const STDIN_CLOSED = "init: stdin closed before the interview finished; what was written is committed; run again with --resume";
 
 /** Indents a block so a default answer or a file is visibly not the question. */
 function indent(text: string): string {
@@ -138,26 +147,51 @@ function indent(text: string): string {
  *
  *  Nothing is paged. A bible file at its gate is printed whole, between two rules: the author is
  *  reading it to approve it, and a pager would put the decision behind a program they then have to
- *  quit. */
+ *  quit.
+ *
+ *  **Input is read through a line queue and never through `rl.question()`.** `createInterface`
+ *  starts consuming its input the moment it exists, while `rl.question()` is a one-shot read: a
+ *  block of answers pasted or piped in at once arrived in full, was turned into `line` events with
+ *  nobody listening, and only the first of them was ever seen — every answer after it vanished and
+ *  the second question waited forever for a line that had already been read. The queue below keeps
+ *  every line that arrives, in order, and hands them out as questions ask for them, so a pasted
+ *  block and a line typed at a prompt are the same thing to everything above this function. */
 export function terminalIO(rl: Interface = createInterface({ input: process.stdin, output: process.stdout })): InitIO & { close(): void } {
   const write = (text: string): void => { process.stdout.write(`${text}\n`); };
-  /** One line read from the author, with the end of stdin turned into a `StdinClosed` rejection.
-   *  `readline` emits `close` when its input stream ends, and the `question` promise it has
-   *  outstanding at that moment never settles on its own; this races the two, so the caller always
-   *  gets either an answer or an error. Whichever arrives first wins and the other is dropped. */
-  const askLine = (prompt: string): Promise<string> => new Promise<string>((resolve, reject) => {
-    let settled = false;
-    const onClose = (): void => {
-      if (settled) return;
-      settled = true;
-      reject(new StdinClosed(STDIN_CLOSED));
-    };
-    rl.once("close", onClose);
-    rl.question(prompt).then(
-      (answer) => { if (!settled) { settled = true; rl.off("close", onClose); resolve(answer); } },
-      (err: unknown) => { if (!settled) { settled = true; rl.off("close", onClose); reject(err instanceof Error ? err : new Error(String(err))); } },
-    );
+
+  /** Every line stdin has delivered that no question has taken yet, oldest first. */
+  const queued: string[] = [];
+  /** The questions waiting for a line that has not arrived yet, in the order they asked. */
+  const waiting: { resolve(line: string): void; reject(err: Error): void }[] = [];
+  /** Whether stdin has ended. Recorded from here — the moment the IO is built — and not per
+   *  question, because by the time the first interview question is asked the event may be long
+   *  past: on a run with `--name` and `--path` given, the scaffold, `git init` and the scaffold
+   *  commit all happen first. */
+  let ended = false;
+
+  rl.on("line", (line: string) => {
+    const next = waiting.shift();
+    if (next === undefined) queued.push(line);
+    else next.resolve(line);
   });
+  rl.on("close", () => {
+    ended = true;
+    // A question already waiting is answered with the refusal rather than left hanging forever.
+    while (waiting.length > 0) (waiting.shift() as { reject(err: Error): void }).reject(new StdinClosed(STDIN_CLOSED));
+  });
+
+  /** One line, from the queue when there is one and from the next `line` event when there is not.
+   *  The queue is consulted before the ended flag on purpose: a block piped in and followed
+   *  immediately by end-of-file has every one of its lines read and answered, and only a question
+   *  the block does not reach is refused. The prompt is written here rather than by readline,
+   *  which no longer asks the questions. */
+  const askLine = (prompt: string): Promise<string> => {
+    if (prompt !== "") process.stdout.write(prompt);
+    const line = queued.shift();
+    if (line !== undefined) return Promise.resolve(line);
+    if (ended) return Promise.reject(new StdinClosed(STDIN_CLOSED));
+    return new Promise<string>((resolve, reject) => { waiting.push({ resolve, reject }); });
+  };
   return {
     say: (text) => {
       write(text.split("\n").map((line) => {

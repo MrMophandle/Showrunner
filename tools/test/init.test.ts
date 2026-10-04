@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { execFile, spawn as realSpawn } from "node:child_process";
 import { EventEmitter } from "node:events";
+import { createInterface } from "node:readline/promises";
 import { PassThrough, Readable } from "node:stream";
 import { existsSync } from "node:fs";
 import { mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
@@ -107,6 +108,11 @@ async function emptyDir(): Promise<string> {
 
 function options(root: string, over: Partial<InitOptions> = {}): InitOptions {
   return { name: "Harbor Lights", path: root, github: "none", engineRoot: ENGINE_ROOT, ...over };
+}
+
+/** `git status --porcelain`'s output in the show: empty when nothing is left uncommitted. */
+async function uncommitted(root: string): Promise<string> {
+  return (await run("git", ["status", "--porcelain"], { cwd: root })).stdout;
 }
 
 async function logLines(root: string): Promise<string[]> {
@@ -313,30 +319,19 @@ describe("the showrunner-init command's arguments", () => {
 });
 
 describe("the terminal InitIO", () => {
-  /** A readline interface whose answers come from an array, so the terminal's own rules — what an
-   *  empty answer means, what ends a multiline answer — are tested without a TTY. */
-  function fakeReadline(answers: readonly string[]): { rl: Parameters<typeof terminalIO>[0]; asked: string[] } {
-    const asked: string[] = [];
-    let next = 0;
-    const rl = Object.assign(new EventEmitter(), {
-      question: async (prompt: string) => {
-        asked.push(prompt);
-        if (next >= answers.length) throw new Error("the terminal asked one question too many");
-        return answers[next++] as string;
-      },
-      close: () => undefined,
-    });
-    return { rl: rl as unknown as Parameters<typeof terminalIO>[0], asked };
+  /** A real readline interface over a block of text, which is how the answers arrive in life: a
+   *  line typed at a prompt and a block pasted or piped in at once are the same `line` events to
+   *  readline, and the second is what the terminal used to lose. Nothing here is faked but the
+   *  stream, so what these tests exercise is the queue the IO actually reads through. */
+  function readlineOver(block: string): Parameters<typeof terminalIO>[0] {
+    return createInterface({ input: Readable.from([block]) });
   }
 
   it("returns the default when the author accepts it with an empty answer, and the answer otherwise", async () => {
     const quiet = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
     try {
-      const kept = fakeReadline([""]);
-      expect(await terminalIO(kept.rl).ask("Q", { default: "the earlier answer" })).toBe("the earlier answer");
-
-      const typed = fakeReadline(["  a new answer  "]);
-      expect(await terminalIO(typed.rl).ask("Q", { default: "the earlier answer" })).toBe("a new answer");
+      expect(await terminalIO(readlineOver("\n")).ask("Q", { default: "the earlier answer" })).toBe("the earlier answer");
+      expect(await terminalIO(readlineOver("  a new answer  \n")).ask("Q", { default: "the earlier answer" })).toBe("a new answer");
     } finally {
       quiet.mockRestore();
     }
@@ -345,11 +340,8 @@ describe("the terminal InitIO", () => {
   it("ends a multiline answer at a line holding only a period, and keeps the default when nothing is typed", async () => {
     const quiet = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
     try {
-      const two = fakeReadline(["first line", "second line", "."]);
-      expect(await terminalIO(two.rl).ask("Q", { multiline: true })).toBe("first line\nsecond line");
-
-      const kept = fakeReadline(["."]);
-      expect(await terminalIO(kept.rl).ask("Q", { multiline: true, default: "what I said last time" })).toBe("what I said last time");
+      expect(await terminalIO(readlineOver("first line\nsecond line\n.\n")).ask("Q", { multiline: true })).toBe("first line\nsecond line");
+      expect(await terminalIO(readlineOver(".\n")).ask("Q", { multiline: true, default: "what I said last time" })).toBe("what I said last time");
     } finally {
       quiet.mockRestore();
     }
@@ -359,17 +351,40 @@ describe("the terminal InitIO", () => {
     const quiet = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
     try {
       const choices = [{ key: "import", label: "Import" }, { key: "approve", label: "Approve" }] as const;
-      const enter = fakeReadline([""]);
-      expect(await terminalIO(enter.rl).choose("Q", choices)).toBe("import");
+      expect(await terminalIO(readlineOver("\n")).choose("Q", choices)).toBe("import");
+      expect(await terminalIO(readlineOver("2\n")).choose("Q", choices)).toBe("approve");
+      expect(await terminalIO(readlineOver("Approve\n")).choose("Q", choices)).toBe("approve");
+      expect(await terminalIO(readlineOver("yes please\n1\n")).choose("Q", choices)).toBe("import");
+    } finally {
+      quiet.mockRestore();
+    }
+  });
 
-      const numbered = fakeReadline(["2"]);
-      expect(await terminalIO(numbered.rl).choose("Q", choices)).toBe("approve");
+  it("keeps a whole block of type-ahead and hands it out one question at a time, in order", async () => {
+    const quiet = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    try {
+      // Nine answers and a choice, arriving in one chunk before a single question is asked — the
+      // shape of a pasted bible and of a piped script, and the shape that used to deliver only its
+      // first line and then wait forever for the second.
+      const io = terminalIO(readlineOver("one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\n2\n"));
+      const answers: string[] = [];
+      for (let i = 0; i < 9; i++) answers.push(await io.ask(`Q${i + 1}`, { multiline: false }));
+      expect(answers).toEqual(["one", "two", "three", "four", "five", "six", "seven", "eight", "nine"]);
+      expect(await io.choose("Q10", [{ key: "import", label: "Import" }, { key: "approve", label: "Approve" }] as const)).toBe("approve");
+      // The block is used up, and stdin has ended behind it: the next question is refused rather
+      // than left waiting for a line that will never come.
+      await expect(io.ask("Q11")).rejects.toThrow(/stdin closed before the interview finished/);
+    } finally {
+      quiet.mockRestore();
+    }
+  });
 
-      const named = fakeReadline(["Approve"]);
-      expect(await terminalIO(named.rl).choose("Q", choices)).toBe("approve");
-
-      const typo = fakeReadline(["yes please", "1"]);
-      expect(await terminalIO(typo.rl).choose("Q", choices)).toBe("import");
+  it("takes a multiline answer out of a block too, up to its lone period", async () => {
+    const quiet = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    try {
+      const io = terminalIO(readlineOver("a paragraph\nand another\n.\nthe next answer\n"));
+      expect(await io.ask("Q1", { multiline: true })).toBe("a paragraph\nand another");
+      expect(await io.ask("Q2")).toBe("the next answer");
     } finally {
       quiet.mockRestore();
     }
@@ -379,7 +394,7 @@ describe("the terminal InitIO", () => {
     const written: string[] = [];
     const quiet = vi.spyOn(process.stdout, "write").mockImplementation((text) => { written.push(String(text)); return true; });
     try {
-      terminalIO(fakeReadline([]).rl).say("--- Canon/style-guide.md ---\nthe file\n--- end of Canon/style-guide.md ---");
+      terminalIO(readlineOver("")).say("--- Canon/style-guide.md ---\nthe file\n--- end of Canon/style-guide.md ---");
     } finally {
       quiet.mockRestore();
     }
@@ -549,21 +564,65 @@ describe("runInit's --path", () => {
 });
 
 describe("the showrunner-init command on a closed stdin", () => {
-  it("exits 1 saying so, rather than exiting 0 in silence", async () => {
+  const SENTENCE = "init: stdin closed before the interview finished; what was written is committed; run again with --resume";
+
+  /** The built CLI, run with its stdin a pipe that `feed` writes and then ends. Returns what it
+   *  said and how it exited. The real binary, because what these tests are about — a readline over
+   *  a closed or pre-filled stdin — only exists in a real process. */
+  async function runBin(args: string[], feed = ""): Promise<{ code: number | null; stdout: string; stderr: string }> {
     expect(existsSync(BIN), `${BIN} is missing — run \`npm run build -w tools\` before the suite`).toBe(true);
-    const target = path.join(await emptyDir(), "show");
-    const child = realSpawn(process.execPath, [BIN, "--path", target], { stdio: ["pipe", "pipe", "pipe"] });
+    const child = realSpawn(process.execPath, [BIN, ...args], { stdio: ["pipe", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (c: Buffer) => { stdout += c.toString("utf8"); });
     child.stderr.on("data", (c: Buffer) => { stderr += c.toString("utf8"); });
-    child.stdin.end();
+    child.stdin.end(feed);
     const code = await new Promise<number | null>((resolve) => { child.on("close", resolve); });
+    return { code, stdout, stderr };
+  }
 
-    expect(stdout).toContain("What is the show called?");
-    expect(stderr.trim()).toBe("init: stdin closed before the interview finished; run again with --resume");
-    expect(code).toBe(1);
-    // Nothing was created, so there is nothing to clean up before running it again.
+  it("says the sentence and exits 1 when stdin is already closed at the first question", async () => {
+    const target = path.join(await emptyDir(), "show");
+    const run = await runBin(["--path", target]);
+
+    expect(run.stdout).toContain("What is the show called?");
+    expect(run.stderr.trim()).toBe(SENTENCE);
+    expect(run.code).toBe(1);
+    // This order asks before it writes, so there is nothing on disk to resume from either.
     expect(existsSync(target)).toBe(false);
   }, 30_000);
+
+  it("says the same sentence when stdin closed long before the first question, after the scaffold commit", async () => {
+    // --name and --path given, so `runInit` writes the scaffold, runs git init and makes the
+    // scaffold commit before the first interview question. stdin's close has come and gone by
+    // then: this used to exit 1 with Node's own `readline was closed`.
+    const target = path.join(await emptyDir(), "show");
+    const run = await runBin(["--name", "Harbor Lights", "--path", target, "--github", "none"]);
+
+    expect(run.stderr.trim()).toBe(SENTENCE);
+    expect(run.code).toBe(1);
+    // And what the sentence promises is true: the scaffold is written and committed, so --resume
+    // continues from it.
+    expect(existsSync(path.join(target, "showrunner.json"))).toBe(true);
+    const log = await logLines(target);
+    expect(log).toHaveLength(1);
+    expect(log[0]).toContain("init: Harbor Lights — the house layout");
+    expect(await uncommitted(target)).toBe("");
+  }, 60_000);
+
+  it("reads a whole piped block, so an answer after the first is not lost", async () => {
+    // Two answers in one chunk. The second used to be consumed by readline with nobody listening
+    // and then waited for forever, so the show was never created at all; now the path answer is
+    // taken from the queue and the scaffold is written where it says.
+    const target = path.join(await emptyDir(), "show");
+    const run = await runBin(["--github", "none"], `Harbor Lights\n${target}\n`);
+
+    expect(run.stdout).toContain("What is the show called?");
+    expect(run.stdout).toContain("Which directory should the show repository be created in?");
+    expect(existsSync(path.join(target, "showrunner.json"))).toBe(true);
+    expect((await loadShowConfig(target)).showName).toBe("Harbor Lights");
+    // The block ran out at the interview's first question, which is the documented stop.
+    expect(run.stderr.trim()).toBe(SENTENCE);
+    expect(run.code).toBe(1);
+  }, 60_000);
 });
