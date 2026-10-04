@@ -72,7 +72,7 @@ describe("RunStore", () => {
     expect(v.status).toBe("running");
     expect(v.worker).toMatchObject({ pid: process.pid, alive: true });
     expect(v.position).toEqual({ stepId: "draft", startedAt: t(10) });
-    expect(v.steps.map((s) => s.id).slice(0, 4)).toEqual(["previous-episode", "premise", "outline", "hand-edits-outline"]);
+    expect(v.steps.map((s) => s.id).slice(0, 4)).toEqual(["previous-episode", "bible-ready", "premise", "outline"]);
     expect(v.steps.find((s) => s.id === "outline")).toMatchObject({ kind: "agent", status: "completed", startedAt: t(3), endedAt: t(9), toolCalls: 4 });
     const draft = v.steps.find((s) => s.id === "draft")!;
     expect(draft.status).toBe("running");
@@ -85,7 +85,7 @@ describe("RunStore", () => {
     // page prints beside the run's own hash.
     expect(v.pipeline).toMatchObject({ name: "episode", hash: "abc", engineVersion: "0.0.1", changed: true });
     expect(v.pipeline.hashNow).toMatch(/^[0-9a-f]{64}$/);
-    expect(v.steps.length).toBe(73);
+    expect(v.steps.length).toBe(74);
     // A step the log never mentions still has a row, which is what makes the count the
     // pipeline's rather than the log's.
     expect(v.steps.find((s) => s.id === "hand-edits-outline")).toEqual({ id: "hand-edits-outline", kind: "guard", status: "pending" });

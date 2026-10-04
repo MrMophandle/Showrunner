@@ -1,0 +1,11 @@
+{
+  "type": "object",
+  "properties": {
+    "pass": { "type": "boolean" },
+    "verdict": { "type": "string", "enum": ["IMAGES_CLEAN", "IMAGES_FAILING"] },
+    "fixed": { "type": "array", "items": { "type": "string" } },
+    "flagged": { "type": "array", "items": { "type": "string" } },
+    "summary": { "type": "string" }
+  },
+  "required": ["pass", "verdict", "fixed", "flagged", "summary"]
+}

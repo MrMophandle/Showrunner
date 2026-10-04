@@ -195,11 +195,15 @@ or queried.
 | `{{results.<stepId>.<field>}}` | a field of that step's result object, at any depth (`{{results.review.notes.tone}}`) |
 | `{{season}}` | the episode's numeric season, unpadded (`Canon/season-{{season}}.md`) — read off an aired id, or from the show config's `airMap` for a production id |
 | `{{show.<path>}}` | a dotted path into the show config (`{{show.showName}}`, `{{show.video.fps}}`), by the same value rules as `{{results.*}}` |
+| `{{vars.<name>}}` | one of the step's own `vars` (`AgentStep.vars`, `GateStep.vars`): a flat name, never a path, so one prompt file can be run for several targets — a pipeline that writes fourteen files with one `write.md` names each target in the step rather than in fourteen prompt files |
 
 **Every hole is an error.** An unknown variable, a step with no result, a path through a non-object,
 a missing key, a null value, or a value `JSON.stringify` cannot represent throws `TemplateError`
 naming the variable as written — `{{results.missing}}: no result for step "missing"` — and the step
-fails before the query is made. A `{{` or `}}` still in the text after substitution is refused too,
+fails before the query is made. A `{{vars.*}}` hole is worded two ways, because the two faults have
+different repairs: `vars are not available` when the step declares no `vars` at all, which is a
+wiring or declaration fault, and `no var "<name>"` when the step declares some but not that one,
+which is a fault in the step's own `vars`. A `{{` or `}}` still in the text after substitution is refused too,
 by a different message that quotes the text rather than a variable, because there is no
 well-formed variable to name: `unbalanced or malformed template braces near: <40 characters>`.
 A prompt with a hole in it lies to the model quietly, which is the failure this refuses to ship.
@@ -490,6 +494,70 @@ the three processes, every file the console writes, the flags and the home-netwo
 beside a run log, the artifact route's three-layer fence, and why the browser tab's title is the
 whole alerting story.
 
+## Starting a show
+
+**`showrunner-init` creates a new show repository from the generic templates under
+`tools/templates/` and interviews its author for the bible, one file and one commit at a time.** It
+writes the house layout (`Canon/`, `Episodes/`, `Production/`, `prompts/`), a `showrunner.json`
+carrying every key the engine and the scripts read, the whole prompt set, the four entity
+templates, the outline template, the two reference indices with their shapes and no entries, the
+two bible files the pipeline itself fills, a `.gitignore` derived from the config's own directory
+keys and a README of the show's own; it commits that scaffold; and then it takes each of the
+thirteen remaining bible files in turn, asks the author that file's questions, hands the answers to
+a writer agent that puts them in the house format, and stops at a gate for the author to read the
+result before committing it. Nothing in it is destructive: every scaffold file is written with the
+`wx` flag, so an existing file raises an error rather than being overwritten, and a directory that
+is not empty is refused unless `--resume` says the author means it.
+
+    npm run build -w engine && npm run build -w tools
+    node tools/dist/init/main.js --name "<show name>" --path <new directory> --github private
+
+`--slug <Slug>` overrides the one word of letters and digits that names the show's files on disk
+and on the NAS; the default is `--name` with every other character removed, so "Harbor Lights"
+becomes `HarborLights`. `--nas-root <dir>` overrides where finished video lands, the default being
+`/Volumes/media/<slug>`, and its parent becomes the mount the `nas-mounted` guard checks for.
+`--github none` creates no GitHub repository and prints the `gh repo create` command to run later;
+`--engine-root <dir>` names the engine repository in the next steps printed at the end.
+**`--name` and `--path` are asked for at the terminal when they are not given, and every multiline
+answer ends with a line holding only a period.**
+
+**Each bible file's gate takes one of four answers.** *Approve* accepts the file as the writer
+agent wrote it. *Reject* takes notes, runs a fix agent over the file and reopens the gate; ten
+rejections stall that one file, which `showrunner-init` says in words before carrying on with the
+rest of the bible, leaving the writer's last revision on disk for the author to finish by hand.
+*"I will write this one myself"* writes the empty template over the file and approves it, because
+an author who will write a file by hand still wants the headings the prompts read by name. *"Import
+this file"* copies a file the author already has over it and approves that.
+
+**An existing show's bible can be imported file by file with `--import <show repository>`.** For
+each bible file the named repository already carries, `showrunner-init` says so, offers *import* as
+the first choice and fills the path in. An import follows no symlink, and a path under the new
+show's own production directory is refused, because that is where the interview's own answers and
+run logs live.
+
+**The interview's record is one event log per bible file, at
+`Production/setup/<key>/runs/<runId>.jsonl`, beside the author's own answers at
+`Production/setup/<key>/answers.md`.** Those runs are logged under the reserved episode id `setup`,
+which never matches the episode-id grammar, so `listEpisodeIds` never lists it and the console
+never shows it as an episode. The log is what records who approved each file and when, and it is
+what `showrunner-init --resume` reads to decide which files to skip: a setup interrupted at the
+fourth bible file picks up at the fourth bible file, and a file whose answers were half typed
+offers each earlier answer back as the default.
+
+    node tools/dist/bible-check.js --show <show repository> [--season <n>]
+
+**`bible-check` names every bible file that is missing or empty and every level-2 section a prompt
+reads by name that a file does not carry**, with the prompt that reads each one, and exits 1 when
+anything is missing. `showrunner-init` runs it at the end of the interview as a report and not a
+refusal, because an author who answered a gate with "I will write this one myself" has files still
+to write. The engine's `bible-ready` guard runs the same two functions before an episode, where the
+answer is a refusal rather than a report.
+
+**A show registry and the console's own "New show" surface are Plan H, not this plan.** Until Plan H
+lands, a new show is started with the `node tools/dist/init/main.js` command line at the top of
+this **Starting a show** section, and the console is then pointed with `--show` at the directory
+`showrunner-init` created.
+
 ## The progress contract
 
 A script reports progress by printing one structured line to stdout per unit of work:
@@ -647,10 +715,13 @@ virtual project and installs only the dependencies; each script keeps its own in
 
 ## Tools
 
-`tools/` holds the two programs that move a show's prompts out of its Archon workflow files and
-check them afterwards. Both are hermetic: each reads only the files it is pointed at, writes only
-where it is told to, and consults no clock, network or environment, so running one twice on the
-same inputs produces byte-identical outputs.
+`tools/` holds four programs: two that move a show's prompts out of its Archon workflow files and
+check them afterwards, and two that start a new show. **`extract-prompts` and `check-prompts` are
+hermetic**: each reads only the files it is pointed at, writes only where it is told to, and
+consults no clock, network or environment, so running one twice on the same inputs produces
+byte-identical outputs. **`showrunner-init` is none of those things and cannot be**: it creates a
+repository, runs `git`, queries a model and may call `gh`, which is why every one of those four is
+an injectable seam in its tests. `bible-check` only reads a show and reports on it.
 
 - **`extract-prompts`** reads a directory of Archon workflow YAML files and writes one `.md` per
   agent prompt, loop body, gate message and gate rejection prompt, plus `index.json` and any output
@@ -671,21 +742,38 @@ same inputs produces byte-identical outputs.
   approval and a hole in one misleads the single person the pipeline cannot afford to mislead.
   **`README.md` is the one exception and is skipped**: it is written by a person, never by the
   extractor, and it documents the template syntax, so it quotes forms such as `{{show.<path>}}`
-  that are deliberately not renderable.
+  that are deliberately not renderable. The context file holds `episodeId`, `runId`, `showRoot` and
+  `results`, and optionally `season`, `show` and **`vars`** — the last being the sample
+  `{{vars.<name>}}` values, which belong to a pipeline step and so cannot be derived by a checker
+  that has no pipeline.
+- **`showrunner-init`** creates a new show repository from the generic templates under
+  `tools/templates/` and interviews its author for the bible, one file and one commit at a time.
+  **Starting a show** above is its documentation: the command line and every flag, the gate's four
+  answers, the `--import` path for an existing show's bible, the record under `Production/setup/`
+  and what `--resume` picks up.
+- **`bible-check`** names every bible file that is missing or empty and every level-2 section a
+  prompt reads by name that a file does not carry, with the prompt that reads each one. It exits 0
+  when the bible is clean, 1 when anything is missing and 64 on a usage fault, so a pre-launch hook
+  can stop a launch on it. `showrunner-init` runs the same two functions at the end of the
+  interview, and so does the engine's `bible-ready` guard before an episode.
 
     node tools/dist/extract-prompts.js --workflows <dir> --out <show-root>/prompts \
         [--overrides tools/show-data/<show>-overrides.json] [--force]
     node tools/dist/check-prompts.js --prompts <show-root>/prompts \
         --context tools/show-data/<show>-check-context.json
+        # the context file: { episodeId, runId, showRoot, results, season?, show?, vars? }
+    node tools/dist/init/main.js --name "<show name>" --path <new directory> --github private
+    node tools/dist/bible-check.js --show <show-root>
 
 **`tools/show-data/` is the one place under `tools/` that carries a show's name, and what it holds
-is data, not code.** Both programs are show-agnostic and take their show-specific inputs as files —
-`--overrides` for the per-node rewrite rules a particular show's workflows need, `--context` for
-the sample context `check-prompts` renders against. Those two files are the exact inputs an
-extraction was run with, so the extraction stays reproducible, and they are versioned beside the
-tool that consumes them rather than inside it. Naming each file for the show it describes is what
-makes the boundary visible in the directory listing: the constraint grep in **Develop** below
-excludes `tools/show-data/` by name, and no other source directory under `tools/`.
+is data, not code.** The two prompt programs are show-agnostic and take their show-specific inputs
+as files — `--overrides` for the per-node rewrite rules a particular show's workflows need, and
+`--context` for the sample context `check-prompts` renders against. Those two files are the exact
+inputs an extraction was run with, so the extraction stays reproducible, and they are versioned
+beside the tool that consumes them rather than inside it. Naming each file for the show it
+describes is what makes the boundary visible in the directory listing: the constraint grep in
+**Develop** below excludes `tools/show-data/` by name, and no other source directory under
+`tools/`.
 
 ## The render project
 
@@ -762,8 +850,8 @@ seed marks completed. It also removes `render/public/ep98/`, the staging directo
 `build-timeline.py` filled, because that directory holds the show's own file names inside the
 engine checkout and the rule below forbids them there.
 
-**No show's name may appear in `engine/`, `scripts/`, `render/`, `tools/src/` or `console/`.** This
-grep is what checks it, and it must print nothing:
+**No show's name may appear in `engine/`, `scripts/`, `render/`, `tools/src/`, `tools/templates/`
+or `console/`.** This grep is what checks it, and it must print nothing:
 
     grep -rniwE 'dead ?light|deadlight|sarn|sable|opha|cricket|remo|trent|ilvaren|coalvane|the mute|ansa|mardo' \
       engine/ scripts/ render/ tools/ console/ \
@@ -776,6 +864,26 @@ that show's characters and places because those are the literals this engine was
 list — a new show's, or a name this one adds later — are caught by review, not by this grep: a
 reviewer who sees a test fixture or a comment naming a real show's cast must say so, and the noun
 moves to the invented show the fixtures use.
+
+**`tools/templates/` is inside the guarded paths, and three checks keep a show out of it.** The
+templates are what every new show is built from — the prompt set, the thirteen bible templates,
+the four entity templates and the show's own README — so a noun left in one of them would be
+copied into every show `showrunner-init` ever creates, and the copy would be the author's file and
+no longer the engine's to fix. First, **the show-name grep printed under "No show's name may
+appear in `engine/`, `scripts/`, `render/`, `tools/src/`, `tools/templates/` or `console/`" above
+searches it**: `tools/templates/` sits under `tools/`, and none of that grep's `--exclude-dir`
+flags names it. Second, `tools/test/templates.test.ts` **refuses a history stamp anywhere under
+`tools/templates/`** — a production id such as `ep07`, a `2026-` date, the first show's author by
+name, or a ruling written with a date or an attribution (`showrunner-ruled`, `ruled 2026-09-09`) —
+because a template carrying one is a copy of a finished show's file rather than a template. The
+ruling patterns are narrower than the bare word on purpose: `RULED` is the status vocabulary every
+interviewed bible template's header carries, so refusing the bare word would refuse the legend the
+templates are required to have. Third, the same test file **refuses the first show's cosmology
+words** — `vanished` and `dark forest` — which are concepts rather than proper nouns and so
+cannot be written as word-boundary alternatives in the grep's list. The two lists are complementary
+by construction: that scan holds what the grep cannot express, and nothing else, because the grep
+searches `tools/test/templates.test.ts` too and a proper noun written there as a regex alternative
+would make the grep report itself.
 
 `tools/show-data/` is excluded because that directory holds a show's own data, as the **Tools**
 section above explains. `render/public/` is excluded because it is a staging directory, not
