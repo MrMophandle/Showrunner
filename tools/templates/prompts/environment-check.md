@@ -39,9 +39,10 @@ time, to every character present:
 - OUT-OF-PLACE BEHAVIOR: flag conduct that belongs to another
   environment — unexplained protective gear where none is needed (fine
   if justified), or a precaution nobody in that place would take.
-- GRAVITY AND MOVEMENT (secondary): "down" must have the source
-  Canon/technology.md gives it. Flag things that fall where nothing
-  falls, and people walking where nothing can be walked on.
+- MOVEMENT AND FOOTING (secondary): what holds a body up here, what it
+  can stand on, and what it can fall through are whatever
+  `## Environment rules` of `Canon/technology.md` says they are. Flag
+  movement that section's own rules do not permit.
 
 Each issue must be one string: "<scene> — <character/moment> —
 <environment as classified> — <what contradicts it>". Pass only if

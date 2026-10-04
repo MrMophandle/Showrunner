@@ -7,7 +7,7 @@ Canon: {{results.canon-review-script}}
 Tone: {{results.tone-check}}
 Flow/tempo: {{results.flow-check}}
 Character fidelity: {{results.character-check}}
-Environment (air/vacuum/gravity): {{results.environment-check}}
+Environment (`## Environment rules` of `Canon/technology.md`): {{results.environment-check}}
 Structure (causality/ending): {{results.structure-check}}
 Repetition (tics/echoes/stock phrasing): {{results.repetition-check}}
 
@@ -26,4 +26,7 @@ only the `issues` list. A deviation is logged to the canon ledger, not revised.
    each issue is genuinely resolved in the current text.
 
 When — and only when — every listed issue is resolved and the script
-still reads in the pilot's register, output exactly: REVISIONS_COMPLETE
+still reads in the register — the most recently approved script under
+Episodes/*/script.md if one exists; when none exists, the
+`## Register sample` section of `Canon/style-guide.md` — output exactly:
+REVISIONS_COMPLETE

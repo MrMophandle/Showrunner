@@ -10,7 +10,8 @@ all; write the author's answer as the body of the file, in the shape the questio
 **The content under each heading is the author's words from the answers, tidied for grammar and
 nothing more.** You supply structure and the house format; you never supply content.
 
-A heading whose question the author left blank gets the single line `_Not yet decided._`.
+A heading whose question the author left blank gets the single line `_Not yet decided._`. A
+heading the template asks no question about gets the same line.
 
 Every rule or law you write ends with `— DRAFT (interview {{vars.date}})`.
 

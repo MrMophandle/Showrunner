@@ -12,4 +12,4 @@
 <!-- Q: What is deliberately left open for the season to answer? List them, so that nothing downstream mistakes a gap for a decision. -->
 
 ## Change log
-<!-- Q: Answer in one line that there are no changes yet. The pipeline appends to this section whenever an episode changes what the season is doing. -->
+<!-- Nothing is asked about this section: it starts empty. The pipeline appends to this section whenever an episode changes what the season is doing. -->

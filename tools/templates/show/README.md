@@ -29,12 +29,22 @@ node console/dist/server/main.js --show <this directory> --engine-root <the engi
 
 Open it in a browser, find the episode, and press **Launch**.
 
-**4. Expect to stop at NEEDS_REFS.** The first run halts before it can make audio or images, because a new show has no cast on file. The run stops at `NEEDS_REFS` until **every speaking recurring character has a locked voice** in `Production/voice-refs/refs.json` and **every recurring subject has a reference image** in `Canon/refs.json`. The stop names exactly who is missing. Two scripts are how you clear it:
+**4. Expect to stop at NEEDS_REFS.** The first run halts before it can make audio or images, because a new show has no cast on file. The run stops at `NEEDS_REFS` until **every speaking recurring character has a locked voice** in `Production/voice-refs/refs.json` and **every recurring subject has a reference image** in `Canon/refs.json`. The stop names exactly who is missing.
+
+Two scripts are how you clear it. Both belong to the engine and are run **from the engine repository**, because `uv run` reads the dependency block in the script's own file; `--show-root` is how you point them back at this show.
 
 ```
-uv run scripts/design-voice.py      # auditions a voice and writes its refs.json entry
-uv run scripts/design-visual.py     # makes candidate images; you pick one and commit it as the ref
+uv run scripts/design-voice.py --show-root <this directory> \
+    --instruct "<a sentence or two describing the voice>" \
+    --text "<a line that character actually says>" \
+    --out Production/voice-refs/<name>
+
+uv run scripts/design-visual.py all --show-root <this directory>
 ```
+
+`design-voice.py` writes `<out>-1.wav`, `<out>-2.wav`, … and prints their paths — two candidates by default, `--candidates N` for more. Voice design is a fresh roll each time, so the WAV you keep *is* the voice: keep the one that is the character and add its entry to `Production/voice-refs/refs.json` by hand, with `LOCKED` in its `status` and its `ref` pointing at the WAV you kept.
+
+`design-visual.py` takes a subject key, or `all` for every subject in `Canon/refs.json` that has no reference image yet, and writes candidates into `Canon/_candidates/`. It renders from that subject's `baseline_prompt`, so add an entry per recurring subject to `Canon/refs.json` first — `all` has nothing to do until you have. It prints the `cp` command that locks the candidate you pick.
 
 This stop is deliberate. A voice and a face are decisions a person makes by ear and by eye, and the pipeline will wait for you rather than invent them.
 

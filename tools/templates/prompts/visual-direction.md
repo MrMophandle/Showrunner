@@ -48,12 +48,12 @@ Write {{show.productionDir}}/{{episodeId}}/images/prompts.json:
        FAILS. Do not reach for 'people' as a safe substitute — it is a
        guard word too.
 
-       WATCH THE INNOCENT USES. Most real failures have been furniture and
-       prose, not populators: 'the crew table' (say GALLEY TABLE), 'eating
-       with the others' (name them), 'a ledger of figures' (say COLUMNED
-       NUMBERS), 'their crews dead at their stations' (say THE DEAD STILL
-       AT THEIR STATIONS). Write around the words entirely — never rely on
-       context to save you.>",
+       WATCH THE INNOCENT USES. Most real failures are furniture and
+       prose, not populators: 'the keepers' table' (say THE LONG TABLE),
+       'eating with the others' (name them), 'a ledger of figures' (say
+       COLUMNED NUMBERS), 'the crews of the boats at their moorings' (say
+       THE BOATS STILL AT THEIR MOORINGS). Write around the words
+       entirely — never rely on context to save you.>",
      "seed": <int>, "width": 1024, "height": 576}
   ]
 }

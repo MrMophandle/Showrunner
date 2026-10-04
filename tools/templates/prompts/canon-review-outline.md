@@ -15,9 +15,9 @@ Read {{show.episodesDir}}/{{episodeId}}/outline.md, then audit against:
 - Character/species/location/faction sheets for entities the outline uses
 
 Also flag: undeclared new/retroactive canon (anything missing from the
-outline's "## New canon proposed"), undeclared arc beats, death-rule
+outline's `## New canon proposed`), undeclared arc beats, death-rule
 violations (register, budget, earned grief), and a missing or incomplete
-"## Cast" section — every named character and every recurring location that
+`## Cast` section — every named character and every recurring location that
 appears must be listed there as `- <Name> (<tags>)` with tags from
 `recurring`, `guest`, `speaks`, `location`.
 

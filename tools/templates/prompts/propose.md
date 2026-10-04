@@ -4,8 +4,9 @@ with it — with the SMALLEST diffs that capture every new fact.
 
 ## Read first
 1. {{show.episodesDir}}/{{episodeId}}/script.md (the approved episode)
-2. {{show.episodesDir}}/{{episodeId}}/outline.md — especially its "Threads opened"
-   section (the author's own list of what this episode establishes)
+2. {{show.episodesDir}}/{{episodeId}}/outline.md — especially its
+   `## Threads opened` section (the author's own list of what this
+   episode establishes)
 3. Canon/continuity-ledger.md, Canon/timeline.md
 4. Every Canon/ entity file for characters, species, locations, and
    factions that appear in the episode (Glob Canon/**/*.md)
@@ -16,10 +17,10 @@ with it — with the SMALLEST diffs that capture every new fact.
 - Canon/timeline.md — add the episode's events if the timeline tracks
   at that granularity; match its existing format.
 - Entity sheets — status changes (injuries, deaths, secrets, items
-  gained like relic fragments, relationship shifts). Edit the existing
-  file sections; do not restructure files.
+  gained or lost, relationship shifts). Edit the existing file sections;
+  do not restructure files.
 - **Arc beats become the new baseline.** If the outline declares
-  "## Arc beats" (licensed character deviations) and the script executed
+  `## Arc beats` (licensed character deviations) and the script executed
   them, update the character's sheet so the CHANGED trait/stance is now
   canon (e.g. "As of {{episodeId}}: ..."). The character auditor measures
   future episodes against the sheet — an arc that isn't absorbed here

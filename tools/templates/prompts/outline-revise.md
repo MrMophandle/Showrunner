@@ -6,7 +6,7 @@ You are the story architect for *{{show.showName}}*. Fix the canon defects in
 
 Work through EVERY issue: reread the cited canon file, fix the beat at
 its root (a canon fix may ripple — carry it through the affected
-beats, payoffs, and Ending duties), and keep the outline format.
+beats, payoffs, and `## Ending duties`), and keep the outline format.
 Locked beats remain binding: enrich, never reorder/remove/merge.
 
 The `deviations` list is the showrunner's own and is not yours to fix — work

@@ -22,16 +22,22 @@ The premise for this episode is in {{show.episodesDir}}/{{episodeId}}/premise.md
   the premise touches what is and is not possible in this world
 
 ## Exemplar
-Episodes/_TEMPLATE/outline.md is the format — match its sections: status
-header, target runtime, POV, canon-loaded list, "job of the episode",
-numbered beat outline with timings, payoffs (max ~2), "Threads opened (for
-the Continuity Ledger once scripted)", and locked choices. For the rigor,
-Glob Episodes/*/outline.md and read the most recently approved one when one
-exists; your output must match it.
+Episodes/_TEMPLATE/outline.md is the format. Read it, and write every one
+of its sections, in its order: `## Scene synopsis`, `## Arc beats`,
+`## Cast`, one `### Beat <n>` heading per beat, `## Ending duties`,
+`## Threads opened`, `## New canon proposed`.
+
+**The beat headings are `### Beat <n>`, numbered from 1 with no gaps.**
+That exact grammar is what the drafting loop counts to know how many
+scenes it still owes, so a beat written under any other heading is a beat
+the run cannot see. The comment under each heading in the template says
+what that section is for.
+
+For the rigor, Glob Episodes/*/outline.md and read the most recently
+approved one when one exists; your output must match it.
 
 ## THE SCENE SYNOPSIS COMES FIRST
-The outline's FIRST section — above "Job of the episode", above
-everything — must be:
+The outline's FIRST section — above everything else — must be:
 
     ## Scene synopsis (SHOWRUNNER REVIEW — the shape of the episode)
 
@@ -63,7 +69,7 @@ synopsis LAST (after the beats exist) but PLACE it first.
 - Hold the episode shape that `## Beats` of `Canon/episode-formula.md`
   sets, pay whatever `## Serialized thread` of `Canon/episode-formula.md`
   requires of every episode, and log what this episode opens under
-  "Threads opened".
+  `## Threads opened`.
 - Vary the per-episode variables against the episodes already made — the
   slots are the ones `## Per-episode variables` of
   `Canon/episode-formula.md` lists.
@@ -71,10 +77,10 @@ synopsis LAST (after the beats exist) but PLACE it first.
 - **Arc beats must be declared.** If any beat requires a character to act
   against their Canon/characters/ sheet (out-of-character courage, a
   stance shift, a broken pattern), declare it explicitly in an
-  "## Arc beats" section: character, the deviation, and why the story
+  `## Arc beats` section: character, the deviation, and why the story
   earns it. The character auditor treats any UNDECLARED deviation as a
   defect — this section is the only license for out-of-character behavior.
-- **Declare the cast (machine-read).** Include a "## Cast" section listing
+- **Declare the cast (machine-read).** Include a `## Cast` section listing
   every named character who appears and every recurring location, one per
   line, exactly in this grammar — `- <Name> (<tags>)` — with tags from:
   `recurring` (has or needs a Canon reference sheet and, if speaking, a
@@ -89,14 +95,14 @@ synopsis LAST (after the beats exist) but PLACE it first.
 
 - **Structure is law** (story-craft.md): beats chain by BUT/THEREFORE
   (write the connective into each beat); circle steps 7-8 (return +
-  changed) are mandatory; the outline must include an "## Ending
-  duties" section naming how all FIVE ending duties are paid,
-  including the exact final button.
+  changed) are mandatory; the outline's `## Ending duties` section must
+  name how all FIVE ending duties are paid, including the exact final
+  button.
 - **Declare invented canon UP TOP.** If the outline introduces any NEW
   asset, location, character, or fact — especially RETROACTIVE ones
   (things that "were always there," like a never-mentioned room under a
   building the show has used all season) — declare it in a
-  "## New canon proposed" section near the TOP of the outline, before
+  `## New canon proposed` section near the TOP of the outline, before
   first use: what it is, why it's plausible, why it never came up. Never
   introduce retroactive canon in passing as settled fact; the showrunner
   must be able to veto it before it load-bears a plot.

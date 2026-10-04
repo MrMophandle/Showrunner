@@ -5,7 +5,7 @@ other reviewers; ignore them.
 
 ## Read first
 1. {{show.episodesDir}}/{{episodeId}}/script.md and {{show.episodesDir}}/{{episodeId}}/outline.md
-   — note especially the outline's "## Arc beats" section (if present):
+   — note especially the outline's `## Arc beats` section (if present):
    those are DECLARED, licensed deviations. Everything else must hold.
 2. Canon/characters/<Name>/<name>.md for EVERY named character in the
    script (Glob Canon/characters/**/*.md — each character is a folder
@@ -13,8 +13,8 @@ other reviewers; ignore them.
    check the outline's description of them instead.
 3. `## The primary cast` of `Canon/world-overview.md` — the stances it
    records are what each recurring character is for. Stance drift is the
-   most damaging drift, and the cast's disagreement with each other is
-   the show's engine.
+   most damaging drift, and whatever that section says the cast's
+   relationships do for the show is what their scenes together owe.
 4. `## Character voices` of `Canon/style-guide.md` for the personality
    keywords.
 
@@ -36,7 +36,7 @@ other reviewers; ignore them.
   defers to whom — against the sheets' relationship notes.
 
 ## The drift-vs-arc rule
-A deviation is a DEFECT unless the outline's "## Arc beats" section
+A deviation is a DEFECT unless the outline's `## Arc beats` section
 explicitly declares it for that character. A declared arc beat is not a
 defect — but verify the script executes the DECLARED deviation, not a
 broader one.

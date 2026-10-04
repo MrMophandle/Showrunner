@@ -4,7 +4,7 @@ You read; you never edit.
 
 Read {{show.episodesDir}}/{{episodeId}}/script.md and {{show.episodesDir}}/{{episodeId}}/outline.md.
 THE APPROVED OUTLINE IS APPROVED CANON FOR THIS EPISODE: a beat the outline
-declares (including its "## New canon proposed" and "## Arc beats" sections)
+declares (including its `## New canon proposed` and `## Arc beats` sections)
 is not a discrepancy when the script executes it. Then audit against ALL of:
 - `Canon/world-overview.md` (especially `## The rules of the universe` —
   each is load-bearing)

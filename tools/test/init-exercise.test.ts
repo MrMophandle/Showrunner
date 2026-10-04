@@ -21,12 +21,13 @@
 
 import { describe, it, expect, afterEach } from "vitest";
 import { execFile } from "node:child_process";
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import {
-  EventLog, createGateMessageRenderer, episodePipeline, loadShowConfig, mintRunId, run,
+  EventLog, createGateMessageRenderer, episodePipeline, headingMatches, loadShowConfig, mintRunId, run,
   type Event, type Executors, type QueryFn, type ShowConfig,
 } from "@showrunner/engine";
 import { runInit } from "../src/init/init.js";
@@ -94,20 +95,28 @@ function scriptedIO(): { io: InitIO; said: string[]; asked: string[] } {
   return { io, said, asked };
 }
 
-/** The answers file read back, by heading — the inverse of the driver's own writer. A `## ` line is
- *  the only section boundary, which is what the driver writes and what the scripted answers above
- *  contain none of. */
-function parseAnswersFile(text: string): Map<string, string> {
+/** The answers file read back, by heading — the inverse of the driver's own writer.
+ *
+ *  **A section opens only on a `## <heading>` line naming one of the template's own headings, in
+ *  the template's order**, which is the driver's rule (`parsePriorAnswers` in
+ *  `tools/src/init/interview.ts`) and therefore the only rule that reads back what the driver
+ *  wrote. Treating any `## ` line as a boundary — which this fake did — is laxer than the driver,
+ *  so a prose answer illustrating a markdown heading would be truncated here and not there, and
+ *  the fake writer would put a different file on disk than the real one. Harmless while the
+ *  scripted answers contain no `## ` line, and a divergence between the two sides of the exercise
+ *  either way. `headingMatches` does the comparison, in the engine's own direction. */
+function parseAnswersFile(text: string, headings: readonly string[]): Map<string, string> {
   const out = new Map<string, string>();
   let heading: string | undefined;
+  let next = 0;
   let body: string[] = [];
   const close = (): void => {
     if (heading !== undefined) out.set(heading, body.join("\n").trim());
     body = [];
   };
   for (const line of text.split("\n")) {
-    const m = /^##[ \t]+(.+?)[ \t]*$/.exec(line);
-    if (m !== null) { close(); heading = (m[1] as string).trim(); continue; }
+    const at = headings.findIndex((h, i) => i >= next && headingMatches(line, h));
+    if (at !== -1) { close(); heading = headings[at] as string; next = at + 1; continue; }
     if (heading === undefined) continue;
     // The question comment under the heading is the file's record of what was asked, not an answer.
     if (body.length === 0 && /^[ \t]*<!--[ \t]*Q:/.test(line)) continue;
@@ -128,8 +137,9 @@ function parseAnswersFile(text: string): Map<string, string> {
  *  (`tools/templates/interview/write.md`) is told to do the same thing. */
 async function writeBibleFile(templatePath: string, answersAbs: string, destination: string): Promise<void> {
   const template = await readFile(templatePath, "utf8");
-  const answers = parseAnswersFile(await readFile(answersAbs, "utf8"));
-  const { header } = parseCanonTemplate(template);
+  const parsed = parseCanonTemplate(template);
+  const answers = parseAnswersFile(await readFile(answersAbs, "utf8"), parsed.questions.map((q) => q.heading));
+  const { header } = parsed;
   const out: string[] = [];
   if (header.trim() !== "") out.push(header.trim(), "");
   // The walk starts after the header so a title heading inside it is not emitted twice. Level 1 is
@@ -166,6 +176,21 @@ function fakeWriter(): { executors: Executors; ran: string[] } {
   return { executors, ran };
 }
 
+/** The outline the fake writes for the `outline` step: the show's **own**
+ *  `Episodes/_TEMPLATE/outline.md`, which `init` copied in, with the episode id on its title line.
+ *
+ *  Writing `# <stepId>` as every artifact — which is what this fake did before — is how findings
+ *  I1, I2 and I3 survived ten task reviews: the exercise could not see that the outline prompt's
+ *  exemplar named sections the template did not carry, because no outline in any test was ever in
+ *  the template's shape. Taking the template itself means the artifact on disk carries every
+ *  heading the prompts read by name and the two `### Beat <n>` headings the draft loop counts, so
+ *  the loop's `total` is not zero, and it cannot drift from the template: the template is where
+ *  it comes from. */
+async function outlineFromTemplate(showRoot: string, episodeId: string): Promise<string> {
+  const template = await readFile(path.join(showRoot, "Episodes", "_TEMPLATE", "outline.md"), "utf8");
+  return template.replace(/^# .*$/m, `# ${episodeId} — "The Winter Contract"`);
+}
+
 /** Every episode step that does real work, faked: an agent writes each declared output and returns
  *  a passing verdict when its step declares a schema, and a script records its argv and succeeds.
  *
@@ -180,7 +205,15 @@ function fakeEpisodeWork(): { executors: Executors; ran: string[] } {
   const executors: Executors = {
     script: async (step, ctx) => {
       ran.push(`script:${step.id}`);
-      void ctx;
+      // Every declared output is written, the same way the agent branch writes its own. The two
+      // fakes disagreed before: the script half reported success and wrote nothing, so
+      // `canon-ledger-outline`'s declared `canon-ledger.md` was never on disk. Harmless today —
+      // the runner hashes a missing output to null — and a trap for the first step that reads it.
+      for (const out of step.outputs ?? []) {
+        const abs = path.join(ctx.showRoot, out);
+        await mkdir(path.dirname(abs), { recursive: true });
+        await writeFile(abs, `${step.id} wrote this.\n`, "utf8");
+      }
       return { ok: true, result: `${step.id} ok` };
     },
     agent: async (step, ctx) => {
@@ -188,7 +221,9 @@ function fakeEpisodeWork(): { executors: Executors; ran: string[] } {
       for (const out of step.outputs ?? []) {
         const abs = path.join(ctx.showRoot, out);
         await mkdir(path.dirname(abs), { recursive: true });
-        await writeFile(abs, `# ${step.id}\n\nwritten by the exercise's fake executor.\n`, "utf8");
+        await writeFile(abs, path.basename(out) === "outline.md"
+          ? await outlineFromTemplate(ctx.showRoot, ctx.episodeId)
+          : `# ${step.id}\n\nwritten by the exercise's fake executor.\n`, "utf8");
       }
       const text = `${step.id} done`;
       return step.schemaFile === undefined
@@ -343,7 +378,21 @@ describe("the init exercise: a whole show from init to its first NEEDS_IDEA", ()
     expect(second.ran).toContain("agent:canon-review-outline");
     expect(second.ran).toContain("script:canon-ledger-outline");
     expect(completionOf(reached.events, "premise")?.["result"]).toBe(PREMISE);
-    expect(await readFile(path.join(root, "Episodes", EPISODE, "outline.md"), "utf8")).toContain("outline");
+
+    // The outline on disk is in the format the show's own template teaches, which is what makes
+    // the rest of this assertion worth making: every heading the prompts read by name, and the
+    // `### Beat <n>` headings the draft loop counts for its `total`. A `done/0` draft loop is the
+    // blind loop the spec's §6.7 exists to surface, and it is what an outline carrying none of
+    // these would produce on every iteration.
+    const outlineText = await readFile(path.join(root, "Episodes", EPISODE, "outline.md"), "utf8");
+    expect(outlineText).toContain(`# ${EPISODE} — "The Winter Contract"`);
+    for (const heading of ["## Scene synopsis", "## Arc beats", "## Cast", "## Ending duties", "## Threads opened", "## New canon proposed"]) {
+      expect(outlineText, heading).toContain(heading);
+    }
+    expect(outlineText.split("\n").filter((l) => /^### Beat \d+/.test(l))).toHaveLength(2);
+    // The script step's declared output is on disk too, which is the fake the agent half always
+    // was and the script half was not.
+    expect(existsSync(path.join(root, "Episodes", EPISODE, "canon-ledger.md"))).toBe(true);
     // The gate message the showrunner would read, rendered from the new show's own prompt set
     // against the new show's own config.
     const message = reached.result.status === "waiting" ? reached.result.gate.message : "";

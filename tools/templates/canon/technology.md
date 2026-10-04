@@ -18,4 +18,4 @@
 <!-- Q: What does the environment do to a body and a voice here — what carries sound, what light exists, what a person cannot survive? These are the rules the environment auditor holds every scene to. -->
 
 ## Change log
-<!-- Q: Answer in one line that there are no changes yet. The pipeline appends to this section whenever an episode establishes a new capability, a new limit, or a new cost, so the file's history stays readable. -->
+<!-- Nothing is asked about this section: it starts empty. The pipeline appends to this section whenever an episode establishes a new capability, a new limit, or a new cost, so the file's history stays readable. -->

@@ -16,7 +16,7 @@ Audit the SCRIPT (the outline is context) for:
   reaction beat where characters absorb it? Unprocessed grief = flag.
 - **Setup/payoff ledger:** list every payoff and its plant; flag
   unplanted payoffs and unresolved plants that aren't logged as
-  deliberate seeds in the outline's Threads opened.
+  deliberate seeds in the outline's `## Threads opened`.
 - **The five ending duties** (`## Endings` of `Canon/story-craft.md`):
   verify each is paid ON THE PAGE — job resolved, emotional note landed
   on a specific character, world's indifference restated, exactly one

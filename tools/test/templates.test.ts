@@ -7,11 +7,33 @@ import { templatesDir } from "../src/init/paths.js";
 const PROMPTS = path.join(templatesDir(), "prompts");
 const CANON = path.join(templatesDir(), "canon");
 const INTERVIEW = path.join(templatesDir(), "interview");
+/** The outline format `init` copies into a new show, and the only document besides the bible whose
+ *  sections the prompts read by name. */
+const OUTLINE_TEMPLATE = path.join(templatesDir(), "episodes", "_TEMPLATE", "outline.md");
 
 async function mdFiles(dir: string): Promise<string[]> {
   let names: string[] = [];
   try { names = await readdir(dir); } catch { return []; }
   return names.filter((n) => n.endsWith(".md") && n !== "README.md").sort();
+}
+
+/** Every `.md` in `dir` including its README, which `mdFiles` leaves out. `prompts/README.md`
+ *  documents the two machine-read conventions and cites the outline's `## Cast` section by name,
+ *  so the structural check below has to read it. */
+async function allMdFiles(dir: string): Promise<string[]> {
+  let names: string[] = [];
+  try { names = await readdir(dir); } catch { return []; }
+  return names.filter((n) => n.endsWith(".md")).sort();
+}
+
+/** Every level-2 heading of a Markdown document, as its text without the `##`. */
+function headingsOf(text: string): string[] {
+  const out: string[] = [];
+  for (const line of text.split("\n")) {
+    const m = /^##[ \t]+(.+?)[ \t]*$/.exec(line);
+    if (m !== null) out.push(m[1] as string);
+  }
+  return out;
 }
 
 async function walk(dir: string): Promise<string[]> {
@@ -97,6 +119,20 @@ describe("templates carry no history and no show", () => {
   });
 });
 
+describe("every interviewed bible template carries the status legend", () => {
+  it("names RULED and DRAFT, because every law the interview writes is stamped DRAFT", async () => {
+    // The plan's F-08: approval at a gate does not promote a DRAFT to RULED, an episode or the
+    // author's hand does, so the file has to say what the two words mean. One template carried a
+    // question and no legend until this test existed.
+    const missing: string[] = [];
+    for (const entry of BIBLE_FILES.filter((b) => b.mode === "interview")) {
+      const text = await readFile(path.join(CANON, `${entry.key}.md`), "utf8");
+      if (!/RULED means approved and binding/.test(text) || !/DRAFT means proposed/.test(text)) missing.push(entry.key);
+    }
+    expect(missing).toEqual([]);
+  });
+});
+
 /** A backticked level-2 heading as a prompt writes it: `` `## Cadence` ``. */
 const CITED_HEADING = /`##\s+([^`]+)`/g;
 
@@ -149,13 +185,20 @@ describe("the canon templates carry every required section, and the prompts read
     // the file wherever the citation states it.
     const required = (file: string | undefined, heading: string): boolean =>
       REQUIRED_SECTIONS.some((r) => (file === undefined || r.file === file.replace("season-{{season}}", "season-{season}")) && headingMatches(`## ${heading}`, r.heading));
+    // A prompt cites the outline's own sections as well as the bible's, and a citation that names
+    // no file could be either. The outline template's headings are the second closed set the
+    // heading-only form is allowed to name; the next describe is what holds that set honest.
+    const outlineHeadings = headingsOf(await readFile(OUTLINE_TEMPLATE, "utf8"));
+    const inOutline = (heading: string): boolean => outlineHeadings.some((h) => headingMatches(`## ${heading}`, h));
     const bad: string[] = [];
     for (const name of await mdFiles(PROMPTS)) {
       const text = await readFile(path.join(PROMPTS, name), "utf8");
       for (const m of text.matchAll(CITED_HEADING)) {
         const heading = m[1]!.trim();
         if (isScriptHeading(heading)) continue;
-        if (!required(undefined, heading)) bad.push(`${name}: \`## ${heading}\` is no REQUIRED_SECTIONS heading`);
+        if (!required(undefined, heading) && !inOutline(heading)) {
+          bad.push(`${name}: \`## ${heading}\` is neither a REQUIRED_SECTIONS heading nor a heading of ${path.basename(OUTLINE_TEMPLATE)}`);
+        }
       }
       for (const m of text.matchAll(CITATION)) {
         for (const h of m[1]!.matchAll(CITED_HEADING)) {
@@ -165,6 +208,78 @@ describe("the canon templates carry every required section, and the prompts read
       }
     }
     expect(bad).toEqual([]);
+  });
+});
+
+/** A level-2 heading as a prompt quotes it rather than backticks it: `"## Cast"`. Both forms are
+ *  read, because the measured prompts used both; `[^"\n]` keeps a quotation from running across a
+ *  hard wrap and swallowing half a paragraph. */
+const QUOTED_HEADING = /"##\s+([^"\n]+)"/g;
+
+/** The beat-heading grammar the draft loop counts, copied from `engine/src/pipelines/episode.ts`'s
+ *  own `progress` function: `total` is the number of lines of the outline matching it. An outline
+ *  with no such heading makes every iteration of the draft loop report `done/0`, which is the
+ *  blind loop the spec's §6.7 exists to prevent. */
+const BEAT_HEADING = /^### Beat \d+/;
+
+describe("the outline template carries every section the prompts name", () => {
+  /** Why this exists. Three findings of the whole-branch review — an exemplar naming eight
+   *  sections the template did not have, three prompts reading a `## Threads opened` section the
+   *  template did not have, and an `## Ending duties` comment naming three duties where five are
+   *  enforced — all survived ten task reviews because nothing bound the outline template to the
+   *  prompts that read it. The bible has that binding (`REQUIRED_SECTIONS` and the guard above);
+   *  the outline is the other document whose sections a prompt reads by name, and this is its. */
+  it("every section a prompt names that is not a bible section is a heading of the outline template", async () => {
+    const outlineHeadings = headingsOf(await readFile(OUTLINE_TEMPLATE, "utf8"));
+    expect(outlineHeadings.length).toBeGreaterThan(0);
+    const isBibleSection = (heading: string): boolean =>
+      REQUIRED_SECTIONS.some((r) => headingMatches(`## ${heading}`, r.heading));
+    const inOutline = (heading: string): boolean =>
+      outlineHeadings.some((h) => headingMatches(`## ${heading}`, h));
+
+    const bad: string[] = [];
+    for (const name of await allMdFiles(PROMPTS)) {
+      const text = await readFile(path.join(PROMPTS, name), "utf8");
+      for (const re of [CITED_HEADING, QUOTED_HEADING]) {
+        for (const m of text.matchAll(re)) {
+          const heading = m[1]!.trim();
+          // A script's own scene headers are upper case and belong to no template.
+          if (isScriptHeading(heading)) continue;
+          if (isBibleSection(heading) || inOutline(heading)) continue;
+          bad.push(`${name}: \`## ${heading}\` is a section of no template this engine ships`);
+        }
+      }
+    }
+    expect(bad).toEqual([]);
+  });
+
+  it("the outline template carries the `### Beat <n>` headings the draft loop counts, and the outline prompt states the grammar", async () => {
+    const template = await readFile(OUTLINE_TEMPLATE, "utf8");
+    const beats = template.split("\n").filter((l) => BEAT_HEADING.test(l));
+    // Two, so the template demonstrates the numbering and the draft loop's `total` is never zero
+    // for an outline written from it.
+    expect(beats.length).toBeGreaterThanOrEqual(2);
+    expect(beats.map((l) => /^### Beat (\d+)/.exec(l)?.[1])).toEqual(beats.map((_, i) => String(i + 1)));
+    // And the prompt that writes outlines says so, which is the half that was missing: nothing
+    // told the agent to write a heading the engine counts.
+    const prompt = await readFile(path.join(PROMPTS, "outline.md"), "utf8");
+    expect(prompt).toContain("### Beat <n>");
+  });
+
+  it("no outline heading is also a bible section, so a fileless citation cannot be misfiled", async () => {
+    // The two closed sets the assertion above takes the union of. If a bible section and an
+    // outline section ever came to share a name, a citation aimed at the wrong document would
+    // pass that union silently, so the collision is refused rather than its symptom.
+    const outlineHeadings = headingsOf(await readFile(OUTLINE_TEMPLATE, "utf8"));
+    const collisions: string[] = [];
+    for (const h of outlineHeadings) {
+      for (const r of REQUIRED_SECTIONS) {
+        if (headingMatches(`## ${h}`, r.heading) || headingMatches(`## ${r.heading}`, h)) {
+          collisions.push(`outline's ## ${h} collides with ${r.file}'s ## ${r.heading}`);
+        }
+      }
+    }
+    expect(collisions).toEqual([]);
   });
 });
 

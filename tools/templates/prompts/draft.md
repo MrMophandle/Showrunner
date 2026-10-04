@@ -67,7 +67,7 @@ After appending a scene, count remaining outline beats. Before
 declaring completion, verify the FINAL scene pays all five ending
 duties from Canon/story-craft.md (job resolved, emotional note on a
 character, world's indifference, one seed, the quiet cold final
-button named in the outline's "Ending duties"). An episode that
+button named in the outline's `## Ending duties`). An episode that
 merely stops is not complete.
 If every beat has a scene AND the ending duties are paid, output exactly:
 DRAFT_COMPLETE
