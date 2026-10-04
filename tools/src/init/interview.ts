@@ -163,31 +163,75 @@ function answersFileFor(questions: readonly { heading: string; question: string 
     .join("\n");
 }
 
+/** The index of the first of `headings` at or after `from` that `line` is the heading of, or -1.
+ *
+ *  This is what makes a line in an answers file a section boundary: **only a `## <heading>` line
+ *  naming one of the template's own headings**, which is exactly what `answersFileFor` writes.
+ *  Any other line that happens to begin with `##` — a prose answer illustrating a markdown
+ *  heading, say — is part of the answer it sits in, and treating it as a boundary truncated the
+ *  default a resumed interview offered back, which an author who accepted the default then
+ *  recorded as their answer.
+ *
+ *  The search starts at `from`, so the headings are matched in the order the template declares
+ *  them: a line inside a later answer that repeats an earlier heading cannot reopen that section.
+ *  A line matching a heading still to come is a boundary, which is the rule's one remaining edge
+ *  and the price of reading a flat file without escaping anything in it.
+ *
+ *  `headingMatches` does the comparison, so case, `&`/"and", punctuation and a parenthetical do
+ *  not count — and the direction is the engine's: the document's line first, the canonical heading
+ *  second, because the test is a whole-word prefix on the line. */
+function headingAt(line: string, headings: readonly string[], from = 0): number {
+  for (let i = from; i < headings.length; i++) {
+    if (headingMatches(line, headings[i] as string)) return i;
+  }
+  return -1;
+}
+
+/** The index of the template question whose heading is `wanted`, or -1 — the same rule as
+ *  `headingAt`, asked the other way round: here the template's heading is the document line and
+ *  `wanted` is the canonical name, because the template may carry a parenthetical the required
+ *  name does not ("## The primary cast (the crew)" carries "The primary cast"). */
+function questionIndexFor(headings: readonly string[], wanted: string): number {
+  return headings.findIndex((h) => headingMatches(`## ${h}`, wanted));
+}
+
 /** The answers an earlier, unfinished interview of this file left behind, by heading — the inverse
  *  of `answersFileFor`, read back so a resumed interview can offer each answer as the default and
  *  the author need not retype a bible they already described. `(blank)` comes back as no answer at
  *  all, because it records a question that was skipped rather than an answer to keep.
  *
- *  A heading the current template no longer carries is simply never looked up, and a heading the
+ *  `headings` are the template's own question headings, in order, and they are the only thing that
+ *  opens a section (see `headingAt`); the keys of the returned map are those headings rather than
+ *  the file's spelling of them, so the caller looks an answer up by the heading it is asking
+ *  about. A heading the current template no longer carries is never looked for, and a heading the
  *  file does not carry yields no default: both are what a template that changed between the two
  *  sittings should do. */
-function parsePriorAnswers(text: string): Map<string, string> {
+function parsePriorAnswers(text: string, headings: readonly string[]): Map<string, string> {
   const out = new Map<string, string>();
-  let heading: string | undefined;
+  let open: string | undefined;
+  let next = 0;
   let body: string[] = [];
   const close = (): void => {
-    if (heading !== undefined) {
+    if (open !== undefined) {
       const answer = body.join("\n").trim();
-      if (answer !== "" && answer !== BLANK) out.set(heading, answer);
+      if (answer !== "" && answer !== BLANK) out.set(open, answer);
     }
     body = [];
   };
   for (const line of text.split("\n")) {
-    const m = /^##[ \t]+(.+?)[ \t]*$/.exec(line);
-    if (m) { close(); heading = m[1] as string; continue; }
-    // The question comment is the file's record of what was asked; it is not part of the answer.
-    if (/^[ \t]*<!--[ \t]*Q:/.test(line)) continue;
-    if (heading !== undefined) body.push(line);
+    const at = headingAt(line, headings, next);
+    if (at !== -1) {
+      close();
+      open = headings[at] as string;
+      next = at + 1;
+      continue;
+    }
+    if (open === undefined) continue;
+    // The question comment `answersFileFor` writes directly under the heading is the file's record
+    // of what was asked, and not part of the answer. Only that one line is dropped — the first of
+    // the section — so a comment inside the answer's own text is the author's and is kept.
+    if (body.length === 0 && /^[ \t]*<!--[ \t]*Q:/.test(line)) continue;
+    body.push(line);
   }
   close();
   return out;
@@ -355,9 +399,10 @@ export async function interviewFile(showRoot: string, entry: BibleFile, io: Init
     // What an earlier, unfinished sitting answered. The answers file is rewritten below, so it is
     // read before anything is asked: this is the only place the earlier text still exists.
     const abs = path.resolve(showRoot, answers);
+    const headings = parsed.questions.map((q) => q.heading);
     let earlier = new Map<string, string>();
     try {
-      earlier = parsePriorAnswers(await readFile(abs, "utf8"));
+      earlier = parsePriorAnswers(await readFile(abs, "utf8"), headings);
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
     }
@@ -371,8 +416,10 @@ export async function interviewFile(showRoot: string, entry: BibleFile, io: Init
     }
     if (entry.key === CAST_KEY) {
       // The cast is read out of the answer to the template's own cast question, never asked for
-      // a second time: two questions would be two lists with no rule for which one wins.
-      const at = parsed.questions.findIndex((q) => headingMatches(`## ${q.heading}`, CAST_HEADING));
+      // a second time: two questions would be two lists with no rule for which one wins. The
+      // question is found by the same heading rule the answers file is parsed with — the
+      // template's own headings, compared through `headingMatches` — and never by a bare string.
+      const at = questionIndexFor(headings, CAST_HEADING);
       if (at === -1) {
         cast = [];
         io.say(`This template has no \`## ${CAST_HEADING}\` question, so no cast was recorded and no character sheet is created.`);

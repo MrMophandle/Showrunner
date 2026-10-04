@@ -557,3 +557,52 @@ describe("interviewFile: a resumed file offers its earlier answers back", () => 
     expect(second.asked.map((a) => a.default)).toEqual(questions.map((_, i) => (i === 1 ? undefined : `kept ${i}`)));
   });
 });
+
+describe("interviewFile: a prior answer that contains a `## ` line of its own", () => {
+  /** A section of the answers file opens only on a `## <heading>` line naming one of the
+   *  template's own question headings. A prose answer that illustrates a markdown heading — a
+   *  style-guide answer about headings is the obvious one — used to truncate the default offered
+   *  on resume at its own `##` line, and an author who accepted that default recorded the
+   *  shortened text as their answer. */
+  const EMBEDDED = [
+    "Use this shape:",
+    "## not a heading, just an example",
+    "and keep the rest of the answer with it.",
+  ].join("\n");
+
+  it("offers the whole answer back as the default, `## ` line and all", async () => {
+    const root = await tempRoot();
+    const template = await readFile(path.join(templatesDir(), "canon", "style-guide.md"), "utf8");
+    const questions = parseCanonTemplate(template).questions;
+
+    const crashing: Executors = { script: async () => ({ ok: true }), agent: async () => ({ ok: false, error: "killed", toolCalls: 0 }) };
+    const first = scriptedIO(questions.map((_, i) => (i === 0 ? EMBEDDED : `kept ${i}`)), []);
+    await expect(interviewFile(root, styleGuide, first.io, await deps(root, { executors: crashing }))).rejects.toThrow(/write failed/);
+    // The file really does hold the embedded line, so the parser is what is under test.
+    expect(await readFile(path.join(root, answersPath("style-guide")), "utf8")).toContain("## not a heading, just an example");
+
+    const second = scriptedIO(questions.map((_, i) => (i === 0 ? EMBEDDED : `kept ${i}`)), ["approve"]);
+    await interviewFile(root, styleGuide, second.io, await deps(root, { now: (): Date => new Date("2030-04-02T09:00:00.000Z") }));
+    expect(second.asked[0]?.default).toBe(EMBEDDED);
+    // Every later question still got its own answer: the embedded line opened no section, so it
+    // did not swallow the answers that follow it either.
+    expect(second.asked.map((a) => a.default)).toEqual(questions.map((_, i) => (i === 0 ? EMBEDDED : `kept ${i}`)));
+  });
+
+  it("keeps a line that repeats an earlier heading inside the answer it sits in", async () => {
+    const root = await tempRoot();
+    const template = await readFile(path.join(templatesDir(), "canon", "style-guide.md"), "utf8");
+    const questions = parseCanonTemplate(template).questions;
+    // The second answer quotes the first question's own heading. Headings are matched in the
+    // template's order, so a heading already passed cannot reopen its section.
+    const quoting = `As in:\n## ${questions[0]?.heading}\nthat section's rules apply here too.`;
+    const crashing: Executors = { script: async () => ({ ok: true }), agent: async () => ({ ok: false, error: "killed", toolCalls: 0 }) };
+    const first = scriptedIO(questions.map((_, i) => (i === 1 ? quoting : `kept ${i}`)), []);
+    await expect(interviewFile(root, styleGuide, first.io, await deps(root, { executors: crashing }))).rejects.toThrow(/write failed/);
+
+    const second = scriptedIO(questions.map((_, i) => `second ${i}`), ["approve"]);
+    await interviewFile(root, styleGuide, second.io, await deps(root, { now: (): Date => new Date("2030-04-02T09:00:00.000Z") }));
+    expect(second.asked[0]?.default).toBe("kept 0");
+    expect(second.asked[1]?.default).toBe(quoting);
+  });
+});
