@@ -71,7 +71,7 @@
   Production/voice-refs/                  MODIFY/NEW (Task 2): refs.json replaced, nine WAVs copied
   Episodes/s01e01..s01e10/                NEW (Task 3): 61 files incl. archive.json ×10
   Production/s01e01..s01e10/              NEW (Task 3): 124 files incl. 54 guest WAVs; 7 manifests' 30 "ref" paths and 21 manifests' "episode" edited; no runs/
-  prompts/{environment-check,outline,visual-direction,flow-check,tts-script}.md   MODIFY (Task 4): eleven lines
+  prompts/{environment-check,outline,visual-direction,flow-check,tts-script,nano-banana-gate.gate,nano-banana-gate.reject}.md   MODIFY (Task 4): twenty-three lines in nine files (the addendum's A-06 counted eleven; its method missed a shot id, a populator example and an ambient rule)
   Canon/characters/_TEMPLATE.md:34-35, Episodes/_TEMPLATE/outline.md:11-12        MODIFY (Task 4)
   README.md                               MODIFY (Task 5): a "Season 1" paragraph
   .superpowers/ is not used in DeadLight2 — the ledger lives in Showrunner's workspace
@@ -255,7 +255,7 @@ grep -rnoE '\bep(0[1-9]|10)/' --include='*.md' --include='*.json' Canon Episodes
 node ~/GitHub/Showrunner/tools/dist/bible-check.js --show "$PWD" --season 1    # exit 0
 node ~/GitHub/Showrunner/tools/dist/bible-check.js --show "$PWD" --season 2    # exit 0
 node ~/GitHub/Showrunner/tools/dist/check-prompts.js --prompts prompts --context <Task 4's file>   # exit 0
-find Production -type d -name runs | wc -l                                      # 0
+find Production/s01e* -type d -name runs | wc -l                                # 0  (Production/setup/<key>/runs/ are Plan G's interview logs, thirteen of them, and setup is not an episode id)
 git -C ~/GitHub/DeadLight status --porcelain | wc -l                            # 2
 ```
 
