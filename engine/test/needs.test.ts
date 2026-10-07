@@ -5,6 +5,11 @@ import path from "node:path";
 import { episodeNeeds, missingRefs, missingShowrunnerImages, parseCastSection } from "../src/needs.js";
 import type { ShowConfig } from "../src/show-config.js";
 
+/** The probe's message for an outline whose `## Cast` section is absent or holds nothing it can
+ *  read, asserted by text rather than by shape: it is the one line an author sees when a run stops
+ *  at NEEDS_REFS with no cast at all, so it has to say what to write and in what grammar. */
+const NO_CAST = 'the outline has no readable ## Cast section (write one line per subject as "- <Name> (<tags>)")';
+
 const show: ShowConfig = {
   showName: "S", showSlug: "Show", promptsDir: "prompts",
   models: { medium: "m", large: "l", writer: "w" }, airMap: {}, output: { nasRoot: "/nas" },
@@ -132,13 +137,34 @@ describe("missingRefs", () => {
     expect(await missingRefs(root, "s02e01", slashed)).toEqual([]);
   });
 
-  it("finds a guest voice by slug prefix, and is empty without a cast section", async () => {
+  it("finds a guest voice by slug prefix, and names the missing cast section", async () => {
     const { root, w } = await show1();
     await w("Episodes/s02e01/outline.md", "## Cast\n- Dock Hand Pim (guest, speaks)\n");
     await w("Production/s02e01/guest-refs/dock-hand-pim-1.wav", "wav");
     expect(await missingRefs(root, "s02e01", show)).toEqual([]);
+    // An outline with no `## Cast` heading at all. This used to return [] and pass refs-ready with
+    // "all references present" having checked nothing (Plan H's H-09): the only thing between such
+    // an outline and synthesis was the canon reviewer's willingness to put the absent section in
+    // its `issues` array, which is an agent's judgment and not a guard.
     await w("Episodes/s02e01/outline.md", "## Beat outline\n- x\n");
-    expect(await missingRefs(root, "s02e01", show)).toEqual([]);
+    expect(await missingRefs(root, "s02e01", show)).toEqual([NO_CAST]);
+  });
+
+  it("names the missing cast section for a ## Cast heading with nothing under it, and reports nothing for an episode with no outline", async () => {
+    const { root, w } = await show1();
+    // The shape a writer leaves when it writes the heading and no lines under it. parseCastSection
+    // skips a blank line inside the section, so `entries` and `malformed` are both empty exactly as
+    // they are for an outline carrying no heading at all, and one message covers both shapes. A
+    // section holding a line that misses the grammar is a different finding and keeps its own
+    // message (the grammar test above), because that line names a subject the probe can see.
+    await w("Episodes/s02e01/outline.md", "# Ep\n\n## Cast\n\n## Beat outline\n### Beat 1\n");
+    expect(await missingRefs(root, "s02e01", show)).toEqual([NO_CAST]);
+    // An outline that does not exist is not this probe's finding, and must stay empty. The episode
+    // pipeline's `premise` guard refuses an episode with nothing in it as NEEDS_IDEA five steps
+    // before refs-ready runs, so a message here would blame refs-ready for a state premise owns —
+    // and because the console puts this list on every Board row regardless of stage, it would put
+    // a "references missing" line on every episode nobody has started yet.
+    expect(await missingRefs(root, "s02e02", show)).toEqual([]);
   });
 });
 

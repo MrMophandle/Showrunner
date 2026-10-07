@@ -138,8 +138,36 @@ await writeIn(root, "showrunner.json", JSON.stringify({
 }, null, 2));
 
 for (const name of CANON) await writeIn(root, `Canon/${name}.md`, `# ${name}\n\nfixture canon for the walkthrough.\n`);
-await writeIn(root, "Canon/refs.json", "{}");
-await writeIn(root, "Production/voice-refs/refs.json", JSON.stringify({ cast: {} }));
+// The two reference files the NEEDS_REFS probe reads, populated rather than empty. Every outline
+// below carries a `## Cast` section, because the probe refuses an outline it cannot read a cast
+// from (engine/src/needs.ts' missingRefs), and a cast line names a subject the probe then looks up:
+// with `{}` in these two files, every row on this Board would print "references missing" for
+// subjects whose runs the fixture's own logs record as checked and passed.
+await writeIn(root, "Canon/refs.json", JSON.stringify({
+  _doc: "the reference registry; a key is a slug and `ref` is the image the probe looks for on disk",
+  vale: { kind: "human", ref: "Canon/characters/Vale/ref.png" },
+  "the-warden": { kind: "human", ref: "Canon/characters/Warden/ref.png" },
+  maeve: { kind: "human", ref: "Canon/characters/Maeve/ref.png" },
+  harbor: { kind: "location", ref: "Canon/locations/harbor.png" },
+}, null, 2));
+for (const [rel, hue] of [
+  ["Canon/characters/Vale/ref.png", 0.2], ["Canon/characters/Warden/ref.png", 0.5],
+  ["Canon/characters/Maeve/ref.png", 0.75], ["Canon/locations/harbor.png", 0.95],
+]) {
+  const file = path.join(root, rel);
+  await mkdir(path.dirname(file), { recursive: true });
+  await writeFile(file, framePng(hue));
+}
+await writeIn(root, "Production/voice-refs/refs.json", JSON.stringify({
+  cast: {
+    Vale: { ref: "Production/voice-refs/vale.wav", status: "LOCKED (speed 1.05)" },
+    Warden: { ref: "Production/voice-refs/warden.wav", status: "LOCKED" },
+    Maeve: { ref: "Production/voice-refs/maeve.wav", status: "LOCKED" },
+  },
+}, null, 2));
+// The probe checks that a voice reference is on disk, not what is in it, so a text file under the
+// .wav name is enough and keeps this fixture to one file.
+for (const who of ["vale", "warden", "maeve"]) await writeIn(root, `Production/voice-refs/${who}.wav`, "a fixture voice reference\n");
 await writeIn(root, "Episodes/_TEMPLATE/outline.md", "# Template\n");
 for (const gate of GATES) {
   await writeIn(root, `prompts/${gate}.gate.md`, `${gate} for {{episodeId}}`);
@@ -164,6 +192,11 @@ await mkdir(path.join(root, "Episodes", "s02e01"), { recursive: true });
 //    shows what this client does with HTML from a prompt: renders it as text.
 await writeIn(root, "Episodes/s02e02/premise.md", "The harbourmaster's log has a week missing from it, and two people remember that week differently.\n");
 await writeIn(root, "Episodes/s02e02/outline.md", `# The Missing Week
+
+## Cast
+- Vale (recurring, speaks)
+- the Warden (recurring, speaks)
+- Harbor (location)
 
 ## Cold open
 Vale reads the log aloud to an empty office. The page for Tuesday is gone — not torn, *cut*.
@@ -239,7 +272,7 @@ written again from them.
 
 // 3. s02e03 — failed at tts-generate, with everything up to casting approved behind it.
 await writeIn(root, "Episodes/s02e03/premise.md", "A container that nobody ordered has been on the quay for eleven days, and the paperwork for it is perfect.\n");
-await writeIn(root, "Episodes/s02e03/outline.md", "# Eleven Days\n\nThe paperwork is perfect, which is the problem.\n");
+await writeIn(root, "Episodes/s02e03/outline.md", "# Eleven Days\n\nThe paperwork is perfect, which is the problem.\n\n## Cast\n- Vale (recurring, speaks)\n- Harbor (location)\n");
 await writeIn(root, "Episodes/s02e03/script.md", "# Eleven Days\n\n## Cold open\n\nVALE: Eleven days.\n");
 
 const t3 = clock(74);
@@ -318,7 +351,7 @@ await writeIn(root, "Production/s02e03/runs/20261002-0915-cd34.troubleshooting.j
 //    hardest row: `deriveStage` tests the NEEDS_ rules before it looks at the open gate
 //    (engine/src/stages.ts), so both are true and the row has to show both.
 await writeIn(root, "Episodes/s02e04/premise.md", "Two boats with the same name are tied up on opposite sides of the harbour.\n");
-await writeIn(root, "Episodes/s02e04/outline.md", "# Same Name, Two Hulls\n\nThe registry says one of them does not exist.\n");
+await writeIn(root, "Episodes/s02e04/outline.md", "# Same Name, Two Hulls\n\nThe registry says one of them does not exist.\n\n## Cast\n- Vale (recurring, speaks)\n- Maeve (recurring)\n- Harbor (location)\n");
 await writeIn(root, "Production/s02e04/images/prompts.json", JSON.stringify({
   shots: [
     { id: "s01-harbour-wide", source: "nano-banana", prompt: "the harbour at first light, wide" },
@@ -357,7 +390,7 @@ await seedRun(root, "s02e04", "20261002-0840-ef56", [
 //    `did nothing` flag, the amber stall label and the Continue action, none of which any state
 //    above can show.
 await writeIn(root, "Episodes/s02e05/premise.md", "The lighthouse keeper's replacement arrives a month early and will not say why.\n");
-await writeIn(root, "Episodes/s02e05/outline.md", "# A Month Early\n\nHe has the paperwork. That is what is wrong with it.\n");
+await writeIn(root, "Episodes/s02e05/outline.md", "# A Month Early\n\nHe has the paperwork. That is what is wrong with it.\n\n## Cast\n- Vale (recurring, speaks)\n- Maeve (recurring, speaks)\n- Harbor (location)\n");
 
 const t5 = clock(33);
 await seedRun(root, "s02e05", "20261002-1005-gh78", [

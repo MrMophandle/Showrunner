@@ -423,8 +423,15 @@ ignored, and so is a line inside it that does not match. Four tags are load-bear
 image is on disk; `recurring` with `speaks` also demands a voice in the voice cast that is `LOCKED`
 and whose WAV is on disk; `guest` with `speaks` demands a WAV at
 `<productionDir>/<episodeId>/guest-refs/<slug>*.wav`. Names are matched as slugs, so `the Warden`
-finds either `warden` or `the-warden`. An outline with no `## Cast` section reports nothing — the
-section's absence is the canon reviewer's finding, not this probe's.
+finds either `warden` or `the-warden`.
+
+**An outline with no readable `## Cast` section stops the run at `NEEDS_REFS`**, in both shapes — no
+`## Cast` heading at all, and a heading with nothing under it the grammar can read — with the one
+line `the outline has no readable ## Cast section (write one line per subject as "- <Name>
+(<tags>)")`. The canon reviewer prompt flags a missing section, but a flag is a line in an agent's
+`issues` array; a guard has to refuse it, or synthesis runs with an unchecked cast and `refs-ready`
+reports "all references present" having looked at nothing. An outline that does not exist reports
+nothing: an episode with nothing in it is the `premise` guard's `NEEDS_IDEA`, five steps upstream.
 
 ### The `source` field on shots
 
