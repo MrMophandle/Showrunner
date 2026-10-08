@@ -5,8 +5,10 @@ doing, it opens the gates for an answer, and it starts and restarts runs — and
 without owning a single one of them.** A run belongs to the detached worker process holding its
 lock, so this server can be restarted, upgraded or killed while a four-hour render keeps writing.
 
-The console names no show. It is pointed at a show repository with `--show <path>` and reads that
-repository's `showrunner.json` for everything it needs to know about which show it is operating.
+The console names no show. It holds **every show a registry lists** — one `ShowContext` and one
+`RunStore` each, built at startup — and reads each repository's `showrunner.json` for everything it
+needs to know about the show it is operating. Which show a request means is a segment of its own
+url: `/api/shows/<key>/…`. `--show <path>` still works and is one show keyed by its directory name.
 
 ## The four surfaces
 
@@ -20,11 +22,43 @@ bundle and answers `/api/*` beneath it.
 | The Gate view | `/episodes/:id/runs/:run/gate` | The gate's rendered message as markdown, `attempt N of M`, the notes from previous rejections, the verdict board of what the reviewers found, one pane per artifact the gate is about, and the Approve and Reject buttons. |
 | What happened | `/episodes/:id/runs/:run/what-happened` | Everything a troubleshooter would be handed — the pipeline, the run, the collapsed events, every prompt the run read with its hash then and now, and every file the run wrote — plus a question box that asks a read-only agent about that run. |
 
-**What is deferred, and is deliberately absent.** One server answers for one show: a show registry
-over `--show` is a later plan's. The console has no authentication, because it is a home-network
-tool. It does not rotate its logs. The season map, the desk, discuss, notes and the standalone
+**What is deferred, and is deliberately absent.** The console has no authentication, because it is a
+home-network tool. It does not rotate its logs. The season map, the desk, discuss, notes and the standalone
 step buttons of the rewrite design's §7.2 are not built. Nothing in the console edits a prompt or
 a canon file.
+
+## Shows and the registry
+
+**One console holds every show on the machine, and `~/.showrunner/shows.json` is the list.**
+
+    {
+      "shows": {
+        "the-live-show": { "root": "/Users/me/GitHub/TheLiveShow" },
+        "the-old-one":   { "root": "/Users/me/GitHub/TheOldOne", "readOnly": true }
+      }
+    }
+
+**The key is the operator's, and that is not a convenience.** The only identity fields a
+`showrunner.json` carries are `showName` and `showSlug`, and a show repository and its successor
+carry the same values for both — and often the same `output.nasRoot` as well. A url keyed on the
+slug could not tell them apart, so the registry carries a key the operator chose. It must match
+`/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/`: no dot, so it can never be `..`; no slash, so it is one url
+segment; no leading hyphen, so nothing downstream reads it as a flag. It is validated once, in the
+show middleware, before it reaches a map or a path.
+
+| What | How the server behaves |
+|---|---|
+| **Every api route** | Under `/api/shows/:show/`, with one exception: `GET /api/shows` is the list and `GET /api/events` is one channel across every show. One middleware turns the segment into that show's `ShowContext` and `RunStore`, so the fifty-odd functions beneath it still take one show and never ask which. |
+| **An unknown key**, or a key the grammar rejects | `404 {"error": "no such show"}`, before any lookup or path join. |
+| **`"readOnly": true`** | **Every `POST` beneath that show is `403 {"error": "<key> is read-only"}`** — the launch, the gate answer, the New-episode form, and any path under the show that no route registered. The refusal is in the middleware and not in the seven write routes, so it covers the whole subtree rather than the paths somebody remembered. Reading a read-only show is unrestricted. This is what makes it safe to list a retired repository beside its successor: the two name the same NAS root and the same final filename, so one finalize step run in the wrong tree would overwrite a finished season. |
+| **The SSE channel** | One stream, and **every message names its show** — `{"type": "run", "show": "<key>", …}`, `{"type": "episodes", "show": "<key>"}`. Two shows holding an episode of the same id are otherwise the same notice twice, and a Board watching one would refetch on the other's every heartbeat. The `hello` carries the whole list: `{"type": "hello", "operator": …, "shows": [{"key", "showName", "readOnly"}]}`. |
+| **A show whose repository will not load** | Reported on stderr by key at startup and left out — its routes then answer 404, like any key the console does not hold. One unfinished edit in one `showrunner.json` must not take every other show's Board off the air. |
+| **A show whose episode files throw** | Its Board answers one row, `{"id": "", "error": "<key>: its episodes could not be read — …"}`, rather than a 500 that names no show. A malformed `images/prompts.json` or `Canon/refs.json` is a real failure of the show's own files; every other registered show is gathered under its own request and is untouched. |
+| **A malformed registry file** | Fatal: the message on stderr and exit 65. A registry read as empty looks exactly like a machine with no shows on it, and the operator's remedy would then be to register every show again. |
+
+**The registry file is the operator's, and this server only reads it.** Nothing in the console
+writes `~/.showrunner/shows.json` today; the New-show surface that appends to it is a later task of
+the same plan, and it is the one write the console ever makes outside a show repository.
 
 ## The archive marker — an episode the engine never ran
 
@@ -68,7 +102,8 @@ they are still writing.
 ## Running it
 
     cd <engine repository> && npm run build
-    node console/dist/server/main.js --show <show repository> --port 4410
+    node console/dist/server/main.js --port 4410                      # every show in ~/.showrunner/shows.json
+    node console/dist/server/main.js --show <show repository>          # one show, keyed by its directory name
 
 **The default port is 4410 and the Vite dev server's is 5193, which are deliberately not console
 v1's 4400 and 5183.** The two consoles' defaults differ so that both run side by side through the
@@ -78,7 +113,8 @@ show repository while this console is brought up on the same machine. Plan F ret
 
 | Flag | Default | What it does |
 |---|---|---|
-| `--show <path>` | **required** | The show repository the server reads and the only tree it writes into. Without it the server prints its usage line and exits 64. |
+| `--registry <file>` | `~/.showrunner/shows.json` | The registry of shows to hold. A file that does not exist is an empty registry and the server still starts, saying so — the state a machine is in before its first show is registered. A file that exists and is malformed exits **65** with the reason, rather than being read as empty. |
+| `--show <path>` | absent | One show repository, keyed by its own directory name, registering nothing and writing nothing. **`--show` and `--registry` together exit 64**: they are two answers to one question, and silently preferring one would be a console holding shows the operator did not ask for. A directory name that is not a show key exits 64 naming it. |
 | `--port <n>` | `4410` | The port to listen on (`DEFAULT_PORT`, `server/main.ts`). A value that is not an integer in 1–65535 exits 64. |
 | `--host` | absent | A presence, not a value. **Absent, the server binds `127.0.0.1` and is reachable only from the machine it runs on; given, it binds `0.0.0.0` and is on the network.** The console has no authentication of its own and it spawns processes, so `--host` is the operator saying "this is my home network" and must never be given on a network that is not. |
 | `--operator <name>` | `console:<username>` | Who the server acts as. The string is stamped on every gate answer as `by`, on every reset, and as the `trigger` of every run it launches. |
@@ -150,7 +186,7 @@ in-memory copy does not have. The spawn is last because a worker started before 
 read an unchanged log, park at the same gate, release its lock and exit — and the operator's answer
 would then land in a log with no process behind it.
 
-### Resume — `POST /api/episodes/:id/runs/:run/resume`
+### Resume — `POST /api/shows/:show/episodes/:id/runs/:run/resume`
 
 **Resume reopens a run that failed.** It calls the engine's `resumeRun` and appends one
 `run_resumed` event carrying the operator's name. Refused with a 409 while a live worker holds the
@@ -161,7 +197,7 @@ the failure swept back at pending and continues from there; every completed step
 so no agent step is paid for twice. Resume is also what clears the `refs-ready` and
 `showrunner-images` guards once the missing file is on disk.
 
-### Continue — `POST /api/episodes/:id/runs/:run/continue`
+### Continue — `POST /api/shows/:show/episodes/:id/runs/:run/continue`
 
 **Continue puts a worker back on a run that crashed, and is the one action with nothing to append.**
 A crash is a log with no terminal event and no live worker, which happens in exactly two ways: a
@@ -180,7 +216,7 @@ for a finished run (`resume it or launch a new run`), for a run parked at a gate
 instead`), and while a live worker holds it. It is keyed on the log and the lock rather than on the
 status string, so it offers the same move whatever the Board happens to call the run.
 
-### Re-run from here — `POST /api/episodes/:id/runs/:run/reset`
+### Re-run from here — `POST /api/shows/:show/episodes/:id/runs/:run/reset`
 
 **Re-run from here returns the named steps and everything downstream of them to pending.** It calls
 the engine's `resetSteps`, which appends a `run_resumed` first when the run had finished, then one
@@ -194,7 +230,7 @@ showrunner is in the middle of judging. Gates are never reset; withdrawing is ho
 taken back. The next worker re-executes the reset steps in dependency order, and a script step
 whose declared inputs and outputs are unchanged on disk is still served from cache.
 
-### Withdraw approval — `POST /api/episodes/:id/runs/:run/withdraw`
+### Withdraw approval — `POST /api/shows/:show/episodes/:id/runs/:run/withdraw`
 
 **Withdraw takes back an approval the showrunner already gave.** It calls the engine's
 `withdrawApproval`, which appends a `run_resumed` when the run had finished, then one `step_reset`
@@ -219,7 +255,7 @@ an earlier gate is still available through the route, deliberately.
 
 ## The artifact route's fence
 
-`GET /api/episodes/:id/files/<show-relative path>` serves the episode's own files — the outline a
+`GET /api/shows/:show/episodes/:id/files/<show-relative path>` serves the episode's own files — the outline a
 gate is asking about, the mix, the shot images, the render, the canon patch — and **nothing else on
 the machine the console is running on.** The route answers a file with HTTP Range, which is what
 lets a browser seek to minute nine of a several-hundred-megabyte render instead of downloading all
@@ -267,7 +303,7 @@ what the person at the tab can do about them:
 | `<show> console` | Nothing wants attention. |
 
 Each form names the first row in Board order that matches, so two waiting episodes name the earlier
-one and the title does not flicker between them. Before `GET /api/show` has answered there is no
+one and the title does not flicker between them. Before `GET /api/shows/:show` has answered there is no
 show name to use and the title is the neutral `console`: this repository names no show, and a
 placeholder would be a name invented in code.
 

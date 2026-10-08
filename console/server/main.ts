@@ -5,10 +5,17 @@ import { fileURLToPath } from "node:url";
 import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { createApp } from "./app.js";
+import { defaultRegistryPath, readRegistry, singleShowRegistry, type Registry } from "./registry.js";
 import { RunStore } from "./runs.js";
-import { loadShowContext } from "./show.js";
+import { defaultOperator, loadShows } from "./show.js";
 
-/** The console's entry point: one show, one port, one store watching the show's run logs.
+/** The console's entry point: every registered show, one port, and one store per show watching
+ *  that show's run logs.
+ *
+ *  **The shows come from a registry** — `~/.showrunner/shows.json` by default, `--registry <file>`
+ *  to point elsewhere, or `--show <root>` for the one-show console this used to be. Which show a
+ *  request means is a segment of its own url, resolved by one middleware in `app.ts`, so the shows
+ *  are a map here and a `ShowContext` is still one show everywhere else.
  *
  *  What it deliberately does not do is own anything it started. Workers are spawned detached and
  *  into their own process groups, so stopping this server — on a signal, on a crash, on an
@@ -40,11 +47,54 @@ function present(name: string): boolean {
  *  different interface and answering half the requests. Plan F retires v1 and frees 4400. */
 export const DEFAULT_PORT = 4410;
 
-const USAGE = `usage: console --show <root> [--engine-root <path>] [--port ${DEFAULT_PORT}] [--host] [--operator <name>] [--worker <path to a worker entry>] [--concurrency 7]\n`;
+const USAGE = `usage: console [--registry <file>] [--show <root>] [--engine-root <path>] [--port ${DEFAULT_PORT}] [--host] [--operator <name>] [--worker <path to a worker entry>] [--concurrency 7]\n`;
+
+/** The registry the flags name, and the line to print about it once the server is listening.
+ *
+ *  Three cases, and the exits are the point of each. **Both flags is a usage error**: they are two
+ *  answers to one question, and silently preferring one would be a console holding shows the
+ *  operator did not ask for. **A malformed registry file is fatal** — exit 65, the message on
+ *  stderr rather than a stack — because a registry read as empty looks exactly like a machine with
+ *  no shows on it, and the operator's remedy would then be to register every show again.
+ *  **The default registry being absent is not an error at all**: it is a new machine, and the
+ *  New-show surface that writes the first entry is served by this very process, so the console has
+ *  to come up with nothing in it and say so. */
+async function registryFromFlags(): Promise<{ registry: Registry; note?: string }> {
+  const showRoot = flag("show");
+  const registryFile = flag("registry");
+  if (showRoot !== undefined && registryFile !== undefined) {
+    process.stderr.write("--show and --registry are two ways of saying which shows this console holds; pass one\n");
+    process.stderr.write(USAGE);
+    process.exit(64);
+  }
+  if (showRoot !== undefined) {
+    try {
+      return { registry: singleShowRegistry(showRoot) };
+    } catch (err) {
+      process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
+      process.exit(64);
+    }
+  }
+  const file = registryFile !== undefined ? path.resolve(registryFile) : defaultRegistryPath();
+  let registry: Registry;
+  try {
+    registry = await readRegistry(file);
+  } catch (err) {
+    process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
+    process.exit(65);
+  }
+  if (Object.keys(registry.shows).length === 0) {
+    return {
+      registry,
+      note: `console: no shows are registered — the registry at ${file} is empty or does not exist yet; `
+        + `register a show from the browser, or start with --show <root>`,
+    };
+  }
+  return { registry };
+}
 
 async function main(): Promise<void> {
-  const showRoot = flag("show");
-  if (showRoot === undefined) { process.stderr.write(USAGE); process.exit(64); }
+  const { registry, note } = await registryFromFlags();
   const here = path.dirname(fileURLToPath(import.meta.url));
   // dist/server/main.js → dist/server → dist → console → the repository root, where `scripts/`
   // and `render/` live.
@@ -60,13 +110,17 @@ async function main(): Promise<void> {
   const concurrency = Number(concurrencyRaw);
   if (!Number.isInteger(concurrency) || concurrency < 1) { process.stderr.write(`invalid --concurrency ${concurrencyRaw}\n`); process.exit(64); }
 
-  const ctx = await loadShowContext({
-    showRoot, engineRoot, concurrency,
+  // One context per registered show, and one store per context. A show whose repository will not
+  // load is reported on stderr by `loadShows` and left out of the map, so one unfinished edit in
+  // one show does not take every other show's Board off the air (ruling H-14).
+  const shows = await loadShows(registry, {
+    engineRoot, concurrency,
     ...(operator !== undefined ? { operator } : {}),
     ...(worker !== undefined ? { workerCommand: [process.execPath, path.resolve(worker)] } : {}),
   });
-  const store = new RunStore(ctx);
-  const app = createApp(ctx, store);
+  const stores = new Map<string, RunStore>();
+  for (const [key, ctx] of shows) stores.set(key, new RunStore(ctx));
+  const app = createApp(shows, stores);
 
   // The built client, when there is one. In development Vite serves it on its own port and
   // proxies /api here, so this directory does not exist and nothing is mounted.
@@ -82,13 +136,24 @@ async function main(): Promise<void> {
     });
   }
 
-  // Watching starts before listening, so the first request already has the show's logs tailed.
-  await store.watch();
+  // Watching starts before listening, so the first request already has every show's logs tailed.
+  for (const store of stores.values()) await store.watch();
   // Loopback unless asked: the console answers for a show repository and spawns processes, and
   // it has no authentication of its own. `--host` is the operator saying "put it on the LAN".
   const hostname = present("host") ? "0.0.0.0" : "127.0.0.1";
   const server = serve({ fetch: app.fetch, port, hostname }, (info) => {
-    process.stdout.write(`console: ${ctx.show.showName} at http://${hostname === "0.0.0.0" ? "0.0.0.0" : "127.0.0.1"}:${info.port} (operator ${ctx.operator})\n`);
+    const address = `http://${hostname === "0.0.0.0" ? "0.0.0.0" : "127.0.0.1"}:${info.port}`;
+    // The operator is the console's, not a show's: `--operator` is passed to every show and the
+    // default is one function, so this is the string every context was stamped with — and it is
+    // still the right line to print on a console that holds no shows at all.
+    const operatorName = operator ?? defaultOperator();
+    process.stdout.write(`console: ${shows.size} show${shows.size === 1 ? "" : "s"} at ${address} (operator ${operatorName})\n`);
+    // One line per show, keyed as the url keys it, because the key is what the operator has to
+    // type or click and the name alone cannot be told apart when two shows share a name.
+    for (const ctx of shows.values()) {
+      process.stdout.write(`console:   ${ctx.key} — ${ctx.show.showName}${ctx.readOnly ? " (read-only)" : ""} → ${address}/shows/${ctx.key}\n`);
+    }
+    if (note !== undefined) process.stdout.write(`${note}\n`);
   });
 
   let stopping = false;
@@ -96,7 +161,7 @@ async function main(): Promise<void> {
     if (stopping) return;
     stopping = true;
     process.stdout.write(`console: ${signal} — closing the server; every run keeps going\n`);
-    store.close();
+    for (const store of stores.values()) store.close();
     server.close(() => { process.exit(0); });
     // A connection that will not close must not keep the console alive forever: SSE streams are
     // open by design, and an operator who pressed Ctrl-C meant it.

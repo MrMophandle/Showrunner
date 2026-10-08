@@ -22,6 +22,29 @@ import type { PipelineDescription } from "@showrunner/engine";
  *  `Exclude<RunStatus, "none" | "running" | "archived">`. */
 export type RunStatus = "none" | "running" | "waiting" | "failed" | "crashed" | "completed" | "archived";
 
+/** One registered show, as `GET /api/shows` lists it and `GET /api/shows/:show` answers for one.
+ *
+ *  `key` is the operator's own name for the show, from the registry — the segment every URL
+ *  carries and the value every SSE message is stamped with. It is not derived from the config:
+ *  `showName` and `showSlug` are the only identity fields a `showrunner.json` has, and the two
+ *  shows this console was built against declare the same value for both (ruling H-02). `readOnly`
+ *  is why a client draws no Launch button, no gate answer and no New-episode form for a show: the
+ *  server refuses every POST to it, and a button that is refused is worse than no button.
+ *
+ *  Declared here rather than in the client because two things now read it — the client, and the
+ *  server's own `/api/shows` route, which builds one of these per context. */
+export interface ShowInfo {
+  key: string;
+  readOnly: boolean;
+  showName: string;
+  showSlug: string;
+  operator: string;
+  episodesDir: string;
+  productionDir: string;
+  stages: string[];
+  engineVersion: string;
+}
+
 /** The worker holding a run, as a reader of the run's `<runId>.lock` sees it. `pid`,
  *  `heartbeatAt` and `groups` are the lock's own fields, written by the worker on every beat;
  *  `alive` is the reader's verdict on `pid` at the moment it read the file, since a lock whose
@@ -75,6 +98,15 @@ export interface EpisodeRow {
    *  Board can show. For an episode with no runs: "archive.json: <reason>" — the archive marker
    *  is there and unreadable, and the stage beside it is the derived one, not the marker's. */
   logError?: string;
+  /** Set on the **one** row a show yields when its rows could not be read at all: `id` is the
+   *  empty string and this carries the reason.
+   *
+   *  The Board gathers its rows per show and catches per show, so one show whose episode files
+   *  throw — a malformed `images/prompts.json`, an unreadable `Canon/refs.json` — becomes one row
+   *  saying so instead of a 500 that tells the operator nothing about which show is at fault
+   *  (ruling H-14). `logError` is the narrower fact (this row's own log or marker stopped being
+   *  readable); `error` means no row for this show could be built. */
+  error?: string;
 }
 
 /** One step of a run as the console draws it: the row exists for every step of the pipeline
@@ -159,11 +191,24 @@ export interface EventBatch {
  *  "run" message says a log grew and to what offset, leaving the client to fetch the bytes it is
  *  missing, and an "episodes" message says some episode's status changed and the Board should
  *  re-read. "hello" is sent once, first, so a client knows the channel is open and who it is
- *  talking to. */
+ *  talking to.
+ *
+ *  **`show` is on every notice, and it is load-bearing.** One channel carries the notices of every
+ *  registered show, and the two shows this console was built against both hold an episode called
+ *  `s02e01`: without the key, a Board watching one show would refetch on the other show's every
+ *  heartbeat and a Run page would tail a log that is not the one it is drawing (ruling H-12). The
+ *  channel stays one stream rather than one per show because a client that is looking at two shows
+ *  in two tabs should still cost one connection.
+ *
+ *  `hello` carries the list and not one name, because the list is what the Shows page draws and
+ *  what tells a client which shows refuse a POST before it offers a button that would be refused.
+ *  The `setup` variant is the interview's runs, written by Task 5's setup worker; it is declared
+ *  here from the start so the client's parser accepts it before anything publishes one. */
 export type SseMessage =
-  | { type: "run"; episodeId: string; runId: string; offset: number }
-  | { type: "episodes" }
-  | { type: "hello"; operator: string; showName: string };
+  | { type: "run"; show: string; episodeId: string; runId: string; offset: number }
+  | { type: "episodes"; show: string }
+  | { type: "setup"; show: string; key: string; runId: string; offset: number }
+  | { type: "hello"; operator: string; shows: { key: string; showName: string; readOnly: boolean }[] };
 
 /** One file (or one directory of files) a gate refers to, as a url the artifact route serves.
  *

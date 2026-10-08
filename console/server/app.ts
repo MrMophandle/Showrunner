@@ -1,18 +1,19 @@
 import path from "node:path";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { Hono } from "hono";
-import type { Context } from "hono";
+import type { Context, MiddlewareHandler } from "hono";
 import { stream as streamText, streamSSE } from "hono/streaming";
 import {
   ENGINE_VERSION, EventLog, RUN_ID, STAGES, answerGate, deriveRunState, describePipeline, episodePipeline,
   latestRunId, listEpisodeIds, mintRunId, parseEpisodeId, resetSteps, resumeRun, withdrawApproval,
   type Pipeline, type PipelineDescription, type QueryFn, type RunState,
 } from "@showrunner/engine";
-import type { EventBatch, SseMessage } from "../shared/types.js";
+import type { EpisodeRow, EventBatch, ShowInfo, SseMessage } from "../shared/types.js";
 import { serveArtifact, serveRunLog } from "./artifacts.js";
 import { gateView } from "./gates.js";
+import { SHOW_KEY } from "./registry.js";
 import type { RunStore } from "./runs.js";
-import type { ShowContext } from "./show.js";
+import { defaultOperator, type ShowContext } from "./show.js";
 import { assemble, ask } from "./what-happened.js";
 import { killRecordedGroups, readLock, spawnWorker } from "./workers.js";
 
@@ -21,7 +22,13 @@ import { killRecordedGroups, readLock, spawnWorker } from "./workers.js";
  *  is the six actions an operator can take on a run plus the gate view, the episode's own files
  *  and "what happened".
  *
- *  Three rules hold across every route.
+ *  Four rules hold across every route.
+ *
+ *  Every route but one lives under `/api/shows/:show/`, and one middleware turns that segment into
+ *  the `ShowContext` and the `RunStore` of the show the request means. The one exception is
+ *  `GET /api/events`, which is one channel across every registered show and stamps the show key on
+ *  every message instead. The middleware is also where a read-only show refuses a POST and where
+ *  an unknown key becomes a 404, so neither refusal is seven handlers' job to remember.
  *
  *  Every `:id` is validated with `parseEpisodeId` and every `:run` against `RUN_ID` **before** any
  *  path is built from it, because these are the strings that become filesystem paths: an unchecked
@@ -121,6 +128,33 @@ function survivingGatesOf(description: PipelineDescription, state: RunState, ste
     .map((step) => step.id);
 }
 
+/** What the show middleware puts on the Hono context, and what every route under
+ *  `/api/shows/:show/` reads back with `c.get`.
+ *
+ *  Declared as Hono's `Variables` rather than left to `any` so a route that asked for a variable
+ *  the middleware does not set would not compile. The two together are the whole of what resolving
+ *  a show means: the show's own context, and the store watching that show's logs. */
+export type ShowVars = { Variables: { ctx: ShowContext; store: RunStore } };
+
+/** One show as the two show routes answer it: the registry's facts about it (`key`, `readOnly`)
+ *  joined to the config's and the engine's. Built in one function because `GET /api/shows` and
+ *  `GET /api/shows/:show` must not disagree about what a show is — the list is what the Shows page
+ *  draws and the single answer is what a Board reads at startup, and a field present in one and
+ *  absent from the other would be a page that works until the operator reloads it. */
+function showInfo(ctx: ShowContext): ShowInfo {
+  return {
+    key: ctx.key,
+    readOnly: ctx.readOnly,
+    showName: ctx.show.showName,
+    showSlug: ctx.show.showSlug,
+    operator: ctx.operator,
+    episodesDir: ctx.episodesDir,
+    productionDir: ctx.productionDir,
+    stages: [...STAGES],
+    engineVersion: ENGINE_VERSION,
+  };
+}
+
 /** The seams the app is built with. Production passes none: `query` defaults, inside
  *  `what-happened.ts`, to the engine's `sdkQuery`. A test passes a fake so the "what happened"
  *  route can be driven end to end without a model behind it. */
@@ -128,47 +162,115 @@ export interface AppDeps {
   query?: QueryFn;
 }
 
-/** The console's app, reading one show through one store. */
-export function createApp(ctx: ShowContext, store: RunStore, deps: AppDeps = {}): Hono {
-  const app = new Hono();
+/** The console's app: one context and one store per registered show, resolved per request from the
+ *  URL's show segment.
+ *
+ *  The two maps are keyed alike and are expected to hold the same keys — `main.ts` builds the
+ *  store map by walking the show map — and the middleware refuses a key missing from either, so a
+ *  half-built pair can never reach a route as a context with no store behind it. */
+export function createApp(
+  shows: Map<string, ShowContext>, stores: Map<string, RunStore>, deps: AppDeps = {},
+): Hono<ShowVars> {
+  const app = new Hono<ShowVars>();
 
-  /** What the client needs once, at startup: who it is talking to and the stage vocabulary the
-   *  Board's columns are drawn from. */
-  app.get("/api/show", (c) => c.json({
-    showName: ctx.show.showName,
-    showSlug: ctx.show.showSlug,
-    operator: ctx.operator,
-    episodesDir: ctx.episodesDir,
-    productionDir: ctx.productionDir,
-    stages: STAGES,
-    engineVersion: ENGINE_VERSION,
-  }));
+  /** Any failure a route did not answer for itself, as JSON.
+   *
+   *  Without this, Hono answers its own `Internal Server Error` as `text/plain`, and every client
+   *  of this server parses an error body as `{error}` — so a 500 read as an empty object and the
+   *  page said nothing at all about what had gone wrong (ruling H-14). The message is the thrown
+   *  error's own, because that message is what the operator has to act on, and the console's rule
+   *  everywhere else is not to paraphrase the words the engine chose. */
+  app.onError((err, c) => c.json({ error: err instanceof Error ? err.message : String(err) }, 500));
 
-  /** The Board: one row per episode of the show, in id order. */
-  app.get("/api/episodes", async (c) => {
-    const ids = await listEpisodeIds(ctx.showRoot, ctx.show);
-    const rows = await Promise.all(ids.map((id) => store.episodeRow(id)));
-    return c.json(rows);
+  /** Every show this console holds. The client's first request: the Shows page is drawn from it,
+   *  and a client cannot build any other url until it knows a key. */
+  app.get("/api/shows", (c) => c.json([...shows.values()].map(showInfo)));
+
+  /** Resolves `:show` into the context and the store of the show a request means, and refuses the
+   *  two things no route beneath it should have to think about.
+   *
+   *  **404 for a key this console does not hold**, including a key the grammar rejects — tested
+   *  before the map lookup, because the key is the one string that reaches a URL path segment and
+   *  validating it once here is the fence spec §4.4 asks for (the episode ids beneath it are
+   *  fenced the same way, once, by `checkEpisodeId`).
+   *
+   *  **403 for any POST to a read-only show.** Here and not in the seven POST handlers, for a
+   *  measured reason: a POST to a path no route registered still matches `/api/shows/:show/*`, so
+   *  the refusal covers the whole subtree rather than the seven paths somebody remembered. The
+   *  retired repository and the live instance name the same NAS root and the same final filename,
+   *  so one write in the wrong tree overwrites a finished season (ruling H-03) — this is the line
+   *  that makes listing the retired show safe. */
+  const resolveShow: MiddlewareHandler<ShowVars> = async (c, next) => {
+    const key = c.req.param("show") ?? "";
+    if (!SHOW_KEY.test(key)) return c.json({ error: "no such show" }, 404);
+    const ctx = shows.get(key);
+    const store = stores.get(key);
+    if (ctx === undefined || store === undefined) return c.json({ error: "no such show" }, 404);
+    if (ctx.readOnly && c.req.method === "POST") return c.json({ error: `${key} is read-only` }, 403);
+    c.set("ctx", ctx);
+    c.set("store", store);
+    await next();
+  };
+  // Two registrations and not one: Hono's `/*` does not match `/api/shows/<key>` with nothing
+  // after it, and that is exactly the shape of the one-show route below.
+  app.use("/api/shows/:show", resolveShow);
+  app.use("/api/shows/:show/*", resolveShow);
+
+  /** What a client needs once per show, at startup: which show this is, whether it may be
+   *  written to, who it is talking to, and the stage vocabulary the Board's columns are drawn
+   *  from. */
+  app.get("/api/shows/:show", (c) => c.json(showInfo(c.get("ctx"))));
+
+  /** The Board: one row per episode of the show, in id order.
+   *
+   *  **The gather is caught, and a show whose rows cannot be read becomes one row rather than a
+   *  500** (ruling H-14). The failures are real and are the show's own files, not the console's: a
+   *  malformed `Production/<id>/images/prompts.json` or `Canon/refs.json` throws out of the needs
+   *  probes, through `episodeRow`, and used to take this route with it — and the operator was told
+   *  "Internal Server Error" about a Board that names no show. One row carrying the reason says
+   *  which show and why, the other registered shows are untouched because each is gathered under
+   *  its own request, and the row's empty `id` is what marks it as a row about the show rather
+   *  than about an episode. */
+  app.get("/api/shows/:show/episodes", async (c) => {
+    const ctx = c.get("ctx");
+    const store = c.get("store");
+    try {
+      const ids = await listEpisodeIds(ctx.showRoot, ctx.show);
+      return c.json(await Promise.all(ids.map((id) => store.episodeRow(id))));
+    } catch (err) {
+      // `id: ""` is what marks the row as a row about the show; `stage: ""` because an
+      // unreadable show has no stage and claiming one would colour the chip with a fact nobody
+      // derived. The reason is the whole of the row's content.
+      const row: EpisodeRow = {
+        id: "",
+        title: ctx.show.showName,
+        stage: "",
+        status: "none",
+        needs: { ideaMissing: false, refsMissing: [], imagesMissing: [] },
+        error: `${ctx.key}: its episodes could not be read — ${err instanceof Error ? err.message : String(err)}`,
+      };
+      return c.json([row]);
+    }
   });
 
-  app.get("/api/episodes/:id", async (c) => {
+  app.get("/api/shows/:show/episodes/:id", async (c) => {
     const id = c.req.param("id");
     const valid = checkEpisodeId(id);
     if (!valid.ok) return c.json({ error: valid.error }, 400);
-    return c.json(await store.episodeRow(id));
+    return c.json(await c.get("store").episodeRow(id));
   });
 
   /** One run at the middle altitude. A run id with no log is not an error: the view is the
    *  pipeline with every step pending, which is what a run looks like in the second between its
    *  launch and its worker's first write. */
-  app.get("/api/episodes/:id/runs/:run", async (c) => {
+  app.get("/api/shows/:show/episodes/:id/runs/:run", async (c) => {
     const id = c.req.param("id");
     const run = c.req.param("run");
     const validId = checkEpisodeId(id);
     if (!validId.ok) return c.json({ error: validId.error }, 400);
     const validRun = checkRunId(run);
     if (!validRun.ok) return c.json({ error: validRun.error }, 400);
-    return c.json(await store.view(id, run));
+    return c.json(await c.get("store").view(id, run));
   });
 
   /** The bottom altitude: the raw events a client has not seen. `after` is a byte offset — the
@@ -176,7 +278,8 @@ export function createApp(ctx: ShowContext, store: RunStore, deps: AppDeps = {})
    *  writing hundreds of lines a minute transfers only the lines. Read from the log rather than
    *  from the store's cache because the cache holds no per-event offsets: the file is the only
    *  thing that can answer "the bytes after N" exactly. */
-  app.get("/api/episodes/:id/runs/:run/events", async (c) => {
+  app.get("/api/shows/:show/episodes/:id/runs/:run/events", async (c) => {
+    const ctx = c.get("ctx");
     const id = c.req.param("id");
     const run = c.req.param("run");
     const validId = checkEpisodeId(id);
@@ -202,13 +305,23 @@ export function createApp(ctx: ShowContext, store: RunStore, deps: AppDeps = {})
    *  the client fetches what it is missing. The subscription is dropped when the client goes
    *  away, which is the only cleanup this route owns. */
   app.get("/api/events", (c) => streamSSE(c, async (stream) => {
-    const hello: SseMessage = { type: "hello", operator: ctx.operator, showName: ctx.show.showName };
+    const first = [...shows.values()][0];
+    const hello: SseMessage = {
+      type: "hello",
+      // Every context carries the same operator — one `--operator` is passed to every show, and
+      // the default is one function — so the first show's is the console's. A console holding no
+      // shows yet still has an operator to name, which is the state the New-show surface runs in.
+      operator: first?.operator ?? defaultOperator(),
+      shows: [...shows.values()].map((s) => ({ key: s.key, showName: s.show.showName, readOnly: s.readOnly })),
+    };
     await stream.writeSSE({ data: JSON.stringify(hello) });
 
     const queue: SseMessage[] = [];
     let wake: (() => void) | undefined;
     let open = true;
-    const unsubscribe = store.subscribe((m) => { queue.push(m); wake?.(); });
+    // One subscription per show, drained into one queue: the channel is one stream across every
+    // registered show, and each message says which show it is about.
+    const unsubscribes = [...stores.values()].map((s) => s.subscribe((m) => { queue.push(m); wake?.(); }));
     stream.onAbort(() => { open = false; wake?.(); });
 
     try {
@@ -233,7 +346,7 @@ export function createApp(ctx: ShowContext, store: RunStore, deps: AppDeps = {})
         if (ticked && open && !stream.aborted) await stream.write(": ping\n\n");
       }
     } finally {
-      unsubscribe();
+      for (const unsubscribe of unsubscribes) unsubscribe();
     }
   }));
 
@@ -266,7 +379,8 @@ export function createApp(ctx: ShowContext, store: RunStore, deps: AppDeps = {})
    *  `wx` rather than a read-then-write, so two operators creating the same episode cannot both
    *  believe they did. No `Production/<id>/` is made here: that directory is a run's to create,
    *  and an empty one would put a row on the Board for an episode with no idea in it. */
-  app.post("/api/episodes", async (c) => {
+  app.post("/api/shows/:show/episodes", async (c) => {
+    const ctx = c.get("ctx");
     const body = await readJsonBody(c);
     const id = body["id"];
     const premise = body["premise"];
@@ -316,7 +430,9 @@ export function createApp(ctx: ShowContext, store: RunStore, deps: AppDeps = {})
    *  and the file left behind would be the episode's latest run, empty and so unfinished —
    *  refusing every later launch while Continue refused it too. The episode would be wedged by a
    *  misconfiguration, which is a worse failure than the misconfiguration. */
-  app.post("/api/episodes/:id/runs", async (c) => {
+  app.post("/api/shows/:show/episodes/:id/runs", async (c) => {
+    const ctx = c.get("ctx");
+    const store = c.get("store");
     const id = c.req.param("id");
     const valid = checkEpisodeId(id);
     if (!valid.ok) return c.json({ error: valid.error }, 400);
@@ -364,7 +480,8 @@ export function createApp(ctx: ShowContext, store: RunStore, deps: AppDeps = {})
    *  `expectedAttempt` is the attempt the Gate page read. The engine refuses an answer that names
    *  a different one, which is the whole protection against a tab left open across a rejection:
    *  the showrunner would otherwise approve a message that a fix agent has already superseded. */
-  app.post("/api/episodes/:id/runs/:run/gate", async (c) => {
+  app.post("/api/shows/:show/episodes/:id/runs/:run/gate", async (c) => {
+    const ctx = c.get("ctx");
     const checked = checkIds(c);
     if (!checked.ok) return c.json({ error: checked.error }, 400);
     const { id, run } = checked;
@@ -393,7 +510,8 @@ export function createApp(ctx: ShowContext, store: RunStore, deps: AppDeps = {})
 
   /** Resumes a failed run: the failed step and everything it swept away go back to pending, and a
    *  worker continues from there. Only a run whose log ends failed can be resumed. */
-  app.post("/api/episodes/:id/runs/:run/resume", async (c) => {
+  app.post("/api/shows/:show/episodes/:id/runs/:run/resume", async (c) => {
+    const ctx = c.get("ctx");
     const checked = checkIds(c);
     if (!checked.ok) return c.json({ error: checked.error }, 400);
     const { id, run } = checked;
@@ -420,7 +538,9 @@ export function createApp(ctx: ShowContext, store: RunStore, deps: AppDeps = {})
    *  Refused for a run that is finished (resume it, or launch a new one) or waiting (answer the
    *  gate). Keyed on the log and the lock rather than on the status string, so it offers the same
    *  move whatever the Board happens to call the run. */
-  app.post("/api/episodes/:id/runs/:run/continue", async (c) => {
+  app.post("/api/shows/:show/episodes/:id/runs/:run/continue", async (c) => {
+    const ctx = c.get("ctx");
+    const store = c.get("store");
     const checked = checkIds(c);
     if (!checked.ok) return c.json({ error: checked.error }, 400);
     const { id, run } = checked;
@@ -442,7 +562,9 @@ export function createApp(ctx: ShowContext, store: RunStore, deps: AppDeps = {})
    *  is expensive: a gate is answered or withdrawn, and resetting around it would leave the run
    *  rebuilding the work the showrunner is being asked about. Gates themselves are never reset —
    *  that is the engine's rule, and `withdraw` is how an approval is taken back. */
-  app.post("/api/episodes/:id/runs/:run/reset", async (c) => {
+  app.post("/api/shows/:show/episodes/:id/runs/:run/reset", async (c) => {
+    const ctx = c.get("ctx");
+    const store = c.get("store");
     const checked = checkIds(c);
     if (!checked.ok) return c.json({ error: checked.error }, 400);
     const { id, run } = checked;
@@ -479,7 +601,9 @@ export function createApp(ctx: ShowContext, store: RunStore, deps: AppDeps = {})
    *  `gate_answered` changes the state it would be read from afterwards. The rail offers withdraw
    *  only on the latest approved gate, so an operator reaching this route for an earlier gate is
    *  acting deliberately — and is told exactly which approvals that spends. */
-  app.post("/api/episodes/:id/runs/:run/withdraw", async (c) => {
+  app.post("/api/shows/:show/episodes/:id/runs/:run/withdraw", async (c) => {
+    const ctx = c.get("ctx");
+    const store = c.get("store");
     const checked = checkIds(c);
     if (!checked.ok) return c.json({ error: checked.error }, 400);
     const { id, run } = checked;
@@ -508,10 +632,10 @@ export function createApp(ctx: ShowContext, store: RunStore, deps: AppDeps = {})
   /** The open gate of one run: the question, the files it is about, the verdicts behind it, and
    *  the attempt the answer must name. A 404 means no gate is open, which is also what a client
    *  polling a gate sees the moment someone else answers it. */
-  app.get("/api/episodes/:id/runs/:run/gate", async (c) => {
+  app.get("/api/shows/:show/episodes/:id/runs/:run/gate", async (c) => {
     const checked = checkIds(c);
     if (!checked.ok) return c.json({ error: checked.error }, 400);
-    const view = await gateView(ctx, store, checked.id, checked.run);
+    const view = await gateView(c.get("ctx"), c.get("store"), checked.id, checked.run);
     if (view === undefined) return c.json({ error: `no gate is open on run ${checked.run} of ${checked.id}` }, 404);
     return c.json(view);
   });
@@ -519,32 +643,34 @@ export function createApp(ctx: ShowContext, store: RunStore, deps: AppDeps = {})
   /** The episode's own files: a file with HTTP Range, or a directory as a JSON listing. The `*`
    *  is a show-relative path, and `resolveArtifactPath` is the only thing standing between it and
    *  the filesystem — see `server/artifacts.ts` for the three layers it applies. */
-  app.get("/api/episodes/:id/files/:path{.+}", async (c) => {
+  app.get("/api/shows/:show/episodes/:id/files/:path{.+}", async (c) => {
     const id = c.req.param("id");
     const valid = checkEpisodeId(id);
     if (!valid.ok) return c.json({ error: valid.error }, 400);
-    return serveArtifact(c, ctx, id, c.req.param("path"));
+    return serveArtifact(c, c.get("ctx"), id, c.req.param("path"));
   });
 
   /** The run's raw log, as a download: the file to attach to a bug report. */
-  app.get("/api/episodes/:id/runs/:run/log", async (c) => {
+  app.get("/api/shows/:show/episodes/:id/runs/:run/log", async (c) => {
     const checked = checkIds(c);
     if (!checked.ok) return c.json({ error: checked.error }, 400);
-    return serveRunLog(c, ctx, checked.id, checked.run);
+    return serveRunLog(c, c.get("ctx"), checked.id, checked.run);
   });
 
   /** Everything the troubleshooter would be handed, so the operator can read it first. */
-  app.get("/api/episodes/:id/runs/:run/context", async (c) => {
+  app.get("/api/shows/:show/episodes/:id/runs/:run/context", async (c) => {
     const checked = checkIds(c);
     if (!checked.ok) return c.json({ error: checked.error }, 400);
-    return c.json(await assemble(ctx, store, checked.id, checked.run));
+    return c.json(await assemble(c.get("ctx"), c.get("store"), checked.id, checked.run));
   });
 
   /** Asks the troubleshooter about one run, streaming the answer as plain text so the operator
    *  reads the first sentence while the agent is still working. Every question and the answer it
    *  produced are appended to `<runs>/<runId>.troubleshooting.jsonl` — beside the run's log, never
    *  in it. */
-  app.post("/api/episodes/:id/runs/:run/ask", async (c) => {
+  app.post("/api/shows/:show/episodes/:id/runs/:run/ask", async (c) => {
+    const ctx = c.get("ctx");
+    const store = c.get("store");
     const checked = checkIds(c);
     if (!checked.ok) return c.json({ error: checked.error }, 400);
     const { id, run } = checked;

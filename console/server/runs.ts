@@ -303,13 +303,25 @@ function failedOf(events: Event[], state: RunState): { stepId: string; error: st
   return undefined;
 }
 
-/** Every run log of the show, tailed by byte offset, projected into the views the console draws,
- *  and announced on one channel.
+/** Every run log of **one** show, tailed by byte offset, projected into the views the console
+ *  draws, and announced on one channel.
  *
  *  The store writes nothing and owns nothing. It reads logs that detached workers append to, and
  *  the only thing it knows that a log does not is whether a process is holding the run — which
  *  it reads from the lock beside the log. A console that believed it owned a run would be a
- *  console that could kill one by restarting. */
+ *  console that could kill one by restarting.
+ *
+ *  **One store per registered show, not one store that knows about several.** The server builds
+ *  the map in `server/main.ts` and the show middleware hands a request the store for its own show,
+ *  which is why every key inside here — `#logs`, `#tails`, `#watchers` — stays keyed as it was,
+ *  on the episode id and the run id alone. Two shows each holding an `s02e01` sit in two stores
+ *  with two `#watchers` maps, so neither can take the other's watcher entry; had one store served
+ *  both shows, every one of these five maps would have needed a show segment and a single missed
+ *  one would have been two shows sharing a tail.
+ *
+ *  What the show key *is* needed for is the channel: every notice this store publishes carries
+ *  `show: this.#ctx.key`, because the SSE channel is one stream across every registered show and a
+ *  client watching one Board must be able to ignore another show's heartbeat (ruling H-12). */
 export class RunStore {
   readonly #ctx: ShowContext;
   readonly #pollMs: number;
@@ -531,7 +543,7 @@ export class RunStore {
     const previous = this.#tails.get(key) ?? Promise.resolve();
     const next = previous.then(async () => {
       const added = await this.#tailOnce(episodeId, runId);
-      if (added > 0) this.#publish({ type: "run", episodeId, runId, offset: this.#logs.get(key)?.offset ?? 0 });
+      if (added > 0) this.#publish({ type: "run", show: this.#ctx.key, episodeId, runId, offset: this.#logs.get(key)?.offset ?? 0 });
     }).catch(() => undefined);
     this.#tails.set(key, next);
     return next;
@@ -561,7 +573,7 @@ export class RunStore {
     if (filename === null || filename === "") {
       const dir = path.join(this.#ctx.showRoot, this.#ctx.productionDir, episodeId, "runs");
       void this.#rescanDir(episodeId, dir);
-      this.#publish({ type: "episodes" });
+      this.#publish({ type: "episodes", show: this.#ctx.key });
       return;
     }
     if (filename.endsWith(".jsonl")) {
@@ -574,7 +586,7 @@ export class RunStore {
     // A lock appearing or disappearing is a run starting or stopping, which is a Board fact
     // rather than a log one: there is nothing new to read, but every row's status may have
     // changed.
-    if (filename.endsWith(".lock")) this.#publish({ type: "episodes" });
+    if (filename.endsWith(".lock")) this.#publish({ type: "episodes", show: this.#ctx.key });
   }
 
   /** Tails the run logs in one directory — used when a watcher is first attached, and whenever a
@@ -611,6 +623,6 @@ export class RunStore {
     const changed = ids.length !== this.#episodeIds.length || ids.some((id, i) => id !== this.#episodeIds[i]);
     this.#episodeIds = ids;
     for (const id of ids) await this.#watchEpisode(id);
-    if (changed) this.#publish({ type: "episodes" });
+    if (changed) this.#publish({ type: "episodes", show: this.#ctx.key });
   }
 }

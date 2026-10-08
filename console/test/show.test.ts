@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
 import path from "node:path";
 import { readFile } from "node:fs/promises";
-import { loadShowContext } from "../server/show.js";
+import os from "node:os";
+import { defaultOperator, loadShowContext } from "../server/show.js";
 import { DEFAULT_PORT } from "../server/main.js";
 import { ENGINE_ROOT, FAKE_WORKER, makeShow } from "./helpers.js";
 
@@ -13,20 +14,53 @@ describe("loadShowContext", () => {
   it("refuses a worker entry that does not exist, and names the remedy", async () => {
     const root = await makeShow();
     const missing = path.join(root, "dist", "worker", "main.js");
-    await expect(loadShowContext({ showRoot: root, engineRoot: ENGINE_ROOT, workerCommand: [process.execPath, missing] }))
+    await expect(loadShowContext({ key: "show", showRoot: root, engineRoot: ENGINE_ROOT, workerCommand: [process.execPath, missing] }))
       .rejects.toThrow("the worker is not built: run npm run build -w console, or pass --worker <path>");
   });
 
   it("resolves the context when the worker entry is there", async () => {
     const root = await makeShow();
     const ctx = await loadShowContext({
-      showRoot: root, engineRoot: ENGINE_ROOT, operator: "console:test",
+      key: "show", showRoot: root, engineRoot: ENGINE_ROOT, operator: "console:test",
       workerCommand: [process.execPath, FAKE_WORKER],
     });
     expect(ctx.workerCommand).toEqual([process.execPath, FAKE_WORKER]);
     expect(ctx.productionDir).toBe("Production");
     expect(ctx.episodesDir).toBe("Episodes");
     expect(ctx.concurrency).toBe(7);
+  });
+
+  it("carries the registry's key and defaults readOnly to false — a writable show", async () => {
+    const root = await makeShow();
+    const ctx = await loadShowContext({
+      key: "harbor-light", showRoot: root, engineRoot: ENGINE_ROOT,
+      workerCommand: [process.execPath, FAKE_WORKER],
+    });
+    expect(ctx.key).toBe("harbor-light");
+    expect(ctx.readOnly).toBe(false);
+  });
+
+  it("carries readOnly when the registry set it, which is how a retired repository is listed", async () => {
+    const root = await makeShow();
+    const ctx = await loadShowContext({
+      key: "retired", showRoot: root, readOnly: true, engineRoot: ENGINE_ROOT,
+      workerCommand: [process.execPath, FAKE_WORKER],
+    });
+    expect(ctx.readOnly).toBe(true);
+  });
+});
+
+/** The operator default has one declaration because two places need the same string: every
+ *  context, and the SSE hello of a console that holds no shows at all. */
+describe("defaultOperator", () => {
+  it("is console:<username>, and is the default loadShowContext stamps", async () => {
+    const root = await makeShow();
+    const ctx = await loadShowContext({
+      key: "show", showRoot: root, engineRoot: ENGINE_ROOT,
+      workerCommand: [process.execPath, FAKE_WORKER],
+    });
+    expect(defaultOperator()).toBe(`console:${os.userInfo().username}`);
+    expect(ctx.operator).toBe(defaultOperator());
   });
 });
 

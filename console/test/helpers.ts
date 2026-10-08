@@ -4,8 +4,9 @@ import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import type { Hono } from "hono";
 import { EventLog, type QueryFn } from "@showrunner/engine";
-import { createApp } from "../server/app.js";
-import { loadShowContext, type ShowContext } from "../server/show.js";
+import { createApp, type ShowVars } from "../server/app.js";
+import { readRegistry, writeRegistry, type RegistryEntry } from "../server/registry.js";
+import { loadShows, type ShowContext } from "../server/show.js";
 import { RunStore } from "../server/runs.js";
 
 /** Not a test file: the fixtures Tasks 4 and 5 both build their tests on. One invented show on
@@ -92,19 +93,68 @@ export async function writeLock(root: string, episodeId: string, runId: string, 
   return file;
 }
 
-/** What the server's tests drive: the app, the context it was built from, and the store the app
- *  reads through. The worker command is the fake worker, so an action spawns a process that
- *  writes a log and exits rather than one that calls a model. `pollMs` is short so a test that
- *  wants the store's directory poll does not wait the production two seconds for it, and `query`
- *  is the seam the "what happened" route asks a model through — a test passes a fake so the
- *  route can be driven without a model behind it. */
-export async function appWith(root: string, opts: { pollMs?: number; query?: QueryFn } = {}): Promise<{ root: string; app: Hono; ctx: ShowContext; store: RunStore }> {
-  const ctx = await loadShowContext({
-    showRoot: root, engineRoot: ENGINE_ROOT, operator: "console:test",
+/** The key `appWith` registers its one show under, so every single-show test's urls are literals
+ *  (`/api/shows/show/episodes/…`) rather than a temporary directory's basename. */
+export const SHOW_KEY_FIXTURE = "show";
+
+/** One show in a temporary registry, as `appWithShows` takes it. */
+export interface FixtureShow {
+  root: string;
+  /** Defaults to `SHOW_KEY_FIXTURE` for the first show; later ones must name their own. */
+  key?: string;
+  readOnly?: boolean;
+}
+
+/** A registry file in a temporary directory of its own, holding the given shows.
+ *
+ *  **Never `~/.showrunner/shows.json`**: a test that wrote the operator's own registry would
+ *  register a temporary directory as a show on this machine and leave it there, and the next
+ *  console the operator started would try to load a show that had been deleted. */
+export async function makeRegistry(entries: FixtureShow[]): Promise<string> {
+  const dir = await mkdtemp(path.join(tmpdir(), "console-registry-"));
+  const file = path.join(dir, "shows.json");
+  const shows: Record<string, RegistryEntry> = {};
+  for (const [i, entry] of entries.entries()) {
+    const key = entry.key ?? (i === 0 ? SHOW_KEY_FIXTURE : `show${i + 1}`);
+    shows[key] = { root: entry.root, ...(entry.readOnly === true ? { readOnly: true } : {}) };
+  }
+  await writeRegistry(file, { shows });
+  return file;
+}
+
+/** What a multi-show test drives: the app over a temporary registry, and the maps behind it so a
+ *  test can reach one show's store directly. The worker command is the fake worker for every show,
+ *  so an action spawns a process that writes a log and exits rather than one that calls a model. */
+export async function appWithShows(
+  entries: FixtureShow[], opts: { pollMs?: number; query?: QueryFn } = {},
+): Promise<{ registryFile: string; app: Hono<ShowVars>; shows: Map<string, ShowContext>; stores: Map<string, RunStore> }> {
+  const registryFile = await makeRegistry(entries);
+  const shows = await loadShows(await readRegistry(registryFile), {
+    engineRoot: ENGINE_ROOT, operator: "console:test",
     workerCommand: [process.execPath, FAKE_WORKER],
+    // A show that would not load is the subject of its own tests; here it would be a silent skip,
+    // so the reason is swallowed rather than printed into the suite's output.
+    report: () => undefined,
   });
-  const store = new RunStore(ctx, { pollMs: opts.pollMs ?? 2000 });
-  return { root, app: createApp(ctx, store, opts.query !== undefined ? { query: opts.query } : {}), ctx, store };
+  const stores = new Map<string, RunStore>();
+  for (const [key, ctx] of shows) stores.set(key, new RunStore(ctx, { pollMs: opts.pollMs ?? 2000 }));
+  return { registryFile, app: createApp(shows, stores, opts.query !== undefined ? { query: opts.query } : {}), shows, stores };
+}
+
+/** What most of the server's tests drive: the app over a registry of exactly one show, that
+ *  show's context, and the store the app reads it through — reachable at `/api/shows/show/…`.
+ *
+ *  The worker command is the fake worker, so an action spawns a process that writes a log and
+ *  exits rather than one that calls a model. `pollMs` is short so a test that wants the store's
+ *  directory poll does not wait the production two seconds for it, and `query` is the seam the
+ *  "what happened" route asks a model through — a test passes a fake so the route can be driven
+ *  without a model behind it. */
+export async function appWith(root: string, opts: { pollMs?: number; query?: QueryFn } = {}): Promise<{ root: string; key: string; app: Hono<ShowVars>; ctx: ShowContext; store: RunStore; shows: Map<string, ShowContext>; stores: Map<string, RunStore> }> {
+  const { app, shows, stores } = await appWithShows([{ root }], opts);
+  const ctx = shows.get(SHOW_KEY_FIXTURE);
+  const store = stores.get(SHOW_KEY_FIXTURE);
+  if (ctx === undefined || store === undefined) throw new Error(`the fixture show at ${root} did not load`);
+  return { root, key: SHOW_KEY_FIXTURE, app, ctx, store, shows, stores };
 }
 
 /** Polls a condition until it holds, then returns; throws when it has not held by `timeoutMs`.
