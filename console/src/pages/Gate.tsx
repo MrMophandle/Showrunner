@@ -95,11 +95,7 @@ export function Gate() {
   const runHref = showHref(showKey, `/episodes/${episodeId}/runs/${runId}`);
   const gate = useApi<GateView>(`${base}/gate`);
   const navigate = useNavigate();
-  const { show } = useConsole();
-  // Unavailable until the show has answered: an answer offered and then refused is worse than an
-  // answer this page never offered. `readOnly` speaks only once the show has said so.
-  const canAct = show !== null && !show.readOnly;
-  const readOnly = show !== null && show.readOnly;
+  const { canAct, readOnly } = useConsole();
 
   const [notes, setNotes] = useState("");
   const [flags, setFlags] = useState<Record<string, string>>({});

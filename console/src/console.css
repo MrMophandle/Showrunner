@@ -260,6 +260,10 @@ select { min-height: var(--tap); }
    dimmed: the row is a record rather than a run this console can act on. */
 .row-archived { border-left-color: color-mix(in srgb, var(--approved) 55%, transparent); }
 
+/* The one row a show yields when its episodes could not be read at all: one sentence across the
+   whole card, because there is no episode behind it and nothing in the four columns to put. */
+.row-show-error { display: block; border-left-color: var(--danger); }
+
 .row-title { display: block; min-height: var(--tap); display: flex; align-items: center; gap: 0.5rem; font-weight: 600; }
 .row-id { color: var(--text-dim); font-weight: 400; }
 .row-stage { display: flex; flex-direction: column; gap: 0.35rem; align-items: flex-start; }

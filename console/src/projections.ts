@@ -200,12 +200,21 @@ export function composeNotesWithFlags(
  *  same `showSlug` (ruling H-02, inventory §2.1). A tab naming only that shared name, on a console
  *  holding both, would be asking for the showrunner without saying where.
  *
+ *  **A read-only show is always idle**, whatever its rows say. Every one of the other three forms
+ *  is a claim about something the reader can do — answer a gate, restart a run that has stopped,
+ *  watch one that is working — and on a read-only show the console offers none of those: the
+ *  server answers 403 to every POST to it, so the Gate page draws no answer and the action bar no
+ *  recovery (ruling H-03). A tab reading `⏸ s02e01 NEEDS YOU` for a show whose gate cannot be
+ *  answered here asks for a showrunner who would arrive and find no button, which is the one
+ *  failure the title exists to prevent. The cost is recorded rather than hidden: a crashed run in
+ *  a read-only show is not announced in the tab, because nothing in this console can continue it.
+ *
  *  The name and the key both come from `GET /api/shows/<key>` and never from code: this
  *  repository names no show. */
 export function titleFor(show: TitleShow, rows: EpisodeRow[] | null, now: Date | number = Date.now()): string {
   const label = showLabel(show);
   const idle = `${label} console`;
-  if (rows === null) return idle;
+  if (show.readOnly || rows === null) return idle;
   const waiting = rows.find((r) => r.status === "waiting");
   if (waiting !== undefined) return `⏸ ${waiting.id} NEEDS YOU — ${label}`;
   const broken = rows.find((r) => r.status === "failed" || r.status === "crashed");
@@ -218,9 +227,11 @@ export function titleFor(show: TitleShow, rows: EpisodeRow[] | null, now: Date |
   return idle;
 }
 
-/** The two fields of a show that a title or a header has to carry. A `Pick` of `ShowInfo` rather
- *  than the whole of it, so a test states a show in two fields and not in nine. */
-export type TitleShow = Pick<ShowInfo, "showName" | "key">;
+/** The three fields of a show that a title has to carry: what to call it, what tells it from
+ *  another show of the same name, and whether anything in it can be acted on from this console. A
+ *  `Pick` of `ShowInfo` rather than the whole of it, so a test states a show in three fields and
+ *  not in nine. */
+export type TitleShow = Pick<ShowInfo, "showName" | "key" | "readOnly">;
 
 /** How a show is named wherever one show has to be told from another: `<showName> · <key>`.
  *
@@ -229,9 +240,33 @@ export type TitleShow = Pick<ShowInfo, "showName" | "key">;
  *  shows this console was measured against declare the same `showName` and the same `showSlug`
  *  (inventory §2.1), and the key is the only thing that distinguishes them — it is also the
  *  segment in the url the operator is looking at, so a label that carries it can be matched
- *  against the address bar. */
-export function showLabel(show: TitleShow): string {
+ *  against the address bar.
+ *
+ *  It takes the two fields it reads rather than `TitleShow`, because how a show is *named* has
+ *  nothing to do with whether it may be written to. */
+export function showLabel(show: Pick<ShowInfo, "showName" | "key">): string {
   return `${show.showName} · ${show.key}`;
+}
+
+/** The reason a Board row is a show's own read failure rather than an episode, or undefined when
+ *  it is an ordinary row.
+ *
+ *  The server gathers the Board's rows per show and catches per show, so a show whose episode
+ *  files throw — a malformed `images/prompts.json`, an unreadable `Canon/refs.json` — yields one
+ *  row with an empty `id` carrying the reason instead of a 500 that names no show (ruling H-14,
+ *  and `EpisodeRow.error` in `shared/types.ts`). That row has no episode, no stage anybody
+ *  derived and no action anybody could take, so the Board must draw it as what it is rather than
+ *  running it through the ordinary template, which would print an empty title beside a blank stage
+ *  chip and a launch button for an episode that does not exist.
+ *
+ *  A function and not an inline test in the component, because this is the rule that decides which
+ *  of two templates a row gets, and it is the kind of rule that is wrong silently: a Board that
+ *  stopped recognising the row would show an empty row instead of the reason a whole show is
+ *  missing. */
+export function showReadFailure(row: EpisodeRow): string | undefined {
+  if (row.id !== "") return undefined;
+  const reason = row.error?.trim() ?? "";
+  return reason === "" ? undefined : reason;
 }
 
 /** The one line a read-only show renders in place of a button whose POST the server would refuse.

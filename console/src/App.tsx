@@ -134,6 +134,10 @@ function ShowShell() {
   const value: ConsoleData = {
     show: show.data,
     showError: show.error,
+    // The two read-only facts, derived here and nowhere else: see `ConsoleData`'s own comments for
+    // why `readOnly` is not the negation of `canAct`.
+    canAct: show.data !== null && !show.data.readOnly,
+    readOnly: show.data !== null && show.data.readOnly,
     rows: episodes.data,
     rowsError: episodes.error,
     rowsLoading: episodes.loading,

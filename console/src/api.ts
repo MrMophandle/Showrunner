@@ -441,6 +441,21 @@ export function useShows(): ApiState<ShowInfo[]> {
 export interface ConsoleData {
   show: ShowInfo | null;
   showError: string | null;
+  /** **Whether to offer a move at all: the show has answered and may be written to.** False while
+   *  `GET /api/shows/<key>` is still in flight, so a show that turns out to be read-only never had
+   *  a Launch button for the length of a fetch.
+   *
+   *  Derived once, in the layout that fetched the show, because the five places that draw an
+   *  action — the Board's launch and continue, the Run page's withdraw, the Gate page's answer,
+   *  the action bar, the What-happened question — must agree about it exactly: a page that
+   *  computed it differently would offer a POST the server answers 403. */
+  canAct: boolean;
+  /** **Whether to say why a move is not offered: the show has answered and said it is read-only.**
+   *  Not the negation of `canAct`: while the show is in flight, and for a key this console does
+   *  not hold, both are false — because a show that has not answered is not a show that has told
+   *  anyone it is read-only, and a Board that said "nosuchshow is read-only" would be explaining a
+   *  show that does not exist. */
+  readOnly: boolean;
   rows: EpisodeRow[] | null;
   rowsError: string | null;
   rowsLoading: boolean;
@@ -448,7 +463,8 @@ export interface ConsoleData {
 }
 
 export const ConsoleContext = createContext<ConsoleData>({
-  show: null, showError: null, rows: null, rowsError: null, rowsLoading: true, refetchRows: () => {},
+  show: null, showError: null, canAct: false, readOnly: false,
+  rows: null, rowsError: null, rowsLoading: true, refetchRows: () => {},
 });
 
 export function useConsole(): ConsoleData {

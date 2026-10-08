@@ -17,7 +17,7 @@ import { titleFor } from "../../src/useDocTitle.js";
 
 /** The show every assertion below is about: the invented one `test/helpers.ts` uses, under the key
  *  an operator would have registered it with. */
-const SHOW: TitleShow = { showName: "Harbor Light", key: "HarborLight" };
+const SHOW: TitleShow = { showName: "Harbor Light", key: "HarborLight", readOnly: false };
 
 function row(over: Partial<EpisodeRow> = {}): EpisodeRow {
   return {
@@ -30,15 +30,15 @@ function row(over: Partial<EpisodeRow> = {}): EpisodeRow {
 describe("titleFor, the document title's pure part", () => {
   it("names the show it was given and never one of its own", () => {
     expect(titleFor(SHOW, [])).toBe("Harbor Light · HarborLight console");
-    expect(titleFor({ showName: "Second Show", key: "second" }, [])).toBe("Second Show · second console");
+    expect(titleFor({ showName: "Second Show", key: "second", readOnly: false }, [])).toBe("Second Show · second console");
   });
 
   it("tells two shows apart by their keys when they declare the same name", () => {
     // The measured case, and the whole reason the key is in the title: the live instance and the
     // retired first repository declare the same showName and the same showSlug (inventory §2.1),
     // so the name is not an identity and the key is.
-    const live = { showName: "One Name", key: "live" };
-    const archive = { showName: "One Name", key: "archive" };
+    const live = { showName: "One Name", key: "live", readOnly: false };
+    const archive = { showName: "One Name", key: "archive", readOnly: false };
     const rows = [row({ id: "s02e04", status: "waiting" })];
     expect(titleFor(live, rows)).toBe("⏸ s02e04 NEEDS YOU — One Name · live");
     expect(titleFor(archive, rows)).toBe("⏸ s02e04 NEEDS YOU — One Name · archive");
@@ -56,6 +56,25 @@ describe("titleFor, the document title's pure part", () => {
   it("names the first waiting episode in board order when two are waiting", () => {
     const rows = [row({ id: "s02e02", status: "waiting" }), row({ id: "s02e05", status: "waiting" })];
     expect(titleFor(SHOW, rows)).toBe("⏸ s02e02 NEEDS YOU — Harbor Light · HarborLight");
+  });
+
+  it("is idle for a read-only show, whatever its rows say", () => {
+    // The tab is the whole alerting story on this network, and every alerting form is a claim
+    // about something the reader can do. A read-only show refuses every POST (ruling H-03), so
+    // its gate draws no answer and its action bar no recovery: a tab saying NEEDS YOU there would
+    // send the showrunner to a page with no button on it.
+    const archive: TitleShow = { showName: "Harbor Light", key: "HarborLight-archive", readOnly: true };
+    const parked = [row({ id: "s02e04", status: "waiting", stage: "DRAFT_IMAGES" })];
+    expect(titleFor(archive, parked)).toBe("Harbor Light · HarborLight-archive console");
+    // The same rows under the writable key do ask, which is what makes the suppression the show's
+    // doing and not the rows'.
+    expect(titleFor(SHOW, parked)).toBe("⏸ s02e04 NEEDS YOU — Harbor Light · HarborLight");
+    // The other two alerting forms go the same way: nothing in this console can continue a crashed
+    // run or act on a running one in a show it may not write to.
+    expect(titleFor(archive, [row({ id: "s02e07", status: "crashed", stage: "DRAFT_ASSEMBLY" })]))
+      .toBe("Harbor Light · HarborLight-archive console");
+    expect(titleFor(archive, [row({ id: "s02e02", status: "running", stage: "DRAFT_AUDIO", lastEventAt: "2026-10-02T10:00:00Z" })], new Date("2026-10-02T10:14:59Z")))
+      .toBe("Harbor Light · HarborLight-archive console");
   });
 
   it("reports a running episode's stage and the minutes since it last moved", () => {

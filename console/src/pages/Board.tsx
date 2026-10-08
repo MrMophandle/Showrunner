@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import type { EpisodeRow } from "../../shared/types.js";
 import { post, showHref, showPath, useConsole, useNow, useShowKey } from "../api.js";
-import { elapsed, firstLine, readOnlyLine, showLabel, stageLabel, stalled } from "../projections.js";
+import { elapsed, firstLine, readOnlyLine, showLabel, showReadFailure, stageLabel, stalled } from "../projections.js";
 import { NewEpisode } from "../components/NewEpisode.js";
 
 /** The Board: one row per episode, and the one question it answers is which of them wants the
@@ -19,6 +19,12 @@ import { NewEpisode } from "../components/NewEpisode.js";
  *  that is offered and then refused teaches the operator that the console has a move it does not
  *  have. `readOnly` arrives on the same `ShowInfo` this page already reads `episodesDir` from, so
  *  knowing costs no request.
+ *
+ *  **A show whose episodes could not be read at all is one row and not a 500.** The server catches
+ *  per show and yields a single row with an empty id carrying the reason (ruling H-14), and this
+ *  page draws that row as the sentence it is — no stage chip, no status, no action — because there
+ *  is no episode behind it to act on and an empty title beside a blank chip would be a Board
+ *  saying nothing about a show that is missing.
  *
  *  An episode whose directory carries an `archive.json` marker and no run logs is drawn at the
  *  marker's stage with an "archived" chip and the marker's one line, no reasons beside it, and no
@@ -83,7 +89,7 @@ function needsLines(row: EpisodeRow, episodesDir: string): string[] {
 }
 
 export function Board() {
-  const { show, rows, rowsError, rowsLoading, refetchRows } = useConsole();
+  const { show, canAct, readOnly, rows, rowsError, rowsLoading, refetchRows } = useConsole();
   const showKey = useShowKey();
   const navigate = useNavigate();
   const now = useNow();
@@ -91,13 +97,6 @@ export function Board() {
   const [error, setError] = useState<string | null>(null);
   const [confirmContinue, setConfirmContinue] = useState<string | null>(null);
   const episodesDir = show?.episodesDir ?? "Episodes";
-  // Two values and not one, because "do not offer this" and "say why it is not offered" are
-  // different questions. `canAct` is false until `GET /api/shows/<key>` has answered, so a show
-  // that turns out to be read-only never had a Launch button; `readOnly` is true only once the
-  // show has said so, so a key this console does not hold is not told it is read-only — it is
-  // told, by the line the layout renders, that there is no such show.
-  const canAct = show !== null && !show.readOnly;
-  const readOnly = show !== null && show.readOnly;
 
   async function launch(id: string): Promise<void> {
     setBusy(id);
@@ -143,6 +142,16 @@ export function Board() {
 
       <ul className="rows">
         {(rows ?? []).map((row) => {
+          // The show's own read failure, before anything episode-shaped is derived from a row that
+          // describes no episode.
+          const failure = showReadFailure(row);
+          if (failure !== undefined) {
+            return (
+              <li className="row row-show-error" key="show-read-failure">
+                <p className="error-line">{failure}</p>
+              </li>
+            );
+          }
           const stage = stageLabel(row.stage);
           const chip = statusChip(row, now);
           const reasons = needsLines(row, episodesDir);

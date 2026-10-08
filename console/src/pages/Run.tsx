@@ -51,10 +51,7 @@ export function Run() {
   const base = showPath(showKey, `/episodes/${encodeURIComponent(episodeId)}/runs/${encodeURIComponent(runId)}`);
 
   const view = useApi<RunView>(base);
-  const { show } = useConsole();
-  // Unavailable until the show has answered, for the Board's reason: a read-only show must not
-  // have offered a recovery action for the length of one fetch.
-  const canAct = show !== null && !show.readOnly;
+  const { show, canAct } = useConsole();
   const now = useNow();
   const [events, setEvents] = useState<WireEvent[]>([]);
   const [feedError, setFeedError] = useState<string | null>(null);

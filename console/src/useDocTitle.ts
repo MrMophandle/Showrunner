@@ -38,13 +38,14 @@ function useMinuteTick(): number {
  *  the state before `GET /api/shows/<key>` has answered. All three leave the title the neutral
  *  "console": this repository names no show, and a placeholder would be a name invented in code.
  *
- *  `show.showName` and `show.key` are the dependencies rather than `show` itself, so the effect
- *  does not re-run on every refetch that returns an identical object. */
+ *  The three fields are the dependencies rather than `show` itself, so the effect does not re-run
+ *  on every refetch that returns an identical object. */
 export function useDocTitle(show: TitleShow | null, rows: EpisodeRow[] | null): void {
   const now = useMinuteTick();
   const showName = show?.showName ?? "";
   const key = show?.key ?? "";
+  const readOnly = show?.readOnly ?? false;
   useEffect(() => {
-    document.title = showName === "" ? "console" : titleFor({ showName, key }, rows, now);
-  }, [showName, key, rows, now]);
+    document.title = showName === "" ? "console" : titleFor({ showName, key, readOnly }, rows, now);
+  }, [showName, key, readOnly, rows, now]);
 }

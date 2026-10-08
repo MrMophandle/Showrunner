@@ -36,10 +36,7 @@ export interface ActionBarProps {
 export function ActionBar({ view, onDone }: ActionBarProps) {
   const { episodeId, runId } = view;
   const showKey = useShowKey();
-  const { show } = useConsole();
-  // See the Board: `canAct` waits for the show, `readOnly` speaks only once the show has said so.
-  const canAct = show !== null && !show.readOnly;
-  const readOnly = show !== null && show.readOnly;
+  const { canAct, readOnly } = useConsole();
   const base = showPath(showKey, `/episodes/${encodeURIComponent(episodeId)}/runs/${encodeURIComponent(runId)}`);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);

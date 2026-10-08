@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { EpisodeRow, RunView, StepRow } from "../../shared/types.js";
 import {
   STALL_MS, composeNotesWithFlags, composeShotRejection, elapsed, firstLine, progressLabel,
-  readOnlyLine, safeHref, showLabel, stageLabel, stallState, stalled, titleFor,
+  readOnlyLine, safeHref, showLabel, showReadFailure, stageLabel, stallState, stalled, titleFor,
 } from "../../src/projections.js";
 
 /** The client's pure helpers. Every one of them is a function of its arguments and a clock the
@@ -148,6 +148,24 @@ describe("showLabel", () => {
   });
 });
 
+describe("showReadFailure", () => {
+  it("picks out the one row a show yields when its episodes could not be read at all", () => {
+    // The server's shape (ruling H-14): an empty id, and the reason on `error`.
+    expect(showReadFailure(row({ id: "", error: "broken: its episodes could not be read — Unexpected token" })))
+      .toBe("broken: its episodes could not be read — Unexpected token");
+  });
+
+  it("leaves an ordinary episode row alone, including one whose own log went unreadable", () => {
+    expect(showReadFailure(row({ id: "s02e01" }))).toBeUndefined();
+    // `logError` is the narrower fact — this row's own log stopped being readable — and that row
+    // is still an episode with a stage and an action, so it keeps the ordinary template.
+    expect(showReadFailure(row({ id: "s02e01", logError: "this run's log could not be read past byte 400" }))).toBeUndefined();
+    // An empty id with no reason is not a failure row either: there is nothing to print.
+    expect(showReadFailure(row({ id: "" }))).toBeUndefined();
+    expect(showReadFailure(row({ id: "", error: "   " }))).toBeUndefined();
+  });
+});
+
 describe("readOnlyLine", () => {
   it("names the key, what is refused, and why a button is absent rather than greyed", () => {
     expect(readOnlyLine("HarborLight-archive", "no run is launched here")).toBe(
@@ -157,10 +175,17 @@ describe("readOnlyLine", () => {
 });
 
 describe("titleFor", () => {
-  const show = { showName: "Harbor Light", key: "HarborLight" };
+  const show = { showName: "Harbor Light", key: "HarborLight", readOnly: false };
 
   it("puts a waiting episode first, with the show's own name and key", () => {
     const rows = [row({ id: "s02e03", status: "running", stage: "DRAFT_SCRIPT" }), row({ id: "s02e01", status: "waiting", stage: "DRAFT_OUTLINE" })];
+    expect(titleFor(show, rows)).toBe("⏸ s02e01 NEEDS YOU — Harbor Light · HarborLight");
+  });
+
+  it("is idle for a read-only show, because none of the other three forms is actionable there", () => {
+    const archive = { ...show, key: "HarborLight-archive", readOnly: true };
+    const rows = [row({ id: "s02e01", status: "waiting", stage: "DRAFT_OUTLINE" })];
+    expect(titleFor(archive, rows)).toBe("Harbor Light · HarborLight-archive console");
     expect(titleFor(show, rows)).toBe("⏸ s02e01 NEEDS YOU — Harbor Light · HarborLight");
   });
 
@@ -184,7 +209,7 @@ describe("titleFor", () => {
     expect(titleFor(show, [row({ status: "completed" })])).toBe("Harbor Light · HarborLight console");
     expect(titleFor(show, [])).toBe("Harbor Light · HarborLight console");
     expect(titleFor(show, null)).toBe("Harbor Light · HarborLight console");
-    expect(titleFor({ showName: "Another Show", key: "another" }, null)).toBe("Another Show · another console");
+    expect(titleFor({ showName: "Another Show", key: "another", readOnly: false }, null)).toBe("Another Show · another console");
   });
 });
 

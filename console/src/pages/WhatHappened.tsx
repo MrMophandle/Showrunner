@@ -65,9 +65,7 @@ export function WhatHappened() {
   const runId = params["run"] ?? "";
   const base = showPath(showKey, `/episodes/${encodeURIComponent(episodeId)}/runs/${encodeURIComponent(runId)}`);
   const runHref = showHref(showKey, `/episodes/${episodeId}/runs/${runId}`);
-  const { show } = useConsole();
-  const canAct = show !== null && !show.readOnly;
-  const readOnly = show !== null && show.readOnly;
+  const { show, canAct, readOnly } = useConsole();
   const context = useApi<WhatHappenedContext>(`${base}/context`);
 
   const [question, setQuestion] = useState("");
