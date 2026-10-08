@@ -97,8 +97,12 @@ export const CAST_KEY = "world-overview";
  *  places to name the cast and the driver no rule for which of the two wins. The heading is
  *  matched through the engine's own `headingMatches`, so punctuation or a parenthetical in the
  *  template's wording does not break the lookup. It is the heading `REQUIRED_SECTIONS`
- *  (`engine/src/bible.ts`) already requires of this file for the character auditor. */
-const CAST_HEADING = "The primary cast";
+ *  (`engine/src/bible.ts`) already requires of this file for the character auditor.
+ *
+ *  Exported because the console reads the cast out of `readAnswers`' heading-keyed record before
+ *  it calls `afterFileApproved`, and a second spelling of this string there would be a browser
+ *  interview that writes no character sheet and leaves `audio.mainCast` naming only the narrator. */
+export const CAST_HEADING = "The primary cast";
 
 /** What an unanswered question records in the answers file. The writer agent is told that a
  *  heading whose question was left blank gets `_Not yet decided._`, so the blank has to be visible
@@ -106,8 +110,19 @@ const CAST_HEADING = "The primary cast";
 const BLANK = "(blank)";
 
 /** The notes recorded on the approval when the author takes the file over. The notes are the log's
- *  record of why an approved file holds nothing but headings. */
-const AUTHOR_NOTES = "the author writes this file";
+ *  record of why an approved file holds nothing but headings.
+ *
+ *  Exported because the console both writes it — its gate panel offers the same four answers — and
+ *  reads it back: a bible row is `written-by-author` exactly when the approving `gate_answered`
+ *  carries these notes, and a file approved this way in the terminal must read the same in the
+ *  browser. Two spellings would be two states for one decision. */
+export const AUTHOR_NOTES = "the author writes this file";
+
+/** What an approval's notes begin with when the file was imported, with the source path after it.
+ *  Exported for the same reason as `AUTHOR_NOTES`: the console writes these notes when its gate
+ *  panel imports a file and derives the `imported` row state by reading them back, and the state
+ *  must be the same for a file imported from the terminal. */
+export const IMPORT_NOTES_PREFIX = "imported from ";
 
 /** The gate's four answers, with the wording the author reads. Exported because the terminal and
  *  the console must offer the same four and word them the same way: the console renders one button
@@ -146,8 +161,13 @@ function localDate(now: Date): string {
 }
 
 /** Refusal of a path the author offered to import. A class of its own so the gate loop can tell
- *  "that path will not do, ask again" from a real I/O fault, which is not the author's to fix. */
-class ImportRefused extends Error {
+ *  "that path will not do, ask again" from a real I/O fault, which is not the author's to fix.
+ *
+ *  Exported with `resolveImport` because the console's gate route has to make the same
+ *  distinction: a refused path is a 400 the author can correct, and an I/O fault is a 500 that is
+ *  not theirs. Matching on the class rather than on the message keeps the console from parsing
+ *  prose this module is free to reword. */
+export class ImportRefused extends Error {
   override readonly name = "ImportRefused";
 }
 
@@ -370,8 +390,14 @@ export async function readAnswers(showRoot: string, entry: BibleFile, production
  *  prose rather than as a list (an imported bible file's, read by `castSectionOf`) yielded a
  *  hundred-character "name" carrying asterisks and commas, which `writeCastSheets` then refused
  *  with a throw that ended the whole setup. The one rule that decides what is a usable name lives
- *  in `scaffold.ts` beside the function that writes the sheet, and is applied here first. */
-function parseCast(text: string): { cast: { name: string; line: string }[]; ignored: string[] } {
+ *  in `scaffold.ts` beside the function that writes the sheet, and is applied here first.
+ *
+ *  Exported because the console's gate route must build the same `InterviewResult.cast` the
+ *  terminal builds before it calls `afterFileApproved`, which is what writes the character sheets
+ *  and `audio.mainCast`. A second parser in the console would be a second rule for what counts as
+ *  a name, and the one that disagreed would either refuse a cast `writeCastSheets` accepts or hand
+ *  it a name it throws on. */
+export function parseCast(text: string): { cast: { name: string; line: string }[]; ignored: string[] } {
   const cast: { name: string; line: string }[] = [];
   const ignored: string[] = [];
   for (const raw of text.split("\n")) {
@@ -394,8 +420,12 @@ function parseCast(text: string): { cast: { name: string; line: string }[]; igno
  *  imported show, no character sheet was written, and `scripts/validate-manifest.py` then refused
  *  every TTS manifest whose speaker was a cast member with no guest WAV. The heading is found
  *  through the engine's `headingMatches`, so an imported file whose heading carries a
- *  parenthetical still matches; the section ends at the next level-1 or level-2 heading. */
-async function castSectionOf(abs: string): Promise<{ cast: { name: string; line: string }[]; ignored: string[] } | undefined> {
+ *  parenthetical still matches; the section ends at the next level-1 or level-2 heading.
+ *
+ *  Exported with `parseCast` because the console reaches the same two cases: a file the author
+ *  imported at its gate, and a file they wrote themselves, neither of which has a typed cast
+ *  answer to read. */
+export async function castSectionOf(abs: string): Promise<{ cast: { name: string; line: string }[]; ignored: string[] } | undefined> {
   let text: string;
   try {
     text = await readFile(abs, "utf8");
@@ -475,8 +505,15 @@ async function realPathOf(p: string): Promise<string> {
  *
  *  A leading `~` is expanded: the author types this path at a prompt rather than in a shell, so
  *  nothing else expands it for them. A relative path resolves against the process's directory,
- *  which is where the author is standing. */
-async function resolveImport(showRoot: string, entry: BibleFile, typed: string, productionDir: string): Promise<string> {
+ *  which is where the author is standing.
+ *
+ *  **Exported because the console's gate route imports a file through this function and not
+ *  through a copy of it.** Every refusal above is a fence, and a fence that exists twice is a
+ *  fence that diverges: the console's copy would be the one that forgot `lstat`, or compared only
+ *  the typed spelling, and the failure would be a bible file silently overwritten by the
+ *  interview's own `answers.md` through one symlink. One implementation, two callers. The path the
+ *  browser sends is the author's typed path, exactly as the terminal's prompt yields one. */
+export async function resolveImport(showRoot: string, entry: BibleFile, typed: string, productionDir: string): Promise<string> {
   const raw = typed.trim();
   if (raw === "") throw new ImportRefused("no path was given, so there is nothing to import");
   const expanded = raw === "~" ? homedir() : raw.startsWith(`~${path.sep}`) || raw.startsWith("~/") ? path.join(homedir(), raw.slice(2)) : raw;
@@ -714,7 +751,7 @@ export async function interviewFile(showRoot: string, entry: BibleFile, io: Init
             throw err;
           }
           await copyFile(source, destination);
-          await answerGate(log, runId, GATE_ID, { approved: true, notes: `imported from ${source}`, ...stamp });
+          await answerGate(log, runId, GATE_ID, { approved: true, notes: `${IMPORT_NOTES_PREFIX}${source}`, ...stamp });
           imported = source;
           untouchedImport = true;
           outcome = "imported";

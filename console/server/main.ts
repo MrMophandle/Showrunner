@@ -49,7 +49,13 @@ export const DEFAULT_PORT = 4410;
 
 const USAGE = `usage: console [--registry <file>] [--show <root>] [--engine-root <path>] [--port ${DEFAULT_PORT}] [--host] [--operator <name>] [--worker <path to a worker entry>] [--concurrency 7]\n`;
 
-/** The registry the flags name, and the line to print about it once the server is listening.
+/** The registry the flags name, the file it came from, and the line to print about it once the
+ *  server is listening.
+ *
+ *  `file` is the path the registry was read from, and it is `undefined` in `--show` single mode —
+ *  which is how the New-show route knows it has nowhere to write an entry and refuses, ruling
+ *  H-01's "`--show` keeps working as a one-show registry whose key is the root's basename, writing
+ *  nothing".
  *
  *  Three cases, and the exits are the point of each. **Both flags is a usage error**: they are two
  *  answers to one question, and silently preferring one would be a console holding shows the
@@ -59,7 +65,7 @@ const USAGE = `usage: console [--registry <file>] [--show <root>] [--engine-root
  *  **The default registry being absent is not an error at all**: it is a new machine, and the
  *  New-show surface that writes the first entry is served by this very process, so the console has
  *  to come up with nothing in it and say so. */
-async function registryFromFlags(): Promise<{ registry: Registry; note?: string }> {
+async function registryFromFlags(): Promise<{ registry: Registry; file?: string; note?: string }> {
   const showRoot = flag("show");
   const registryFile = flag("registry");
   if (showRoot !== undefined && registryFile !== undefined) {
@@ -86,15 +92,16 @@ async function registryFromFlags(): Promise<{ registry: Registry; note?: string 
   if (Object.keys(registry.shows).length === 0) {
     return {
       registry,
+      file,
       note: `console: no shows are registered — the registry at ${file} is empty or does not exist yet; `
         + `register a show from the browser, or start with --show <root>`,
     };
   }
-  return { registry };
+  return { registry, file };
 }
 
 async function main(): Promise<void> {
-  const { registry, note } = await registryFromFlags();
+  const { registry, file: registryFile, note } = await registryFromFlags();
   const here = path.dirname(fileURLToPath(import.meta.url));
   // dist/server/main.js → dist/server → dist → console → the repository root, where `scripts/`
   // and `render/` live.
@@ -120,7 +127,17 @@ async function main(): Promise<void> {
   });
   const stores = new Map<string, RunStore>();
   for (const [key, ctx] of shows) stores.set(key, new RunStore(ctx));
-  const app = createApp(shows, stores);
+  // `newShow` is what `POST /api/shows` needs and cannot derive: on a machine with no shows
+  // registered yet there is no context to copy an engine root or a worker command from, and that
+  // empty console is exactly the one the New-show surface is for. In `--show` single mode there is
+  // no registry file to append to, so the route refuses rather than inventing one.
+  const app = createApp(shows, stores, registryFile === undefined ? {} : {
+    newShow: {
+      registryFile, engineRoot, concurrency,
+      ...(operator !== undefined ? { operator } : {}),
+      ...(worker !== undefined ? { workerCommand: [process.execPath, path.resolve(worker)] } : {}),
+    },
+  });
 
   // The built client, when there is one. In development Vite serves it on its own port and
   // proxies /api here, so this directory does not exist and nothing is mounted.

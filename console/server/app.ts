@@ -1,5 +1,5 @@
 import path from "node:path";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { Hono } from "hono";
 import type { Context, MiddlewareHandler } from "hono";
 import { stream as streamText, streamSSE } from "hono/streaming";
@@ -8,12 +8,17 @@ import {
   latestRunId, listEpisodeIds, mintRunId, parseEpisodeId, resetSteps, resumeRun, withdrawApproval,
   type Pipeline, type PipelineDescription, type QueryFn, type RunState,
 } from "@showrunner/engine";
+import { ImportRefused, initScaffold, type GateChoice, type InitIO } from "@showrunner/tools";
 import type { EpisodeRow, EventBatch, ShowInfo, SseMessage } from "../shared/types.js";
 import { serveArtifact, serveRunLog } from "./artifacts.js";
+import {
+  answerBibleGate, bibleFile, bibleFilePath, bibleRows, finishBible, saveAnswers, startBibleRun,
+  unapprovedBibleFiles, type BibleDeps,
+} from "./bible.js";
 import { gateView } from "./gates.js";
-import { SHOW_KEY } from "./registry.js";
-import type { RunStore } from "./runs.js";
-import { defaultOperator, type ShowContext } from "./show.js";
+import { SHOW_KEY, readRegistry, registerShow } from "./registry.js";
+import { RunStore } from "./runs.js";
+import { defaultOperator, loadShowContext, type ShowContext } from "./show.js";
 import { assemble, ask } from "./what-happened.js";
 import { killRecordedGroups, readLock, spawnWorker } from "./workers.js";
 
@@ -155,11 +160,102 @@ function showInfo(ctx: ShowContext): ShowInfo {
   };
 }
 
-/** The seams the app is built with. Production passes none: `query` defaults, inside
- *  `what-happened.ts`, to the engine's `sdkQuery`. A test passes a fake so the "what happened"
- *  route can be driven end to end without a model behind it. */
+/** What `POST /api/shows` needs in order to make a show and hold it: the registry file to append
+ *  the entry to, and the four facts a `ShowContext` takes that are the console's own rather than
+ *  the registry's.
+ *
+ *  It is a dep and not derived from the shows the app already holds, because the case this route
+ *  exists for is **a console with no shows at all** — a new machine, whose registry file does not
+ *  exist yet — and there is then no context to copy an engine root or a worker command from. When
+ *  it is absent the route refuses: that is `--show <root>` single mode, which by ruling H-01 writes
+ *  nothing on the machine. */
+export interface NewShowDeps {
+  registryFile: string;
+  engineRoot: string;
+  operator?: string;
+  workerCommand?: string[];
+  concurrency?: number;
+}
+
+/** The seams the app is built with. Production passes `newShow` and nothing else: `query` defaults,
+ *  inside `what-happened.ts`, to the engine's `sdkQuery`; `setupWorkerCommand` defaults, inside
+ *  `server/bible.ts`, to this console's own compiled setup worker; and `makeStore` to one store per
+ *  show with the production poll. A test passes a fake worker, a temporary registry and a short
+ *  poll, so every route can be driven end to end with no model and nothing written outside a
+ *  temporary directory. */
 export interface AppDeps {
   query?: QueryFn;
+  /** What a new show is made and registered with; absent in `--show` single mode. */
+  newShow?: NewShowDeps;
+  /** argv prefix of the setup worker, as `ShowContext.workerCommand` is for the episode worker. */
+  setupWorkerCommand?: string[];
+  /** How the store for a newly registered show is built, so a test can give it the same short
+   *  poll its other stores have. */
+  makeStore?: (ctx: ShowContext) => RunStore;
+}
+
+/** A refusal a bible route answers, or `undefined` for a failure that is not the operator's and
+ *  belongs on `app.onError` as a 500.
+ *
+ *  The statuses are the console's existing vocabulary, applied to the bible's own refusals: **404**
+ *  for a key that is not one of the fifteen `BIBLE_FILES` names, because as far as a URL is
+ *  concerned that file does not exist; **400** for a malformed run id and for an import path the
+ *  fence refuses, both of which the operator can correct; **409** for every refusal that names a
+ *  conflicting state — a run a worker holds, a gate that must be answered first, a file with no
+ *  answers yet, a scaffold file that has no gate, and the engine's own wording for a gate answered
+ *  at the wrong attempt.
+ *
+ *  Matched on the messages these functions produce, with `ImportRefused` matched on its class
+ *  rather than its prose, because that prose is `@showrunner/tools`' to reword. A message no
+ *  pattern here recognises is **not** turned into a 409 by default: an unrecognised failure
+ *  answered as a conflict would tell the operator to retry something that is broken. */
+function bibleRefusal(err: unknown): { status: 400 | 404 | 409; error: string } | undefined {
+  if (err instanceof ImportRefused) return { status: 400, error: err.message };
+  if (!(err instanceof Error)) return undefined;
+  const m = err.message;
+  if (/^no such bible file /.test(m)) return { status: 404, error: m };
+  if (/^invalid run id /.test(m)) return { status: 400, error: m };
+  if (/ is a scaffold file: /.test(m)) return { status: 409, error: m };
+  if (/ asks no questions: /.test(m)) return { status: 409, error: m };
+  if (/^run .* is held by pid /.test(m)) return { status: 409, error: m };
+  if (/^answer the gate on run /.test(m)) return { status: 409, error: m };
+  if (/ is not finished; /.test(m)) return { status: 409, error: m };
+  if (/^answer .*'s questions first: /.test(m)) return { status: 409, error: m };
+  if (/^a rejection needs notes/.test(m)) return { status: 400, error: m };
+  if (/^could not mint a free run id /.test(m)) return { status: 409, error: m };
+  // `answerGate`'s own refusals: "gate ... is open at attempt 2, not 1", "no gate is open on ...".
+  if (/\bgate\b/.test(m) && /\battempt\b|no gate is open/.test(m)) return { status: 409, error: m };
+  return undefined;
+}
+
+/** The `InitIO` a route hands a phase of `init` that asks nothing: `say` is collected and returned
+ *  to the browser as the phase's own account of what it did, and a phase that tried to ask a
+ *  question would fail loudly rather than hang on a terminal that is not there. */
+function collectingIO(): { io: InitIO; said: string[] } {
+  const said: string[] = [];
+  return {
+    said,
+    io: {
+      say: (text: string) => { said.push(text); },
+      ask: async () => { throw new Error("this phase asks nothing: the browser asks the author"); },
+      choose: async () => { throw new Error("this phase asks nothing: the browser asks the author"); },
+    },
+  };
+}
+
+/** A path with every symlink in it resolved, or the path itself when it does not exist yet — which
+ *  is the ordinary case for a new show's directory. The comparisons below are string comparisons
+ *  on resolved paths, and on macOS a temporary directory under `/var` is reached through a
+ *  symlink, so two spellings of one directory would otherwise sit inside neither each other. */
+async function realish(p: string): Promise<string> {
+  try { return await realpath(p); } catch { /* not there yet */ }
+  try { return path.join(await realpath(path.dirname(p)), path.basename(p)); } catch { return p; }
+}
+
+/** Whether `child` is `parent` or sits under it. A path that merely shares a prefix with the
+ *  parent's name ("Showrunner-old" beside "Showrunner") is not inside it. */
+function inside(child: string, parent: string): boolean {
+  return child === parent || child.startsWith(parent + path.sep);
 }
 
 /** The console's app: one context and one store per registered show, resolved per request from the
@@ -182,9 +278,115 @@ export function createApp(
    *  everywhere else is not to paraphrase the words the engine chose. */
   app.onError((err, c) => c.json({ error: err instanceof Error ? err.message : String(err) }, 500));
 
+  /** What the bible's two actions spawn with: the setup worker's argv prefix, or nothing, in which
+   *  case `server/bible.ts` resolves this console's own compiled `dist/worker/setup.js`. */
+  const bibleDeps: BibleDeps = deps.setupWorkerCommand !== undefined ? { setupWorkerCommand: deps.setupWorkerCommand } : {};
+
   /** Every show this console holds. The client's first request: the Shows page is drawn from it,
    *  and a client cannot build any other url until it knows a key. */
   app.get("/api/shows", (c) => c.json([...shows.values()].map(showInfo)));
+
+  /** Creates a show and registers it, in one request: the scaffold `init` writes, then the
+   *  registry entry, then the context and the store this server holds it by.
+   *
+   *  **The three path refusals, each before anything is written** (spec §4.4, and ruling H-01's
+   *  reason for a registry file at all):
+   *
+   *  - **a key the grammar rejects** — the key is the one string that becomes a URL segment, a map
+   *    lookup and a log line, and `SHOW_KEY` is where that is decided for all three;
+   *  - **a key already registered**, refused here against the shows this server holds *and* against
+   *    the file on disk, so the scaffold is never written for a show whose key cannot be used
+   *    (`registerShow` refuses it again, as the second line of defence);
+   *  - **a path inside the engine root, or inside or containing a registered show's root.** The
+   *    engine root holds this console and the engine's own tests; a show scaffolded inside it would
+   *    put a show repository inside a repository, and the show-name grep over `engine/` would start
+   *    reporting the new show's own bible. A path that contains a registered root would make the new
+   *    show's repository the parent of an existing one, which is two shows with one git history.
+   *    Both directions are refused, on resolved and symlink-resolved spellings alike.
+   *
+   *  **The maps gain the show without a restart.** `createApp` closes over the two maps and the
+   *  show middleware reads them per request, so the `set` below is visible to the very next
+   *  request — which is the whole reason the registry is a file and not argv: a list that lived in
+   *  `process.argv` could not be appended to by the surface that creates a show (ruling H-01).
+   *  `watch()` is started here too, so the new show's first bible run is tailed from the moment it
+   *  starts rather than from the next console restart.
+   *
+   *  A console started with `--show <root>` refuses: that mode is one show, keyed by its directory
+   *  name, writing nothing on the machine. */
+  app.post("/api/shows", async (c) => {
+    const newShow = deps.newShow;
+    if (newShow === undefined) {
+      return c.json({ error: "this console was started with --show, which holds one show and writes no registry; start it with --registry <file> to create a show" }, 409);
+    }
+    const body = await readJsonBody(c);
+    const name = body["name"];
+    const rawPath = body["path"];
+    const github = body["github"] ?? "none";
+    if (typeof name !== "string" || name.trim() === "") return c.json({ error: "name must be a non-empty string" }, 400);
+    if (typeof rawPath !== "string" || rawPath.trim() === "") return c.json({ error: "path must be a non-empty string" }, 400);
+    if (github !== "private" && github !== "public" && github !== "none") return c.json({ error: 'github must be "private", "public" or "none"' }, 400);
+    for (const field of ["slug", "nasRoot", "importFrom", "key"]) {
+      const value = body[field];
+      if (value !== undefined && (typeof value !== "string" || value.trim() === "")) {
+        return c.json({ error: `${field} must be a non-empty string when it is given` }, 400);
+      }
+    }
+    const target = path.resolve(rawPath);
+    const key = typeof body["key"] === "string" ? body["key"] : path.basename(target);
+    if (!SHOW_KEY.test(key)) {
+      return c.json({ error: `${JSON.stringify(key)} is not a show key: expected [A-Za-z0-9][A-Za-z0-9_-]{0,63}` }, 400);
+    }
+    if (shows.has(key)) return c.json({ error: `${key} is already registered, at ${shows.get(key)?.showRoot ?? "another path"}` }, 409);
+    const registry = await readRegistry(newShow.registryFile);
+    const registered = registry.shows[key];
+    if (registered !== undefined) return c.json({ error: `${key} is already registered, at ${path.resolve(registered.root)}` }, 409);
+
+    const resolvedTarget = await realish(target);
+    const engineRoot = await realish(path.resolve(newShow.engineRoot));
+    if (inside(resolvedTarget, engineRoot) || inside(engineRoot, resolvedTarget)) {
+      return c.json({ error: `${target} is inside the engine repository at ${newShow.engineRoot}; a show lives in a repository of its own` }, 400);
+    }
+    for (const [otherKey, entry] of Object.entries(registry.shows)) {
+      const other = await realish(path.resolve(entry.root));
+      if (inside(resolvedTarget, other) || inside(other, resolvedTarget)) {
+        return c.json({ error: `${target} is inside or holds the show registered as ${otherKey} at ${entry.root}; a show lives in a repository of its own` }, 400);
+      }
+    }
+
+    const { io, said } = collectingIO();
+    let root: string;
+    let commits: string[];
+    try {
+      const scaffold = await initScaffold({
+        name: name.trim(),
+        path: target,
+        github,
+        engineRoot: newShow.engineRoot,
+        ...(typeof body["slug"] === "string" ? { slug: body["slug"] } : {}),
+        ...(typeof body["nasRoot"] === "string" ? { nasRoot: body["nasRoot"] } : {}),
+        ...(typeof body["importFrom"] === "string" ? { importFrom: body["importFrom"] } : {}),
+      }, io);
+      root = scaffold.root;
+      commits = scaffold.commits;
+    } catch (err) {
+      // Every refusal `initScaffold` makes is the author's to fix: an empty name, a slug that
+      // would not name a file, a directory that already holds something, an `--import` path that
+      // is not a show. The message is the one to show them.
+      return c.json({ error: err instanceof Error ? err.message : String(err) }, 400);
+    }
+    await registerShow(newShow.registryFile, key, { root });
+    const ctx = await loadShowContext({
+      key, showRoot: root, engineRoot: newShow.engineRoot,
+      ...(newShow.operator !== undefined ? { operator: newShow.operator } : {}),
+      ...(newShow.workerCommand !== undefined ? { workerCommand: newShow.workerCommand } : {}),
+      ...(newShow.concurrency !== undefined ? { concurrency: newShow.concurrency } : {}),
+    });
+    const store = deps.makeStore !== undefined ? deps.makeStore(ctx) : new RunStore(ctx);
+    shows.set(key, ctx);
+    stores.set(key, store);
+    await store.watch();
+    return c.json({ key, root, commits, said });
+  });
 
   /** Resolves `:show` into the context and the store of the show a request means, and refuses the
    *  two things no route beneath it should have to think about.
@@ -625,6 +827,162 @@ export function createApp(
     }
     const { pid } = await spawnWorker(ctx, id, run);
     return c.json({ runId: run, pid, reset, survivingGates });
+  });
+
+  // ── the bible ─────────────────────────────────────────────────────────────────────────────
+  //
+  // The New-show surface's read and write sides. Four things make this family different from the
+  // episode routes above, and all four are ruling H-07's:
+  //
+  //   * the key is a **bible key**, one of the fifteen `BIBLE_FILES` names, validated by
+  //     `bibleEntry` inside `server/bible.ts` before it reaches a path — so these routes carry no
+  //     `checkEpisodeId`, because the reserved id `setup` is not an episode id and never will be;
+  //   * `GET bible/:key/file` is the one fence that serves a file under `Canon/`, and it serves
+  //     exactly the file the table names for the key — there is no path parameter to traverse;
+  //   * the gate's four answers are the terminal's four (`GATE_CHOICES`), two of which write the
+  //     file before they answer; and
+  //   * a read-only show refuses every one of the POSTs in the middleware above, not here.
+  //
+  // The write order inside each action is `server/bible.ts`' own, and its doc comments carry the
+  // argument for it.
+
+  /** The fifteen rows of the Bible view, in interview order. */
+  app.get("/api/shows/:show/bible", async (c) => c.json(await bibleRows(c.get("ctx"))));
+
+  /** One bible file: its row, its questions with whatever is answered, the gate's message when a
+   *  gate is open, the file itself, and the latest run. */
+  app.get("/api/shows/:show/bible/:key", async (c) => {
+    try {
+      return c.json(await bibleFile(c.get("ctx"), c.req.param("key"), c.get("store")));
+    } catch (err) {
+      const refusal = bibleRefusal(err);
+      if (refusal === undefined) throw err;
+      return c.json({ error: refusal.error }, refusal.status);
+    }
+  });
+
+  /** The bible file itself, as text — the raw view behind the gate's rendered Markdown.
+   *
+   *  A 404 for a key that is not one of the fifteen, and a 404 for a file that is not written yet:
+   *  both are "there is no such file here", which is the honest answer and the one the client's
+   *  raw toggle can render. */
+  app.get("/api/shows/:show/bible/:key/file", async (c) => {
+    const ctx = c.get("ctx");
+    const key = c.req.param("key");
+    let file: string;
+    try {
+      file = bibleFilePath(ctx, key);
+    } catch (err) {
+      const refusal = bibleRefusal(err);
+      if (refusal === undefined) throw err;
+      return c.json({ error: refusal.error }, refusal.status);
+    }
+    let text: string;
+    try {
+      text = await readFile(file, "utf8");
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+        return c.json({ error: `${path.relative(ctx.showRoot, file)} is not written yet` }, 404);
+      }
+      throw err;
+    }
+    c.header("Content-Type", "text/markdown; charset=utf-8");
+    c.header("Cache-Control", "no-store");
+    return c.body(text);
+  });
+
+  /** The author's answers for one bible file, saved the moment the form is saved — one of the four
+   *  writes this server makes. The record is merged over what is on disk, so a form that posts one
+   *  field cannot erase the other eight answers (`saveAnswers` records why). */
+  app.post("/api/shows/:show/bible/:key/answers", async (c) => {
+    const body = await readJsonBody(c);
+    const answers = body["answers"];
+    if (typeof answers !== "object" || answers === null || Array.isArray(answers)) {
+      return c.json({ error: "answers must be an object of heading → answer" }, 400);
+    }
+    for (const [heading, value] of Object.entries(answers)) {
+      if (typeof value !== "string") return c.json({ error: `the answer under ${JSON.stringify(heading)} must be a string` }, 400);
+    }
+    try {
+      const file = await saveAnswers(c.get("ctx"), c.req.param("key"), answers as Record<string, string>);
+      return c.json({ file });
+    } catch (err) {
+      const refusal = bibleRefusal(err);
+      if (refusal === undefined) throw err;
+      return c.json({ error: refusal.error }, refusal.status);
+    }
+  });
+
+  /** Starts the file's writing step: creates the log and spawns the setup worker on it. Refused
+   *  while the file's latest run is unfinished, and for an interview file with no answers. */
+  app.post("/api/shows/:show/bible/:key/runs", async (c) => {
+    try {
+      return c.json(await startBibleRun(c.get("ctx"), c.req.param("key"), bibleDeps));
+    } catch (err) {
+      const refusal = bibleRefusal(err);
+      if (refusal === undefined) throw err;
+      return c.json({ error: refusal.error }, refusal.status);
+    }
+  });
+
+  /** Answers the file's open gate with one of the four answers the terminal offers.
+   *
+   *  `expectedAttempt` is required and not optional, unlike the episode gate's, because every one
+   *  of these four answers is a decision about a file the page has just shown: an answer written
+   *  against a message a rejection has since superseded must be refused by the engine rather than
+   *  applied to a newer ask nobody read. */
+  app.post("/api/shows/:show/bible/:key/runs/:run/gate", async (c) => {
+    const ctx = c.get("ctx");
+    const body = await readJsonBody(c);
+    const choice = body["choice"];
+    const notes = body["notes"] ?? "";
+    const importPath = body["importPath"];
+    const expectedAttempt = body["expectedAttempt"];
+    const choices: GateChoice[] = ["approve", "reject", "myself", "import"];
+    if (typeof choice !== "string" || !choices.includes(choice as GateChoice)) {
+      return c.json({ error: `choice must be one of ${choices.join(", ")}` }, 400);
+    }
+    if (typeof notes !== "string") return c.json({ error: "notes must be a string" }, 400);
+    if (importPath !== undefined && typeof importPath !== "string") return c.json({ error: "importPath must be a string" }, 400);
+    if (!Number.isInteger(expectedAttempt)) return c.json({ error: "expectedAttempt must be an integer: the attempt the gate you read is open at" }, 400);
+    try {
+      return c.json(await answerBibleGate(ctx, c.req.param("key"), c.req.param("run"), {
+        choice: choice as GateChoice, notes, expectedAttempt: expectedAttempt as number, by: ctx.operator,
+        ...(typeof importPath === "string" ? { importPath } : {}),
+      }, bibleDeps));
+    } catch (err) {
+      const refusal = bibleRefusal(err);
+      if (refusal === undefined) throw err;
+      return c.json({ error: refusal.error }, refusal.status);
+    }
+  });
+
+  /** The end of a setup: the bible-check report, the GitHub repository, and the next steps out of
+   *  the show's own README.
+   *
+   *  **Refused while any gated bible file is unapproved**, with the list of them. `initFinish`
+   *  derives its own `stalled` from the run logs, so calling it part-way through would answer
+   *  "thirteen files are waiting on you" to an operator who asked to finish — and would create the
+   *  GitHub repository over a half-written bible, which `gh repo create --push` cannot be asked to
+   *  do twice under one name (Task 2's ruling, and its report's second concern).
+   *
+   *  The registry entry's `readOnly` is untouched: a show whose bible is finished is the show this
+   *  console writes to, and read-only is the retired repository's property, not a stage. */
+  app.post("/api/shows/:show/bible/finish", async (c) => {
+    const ctx = c.get("ctx");
+    const body = await readJsonBody(c);
+    const github = body["github"] ?? "none";
+    if (github !== "private" && github !== "public" && github !== "none") {
+      return c.json({ error: 'github must be "private", "public" or "none"' }, 400);
+    }
+    const unapproved = await unapprovedBibleFiles(ctx);
+    if (unapproved.length > 0) {
+      return c.json({
+        error: `${unapproved.length} bible file(s) are not approved yet: ${unapproved.join(", ")}. Finish them first — each one's gate is still the author's to answer.`,
+        unapproved,
+      }, 409);
+    }
+    return c.json(await finishBible(ctx, github));
   });
 
   // ── the gate, the artifacts and "what happened" ───────────────────────────────────────────

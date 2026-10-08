@@ -187,6 +187,99 @@ export interface EventBatch {
   offset: number;
 }
 
+/** Where one bible file stands, derived from four things and nothing else: its `BIBLE_FILES` row,
+ *  its `Production/setup/<key>/answers.md`, the latest log under
+ *  `Production/setup/<key>/runs/` and the lock beside that log.
+ *
+ *  **The file's own presence on disk is not one of the four**, deliberately: `init` scaffolds or
+ *  imports every bible file before anybody is interviewed, so a file existing says nothing about
+ *  whether its interview has happened. The state is the interview's, not the file's.
+ *
+ *  The nine, in the order an interview passes through them. `pending`: nothing has happened —
+ *  there is no run and no answer saved. `answering`: answers are on disk and the writer has not
+ *  been started. `running`: a worker is holding the file's latest run. `gate`: the run is parked
+ *  at its gate, waiting for one of the four answers. `approved`, `imported` and
+ *  `written-by-author` are the three ways an approval is recorded, told apart by the notes on the
+ *  approving `gate_answered` — nothing, "imported from <path>", or "the author writes this file" —
+ *  so a file approved from the terminal reads the same as one approved from the browser.
+ *  `stalled`: the gate was rejected its maximum ten times and the file on disk is the last
+ *  revision the fix agent made, which is the author's to finish. `failed`: anything else that
+ *  ended badly — the writer agent failed, or the run crashed with no worker holding it.
+ *
+ *  There is no `crashed` member, because a crash is a fact about a run and not about a file: the
+ *  row says `failed` and `BibleFileView.run.status` says `crashed`, which is what lets the page
+ *  offer "start again" with the worker's own account beside it. */
+export type BibleState =
+  | "pending" | "answering" | "running" | "gate"
+  | "approved" | "imported" | "written-by-author"
+  | "stalled" | "failed";
+
+/** One row of the Bible view: one of the fifteen files `BIBLE_FILES` names, with where its
+ *  interview stands and how much of its form is filled in.
+ *
+ *  `key`, `file`, `mode` and `purpose` are the engine's table, not the show's, so the rows are the
+ *  same fifteen for every show. `mode` decides what the row can do: an `interview` file has
+ *  questions and a writer, a `default` file has a house template and a gate over it, and a
+ *  `scaffold` file has neither — the pipeline fills it, there is nothing to interview and no run
+ *  can be started for it, which is why a scaffold row stays `pending` for the life of the show.
+ *
+ *  `runId` and `attempt` are the file's latest run and the attempt its gate is open at, absent for
+ *  a file that has never run. `attempt` is what an answer carries back as `expectedAttempt`, which
+ *  is the protection against a tab left open across a rejection. `questions` is how many the
+ *  file's canon template asks (nine for `world-overview`, zero for the three default and two
+ *  scaffold files) and `answered` how many have a real answer — not blank — so the rail can show
+ *  "4 of 9" without fetching every file's answers. */
+export interface BibleRow {
+  key: string;
+  /** The file, relative to the show root, with the show's own canon directory in it. */
+  file: string;
+  mode: "interview" | "default" | "scaffold";
+  /** One sentence from `BIBLE_FILES`: what this file is for. Shown before the questions. */
+  purpose: string;
+  state: BibleState;
+  runId?: string;
+  attempt?: number;
+  questions: number;
+  answered: number;
+}
+
+/** One bible file at the altitude the Bible page draws: its row, its questions with whatever is
+ *  answered, the gate's message when a gate is open, the file itself, and its latest run.
+ *
+ *  `questionsList` is the canon template's questions in template order joined to the answers on
+ *  disk by heading — one textarea per entry, with `answer` as the prefill and `""` for a question
+ *  nobody has answered. `prior` says those answers came from an earlier sitting rather than from
+ *  this one, which is what lets the form say so; it is true exactly when `answers.md` is on disk.
+ *  `content` is the file's text when it is readable, because the gate shows the whole file as the
+ *  terminal prints it whole — `GET bible/:key/file` serves the same bytes for a raw view. */
+export interface BibleFileView extends BibleRow {
+  questionsList: { heading: string; question: string; answer: string }[];
+  gateMessage?: string;
+  content?: string;
+  run?: SetupRunView;
+  prior: boolean;
+}
+
+/** One setup run as the Bible page draws it: a projection over `bibleFilePipeline`'s own
+ *  description and the run's log, and **not** the episode's `RunView`.
+ *
+ *  A bible file's pipeline is one or two steps — `write` then `gate` for an interviewed file, the
+ *  gate alone for a default one — so the episode's sixty-eight-step view would describe a setup
+ *  run as an episode with every step pending (inventory §4.3). `status` is derived by the same
+ *  ladder `RunView.status` is, so a bible run and an episode run cannot come to disagree about
+ *  what "crashed" means: it is a run whose log stops mid-step with no live worker holding its
+ *  lock. `gate` is the open gate's attempt and message; `error` is the failed step's message;
+ *  `offset` is the byte offset in the log this view was built from, so a client can ask for
+ *  exactly the events it has not seen. */
+export interface SetupRunView {
+  runId: string;
+  status: "none" | "running" | "waiting" | "failed" | "completed" | "crashed";
+  steps: { id: string; status: string; startedAt?: string }[];
+  gate?: { attempt: number; message: string };
+  error?: string;
+  offset: number;
+}
+
 /** What the server pushes over its one SSE channel. Each message is a notice, not a payload: a
  *  "run" message says a log grew and to what offset, leaving the client to fetch the bytes it is
  *  missing, and an "episodes" message says some episode's status changed and the Board should

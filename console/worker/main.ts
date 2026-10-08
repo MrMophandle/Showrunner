@@ -1,11 +1,23 @@
 import path from "node:path";
 import os from "node:os";
-import { appendFile, mkdir, open, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import {
   EventLog, run, runLogPaths, episodePipeline, loadShowConfig, createAgentExecutor, createGateMessageRenderer, sdkQuery, scriptExecutor,
-  liveProcessGroups, killLiveProcessGroups, type Executors, type GateMessageRenderer, type RunResult,
+  type Executors, type GateMessageRenderer, type RunResult,
 } from "@showrunner/engine";
+import { killOnSignal, lockFileFor, startHeartbeat, takeLock, type HeartbeatDeps } from "./lock.js";
+
+/** The lock, the heartbeat and the signal handling live in `worker/lock.ts`, shared with
+ *  `worker/setup.ts`: this entry runs an episode's pipeline and that one runs a bible file's, and
+ *  the two differ in which log, which lock path, which pipeline, which prompts directory and which
+ *  prior logs — and in nothing about locking (ruling H-13).
+ *
+ *  `LockFile` and `lockPath` are re-exported here because `server/workers.ts` reads an episode
+ *  run's lock through them. `lockPath` stays this module's own: it is built from `EventLog.logPath`,
+ *  which validates the episode id, and a bible file's lock is beside a log that path builder
+ *  refuses to compose. */
+export { lockFileFor, type LockFile } from "./lock.js";
 
 /** Which run segment to execute, and as whom. `engineRoot` locates the engine's `scripts/` and
  *  `render/` directories for the pipeline's script steps; `operator` becomes the run's `trigger`,
@@ -14,54 +26,23 @@ import {
  *  is not an agent step runs alone whatever it is set to. */
 export interface WorkerOptions { showRoot: string; episodeId: string; runId: string; engineRoot: string; operator: string; concurrency?: number }
 
-/** The contents of `<runs>/<runId>.lock` — the one fact the run log cannot state: whether a
- *  process is running this run right now. `groups` are the process-group ids of the worker's live
- *  script children, refreshed on every beat, so the console can kill a render the worker is
- *  supervising without having to go looking for it. */
-export interface LockFile { pid: number; startedAt: string; heartbeatAt: string; groups: number[] }
-
 /** The seams a test replaces. Production passes none of them: `executors` and `renderGateMessage`
- *  default to the real ones built from the show config, `heartbeatMs` to five seconds, `now` to
- *  the clock. `onHeartbeat` is observation only — it is called with the body of each beat,
- *  including the immediate first one. */
-export interface WorkerDeps { executors?: Executors; renderGateMessage?: GateMessageRenderer; heartbeatMs?: number; now?: () => Date; onHeartbeat?: (lock: LockFile) => void }
+ *  default to the real ones built from the show config, and the three heartbeat seams
+ *  (`heartbeatMs`, `now`, `onHeartbeat`) come from `lock.ts`, so this entry and the setup worker
+ *  cannot drift into two defaults for one interval. The shape is unchanged. */
+export interface WorkerDeps extends HeartbeatDeps { executors?: Executors; renderGateMessage?: GateMessageRenderer }
 
 /** What one segment came to. Three of the four are states the run log already records and the
  *  console re-derives from it; "crashed" is the one it cannot — a rejected `run()` or a lock held
  *  by another worker — and `detail` is the only account of it outside the worker log. */
 export type WorkerOutcome = { status: "waiting" | "completed" | "failed" | "crashed"; detail: string };
 
-/** The lock lives beside the log it guards; both are named by the run id. */
+/** The lock of one episode run, beside its log and named by the run id. An episode's log address
+ *  is `EventLog.logPath`'s, which validates both ids, so this is the one place the console and the
+ *  worker agree on where an episode run's lock is; `lockFileFor` applies the naming rule the setup
+ *  worker's lock obeys too. */
 export function lockPath(showRoot: string, episodeId: string, runId: string, productionDir = "Production"): string {
-  return EventLog.logPath(showRoot, episodeId, runId, productionDir).replace(/\.jsonl$/, ".lock");
-}
-
-function alive(pid: number): boolean {
-  try { process.kill(pid, 0); return true; } catch (err) { return (err as NodeJS.ErrnoException).code === "EPERM"; }
-}
-
-/** Takes the run's lock or says who holds it. The lock is created with `wx`, so two workers
- *  racing for one run cannot both win; a lock whose pid is dead belongs to a worker that died
- *  without its `finally`, and is removed and retaken. The lock is the one fact the log cannot
- *  state — whether anyone is running this run right now. */
-async function takeLock(file: string, now: Date): Promise<{ ok: true } | { ok: false; holder: number }> {
-  await mkdir(path.dirname(file), { recursive: true });
-  const body = (): string => JSON.stringify({ pid: process.pid, startedAt: now.toISOString(), heartbeatAt: now.toISOString(), groups: [] } satisfies LockFile);
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      const h = await open(file, "wx");
-      await h.writeFile(body(), "utf8");
-      await h.close();
-      return { ok: true };
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
-      let holder: LockFile | undefined;
-      try { holder = JSON.parse(await readFile(file, "utf8")) as LockFile; } catch { holder = undefined; }
-      if (holder && alive(holder.pid)) return { ok: false, holder: holder.pid };
-      await rm(file, { force: true });
-    }
-  }
-  return { ok: false, holder: -1 };
+  return lockFileFor(EventLog.logPath(showRoot, episodeId, runId, productionDir));
 }
 
 /** One run segment: lock, build, run() once, release. Returns rather than throws for every
@@ -80,41 +61,12 @@ export async function runOnce(opts: WorkerOptions, deps: WorkerDeps = {}): Promi
   const lock = await takeLock(lockFile, tookAt);
   if (!lock.ok) { const detail = `run ${opts.runId} is held by pid ${lock.holder}`; await note(detail); return { status: "crashed", detail }; }
 
-  // The latest beat is held as a promise so the release in `finally` can wait for it. A write
-  // still in flight when the lock file is removed would land after the removal and recreate the
-  // lock, leaving the run looking held by a worker that has already exited.
-  let beat: Promise<void> = Promise.resolve();
-  let heartbeat: NodeJS.Timeout | undefined;
-  // One `startedAt` for the life of the worker — the moment it took the lock, which is what the
-  // field means. Recomputing it on every beat made it a second copy of `heartbeatAt` that happens
-  // to be spelled differently, and a lock whose `startedAt` moves says nothing about how long the
-  // worker has held the run.
-  const startedAt = tookAt.toISOString();
-  const tmpFile = `${lockFile}.tmp`;
-
-  /** One beat: write the body to `<lockFile>.tmp` and rename it over the lock.
-   *
-   *  `writeFile` on the lock itself opens with `O_TRUNC` and then writes, so between those two
-   *  syscalls the lock is zero bytes — which `readLock` reads as "no lock" by design, every five
-   *  seconds, for the life of the run. Two things follow from that microsecond: the Board can read
-   *  a running episode as crashed, and `spawnWorker`'s refusal does not fire, so a second worker
-   *  starts and its `takeLock` finds the same truncated file, cannot parse it, deletes it and
-   *  takes the lock. Rename within one directory is atomic: a reader resolving the lock's name
-   *  gets the previous beat whole or this one whole, and the lock's path is never empty, so
-   *  `takeLock`'s `wx` still refuses a second worker throughout. */
-  const writeBeat = async (): Promise<void> => {
-    const body: LockFile = { pid: process.pid, startedAt, heartbeatAt: now().toISOString(), groups: liveProcessGroups() };
-    deps.onHeartbeat?.(body);
-    await writeFile(tmpFile, JSON.stringify(body), "utf8");
-    await rename(tmpFile, lockFile);
-  };
+  // The beat starts at once, so a reader never sees a lock without `groups`, and `release()` is
+  // what the `finally` below calls: it stops the interval, waits for the beat in flight and
+  // removes the lock. `lock.ts` records why each of those three matters.
+  const heartbeat = await startHeartbeat(lockFile, tookAt, deps);
 
   try {
-    // The first beat at once, so a reader never sees a lock without `groups` — and inside the
-    // `try`, so a write that throws still reaches the release below rather than leaving a lock
-    // behind with no worker.
-    await writeBeat();
-    heartbeat = setInterval(() => { beat = writeBeat().catch(() => undefined); }, deps.heartbeatMs ?? 5000);
     const pipeline = episodePipeline({ show, episodeId: opts.episodeId, engineRoot: opts.engineRoot });
     const agentOpts = { query: sdkQuery, show };
     const executors: Executors = deps.executors ?? { script: scriptExecutor, agent: createAgentExecutor(agentOpts) };
@@ -133,12 +85,7 @@ export async function runOnce(opts: WorkerOptions, deps: WorkerDeps = {}): Promi
     await note(detail);
     return { status: result.status, detail };
   } finally {
-    if (heartbeat !== undefined) clearInterval(heartbeat);
-    await beat;
-    await rm(lockFile, { force: true });
-    // A beat that failed between its write and its rename leaves the temporary file behind; it is
-    // the worker's own and nothing else reads it, so it goes with the lock.
-    await rm(tmpFile, { force: true });
+    await heartbeat.release();
   }
 }
 
@@ -158,8 +105,7 @@ async function main(): Promise<void> {
     process.stderr.write(`invalid --concurrency ${c}\n`);
     process.exit(64);
   }
-  const stop = () => { const { killed, failed } = killLiveProcessGroups(); process.stderr.write(`signalled: killed ${killed} process groups, ${failed} refused\n`); process.exit(143); };
-  process.on("SIGTERM", stop); process.on("SIGINT", stop);
+  killOnSignal();
   const r = await runOnce({ showRoot, episodeId, runId, engineRoot, operator, ...(c !== undefined ? { concurrency: Number(c) } : {}) });
   process.stdout.write(`${r.status}: ${r.detail}\n`);
   process.exit(r.status === "waiting" || r.status === "completed" ? 0 : r.status === "failed" ? 1 : 2);

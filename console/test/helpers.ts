@@ -23,6 +23,13 @@ export const ENGINE_ROOT = path.resolve(here, "..", "..");
  *  completed step and either a run_finished or an open gate, and exits. */
 export const FAKE_WORKER = path.join(here, "fixtures", "fake-worker.mjs");
 
+/** The fake **setup** worker, spawned instead of `dist/worker/setup.js`: it reads the bible run's
+ *  log and appends whatever comes next in the gate cycle — the first run's `write` and
+ *  `gate_opened`, an approved gate's `run_finished`, or a rejected gate's next attempt — then
+ *  exits. One fixture drives the whole cycle, so a test that answers a gate gets the same log a
+ *  real worker would have written. */
+export const FAKE_SETUP_WORKER = path.join(here, "fixtures", "fake-setup-worker.mjs");
+
 /** The eight gates of the episode pipeline, so `makeShow` can write the message file each one
  *  names. A gate with no message file is a load-time error in `orderSteps`, so a fixture show
  *  that is missing one cannot run at all. */
@@ -129,16 +136,29 @@ export async function appWithShows(
   entries: FixtureShow[], opts: { pollMs?: number; query?: QueryFn } = {},
 ): Promise<{ registryFile: string; app: Hono<ShowVars>; shows: Map<string, ShowContext>; stores: Map<string, RunStore> }> {
   const registryFile = await makeRegistry(entries);
+  const pollMs = opts.pollMs ?? 2000;
+  const workerCommand = [process.execPath, FAKE_WORKER];
   const shows = await loadShows(await readRegistry(registryFile), {
     engineRoot: ENGINE_ROOT, operator: "console:test",
-    workerCommand: [process.execPath, FAKE_WORKER],
+    workerCommand,
     // A show that would not load is the subject of its own tests; here it would be a silent skip,
     // so the reason is swallowed rather than printed into the suite's output.
     report: () => undefined,
   });
   const stores = new Map<string, RunStore>();
-  for (const [key, ctx] of shows) stores.set(key, new RunStore(ctx, { pollMs: opts.pollMs ?? 2000 }));
-  return { registryFile, app: createApp(shows, stores, opts.query !== undefined ? { query: opts.query } : {}), shows, stores };
+  for (const [key, ctx] of shows) stores.set(key, new RunStore(ctx, { pollMs }));
+  // `newShow` points at **this registry**, in a temporary directory of its own, which is what
+  // makes `POST /api/shows` testable without any test ever touching `~/.showrunner/shows.json`:
+  // a test that wrote the operator's own registry would register a temporary directory as a show
+  // on this machine and leave it there. A show created through the route is built with the same
+  // fake workers and the same short poll as the fixtures above.
+  const app = createApp(shows, stores, {
+    ...(opts.query !== undefined ? { query: opts.query } : {}),
+    newShow: { registryFile, engineRoot: ENGINE_ROOT, operator: "console:test", workerCommand, concurrency: 1 },
+    setupWorkerCommand: [process.execPath, FAKE_SETUP_WORKER],
+    makeStore: (ctx) => new RunStore(ctx, { pollMs }),
+  });
+  return { registryFile, app, shows, stores };
 }
 
 /** What most of the server's tests drive: the app over a registry of exactly one show, that

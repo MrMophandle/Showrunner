@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@showrunner/engine": "*",
+    "@showrunner/tools": "*",
     "hono": "^4.6.0",
     "@hono/node-server": "^1.13.0",
     "marked": "^14.0.0",
