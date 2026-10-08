@@ -2,20 +2,22 @@ import { describe, it, expect } from "vitest";
 import { gateView } from "../server/gates.js";
 import { appWith, makeShow, seedRun, writeIn, type SeedEvent } from "./helpers.js";
 
-/** The prefix every artifact url of episode s02e01 carries. The gate view's job is to name the
- *  file each of the eight gates refers to, as a url under the episode's own two trees, so these
- *  tests are mostly a table check: the gate id in, the artifact list out. */
-const FILES = "/api/episodes/s02e01/files";
+/** The prefix every artifact url of episode s02e01 carries, **including the show key**, because
+ *  every api route lives under `/api/shows/:show/` and the gate view hands the client urls that
+ *  are already complete. The gate view's job is to name the file each of the eight gates refers
+ *  to, as a url under the episode's own two trees, so these tests are mostly a table check: the
+ *  gate id in, the artifact list out. */
+const FILES = "/api/shows/show/episodes/s02e01/files";
 
 /** A show with one run of s02e01 parked at `gateId`, plus whatever the test seeds before it. */
 async function parkedAt(gateId: string, before: SeedEvent[] = [], attempt = 1) {
-  const { root, ctx, store } = await appWith(await makeShow());
+  const { root, app, ctx, store } = await appWith(await makeShow());
   await seedRun(root, "s02e01", "r1", [
     { kind: "run_started", payload: { pipeline: "episode", episodeId: "s02e01" } },
     ...before,
     { stepId: gateId, kind: "gate_opened", payload: { attempt, message: `Approve ${gateId}.` } },
   ]);
-  return { root, ctx, store };
+  return { root, app, ctx, store };
 }
 
 describe("the gate view", () => {
@@ -116,6 +118,36 @@ describe("the gate view", () => {
     expect(Object.keys(v.verdicts).sort()).toEqual(["canon-review-script", "tone-check"]);
     expect((v.verdicts["tone-check"] as { pass: boolean }).pass).toBe(false);
     store.close();
+  });
+
+  /** The assertion the registry commit needed and did not have: an artifact url is not merely
+   *  well-formed, it is an address this app answers. Every url the gate view hands out used to
+   *  read `/api/episodes/<id>/files/<path>`, which moved under `/api/shows/:show/` — so the whole
+   *  Gate page (markdown, diff, json, audio, contact sheet, video) pointed at a 404 while every
+   *  shape assertion above still passed. Fetching one proves the prefix and the route agree. */
+  it("hands out artifact urls this app actually answers, for a file and for a directory", async () => {
+    const { root, app, ctx, store } = await parkedAt("outline-gate");
+    await writeIn(root, "Episodes/s02e01/outline.md", "# The Missing Week\n");
+    const v = (await gateView(ctx, store, "s02e01", "r1"))!;
+    expect(v.artifacts.length).toBeGreaterThan(0);
+    for (const artifact of v.artifacts) {
+      expect(artifact.url.startsWith(`/api/shows/${ctx.key}/episodes/s02e01/files/`), artifact.url).toBe(true);
+    }
+    const fetched = await app.request(v.artifacts[0]!.url);
+    expect(fetched.status).toBe(200);
+    expect(await fetched.text()).toBe("# The Missing Week\n");
+    store.close();
+
+    // A directory artifact carries the same address twice, and the listing has to answer there too.
+    const image = await parkedAt("image-gate");
+    await writeIn(image.root, "Production/s02e01/images/s01-wide.png", "not really a png");
+    const dirArtifact = (await gateView(image.ctx, image.store, "s02e01", "r1"))!.artifacts[0]!;
+    expect(dirArtifact.listUrl).toBe(dirArtifact.url);
+    expect(dirArtifact.url.startsWith(`/api/shows/${image.ctx.key}/episodes/s02e01/files/`)).toBe(true);
+    const listed = await image.app.request(dirArtifact.listUrl!);
+    expect(listed.status).toBe(200);
+    expect(await listed.json()).toMatchObject({ entries: [{ name: "s01-wide.png", size: 16, isDir: false }] });
+    image.store.close();
   });
 
   it("is undefined for a run with no gate open", async () => {

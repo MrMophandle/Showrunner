@@ -20,7 +20,7 @@ describe("the read routes", () => {
     store.close();
   });
 
-  it("GET /api/episodes lists every episode of the show, sorted", async () => {
+  it("GET /api/shows/:show/episodes lists every episode of the show, sorted", async () => {
     const { root, app, store } = await appWith(await makeShow());
     await writeIn(root, "Episodes/s02e03/premise.md", "A dive.\n");
     await mkdir(path.join(root, "Production", "s02e02", "runs"), { recursive: true });
@@ -32,7 +32,7 @@ describe("the read routes", () => {
     store.close();
   });
 
-  it("GET /api/episodes/:id returns the row, and refuses an id that is not one", async () => {
+  it("GET /api/shows/:show/episodes/:id returns the row, and refuses an id that is not one", async () => {
     const { app, store } = await appWith(await makeShow());
     expect((await app.request("/api/shows/show/episodes/s02e01")).status).toBe(200);
     const bad = await app.request("/api/shows/show/episodes/zz");
@@ -41,7 +41,7 @@ describe("the read routes", () => {
     store.close();
   });
 
-  it("GET /api/episodes/:id/runs/:run returns the view, and refuses a run id that is not one", async () => {
+  it("GET /api/shows/:show/episodes/:id/runs/:run returns the view, and refuses a run id that is not one", async () => {
     const { root, app, store } = await appWith(await makeShow());
     await seedRun(root, "s02e01", "r1", [
       { kind: "run_started", payload: { pipeline: "episode", episodeId: "s02e01" } },
@@ -57,7 +57,7 @@ describe("the read routes", () => {
     store.close();
   });
 
-  it("GET /api/episodes/:id/runs/:run/events?after=<offset> returns only what is new", async () => {
+  it("GET /api/shows/:show/episodes/:id/runs/:run/events?after=<offset> returns only what is new", async () => {
     const { root, app, store } = await appWith(await makeShow());
     await seedRun(root, "s02e01", "r1", [
       { kind: "run_started", payload: { pipeline: "episode", episodeId: "s02e01" } },
@@ -278,7 +278,7 @@ describe("the actions", () => {
     return text.trim() === "" ? [] : text.trim().split("\n").map((l) => JSON.parse(l) as { stepId?: string; kind: string; payload: Record<string, unknown> });
   }
 
-  it("POST /api/episodes writes the premise once, and refuses a second one", async () => {
+  it("POST /api/shows/:show/episodes writes the premise once, and refuses a second one", async () => {
     const { root, app, store } = await appWith(await makeShow());
     const made = await app.request("/api/shows/show/episodes", json({ id: "s02e05", premise: "A week." }));
     expect(made.status).toBe(200);
@@ -299,7 +299,7 @@ describe("the actions", () => {
     store.close();
   });
 
-  it("POST /api/episodes/:id/runs mints a run, creates its log before spawning, and the worker writes run_started", async () => {
+  it("POST /api/shows/:show/episodes/:id/runs mints a run, creates its log before spawning, and the worker writes run_started", async () => {
     const { root, app, store } = await appWith(await makeShow());
     const res = await app.request("/api/shows/show/episodes/s02e01/runs", { method: "POST" });
     expect(res.status).toBe(200);
@@ -322,7 +322,7 @@ describe("the actions", () => {
     store.close();
   });
 
-  it("POST /api/episodes/:id/runs refuses while a worker holds the latest run", async () => {
+  it("POST /api/shows/:show/episodes/:id/runs refuses while a worker holds the latest run", async () => {
     const { root, app, store } = await appWith(await makeShow());
     await seedRun(root, "s02e01", "r1", [{ kind: "run_started", payload: { pipeline: "episode", episodeId: "s02e01" } }]);
     await writeLock(root, "s02e01", "r1", process.pid);
@@ -332,7 +332,7 @@ describe("the actions", () => {
     store.close();
   });
 
-  it("POST /api/episodes/:id/runs refuses while the latest run is unfinished, and allows a relaunch after a completed one", async () => {
+  it("POST /api/shows/:show/episodes/:id/runs refuses while the latest run is unfinished, and allows a relaunch after a completed one", async () => {
     const { root, app, store } = await appWith(await makeShow());
     // A crashed run: a step in flight, no terminal event, and no lock — the `finally` of a
     // rejected `run()` took it. Nothing above refuses this, and two workers on one episode would
@@ -356,7 +356,7 @@ describe("the actions", () => {
     store.close();
   });
 
-  it("POST /api/episodes/:id/runs leaves no run behind when the spawn fails", async () => {
+  it("POST /api/shows/:show/episodes/:id/runs leaves no run behind when the spawn fails", async () => {
     const { root, app, key, ctx, store } = await appWith(await makeShow());
     // A context whose worker cannot be spawned at all: `spawnWorker` throws before any process
     // starts. The log for the minted run was already created — that is what makes the run the
@@ -377,7 +377,7 @@ describe("the actions", () => {
     store.close();
   });
 
-  it("POST /api/episodes/:id/runs refuses while a gate is open on the latest run", async () => {
+  it("POST /api/shows/:show/episodes/:id/runs refuses while a gate is open on the latest run", async () => {
     const { root, app, store } = await appWith(await makeShow());
     await seedRun(root, "s02e01", "r1", [
       { kind: "run_started", payload: { pipeline: "episode", episodeId: "s02e01" } },

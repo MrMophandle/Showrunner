@@ -169,7 +169,8 @@ async function serveFile(c: Context, absolute: string, size: number, name: strin
  *  to know which entries it can descend into. */
 export interface DirEntry { name: string; size: number; isDir: boolean }
 
-/** `GET /api/episodes/:id/files/*`: one file with Range, or one directory as a JSON listing.
+/** `GET /api/shows/:show/episodes/:id/files/*`: one file with Range, or one directory as a JSON
+ *  listing.
  *
  *  A directory is answered rather than refused because three of the eight gates are about a
  *  directory and not a file — the shot images, the guest voice references — and the client cannot
@@ -196,7 +197,7 @@ export async function serveArtifact(c: Context, ctx: ShowContext, episodeId: str
   return serveFile(c, fenced.abs, info.size, path.posix.basename(showRelative), false);
 }
 
-/** `GET /api/episodes/:id/runs/:run/log`: the run's raw JSONL as a download.
+/** `GET /api/shows/:show/episodes/:id/runs/:run/log`: the run's raw JSONL as a download.
  *
  *  Served from outside the artifact fence on purpose. The log lives at
  *  `<productionDir>/<id>/runs/<runId>.jsonl`, which the fence would allow, but routing it through

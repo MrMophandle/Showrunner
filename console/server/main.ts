@@ -127,9 +127,9 @@ async function main(): Promise<void> {
   const clientDir = path.resolve(here, "..", "client");
   if (existsSync(clientDir)) {
     app.use("/*", serveStatic({ root: clientDir }));
-    // The client routes in the browser ("/episodes/s02e01"), so a path that names no file is
-    // the client's own route and gets its index. Anything under /api/ that reached here is a
-    // route that does not exist, and must stay a 404 rather than becoming an HTML page.
+    // The client routes in the browser ("/shows/<key>/episodes/s02e01"), so a path that names no
+    // file is the client's own route and gets its index. Anything under /api/ that reached here is
+    // a route that does not exist, and must stay a 404 rather than becoming an HTML page.
     app.get("/*", async (c) => {
       if (c.req.path.startsWith("/api/")) return c.notFound();
       return c.html(await readFile(path.join(clientDir, "index.html"), "utf8"));
