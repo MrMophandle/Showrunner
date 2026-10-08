@@ -47,7 +47,7 @@ function present(name: string): boolean {
  *  different interface and answering half the requests. Plan F retires v1 and frees 4400. */
 export const DEFAULT_PORT = 4410;
 
-const USAGE = `usage: console [--registry <file>] [--show <root>] [--engine-root <path>] [--port ${DEFAULT_PORT}] [--host] [--operator <name>] [--worker <path to a worker entry>] [--concurrency 7]\n`;
+const USAGE = `usage: console [--registry <file>] [--show <root>] [--engine-root <path>] [--port ${DEFAULT_PORT}] [--host] [--operator <name>] [--worker <path to a worker entry>] [--setup-worker <path to a setup worker entry>] [--concurrency 7]\n`;
 
 /** The registry the flags name, the file it came from, and the line to print about it once the
  *  server is listening.
@@ -111,6 +111,11 @@ async function main(): Promise<void> {
   if (!Number.isInteger(port) || port < 1 || port > 65535) { process.stderr.write(`invalid --port ${portRaw}\n`); process.exit(64); }
   const operator = flag("operator");
   const worker = flag("worker");
+  // The bible interview's worker, as `--worker` is the episode's. Separate flags because they are
+  // two entries with two argv shapes (`--episode`/`--run` against `--key`/`--run`) and a console
+  // driving a fake one of each is how the Bible page is exercised without a writer model behind it;
+  // an operator has no reason to set either.
+  const setupWorker = flag("setup-worker");
   // How many ready agent steps a worker may run at once. 7 is the review panel's width; the flag
   // is here for an operator who is being rate-limited and wants the panel narrower.
   const concurrencyRaw = flag("concurrency") ?? "7";
@@ -131,12 +136,15 @@ async function main(): Promise<void> {
   // registered yet there is no context to copy an engine root or a worker command from, and that
   // empty console is exactly the one the New-show surface is for. In `--show` single mode there is
   // no registry file to append to, so the route refuses rather than inventing one.
-  const app = createApp(shows, stores, registryFile === undefined ? {} : {
-    newShow: {
-      registryFile, engineRoot, concurrency,
-      ...(operator !== undefined ? { operator } : {}),
-      ...(worker !== undefined ? { workerCommand: [process.execPath, path.resolve(worker)] } : {}),
-    },
+  const app = createApp(shows, stores, {
+    ...(setupWorker !== undefined ? { setupWorkerCommand: [process.execPath, path.resolve(setupWorker)] } : {}),
+    ...(registryFile === undefined ? {} : {
+      newShow: {
+        registryFile, engineRoot, concurrency,
+        ...(operator !== undefined ? { operator } : {}),
+        ...(worker !== undefined ? { workerCommand: [process.execPath, path.resolve(worker)] } : {}),
+      },
+    }),
   });
 
   // The built client, when there is one. In development Vite serves it on its own port and

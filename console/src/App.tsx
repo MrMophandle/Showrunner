@@ -1,16 +1,18 @@
 import { Link, Outlet, Route, Routes } from "react-router-dom";
 import type { EpisodeRow, ShowInfo } from "../shared/types.js";
 import {
-  ConsoleContext, showHref, showPath, useApi, useCoalesced, useSSE, useSseLive, useShowKey,
-  type ConsoleData,
+  ConsoleContext, bibleHref, showHref, showPath, useApi, useCoalesced, useSSE, useSseLive,
+  useShowKey, type ConsoleData,
 } from "./api.js";
 import { showLabel } from "./projections.js";
 import { useDocTitle } from "./useDocTitle.js";
+import { Bible } from "./pages/Bible.js";
 import { Board } from "./pages/Board.js";
 import { Run } from "./pages/Run.js";
 import { Gate } from "./pages/Gate.js";
+import { NewShow } from "./pages/NewShow.js";
 import { WhatHappened } from "./pages/WhatHappened.js";
-import { NewShowPlaceholder, NoSuchPage, Shows } from "./pages/Shows.js";
+import { NoSuchPage, Shows } from "./pages/Shows.js";
 
 /** The app: the chrome, the shows list, and the four pages of one show.
  *
@@ -26,7 +28,7 @@ import { NewShowPlaceholder, NoSuchPage, Shows } from "./pages/Shows.js";
  *    `ConsoleContext`. A page beneath it therefore has the whole `ShowInfo` — which is how it
  *    knows `readOnly` without a second request — and `useShowKey()` for the paths it builds.
  *  - `ShowlessShell` carries the two pages that are about no show in particular, the shows list at
- *    `/` and the New-show placeholder, and the no-such-page line.
+ *    `/` and the New-show form, and the no-such-page line.
  *
  *  The show's identity and its rows are fetched by the layout rather than inside the Board for one
  *  reason, unchanged from before the registry: the document title is the whole alerting story on
@@ -45,11 +47,16 @@ export function App() {
         {/* A static segment outranks a dynamic one in react-router's own matching, so this wins
             over `/shows/:show` below and no request for the New-show page is ever read as a
             request for a show keyed `new`. */}
-        <Route path="/shows/new" element={<NewShowPlaceholder />} />
+        <Route path="/shows/new" element={<NewShow />} />
         <Route path="*" element={<NoSuchPage />} />
       </Route>
       <Route path="/shows/:show" element={<ShowShell />}>
         <Route index element={<Board />} />
+        {/* Two registrations and not one optional segment: `/shows/:show/bible` is the rail and
+            the Finish panel, `/shows/:show/bible/:key` is the same rail with one file's panel
+            beside it, and `Bible` reads `:key` to tell them apart. */}
+        <Route path="bible" element={<Bible />} />
+        <Route path="bible/:key" element={<Bible />} />
         <Route path="episodes/:id/runs/:run" element={<Run />} />
         <Route path="episodes/:id/runs/:run/gate" element={<Gate />} />
         <Route path="episodes/:id/runs/:run/what-happened" element={<WhatHappened />} />
@@ -74,6 +81,13 @@ function Chrome({ show }: { show: ShowInfo | null }) {
       <Link className="chrome-home link-plain" to="/">{show === null ? "console" : "shows ▸"}</Link>
       {show !== null && (
         <Link className="chrome-name link-plain" to={showHref(show.key)}>{showLabel(show)}</Link>
+      )}
+      {/* The way into the show's bible, in the chrome rather than on the Board, so that it is one
+          tap from the Run and Gate pages too: a file whose gate wants an answer is reached from
+          wherever the operator happens to be, and a bible that could only be opened from the Board
+          would be a page they had to go back for. */}
+      {show !== null && (
+        <Link className="chrome-bible link-plain" to={bibleHref(show.key)}>bible ▸</Link>
       )}
       {show !== null && show.readOnly && <span className="chip chip-readonly">read-only</span>}
       <span className="chrome-meta quiet mono">

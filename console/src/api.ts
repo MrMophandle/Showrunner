@@ -55,6 +55,29 @@ export function showHref(show: string, suffix = ""): string {
   return `/shows/${encodeURIComponent(show)}${suffix}`;
 }
 
+/** The api address of one show's bible, or of one file of it, or of something beneath that file:
+ *  `biblePath("HarborLights")` is `/api/shows/HarborLights/bible`,
+ *  `biblePath("HarborLights", "world-overview")` is `/api/shows/HarborLights/bible/world-overview`,
+ *  and `biblePath("HarborLights", "world-overview", "/file")` adds the suffix.
+ *
+ *  Built on `showPath` rather than beside it, so the `/api/shows/<key>` prefix is still spelled in
+ *  one place. It exists because the bible key is a **path segment** at six addresses (the view, the
+ *  file, the answers, the runs, one run's gate) and encoding it at each of them is five chances to
+ *  forget: the keys `BIBLE_FILES` names are all `[a-z0-9-]`, so a missed `encodeURIComponent` would
+ *  work for every one of them and fail only if the table ever gained a key with a slash or a space
+ *  in it — the kind of defect that is found years later. */
+export function biblePath(show: string, key?: string, suffix = ""): string {
+  return showPath(show, key === undefined ? "/bible" : `/bible/${encodeURIComponent(key)}${suffix}`);
+}
+
+/** The browser address of one show's Bible page, or of one file's panel on it. Separate from
+ *  `biblePath` for the reason `showHref` is separate from `showPath`: `/shows/<key>/bible` is a
+ *  route of `App.tsx` and `/api/shows/<key>/bible` is a route of the server, and one builder with a
+ *  flag would be one place where a link could silently become a fetch. */
+export function bibleHref(show: string, key?: string): string {
+  return showHref(show, key === undefined ? "/bible" : `/bible/${encodeURIComponent(key)}`);
+}
+
 /** The key of the show the current page is looking at, read from the url's `:show` segment.
  *
  *  The key comes from the url and not from the fetched `ShowInfo` because it is needed on the
@@ -273,9 +296,10 @@ function setLive(value: boolean): void {
  *  on: taking it would have a Board re-read its whole show on another show's heartbeat and a Run
  *  page tail a log it is not drawing.
  *
- *  A `setup` notice is parsed and handed on although no page reads one yet — the Bible view lands
- *  in Task 6 of this plan. Parsing it here from the start means the channel is never the reason
- *  that page does not work.
+ *  A `setup` notice is read by one page, the Bible view (`pages/Bible.tsx`): it refetches the rail
+ *  for any key of its own show and the open file for its own key, and refuses to refetch a gate it
+ *  is showing — a notice there raises a banner instead, because the attempt the author read is the
+ *  attempt their answer carries.
  *
  *  A `hello` with one malformed entry in its `shows` list is dropped **whole** rather than filtered
  *  down to the readable entries, because a list with a hole in it would have the Shows page draw a

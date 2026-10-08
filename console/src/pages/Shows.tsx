@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { showHref, useSSE, useShows } from "../api.js";
+import { bibleHref, showHref, useSSE, useShows } from "../api.js";
 
 /** The Shows page: every show this console holds, and the way to start another.
  *
@@ -70,6 +70,10 @@ export function Shows() {
             </div>
             <div className="row-actions">
               <Link className="btn" to={showHref(show.key)}>open the board</Link>
+              {/* The bible beside the board, per show: a show whose setup is unfinished has an
+                  empty Board and thirteen files waiting on their author, and sending them to the
+                  Board first would show them nothing. */}
+              <Link className="btn" to={bibleHref(show.key)}>the bible</Link>
             </div>
           </li>
         ))}
@@ -81,20 +85,6 @@ export function Shows() {
           no gate answer, no new episode. Registered so it can be read beside a show that shares its NAS root.
         </p>
       )}
-    </div>
-  );
-}
-
-/** What `/shows/new` renders until Task 6 of this plan puts the form there.
- *
- *  A page and not a missing route, because the Shows page's "new show" link is the honest place to
- *  say where that surface is: a link to nothing would read as a bug, and a form that posted to a
- *  route no server registers yet would read as a worse one. One line, no fields, no POST. */
-export function NewShowPlaceholder() {
-  return (
-    <div className="board">
-      <h1>new show</h1>
-      <p className="quiet">the New-show form lands in Task 6. <Link to="/">back to the shows</Link></p>
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import type { EpisodeRow, RunView, ShowInfo, StepRow } from "../shared/types.js";
+import type { BibleRow, BibleState, EpisodeRow, RunView, ShowInfo, StepRow } from "../shared/types.js";
 
 /** The client's projections: every judgment the four surfaces make about the data the server
  *  hands them, as functions of their arguments and a clock the caller passes in.
@@ -313,3 +313,134 @@ export function safeHref(href: string | null | undefined): string | undefined {
   if (name === undefined) return cleaned;
   return SAFE_SCHEMES.has(`${name.toLowerCase()}:`) ? cleaned : undefined;
 }
+
+// ── the Bible page ────────────────────────────────────────────────────────────────────────────
+
+/** Which of the Bible page's six panels one bible file gets.
+ *
+ *  Six and not nine, because three of the nine `BibleState`s share one panel (the three ways an
+ *  approval is recorded all draw the finished file read-only) and two more share another (`stalled`
+ *  and `failed` both draw a reason and a "start again"). The names are the panels' own, so the page
+ *  renders one branch per name rather than one per state. */
+export type BiblePanel = "questions" | "running" | "gate" | "approved" | "trouble" | "scaffold";
+
+/** The state → panel table, as a `Record` rather than a `switch`, so that a tenth `BibleState`
+ *  added to `shared/types.ts` is a compile error here instead of a file that silently renders
+ *  nothing. */
+const PANEL_BY_STATE: Record<BibleState, BiblePanel> = {
+  pending: "questions",
+  answering: "questions",
+  running: "running",
+  gate: "gate",
+  approved: "approved",
+  imported: "approved",
+  "written-by-author": "approved",
+  stalled: "trouble",
+  failed: "trouble",
+};
+
+/** The panel one bible file's view gets: the mode is read **before** the state, which is the whole
+ *  reason this is a function and not an inline test.
+ *
+ *  A scaffold file (`continuity-ledger`, `voice-registry`) reads `pending` for the life of the show
+ *  — nothing ever writes a setup log for it, because the episode pipeline fills it
+ *  (`shared/types.ts`'s `BibleRow`) — so a page that selected on the state alone would offer the
+ *  author a question form and a "Write it" button for a file whose run route answers 409. The mode
+ *  is the fact that settles it.
+ *
+ *  Takes the two fields it reads, so the Bible page can ask the question of a `BibleRow` from the
+ *  rail or of the whole `BibleFileView`. */
+export function biblePanelFor(row: Pick<BibleRow, "state" | "mode">): BiblePanel {
+  if (row.mode === "scaffold") return "scaffold";
+  return PANEL_BY_STATE[row.state];
+}
+
+/** The chip class the rail draws one bible state with, out of the stylesheet the Board already
+ *  uses, so the two pages cannot come to mean different things by one colour: amber is "blocked on
+ *  you", blue is "in flight", green is "a milestone that has been passed", red is "ended badly".
+ *  A gate is amber for the same reason an episode waiting on the showrunner is. */
+export function bibleChipClass(state: BibleState): string {
+  switch (state) {
+    case "pending": return "chip chip-none";
+    case "answering": return "chip chip-draft";
+    case "running": return "chip chip-running";
+    case "gate": return "chip chip-waiting";
+    case "approved": case "imported": case "written-by-author": return "chip chip-approved";
+    default: return "chip chip-failed";
+  }
+}
+
+/** Whether the question form holds anything that is not on disk.
+ *
+ *  **Compared trimmed**, both sides: an answer the author added a newline to is not a different
+ *  answer, and a textarea holding only whitespace is an unanswered question — `writeAnswers`
+ *  records those as `(blank)` either way. Absent and empty are the same thing on both sides, so a
+ *  heading the saved record has never carried and a textarea nobody has typed in are equal.
+ *
+ *  It gates "Save answers", and it decides whether "Write it" posts the answers before it starts
+ *  the run: the writer agent reads the answers off disk, and a browser that started a twenty-minute
+ *  writer against answers still sitting in a textarea would be the one way this surface is worse
+ *  than the terminal, which writes every answer the moment it is given. */
+export function answersDirty(saved: Record<string, string>, current: Record<string, string>): boolean {
+  for (const heading of new Set([...Object.keys(saved), ...Object.keys(current)])) {
+    if ((saved[heading] ?? "").trim() !== (current[heading] ?? "").trim()) return true;
+  }
+  return false;
+}
+
+/** The three ways an approval is recorded, which is what `isApproved` counts and what the Finish
+ *  panel's condition is written over. Exported because the rail labels them and the test asserts
+ *  the set. */
+export const BIBLE_APPROVED_STATES: readonly BibleState[] = ["approved", "imported", "written-by-author"];
+
+/** Whether every gated bible file is approved — the condition the Finish panel appears under, and
+ *  the client's half of `POST bible/finish`'s own refusal.
+ *
+ *  The two scaffold rows are skipped because they are never gated: `unapprovedBibleFiles`
+ *  (`server/bible.ts`) skips them too, and a panel that waited for them would never appear at all.
+ *  `null` — the rows have not answered yet — is false, so a Finish panel never flashes up for the
+ *  length of a fetch and is then withdrawn. */
+export function bibleFinishable(rows: BibleRow[] | null): boolean {
+  if (rows === null || rows.length === 0) return false;
+  return rows.every((row) => row.mode === "scaffold" || BIBLE_APPROVED_STATES.includes(row.state));
+}
+
+/** A show name as a slug: every non-alphanumeric character removed, so "Harbor Lights" becomes
+ *  "HarborLights". Nothing is lower-cased and nothing is substituted for a space.
+ *
+ *  **This is a copy of `slugFrom` in `tools/src/init/init.ts:117`, and it is a copy on purpose.**
+ *  That function is exported from `@showrunner/tools` (`tools/src/index.ts`), but the module
+ *  declaring it imports `node:path`, `node:fs/promises` and `@showrunner/engine` at its first three
+ *  lines, so importing it here would pull `node:fs` into the browser bundle — the thing
+ *  `shared/types.ts`' header forbids and the reason that file carries no value import from the
+ *  engine. The New-show form must show the slug **before** the show is made, because the slug is
+ *  rendered into `output.mixFilename` and into the names of files on the NAS, so deriving it on the
+ *  server after the fact is not an option either.
+ *
+ *  The copy is pinned rather than trusted: `console/test/client/bible-projection.test.ts` imports
+ *  `slugFrom` from `@showrunner/tools` — legal there, because the console's suite runs in Node — and
+ *  asserts the two agree over a table of names. If the tools' rule changes, that test fails. */
+export function showSlugFrom(name: string): string {
+  return name.replace(/[^A-Za-z0-9]+/g, "");
+}
+
+/** The four answers a bible gate takes, as the engine's `GateChoice` spells them. */
+export type GateChoiceKey = "approve" | "reject" | "myself" | "import";
+
+/** The gate's four answers with the wording the author reads, in the order the terminal offers
+ *  them.
+ *
+ *  **A copy of `GATE_CHOICES` in `tools/src/init/interview.ts`, for the reason `showSlugFrom`
+ *  above records** — that module imports `node:fs/promises` and the engine — and pinned the same
+ *  way: `console/test/client/bible-projection.test.ts` asserts these keys and labels equal
+ *  `GATE_CHOICES`' imported from `@showrunner/tools`, in order. The wording is not the console's to
+ *  improvise: the terminal and the browser must offer the same four answers and say the same thing
+ *  about them, or an author who starts a setup in one and finishes it in the other is reading two
+ *  different menus. A fifth answer invented here would be an answer `answerGate` has no meaning
+ *  for. */
+export const GATE_BUTTONS: readonly { key: GateChoiceKey; label: string }[] = [
+  { key: "approve", label: "Approve this file as it stands" },
+  { key: "reject", label: "Reject it with notes, and let the writer revise it" },
+  { key: "myself", label: "I will write this one myself — write the empty template over it and approve" },
+  { key: "import", label: "Import a file I already have — copy it over this one and approve" },
+];
