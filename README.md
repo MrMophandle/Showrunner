@@ -417,13 +417,23 @@ the only thing that says who is in an episode before a script exists. One entry 
     - Harbor (location)
     - Dock Hand Pim (guest, speaks)
 
-The grammar is `- <Name> (<tag>, <tag>)`. Tags are lowercased; a line outside the section is
-ignored, and so is a line inside it that does not match. Four tags are load-bearing
-(`engine/src/needs.ts`): `recurring` or `location` demands an entry in the visual bible whose `ref`
-image is on disk; `recurring` with `speaks` also demands a voice in the voice cast that is `LOCKED`
-and whose WAV is on disk; `guest` with `speaks` demands a WAV at
-`<productionDir>/<episodeId>/guest-refs/<slug>*.wav`. Names are matched as slugs, so `the Warden`
-finds either `warden` or `the-warden`.
+The grammar is `- <Name> (<tag>, <tag>)`. Tags are lowercased, and a line outside the section is
+ignored. **A line inside the section that misses the grammar is reported and not ignored** — it
+comes back as a `NEEDS_REFS` line naming the grammar it missed, because a line the parser cannot
+read is a subject the probe never checks, and an em dash written instead of parentheses once took an
+unregistered character all the way into synthesis. Two kinds of line inside the section are skipped
+as layout rather than reported: a blank one, and one that is **entirely** an HTML comment, which is
+what the outline template writes under the heading so its instructions may be left in place. A
+comment sharing a line with anything else is still a cast line, and still reported.
+
+Four tags are load-bearing (`engine/src/needs.ts`): `recurring` or `location` demands an entry in
+the visual bible whose `ref` image is on disk; `recurring` with `speaks` also demands a voice in the
+voice cast that is `LOCKED` and whose WAV is on disk; `guest` with `speaks` demands a WAV under the
+directory `audio.guestRefsDir` names, as `<slug>*.wav`. That key is configurable and carries a
+literal `{episodeId}` token the probe substitutes with the run's id — it is the one show path that
+is per-episode — and its default, when the key is absent, is
+`<productionDir>/<episodeId>/guest-refs`. Names are matched as slugs, so `the Warden` finds either
+`warden` or `the-warden`.
 
 **An outline with no readable `## Cast` section stops the run at `NEEDS_REFS`**, in both shapes — no
 `## Cast` heading at all, and a heading with nothing under it the grammar can read — with the one
@@ -477,13 +487,16 @@ named `episode.wav` rather than by the show's pattern.
 
 ## The console
 
-**`console/` is the showrunner's operating layer over the engine: four browser surfaces that show
-what every episode is doing, open each gate for an answer, and start and restart runs — without the
-server owning a single run.** The Board is one row per episode; the Run view is the pipeline's steps
-and the run's events; the Gate view is the question, its artifacts and the Approve and Reject
-buttons; and "What happened" hands a read-only agent the run's own record. Every action goes
-through the engine's verbs — `answerGate`, `resumeRun`, `resetSteps` and `withdrawApproval` — and
-then spawns a detached worker, so the event log stays the only thing that decides what a run is.
+**`console/` is the showrunner's operating layer over the engine: browser surfaces that show what
+every episode is doing, open each gate for an answer, start and restart runs, and start a whole show
+and interview its bible — without the server owning a single run.** Four of them are one episode's,
+at one altitude each: the Board is one row per episode; the Run view is the pipeline's steps and the
+run's events; the Gate view is the question, its artifacts and the Approve and Reject buttons; and
+"What happened" hands a read-only agent the run's own record. Three more are not about an episode at
+all — the shows list, the New-show form and the Bible view, the last two documented in **Starting a
+show from the console** and **The Bible view** below. Every action goes through the engine's verbs —
+`answerGate`, `resumeRun`, `resetSteps` and `withdrawApproval` — and then spawns a detached worker,
+so the event log stays the only thing that decides what a run is.
 
 The console names no show. **It holds every show a registry lists** — one show context and one run
 store each, built at startup — and reads each repository's `showrunner.json` for everything it needs
@@ -548,10 +561,11 @@ the line that makes looking at the old one safe.
 **`/shows/<key>/bible` is the interview in the browser: the show's fifteen bible files as a rail,
 one file's panel beside it, and the Finish panel once every gated file is approved.** The rows are
 the same fifteen for every show, because `key`, `file`, `mode` and `purpose` come from the engine's
-`BIBLE_FILES` table and not from the show: eleven **interview** files, three **default** files that
+`BIBLE_FILES` table and not from the show: ten **interview** files, three **default** files that
 carry a house template and a gate over it, and two **scaffold** files — the continuity ledger and the
 voice registry — which the pipeline fills, so no run can be started for them and their rows stay
-`pending` for the life of the show.
+`pending` for the life of the show. Ten and three are the thirteen gated files **Starting a show**
+below counts; the two scaffolds have no gate.
 
 **Each row's state is derived from four things and nothing else:** its `BIBLE_FILES` row, its
 `Production/setup/<key>/answers.md`, the latest log under `Production/setup/<key>/runs/`, and the

@@ -19,13 +19,23 @@ export interface CastEntry { name: string; tags: string[] }
  *  template carried a line this parser reported as missing the grammar, and `missingRefs` turned
  *  the template's own instructions into a NEEDS_REFS stop. The test is per-line and not across
  *  lines on purpose: a comment opened on one line and closed on another has swallowed whatever is
- *  between them, cast lines included, and must still be reported rather than skipped. */
+ *  between them, cast lines included, and must still be reported rather than skipped.
+ *
+ *  **A heading of any level ends the section, and is never itself an entry.** The section used to
+ *  be closed only by the next level-2 heading, and the shipped outline template puts its
+ *  `### Beat 1` and `### Beat 2` headings between `## Cast` and the next `## ` one — so those two
+ *  headings fell inside the cast section and were reported as missing the grammar, which is the
+ *  same NEEDS_REFS stop the comment skip above was added to remove and was only half of. Treating
+ *  every heading as a boundary is the conservative reading in both directions: a heading line can
+ *  never be `- <Name> (<tags>)`, so nothing that was an entry stops being one, and a cast list that
+ *  a heading has interrupted is over whatever the heading's depth, so no line under some later
+ *  subsection is read as cast. */
 export function parseCastSection(outline: string): { entries: CastEntry[]; malformed: string[] } {
   const entries: CastEntry[] = [];
   const malformed: string[] = [];
   let inSection = false;
   for (const line of outline.split("\n")) {
-    if (/^## /.test(line)) { inSection = /^## Cast\b/.test(line); continue; }
+    if (/^#{1,6} /.test(line)) { inSection = /^## Cast\b/.test(line); continue; }
     if (!inSection || line.trim() === "" || /^<!--.*-->$/.test(line.trim())) continue;
     const m = /^- (.+?) \(([^)]*)\)\s*$/.exec(line);
     if (!m || m[1] === undefined || m[2] === undefined) { malformed.push(line.trim()); continue; }

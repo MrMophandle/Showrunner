@@ -69,6 +69,28 @@ describe("parseCastSection", () => {
       "<!-- opened here", "closed here -->",
     ]);
   });
+
+  it("ends the section at a heading of any level, which is where the shipped template's beats begin", () => {
+    // The other half of the template fault, and the one the comment skip alone did not fix. The
+    // outline template's `## Cast` is followed by `### Beat 1` and `### Beat 2` *before* the next
+    // level-2 heading, so a section closed only by `## ` swallowed both beat headings and reported
+    // them as cast lines missing the grammar. `tools/test/templates.test.ts` asserts this against
+    // the real template; this is the shape, in one string.
+    const outline = "# s02e01\n\n## Cast\n<!-- instructions -->\n- Vale (recurring, speaks)\n- Harbor (location)\n\n### Beat 1 — <title>\n<!-- what a beat is -->\n\n### Beat 2 — <title>\n\n## Ending duties\n- not cast either\n";
+    expect(parseCastSection(outline)).toEqual({
+      entries: [{ name: "Vale", tags: ["recurring", "speaks"] }, { name: "Harbor", tags: ["location"] }],
+      malformed: [],
+    });
+    // A heading is a boundary and never an entry, whatever its depth and whatever follows it: the
+    // list under a later heading is that heading's, not the cast's.
+    expect(parseCastSection("## Cast\n- Vale (recurring)\n#### Notes\n- a note, not a subject\n")).toEqual({
+      entries: [{ name: "Vale", tags: ["recurring"] }],
+      malformed: [],
+    });
+    // And the heading test is the ATX one: `#hashtag` with no space is prose, so it is still a line
+    // inside the section that misses the grammar.
+    expect(parseCastSection("## Cast\n#notaheading\n").malformed).toEqual(["#notaheading"]);
+  });
 });
 
 describe("missingRefs", () => {
@@ -194,10 +216,13 @@ describe("missingRefs", () => {
     // lines and leaves its instruction comment in place — which is the ordinary thing to do, since
     // the comment does not render — must get a clean probe, not a line blaming the instructions for
     // missing the grammar.
+    // The whole template shape, not just its cast lines: the instruction comment under the heading
+    // *and* the two `### Beat <n>` headings that follow the cast, which are what the next section
+    // of this file proves are a boundary rather than cast lines.
     const { root, w } = await show1();
     await w(
       "Episodes/s02e01/outline.md",
-      "# s02e01\n\n## Cast\n<!-- One line per character and location, as `- <Name> (<tags>)`, tags from: recurring, guest, speaks, location. -->\n- Vale (recurring, speaks)\n- Harbor (location)\n",
+      "# s02e01\n\n## Scene synopsis\n<!-- One paragraph. -->\n\n## Cast\n<!-- One line per character and location, as `- <Name> (<tags>)`, tags from: recurring, guest, speaks, location. -->\n- Vale (recurring, speaks)\n- Harbor (location)\n\n### Beat 1 — <title>\n<!-- One beat per heading. -->\n\n### Beat 2 — <title>\n\n## Ending duties\n<!-- How the ending pays its duties. -->\n",
     );
     expect(await missingRefs(root, "s02e01", show)).toEqual([]);
   });
