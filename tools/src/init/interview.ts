@@ -9,6 +9,13 @@ import {
 import { templatesDir } from "./paths.js";
 import { CAST_NAME, parseCanonTemplate, templateWithoutQuestions, type Question } from "./scaffold.js";
 
+/** One question the interview asks and the bible section whose answer it is, re-exported from
+ *  `scaffold.ts` where it is declared beside the template parser that produces it. The console
+ *  renders these as a form and reads them back by heading, so it must have the type without
+ *  importing the scaffold writer; a second declaration of the same two fields would be a second
+ *  spelling of the one contract `questionsFor`, `readAnswers` and `writeAnswers` share. */
+export type { Question } from "./scaffold.js";
+
 /** The terminal the interview talks through, injected so the driver is testable without a TTY:
  *  `init` passes a readline-backed implementation (Task 8) and the tests pass scripted answers.
  *  `say` prints a block of text; `ask` asks one question and returns the answer, with
@@ -102,7 +109,11 @@ const BLANK = "(blank)";
  *  record of why an approved file holds nothing but headings. */
 const AUTHOR_NOTES = "the author writes this file";
 
-const GATE_CHOICES: readonly { key: GateChoice; label: string }[] = [
+/** The gate's four answers, with the wording the author reads. Exported because the terminal and
+ *  the console must offer the same four and word them the same way: the console renders one button
+ *  per entry, and a fifth answer invented in a React component would be an answer `answerGate` has
+ *  no meaning for. */
+export const GATE_CHOICES: readonly { key: GateChoice; label: string }[] = [
   { key: "approve", label: "Approve this file as it stands" },
   { key: "reject", label: "Reject it with notes, and let the writer revise it" },
   { key: "myself", label: "I will write this one myself — write the empty template over it and approve" },
@@ -144,6 +155,51 @@ class ImportRefused extends Error {
  *  first, and the file the writer agent is pointed at as the format to follow. */
 function canonTemplatePath(key: string): string {
   return path.join(templatesDir(), "canon", `${key}.md`);
+}
+
+/** The interview's own prompt directory: `write.md`, `gate.md` and `revise.md` ship with the
+ *  engine's templates rather than being copied into the show, because they are the setup's prompts
+ *  and not the show's. The show's own prompt set is copied into `prompts/` by the scaffold.
+ *
+ *  Exported, and here rather than in `init.ts`, because three callers now need the same directory:
+ *  `init`'s own executors, the console's setup worker — which runs in a process of its own and
+ *  would otherwise resolve the show's `prompts/` and render an episode prompt for a bible step —
+ *  and the tests that drive a gate message. */
+export function interviewPromptsDir(): string {
+  return path.join(templatesDir(), "interview");
+}
+
+/** The questions one bible file's canon template asks, in the template's order: the heading each
+ *  answer is written under and the question itself.
+ *
+ *  Exported because the console's New-show surface *is* these questions — one textarea per entry,
+ *  prefilled from `readAnswers` — and because `writeAnswers` needs the same list to write every
+ *  heading the writer agent and `bible-check` both read. Empty for a `default` or `scaffold` file,
+ *  which has no interview: the author reviews those at a gate without being asked anything. */
+export async function questionsFor(entry: BibleFile): Promise<Question[]> {
+  return parseCanonTemplate(await readFile(canonTemplatePath(entry.key), "utf8")).questions;
+}
+
+/** The six variables `bibleFilePipeline`'s three prompts render: `file`, `key`, `purpose`,
+ *  `answersPath`, `templatePath` and `date`.
+ *
+ *  Exported because the console's setup worker builds the same pipeline in a process of its own,
+ *  and a seventh spelling of these six keys would be a prompt rendering an empty string — the one
+ *  failure a prompt does not announce. `date` is the author's own calendar date and not
+ *  Greenwich's, for the reason `localDate` records, which is also why the clock arrives here as a
+ *  `Date` and not as a string. `showRoot` is taken but not read: every file-addressed function in
+ *  this module takes the show root first, and a caller that had to drop it for this one would be
+ *  the caller most likely to pass the arguments in the wrong order. */
+export function buildVars(showRoot: string, entry: BibleFile, now: Date, productionDir?: string): Record<string, string> {
+  void showRoot;
+  return {
+    file: entry.file,
+    key: entry.key,
+    purpose: entry.purpose,
+    answersPath: answersPath(entry.key, productionDir),
+    templatePath: canonTemplatePath(entry.key),
+    date: localDate(now),
+  };
 }
 
 /** True when `child` is `parent` or sits under it. String comparison on resolved paths, which is
@@ -254,6 +310,54 @@ function parsePriorAnswers(text: string, headings: readonly string[]): Map<strin
   }
   close();
   return out;
+}
+
+/** Writes a bible file's answers file whole — `<productionDir>/setup/<key>/answers.md` — and
+ *  returns its path relative to the show root, which is the path a caller stages for the file's
+ *  commit.
+ *
+ *  Exported because the console writes the author's answers as a one-shot request, outside any run,
+ *  the way the server writes `premise.md`: the form posts what it holds and the answers are on disk
+ *  before any writer agent is started. The whole file is rewritten and never appended to, for the
+ *  reason the question loop records: `answersFileFor` emits every one of the template's headings
+ *  with `(blank)` under the questions that have no answer, which is the shape the writer agent and
+ *  `bible-check` both need, and a truncated rewrite loses at most the answer in flight where a
+ *  truncated append would leave a half-written heading block for `parsePriorAnswers` to read as
+ *  part of the answer above it.
+ *
+ *  **The consequence a caller owes: `answers` is the whole file, not a patch.** A heading absent
+ *  from it is written back as `(blank)`, so a form holding one answer must read the rest with
+ *  `readAnswers` first. The record is keyed by heading because that is how the file is read back,
+ *  and no canon template carries one heading twice. */
+export async function writeAnswers(showRoot: string, entry: BibleFile, answers: Record<string, string>, productionDir?: string): Promise<string> {
+  const rel = answersPath(entry.key, productionDir);
+  const abs = path.resolve(showRoot, rel);
+  const questions = await questionsFor(entry);
+  await mkdir(path.dirname(abs), { recursive: true });
+  await writeFile(abs, answersFileFor(questions, questions.map((q) => answers[q.heading] ?? "")), "utf8");
+  return rel;
+}
+
+/** The answers already on disk for a bible file, by heading — `{}` when the file has never been
+ *  answered, and never an entry for a question recorded as `(blank)`, because that records a
+ *  question the author skipped rather than an answer to keep.
+ *
+ *  Exported because this is how a second visit continues an interview with no new persistence: the
+ *  terminal offers each answer back as that question's default and the console prefills the same
+ *  text into the form, both reading the file the question loop rewrites after every answer. A
+ *  heading the current template no longer carries is never looked for, and a heading the file does
+ *  not carry yields nothing: both are what a template that changed between two sittings should do. */
+export async function readAnswers(showRoot: string, entry: BibleFile, productionDir?: string): Promise<Record<string, string>> {
+  const abs = path.resolve(showRoot, answersPath(entry.key, productionDir));
+  let text: string;
+  try {
+    text = await readFile(abs, "utf8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+    return {};
+  }
+  const headings = (await questionsFor(entry)).map((q) => q.heading);
+  return Object.fromEntries(parsePriorAnswers(text, headings));
 }
 
 /** The cast the author listed, and the lines that were not in the form the question asked for.
@@ -487,14 +591,10 @@ export async function interviewFile(showRoot: string, entry: BibleFile, io: Init
   const interviewed = entry.mode === "interview" && imported === undefined;
   if (interviewed) {
     if (parsed.header.trim() !== "") io.say(parsed.header.trim());
-    // What an earlier, unfinished sitting answered. The answers file is rewritten below, so it is
-    // read before anything is asked: this is the only place the earlier text still exists.
-    let earlier = new Map<string, string>();
-    try {
-      earlier = parsePriorAnswers(await readFile(abs, "utf8"), headings);
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
-    }
+    // What an earlier, unfinished sitting answered, read through the same function the console's
+    // form prefills itself from. The answers file is rewritten below, so it is read before
+    // anything is asked: this is the only place the earlier text still exists.
+    const earlier = new Map(Object.entries(await readAnswers(showRoot, entry, productionDir)));
     if (earlier.size > 0) {
       io.say(`${earlier.size} answer(s) from an earlier sitting are offered back as you go; keep one as it is, or type over it.`);
     }
@@ -515,11 +615,19 @@ export async function interviewFile(showRoot: string, entry: BibleFile, io: Init
     // A question this sitting has not reached is written back from `earlier`, not blanked: on a
     // resumed interview the first rewrite would otherwise erase every answer below the one being
     // typed, which is the very loss this fix exists to prevent.
-    const record = (): Promise<void> => writeFile(
-      abs,
-      answersFileFor(parsed.questions, parsed.questions.map((q, i) => given[i] ?? earlier.get(q.heading) ?? "")),
-      "utf8",
-    );
+    //
+    // The write goes through `writeAnswers`, which is also the console's one-shot write, so the
+    // terminal and the browser cannot put differently shaped answers files on disk for the same
+    // show. It takes the answers by heading and this loop holds them by index, hence the record
+    // built here; no canon template carries one heading twice.
+    const record = async (): Promise<void> => {
+      await writeAnswers(
+        showRoot,
+        entry,
+        Object.fromEntries(parsed.questions.map((q, i) => [q.heading, given[i] ?? earlier.get(q.heading) ?? ""])),
+        productionDir,
+      );
+    };
     for (const q of parsed.questions) {
       const prior = earlier.get(q.heading);
       given.push(await io.ask(q.question, prior === undefined ? { multiline: true } : { multiline: true, default: prior }));
@@ -539,14 +647,7 @@ export async function interviewFile(showRoot: string, entry: BibleFile, io: Init
     }
   }
 
-  const vars: Record<string, string> = {
-    file: entry.file,
-    key: entry.key,
-    purpose: entry.purpose,
-    answersPath: answers,
-    templatePath,
-    date: localDate(now()),
-  };
+  const vars = buildVars(showRoot, entry, now(), productionDir);
   // An imported file's pipeline is the gate alone. `bibleFilePipeline` pushes the `write` step for
   // an `interview` entry and not for a `default` one, so handing it the entry with its mode
   // rewritten is how the writer agent is skipped — the one thing I5 asks for — without the engine
@@ -682,14 +783,26 @@ export async function interviewFile(showRoot: string, entry: BibleFile, io: Init
   return done;
 }
 
-/** Whether a bible file's interview has been approved: the latest run under its log directory
- *  finished completed. "Latest" is the lexically last log, which is the most recent one because
- *  `mintRunId` sorts by time. False for a file that has never been interviewed, for one whose run
- *  failed, and for one still waiting at its gate — which is what makes this the question
- *  `init --resume` asks per file before it interviews one again. */
-export async function isApproved(showRoot: string, entry: BibleFile, productionDir?: string): Promise<boolean> {
+/** The absolute path of the most recent run log of a bible file's interview, or `undefined` when
+ *  the file has never been interviewed. "Most recent" is the lexically last log, which is the
+ *  latest one because `mintRunId` stamps the time into the id.
+ *
+ *  Exported because this one log is the whole state of a bible file: the console's Bible view reads
+ *  it to say whether a file is waiting at a gate, running, approved or failed, and it must give the
+ *  same answer for a file interviewed in the terminal as for one interviewed in the browser. The
+ *  path is absolute so a caller can hand it straight to `EventLog`. */
+export async function latestSetupLog(showRoot: string, entry: BibleFile, productionDir?: string): Promise<string | undefined> {
   const logs = await runLogsIn(bibleLogDir(showRoot, entry.key, productionDir));
-  const latest = logs[logs.length - 1];
+  return logs[logs.length - 1];
+}
+
+/** Whether a bible file's interview has been approved: the latest run under its log directory
+ *  finished completed. False for a file that has never been interviewed, for one whose run
+ *  failed, and for one still waiting at its gate — which is what makes this the question
+ *  `init --resume` asks per file before it interviews one again, and the question `initFinish`
+ *  asks per file to say which files are still the author's to finish. */
+export async function isApproved(showRoot: string, entry: BibleFile, productionDir?: string): Promise<boolean> {
+  const latest = await latestSetupLog(showRoot, entry, productionDir);
   if (latest === undefined) return false;
   const state = deriveRunState(await new EventLog(latest).read());
   return state.finished && state.status === "completed";

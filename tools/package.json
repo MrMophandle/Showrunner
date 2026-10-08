@@ -3,6 +3,8 @@
   "version": "0.0.1",
   "private": true,
   "type": "module",
+  "main": "./dist/index.js",
+  "exports": { ".": "./dist/index.js" },
   "bin": {
     "extract-prompts": "./dist/extract-prompts.js",
     "check-prompts": "./dist/check-prompts.js",
