@@ -6,11 +6,22 @@
 // model involved — the run logs are written by hand, exactly as `test/helpers.ts`'s `seedRun`
 // writes them for the server's own tests.
 //
-// Run it, and it prints the show root:
+// Run it, and it prints the show root. The console holds a registry of shows now, and every page
+// of a show lives under /shows/<key>/, so the walkthrough goes through a scratch registry file
+// with a key chosen for the occasion:
 //
-//   node console/test/fixtures/seed-show.mjs
-//   node console/dist/server/main.js --show <that path> \
-//     --worker console/test/fixtures/fake-worker.mjs --port 4400
+//   node console/test/fixtures/seed-show.mjs                       # prints <that path>
+//   printf '{"shows":{"HarborLight":{"root":"<that path>"}}}' > /tmp/shows.json
+//   node console/dist/server/main.js --registry /tmp/shows.json \
+//     --worker console/test/fixtures/fake-worker.mjs --port 4410
+//   then open http://127.0.0.1:4410/shows/HarborLight
+//
+// Add a second entry with "readOnly": true to see a show the console refuses every POST to: no
+// launch, no gate answer, no new episode, one line in their place.
+//
+// `--show <that path>` still works and is a one-show registry keyed by the path's own basename
+// (`console-walkthrough-XXXXXX`), which is then the key in the url. **Not --port 4400:** console
+// v1 runs there in the show repository, and 4410 is this console's own default.
 //
 // Five episodes. The brief names three — the first three below — and the last two are additions,
 // each for a surface element the first three cannot show: `image-gate` needs a directory of images

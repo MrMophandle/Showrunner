@@ -1,4 +1,4 @@
-import type { EpisodeRow, RunView, StepRow } from "../shared/types.js";
+import type { EpisodeRow, RunView, ShowInfo, StepRow } from "../shared/types.js";
 
 /** The client's projections: every judgment the four surfaces make about the data the server
  *  hands them, as functions of their arguments and a clock the caller passes in.
@@ -194,20 +194,60 @@ export function composeNotesWithFlags(
  *  it is: an archived episode was finished outside the engine and there is nothing for the person
  *  at the tab to do about it.
  *
- *  `showName` comes from `GET /api/show` and never from code: this repository names no show. */
-export function titleFor(showName: string, rows: EpisodeRow[] | null, now: Date | number = Date.now()): string {
-  const idle = `${showName} console`;
+ *  **The show is named by `showLabel`, which carries the key as well as the name**, because one
+ *  console now holds every show on the machine and a name alone cannot tell two of them apart:
+ *  the two repositories this console was measured against declare the **same** `showName` and the
+ *  same `showSlug` (ruling H-02, inventory §2.1). A tab naming only that shared name, on a console
+ *  holding both, would be asking for the showrunner without saying where.
+ *
+ *  The name and the key both come from `GET /api/shows/<key>` and never from code: this
+ *  repository names no show. */
+export function titleFor(show: TitleShow, rows: EpisodeRow[] | null, now: Date | number = Date.now()): string {
+  const label = showLabel(show);
+  const idle = `${label} console`;
   if (rows === null) return idle;
   const waiting = rows.find((r) => r.status === "waiting");
-  if (waiting !== undefined) return `⏸ ${waiting.id} NEEDS YOU — ${showName}`;
+  if (waiting !== undefined) return `⏸ ${waiting.id} NEEDS YOU — ${label}`;
   const broken = rows.find((r) => r.status === "failed" || r.status === "crashed");
-  if (broken !== undefined) return `⚠ ${broken.id} ${broken.status === "failed" ? "FAILED" : "CRASHED"} — ${showName}`;
+  if (broken !== undefined) return `⚠ ${broken.id} ${broken.status === "failed" ? "FAILED" : "CRASHED"} — ${label}`;
   const running = rows.find((r) => r.status === "running");
   if (running !== undefined) {
     const minutes = Math.floor((since(running.lastEventAt, now) ?? 0) / 60_000);
-    return `● ${running.id} ${running.stage} · ${minutes}m — ${showName}`;
+    return `● ${running.id} ${running.stage} · ${minutes}m — ${label}`;
   }
   return idle;
+}
+
+/** The two fields of a show that a title or a header has to carry. A `Pick` of `ShowInfo` rather
+ *  than the whole of it, so a test states a show in two fields and not in nine. */
+export type TitleShow = Pick<ShowInfo, "showName" | "key">;
+
+/** How a show is named wherever one show has to be told from another: `<showName> · <key>`.
+ *
+ *  One function shared by the chrome's link (`App.tsx`) and the document title (`titleFor`), so
+ *  the header and the tab cannot name the same show two ways. The key is not decoration: the two
+ *  shows this console was measured against declare the same `showName` and the same `showSlug`
+ *  (inventory §2.1), and the key is the only thing that distinguishes them — it is also the
+ *  segment in the url the operator is looking at, so a label that carries it can be matched
+ *  against the address bar. */
+export function showLabel(show: TitleShow): string {
+  return `${show.showName} · ${show.key}`;
+}
+
+/** The one line a read-only show renders in place of a button whose POST the server would refuse.
+ *
+ *  `refused` says what is not on offer here, in the words of the place it is rendered; the rest is
+ *  the same sentence everywhere, because the reason is the same everywhere. The key is named
+ *  because a console holds several shows and the operator has to know which one is read-only
+ *  without reading the address bar.
+ *
+ *  **Why a line and not a disabled button:** a read-only show refuses *every* POST with 403
+ *  (`server/app.ts`'s show middleware, ruling H-03). The two shows this console was measured
+ *  against name one NAS root and one final filename, so a single write in the retired tree
+ *  overwrites a finished season — and a button that is offered and then refused teaches the
+ *  operator that the console has a move it does not have. */
+export function readOnlyLine(key: string, refused: string): string {
+  return `${key} is read-only: ${refused}. Two registered shows can name one NAS root, and a write in the wrong tree would overwrite a finished season.`;
 }
 
 /** The schemes a link rendered from a gate's message or an episode's markdown may carry.

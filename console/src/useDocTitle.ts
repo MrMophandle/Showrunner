@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { EpisodeRow } from "../shared/types.js";
-import { titleFor } from "./projections.js";
+import { titleFor, type TitleShow } from "./projections.js";
 
 /** The browser tab as an alarm. Ported in purpose from console v1's `useDocTitle`: the spec rules
  *  out web notifications (a LAN console is served over http, which is not a secure context, so
@@ -28,12 +28,23 @@ function useMinuteTick(): number {
   return now;
 }
 
-/** Sets `document.title` from the show's name and the Board's rows. Before `GET /api/show` has
- *  answered there is no name to use, and the title stays the neutral "console": this repository
- *  names no show, and a placeholder would be a name invented in code. */
-export function useDocTitle(showName: string | undefined, rows: EpisodeRow[] | null): void {
+/** Sets `document.title` from the show the page is looking at and that show's Board rows.
+ *
+ *  **`show` is the whole `ShowInfo` and not a name**, because the title carries the key as well
+ *  (`titleFor` through `showLabel`): one console holds every show on the machine, and two of them
+ *  can declare the same `showName`.
+ *
+ *  `null` is the two states that have no show — the Shows list at `/` and the New-show page — and
+ *  the state before `GET /api/shows/<key>` has answered. All three leave the title the neutral
+ *  "console": this repository names no show, and a placeholder would be a name invented in code.
+ *
+ *  `show.showName` and `show.key` are the dependencies rather than `show` itself, so the effect
+ *  does not re-run on every refetch that returns an identical object. */
+export function useDocTitle(show: TitleShow | null, rows: EpisodeRow[] | null): void {
   const now = useMinuteTick();
+  const showName = show?.showName ?? "";
+  const key = show?.key ?? "";
   useEffect(() => {
-    document.title = showName === undefined || showName === "" ? "console" : titleFor(showName, rows, now);
-  }, [showName, rows, now]);
+    document.title = showName === "" ? "console" : titleFor({ showName, key }, rows, now);
+  }, [showName, key, rows, now]);
 }

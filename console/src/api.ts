@@ -1,13 +1,22 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
-import type { EpisodeRow, SseMessage } from "../shared/types.js";
+import { useParams } from "react-router-dom";
+import type { EpisodeRow, ShowInfo, SseMessage } from "../shared/types.js";
 
 /** The client's one way of talking to the console's server: a fetch hook, a POST, one SSE channel
  *  shared by every page, and the context the app's chrome (the show's name and the Board's rows)
  *  is read through.
  *
  *  The server is the only origin this client talks to. There is no second base url, no api key and
- *  no retry policy beyond the SSE channel's reconnect: the console answers for one show on one
+ *  no retry policy beyond the SSE channel's reconnect: the console answers for every show on one
  *  machine, usually the same machine.
+ *
+ *  **Which show a request means is a segment of its url, not a mode this module holds.** Every api
+ *  route lives under `/api/shows/<key>/` (ruling H-02: the key is the operator's, because the only
+ *  identity fields a show config carries are `showName` and `showSlug` and the two shows this
+ *  console was built against declare the same value for both), so `showPath` is the one place that
+ *  spells that prefix and `useShowKey` is the one place that reads the key out of the url. The SSE
+ *  channel is the exception: it stays one connection for every show, and each notice says which
+ *  show it is about.
  *
  *  `useApi` and `useSSE` are ported from console v1 (`console/src/api.ts`), with two changes. The
  *  SSE channel is one `EventSource` for the whole app rather than one per hook, because the server
@@ -16,18 +25,45 @@ import type { EpisodeRow, SseMessage } from "../shared/types.js";
  *  sends every notice as `data:` with no `event:` line, and the vocabulary is in the payload's own
  *  `type` (`shared/types.ts`'s `SseMessage`). */
 
-/** What `GET /api/show` answers. Declared here rather than in `shared/types.ts` because the
- *  server builds that response inline from its `ShowContext` and the engine's `STAGES`, and this
- *  is the client's reading of it; a shared declaration would be a second thing to keep in
- *  agreement with a route that has no view model of its own. */
-export interface ShowInfo {
-  showName: string;
-  showSlug: string;
-  operator: string;
-  episodesDir: string;
-  productionDir: string;
-  stages: string[];
-  engineVersion: string;
+/** `ShowInfo` is re-exported so a page can read one show's identity from the module it fetches
+ *  through, rather than importing the type from one place and the hook from another. It is
+ *  declared in `shared/types.ts` and not here: the server has a view model for it now
+ *  (`server/app.ts`'s `showInfo`), answered by both `GET /api/shows` and `GET /api/shows/:show`,
+ *  so a second client-side declaration would be a copy to keep in agreement rather than the
+ *  client's own reading of an inline response. */
+export type { ShowInfo };
+
+/** The api address of one show, or of something beneath it: `showPath("HarborLight", "/episodes")`
+ *  is `/api/shows/HarborLight/episodes`.
+ *
+ *  One function and not thirteen hand-built template strings, because every one of the client's
+ *  calls moved under this prefix at once and the next route to move must have one place to change.
+ *  The key is encoded and the suffix is not: the suffix is built by its caller, which has already
+ *  encoded the episode and run ids it carries. */
+export function showPath(show: string, suffix = ""): string {
+  return `/api/shows/${encodeURIComponent(show)}${suffix}`;
+}
+
+/** The browser address of one show's page, or of something beneath it:
+ *  `showHref("HarborLight", "/episodes/s02e01/runs/r1")` is
+ *  `/shows/HarborLight/episodes/s02e01/runs/r1`.
+ *
+ *  Separate from `showPath` because the two prefixes are different strings that must stay in step
+ *  — `/shows/<key>` is a route of `App.tsx` and `/api/shows/<key>` is a route of the server — and
+ *  a single builder with a flag would be one place where a link could silently become a fetch. */
+export function showHref(show: string, suffix = ""): string {
+  return `/shows/${encodeURIComponent(show)}${suffix}`;
+}
+
+/** The key of the show the current page is looking at, read from the url's `:show` segment.
+ *
+ *  The key comes from the url and not from the fetched `ShowInfo` because it is needed on the
+ *  first render, before any fetch has answered: the Run and Gate pages drop an SSE notice whose
+ *  `show` is not theirs, and a filter that waited for a fetch would, for the length of that
+ *  fetch, accept another show's notice about an identically-named run. Empty string on a page
+ *  with no show segment, which is `/` and `/shows/new`. */
+export function useShowKey(): string {
+  return useParams()["show"] ?? "";
 }
 
 /** One entry of the artifact route's directory listing (`server/artifacts.ts`'s `DirEntry`).
@@ -229,25 +265,63 @@ function setLive(value: boolean): void {
 
 /** A message off the wire, or undefined when it is not one this client knows. A notice it cannot
  *  read is dropped rather than thrown: the channel is a convenience — every page can still be
- *  refreshed by hand — and a malformed line must not take the connection down with it. */
-function parseMessage(raw: string): SseMessage | undefined {
+ *  refreshed by hand — and a malformed line must not take the connection down with it.
+ *
+ *  **`show` is required on `run`, `episodes` and `setup`, and a notice without it is dropped.**
+ *  One channel carries every registered show's notices and two shows can each hold an `s02e01`
+ *  (ruling H-12), so a notice that cannot say which show it is about is a notice no page can act
+ *  on: taking it would have a Board re-read its whole show on another show's heartbeat and a Run
+ *  page tail a log it is not drawing.
+ *
+ *  A `setup` notice is parsed and handed on although no page reads one yet — the Bible view lands
+ *  in Task 6 of this plan. Parsing it here from the start means the channel is never the reason
+ *  that page does not work.
+ *
+ *  A `hello` with one malformed entry in its `shows` list is dropped **whole** rather than filtered
+ *  down to the readable entries, because a list with a hole in it would have the Shows page draw a
+ *  console that is missing a show, which is worse than a Shows page that fetches the list itself.
+ *
+ *  Exported for `test/client/api-paths.test.ts`: the refusals above are the part of this module
+ *  that fails silently, and a notice wrongly dropped looks exactly like a console whose channel is
+ *  quiet. */
+export function parseMessage(raw: string): SseMessage | undefined {
   let parsed: unknown;
   try { parsed = JSON.parse(raw); } catch { return undefined; }
   if (!isRecord(parsed)) return undefined;
   const type = parsed["type"];
-  if (type === "episodes") return { type: "episodes" };
+  const show = parsed["show"];
+  if (type === "episodes") {
+    if (typeof show !== "string") return undefined;
+    return { type: "episodes", show };
+  }
   if (type === "hello") {
     const operator = parsed["operator"];
-    const showName = parsed["showName"];
-    if (typeof operator !== "string" || typeof showName !== "string") return undefined;
-    return { type: "hello", operator, showName };
+    const shows = parsed["shows"];
+    if (typeof operator !== "string" || !Array.isArray(shows)) return undefined;
+    const list: { key: string; showName: string; readOnly: boolean }[] = [];
+    for (const entry of shows) {
+      if (!isRecord(entry)) return undefined;
+      const key = entry["key"];
+      const showName = entry["showName"];
+      const readOnly = entry["readOnly"];
+      if (typeof key !== "string" || typeof showName !== "string" || typeof readOnly !== "boolean") return undefined;
+      list.push({ key, showName, readOnly });
+    }
+    return { type: "hello", operator, shows: list };
   }
   if (type === "run") {
     const episodeId = parsed["episodeId"];
     const runId = parsed["runId"];
     const offset = parsed["offset"];
-    if (typeof episodeId !== "string" || typeof runId !== "string" || typeof offset !== "number") return undefined;
-    return { type: "run", episodeId, runId, offset };
+    if (typeof show !== "string" || typeof episodeId !== "string" || typeof runId !== "string" || typeof offset !== "number") return undefined;
+    return { type: "run", show, episodeId, runId, offset };
+  }
+  if (type === "setup") {
+    const key = parsed["key"];
+    const runId = parsed["runId"];
+    const offset = parsed["offset"];
+    if (typeof show !== "string" || typeof key !== "string" || typeof runId !== "string" || typeof offset !== "number") return undefined;
+    return { type: "setup", show, key, runId, offset };
   }
   return undefined;
 }
@@ -346,10 +420,24 @@ export function useNow(everyMs = 1_000): number {
 
 // ── the chrome ────────────────────────────────────────────────────────────────────────────────
 
-/** What every page can read without fetching it again: the show the console is pointed at, and the
- *  Board's rows. The rows are fetched by the app rather than by the Board because the document
- *  title is the alerting story and must be right on a Run page too — an episode that starts
- *  waiting has to reach the tab of whatever page the operator is looking at. */
+/** Every registered show, as the Shows page lists them: `GET /api/shows`.
+ *
+ *  This is the Shows page's hook and no other page's. A page that is looking at one show reads
+ *  that show's own `ShowInfo` out of `ConsoleContext` — fetched once by the `/shows/:show` layout
+ *  from `GET /api/shows/<key>`, which carries the same nine fields — rather than fetching every
+ *  show on the machine to answer a question about one of them. */
+export function useShows(): ApiState<ShowInfo[]> {
+  return useApi<ShowInfo[]>("/api/shows");
+}
+
+/** What every page beneath `/shows/:show` can read without fetching it again: the show it is
+ *  looking at, and that show's Board rows. The rows are fetched by the layout rather than by the
+ *  Board because the document title is the alerting story and must be right on a Run page too —
+ *  an episode that starts waiting has to reach the tab of whatever page the operator is looking
+ *  at.
+ *
+ *  `show` is the whole `ShowInfo` and that is what carries `readOnly`, which is why no page needs
+ *  a second request to know whether to draw a button the server would refuse. */
 export interface ConsoleData {
   show: ShowInfo | null;
   showError: string | null;

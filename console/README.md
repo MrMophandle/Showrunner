@@ -12,15 +12,18 @@ url: `/api/shows/<key>/…`. `--show <path>` still works and is one show keyed b
 
 ## The four surfaces
 
-Four pages, each at one altitude. The client routes in the browser; the server serves the built
-bundle and answers `/api/*` beneath it.
+The shows list, then four pages of one show, each at one altitude. The client routes in the
+browser; the server serves the built bundle and answers `/api/*` beneath it. **Every page of a show
+lives under `/shows/<key>/`**, because one console holds every show on the machine and there is no
+page that can be "the Board" without saying whose.
 
 | Surface | Route | What it shows |
 |---|---|---|
-| The Board | `/` | One row per episode: the id, the title taken from the episode's outline heading, the stage chip with the reasons underneath it, the open gate's step id and attempt, the run's status, the time since the run's last event, and the row's one action. A New-episode form posts a new episode's `premise.md`. |
-| The Run view | `/episodes/:id/runs/:run` | Three altitudes at once: the stage, the step in flight with its elapsed time and progress bar, and the time since the last event; then the step rail, every step of the pipeline in order with its status; then the event feed, the last 2,000 events. The action bar carries the recovery moves. |
-| The Gate view | `/episodes/:id/runs/:run/gate` | The gate's rendered message as markdown, `attempt N of M`, the notes from previous rejections, the verdict board of what the reviewers found, one pane per artifact the gate is about, and the Approve and Reject buttons. |
-| What happened | `/episodes/:id/runs/:run/what-happened` | Everything a troubleshooter would be handed — the pipeline, the run, the collapsed events, every prompt the run read with its hash then and now, and every file the run wrote — plus a question box that asks a read-only agent about that run. |
+| The shows | `/` | One card per registered show: the key, the name, whether it is writable or read-only, its episodes and production directory names, and a link to its Board. A "new show" link points at `/shows/new`, which says the New-show form is still to come. |
+| The Board | `/shows/:show` | One row per episode: the id, the title taken from the episode's outline heading, the stage chip with the reasons underneath it, the open gate's step id and attempt, the run's status, the time since the run's last event, and the row's one action. A New-episode form posts a new episode's `premise.md`. A read-only show draws no launch, no continue and no form, and one line saying why. |
+| The Run view | `/shows/:show/episodes/:id/runs/:run` | Three altitudes at once: the stage, the step in flight with its elapsed time and progress bar, and the time since the last event; then the step rail, every step of the pipeline in order with its status; then the event feed, the last 2,000 events. The action bar carries the recovery moves, and carries none on a read-only show. |
+| The Gate view | `/shows/:show/episodes/:id/runs/:run/gate` | The gate's rendered message as markdown, `attempt N of M`, the notes from previous rejections, the verdict board of what the reviewers found, one pane per artifact the gate is about, and the Approve and Reject buttons — one line instead of the buttons on a read-only show. |
+| What happened | `/shows/:show/episodes/:id/runs/:run/what-happened` | Everything a troubleshooter would be handed — the pipeline, the run, the collapsed events, every prompt the run read with its hash then and now, and every file the run wrote — plus a question box that asks a read-only agent about that run (absent on a read-only show: asking appends to the run's troubleshooting log, which is a write). |
 
 **What is deferred, and is deliberately absent.** The console has no authentication, because it is a
 home-network tool. It does not rotate its logs. The season map, the desk, discuss, notes and the standalone
@@ -297,15 +300,19 @@ what the person at the tab can do about them:
 
 | Form | When |
 |---|---|
-| `⏸ <id> NEEDS YOU — <show>` | An episode is parked at a gate. This wins everything: it is the only form that is a question addressed to the reader. |
-| `⚠ <id> FAILED — <show>` / `⚠ <id> CRASHED — <show>` | A run has stopped and will not restart itself. Second, because it is a job waiting on the operator rather than a question. |
-| `● <id> <stage> · <N>m — <show>` | A run is working, where `N` is the whole minutes since that run's last event. |
-| `<show> console` | Nothing wants attention. |
+| `⏸ <id> NEEDS YOU — <show> · <key>` | An episode is parked at a gate. This wins everything: it is the only form that is a question addressed to the reader. |
+| `⚠ <id> FAILED — <show> · <key>` / `⚠ <id> CRASHED — <show> · <key>` | A run has stopped and will not restart itself. Second, because it is a job waiting on the operator rather than a question. |
+| `● <id> <stage> · <N>m — <show> · <key>` | A run is working, where `N` is the whole minutes since that run's last event. |
+| `<show> · <key> console` | Nothing wants attention. |
+| `console` | The page is not inside a show — the shows list, or the New-show page. |
 
 Each form names the first row in Board order that matches, so two waiting episodes name the earlier
-one and the title does not flicker between them. Before `GET /api/shows/:show` has answered there is no
-show name to use and the title is the neutral `console`: this repository names no show, and a
-placeholder would be a name invented in code.
+one and the title does not flicker between them. **The key is in every form beside the name** because
+two registered shows can declare the same `showName` — the two this console was measured against do —
+and a tab asking for the showrunner without saying which show was asking would be the alerting story
+failing at the one moment it matters. Before `GET /api/shows/:show` has answered there is no show name
+to use and the title is the neutral `console`: this repository names no show, and a placeholder would
+be a name invented in code.
 
 ## Develop
 

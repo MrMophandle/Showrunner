@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { post } from "../api.js";
+import { post, showPath } from "../api.js";
 
 /** The New episode form: an id and a premise, which is the whole of what an episode is before a
  *  run has touched it.
@@ -10,8 +10,13 @@ import { post } from "../api.js";
  *  creating the episode again"), and that refusal is shown as it came: this form is deliberately
  *  not an editor. Editing an existing premise is a file on a disk the operator has, and a console
  *  that offered to overwrite it would be the one thing in this program that could lose the
- *  showrunner's own writing. */
-export function NewEpisode({ episodesDir, onCreated }: { episodesDir: string; onCreated: (id: string) => void }) {
+ *  showrunner's own writing.
+ *
+ *  `showKey` is a prop rather than a `useShowKey()` call of its own because the Board already
+ *  holds the key it rendered this form for: one source, and the form cannot post an episode into a
+ *  show the Board is not showing. The Board renders no form at all for a read-only show, so this
+ *  component never has to think about a POST that would be refused. */
+export function NewEpisode({ showKey, episodesDir, onCreated }: { showKey: string; episodesDir: string; onCreated: (id: string) => void }) {
   const [id, setId] = useState("");
   const [premise, setPremise] = useState("");
   const [busy, setBusy] = useState(false);
@@ -23,7 +28,7 @@ export function NewEpisode({ episodesDir, onCreated }: { episodesDir: string; on
     setError(null);
     setNotice(null);
     try {
-      await post("/api/episodes", { id: id.trim(), premise });
+      await post(showPath(showKey, "/episodes"), { id: id.trim(), premise });
       setNotice(`${episodesDir}/${id.trim()}/premise.md written`);
       onCreated(id.trim());
       setId("");

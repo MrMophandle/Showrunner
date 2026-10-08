@@ -89,6 +89,9 @@ h3 { font-size: 0.95rem; margin: 1.25rem 0 0.4rem; font-weight: 600; color: var(
 }
 
 .chrome-name { font-weight: 600; font-size: 1.05rem; }
+/* The way out of a show, left of the show's own name: one console holds every show on the machine,
+   so "shows" is a place and not a synonym for the board. */
+.chrome-home { color: var(--text-dim); font-size: 0.92rem; }
 .chrome-meta { margin-left: auto; }
 
 .chrome-live {
@@ -159,6 +162,10 @@ h3 { font-size: 0.95rem; margin: 1.25rem 0 0.4rem; font-weight: 600; color: var(
    state of a run, while the stage chip beside it keeps the ordinary approved green. */
 .chip-archived { color: var(--text-dim); border-style: dashed; }
 
+/* A read-only show: dashed and dim, like an archived episode, because it is the same kind of fact
+   — a thing this console reads and cannot act on. */
+.chip-readonly { color: var(--text-dim); border-style: dashed; }
+
 .error-line { color: var(--danger); margin: 0.5rem 0; }
 .notice-line { color: var(--ok); margin: 0.5rem 0; }
 .action-reason { color: var(--text-dim); font-size: 0.88rem; }
@@ -206,6 +213,30 @@ h3 { font-size: 0.95rem; margin: 1.25rem 0 0.4rem; font-weight: 600; color: var(
 
 select { min-height: var(--tap); }
 .new-episode-form input { min-height: var(--tap); }
+
+/* ── the shows list ───────────────────────────────────────────────────────────────────────── */
+
+/* Its own grid rather than the Board's `.row`, which is four columns of an episode: a show's card
+   is three — what it is, whether it may be written to, and the way in. */
+.show-rows { list-style: none; margin: 1rem 0; padding: 0; display: grid; gap: 0.5rem; }
+
+.show-row {
+  display: grid;
+  grid-template-columns: minmax(18rem, 3fr) minmax(7rem, auto) auto;
+  gap: 0.75rem;
+  align-items: center;
+  padding: 0.6rem 0.8rem;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--draft);
+  border-radius: var(--radius);
+}
+
+.show-row-readonly { border-left-color: var(--border); }
+
+@media (max-width: 760px) {
+  .show-row { grid-template-columns: 1fr; }
+}
 
 .rows { list-style: none; margin: 1rem 0; padding: 0; display: grid; gap: 0.5rem; }
 

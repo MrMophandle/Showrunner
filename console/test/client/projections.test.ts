@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { EpisodeRow, RunView, StepRow } from "../../shared/types.js";
 import {
   STALL_MS, composeNotesWithFlags, composeShotRejection, elapsed, firstLine, progressLabel,
-  safeHref, stageLabel, stallState, stalled, titleFor,
+  readOnlyLine, safeHref, showLabel, stageLabel, stallState, stalled, titleFor,
 } from "../../src/projections.js";
 
 /** The client's pure helpers. Every one of them is a function of its arguments and a clock the
@@ -139,17 +139,34 @@ describe("composeNotesWithFlags", () => {
   });
 });
 
-describe("titleFor", () => {
-  const show = "Harbor Light";
+describe("showLabel", () => {
+  it("names a show by its name and its key, which is what tells two of them apart", () => {
+    expect(showLabel({ showName: "Harbor Light", key: "HarborLight" })).toBe("Harbor Light · HarborLight");
+    // The measured case: the live instance and the retired first repository declare the same
+    // showName and the same showSlug (inventory §2.1), so the key is the only identity there is.
+    expect(showLabel({ showName: "One Name", key: "live" })).not.toBe(showLabel({ showName: "One Name", key: "archive" }));
+  });
+});
 
-  it("puts a waiting episode first, with the show's own name", () => {
+describe("readOnlyLine", () => {
+  it("names the key, what is refused, and why a button is absent rather than greyed", () => {
+    expect(readOnlyLine("HarborLight-archive", "no run is launched here")).toBe(
+      "HarborLight-archive is read-only: no run is launched here. Two registered shows can name one NAS root, and a write in the wrong tree would overwrite a finished season.",
+    );
+  });
+});
+
+describe("titleFor", () => {
+  const show = { showName: "Harbor Light", key: "HarborLight" };
+
+  it("puts a waiting episode first, with the show's own name and key", () => {
     const rows = [row({ id: "s02e03", status: "running", stage: "DRAFT_SCRIPT" }), row({ id: "s02e01", status: "waiting", stage: "DRAFT_OUTLINE" })];
-    expect(titleFor(show, rows)).toBe("⏸ s02e01 NEEDS YOU — Harbor Light");
+    expect(titleFor(show, rows)).toBe("⏸ s02e01 NEEDS YOU — Harbor Light · HarborLight");
   });
 
   it("reports a running episode with its stage and the minutes since its last event", () => {
     const rows = [row({ id: "s02e02", status: "running", stage: "DRAFT_AUDIO", lastEventAt: "2026-10-02T10:00:00Z" })];
-    expect(titleFor(show, rows, new Date("2026-10-02T10:03:40Z"))).toBe("● s02e02 DRAFT_AUDIO · 3m — Harbor Light");
+    expect(titleFor(show, rows, new Date("2026-10-02T10:03:40Z"))).toBe("● s02e02 DRAFT_AUDIO · 3m — Harbor Light · HarborLight");
   });
 
   it("ignores an archived episode: a finished season is not something the tab can ask for", () => {
@@ -157,17 +174,17 @@ describe("titleFor", () => {
       row({ id: "ep01", status: "archived", stage: "COMPLETE", archiveNote: "Season 1, made by console v1; final on the NAS 2026-07-18" }),
       row({ id: "ep10", status: "archived", stage: "COMPLETE" }),
     ];
-    expect(titleFor(show, rows)).toBe("Harbor Light console");
+    expect(titleFor(show, rows)).toBe("Harbor Light · HarborLight console");
     // An archived row beside a waiting one leaves the waiting one's claim on the title intact.
     expect(titleFor(show, [...rows, row({ id: "s02e01", status: "waiting", stage: "DRAFT_OUTLINE" })]))
-      .toBe("⏸ s02e01 NEEDS YOU — Harbor Light");
+      .toBe("⏸ s02e01 NEEDS YOU — Harbor Light · HarborLight");
   });
 
   it("falls back to the show's console for an idle, empty or unread board", () => {
-    expect(titleFor(show, [row({ status: "completed" })])).toBe("Harbor Light console");
-    expect(titleFor(show, [])).toBe("Harbor Light console");
-    expect(titleFor(show, null)).toBe("Harbor Light console");
-    expect(titleFor("Another Show", null)).toBe("Another Show console");
+    expect(titleFor(show, [row({ status: "completed" })])).toBe("Harbor Light · HarborLight console");
+    expect(titleFor(show, [])).toBe("Harbor Light · HarborLight console");
+    expect(titleFor(show, null)).toBe("Harbor Light · HarborLight console");
+    expect(titleFor({ showName: "Another Show", key: "another" }, null)).toBe("Another Show · another console");
   });
 });
 
@@ -237,7 +254,10 @@ describe("progressLabel", () => {
 describe("safeHref", () => {
   it("keeps http, https, mailto and in-app paths", () => {
     expect(safeHref("https://example.test/x")).toBe("https://example.test/x");
-    expect(safeHref("/api/episodes/s02e01/files/Episodes/s02e01/outline.md")).toBe("/api/episodes/s02e01/files/Episodes/s02e01/outline.md");
+    // The address shape the console actually serves since every route moved under its show: an
+    // in-app path with no scheme, which is kept as it came.
+    expect(safeHref("/api/shows/HarborLight/episodes/s02e01/files/Episodes/s02e01/outline.md"))
+      .toBe("/api/shows/HarborLight/episodes/s02e01/files/Episodes/s02e01/outline.md");
     expect(safeHref("mailto:someone@example.test")).toBe("mailto:someone@example.test");
     expect(safeHref("outline.md")).toBe("outline.md");
   });

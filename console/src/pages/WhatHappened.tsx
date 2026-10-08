@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import type { WhatHappenedContext } from "../../shared/types.js";
-import { getText, postStream, useApi, useConsole } from "../api.js";
+import { getText, postStream, showHref, showPath, useApi, useConsole, useShowKey } from "../api.js";
+import { readOnlyLine } from "../projections.js";
 import { Markdown } from "../components/Markdown.js";
 
 /** "What happened": the run's own record, and an agent that answers questions about it.
@@ -19,7 +20,12 @@ import { Markdown } from "../components/Markdown.js";
  *  it: the file is one of the episode's own.
  *
  *  Cost is labelled estimated, always. It is `total_cost_usd` as the SDK reported it for one
- *  query, which is a number the model's own accounting produced; the invoice is Anthropic's. */
+ *  query, which is a number the model's own accounting produced; the invoice is Anthropic's.
+ *
+ *  **A read-only show renders the record and no question box.** Asking is a POST
+ *  (`POST …/runs/:run/ask`, which appends to the troubleshooting log beside the run), and the
+ *  server refuses every POST to a read-only show with 403 (ruling H-03) — so the box would be a
+ *  question the console cannot ask. Everything above it is a GET and is shown in full. */
 
 /** One row of the troubleshooting log, as the server writes it (`server/what-happened.ts`'s
  *  `record`). Read defensively: the file is append-only and a row from an older console is still
@@ -54,11 +60,14 @@ function parseLog(text: string): AskedRow[] {
 
 export function WhatHappened() {
   const params = useParams();
+  const showKey = useShowKey();
   const episodeId = params["id"] ?? "";
   const runId = params["run"] ?? "";
-  const base = `/api/episodes/${encodeURIComponent(episodeId)}/runs/${encodeURIComponent(runId)}`;
-  const runHref = `/episodes/${episodeId}/runs/${runId}`;
+  const base = showPath(showKey, `/episodes/${encodeURIComponent(episodeId)}/runs/${encodeURIComponent(runId)}`);
+  const runHref = showHref(showKey, `/episodes/${episodeId}/runs/${runId}`);
   const { show } = useConsole();
+  const canAct = show !== null && !show.readOnly;
+  const readOnly = show !== null && show.readOnly;
   const context = useApi<WhatHappenedContext>(`${base}/context`);
 
   const [question, setQuestion] = useState("");
@@ -73,7 +82,7 @@ export function WhatHappened() {
   // A 404 is the ordinary case — nobody has asked anything about this run yet — and is not an error.
   const logUrl = show === null
     ? null
-    : `/api/episodes/${encodeURIComponent(episodeId)}/files/${encodeURIComponent(show.productionDir)}/${encodeURIComponent(episodeId)}/runs/${encodeURIComponent(`${runId}.troubleshooting.jsonl`)}`;
+    : showPath(showKey, `/episodes/${encodeURIComponent(episodeId)}/files/${encodeURIComponent(show.productionDir)}/${encodeURIComponent(episodeId)}/runs/${encodeURIComponent(`${runId}.troubleshooting.jsonl`)}`);
 
   const readLog = useCallback(async (): Promise<void> => {
     if (logUrl === null) return;
@@ -187,6 +196,9 @@ export function WhatHappened() {
 
       <section className="ask">
         <h2>ask about this run</h2>
+        {readOnly && <p className="action-reason">{readOnlyLine(showKey, "no question is asked here — asking appends to the run's troubleshooting log, which is a write")}</p>}
+        {canAct && (
+            <>
         <p className="quiet">
           The agent reads this run's log and the files above. It has Read, Glob and Grep and nothing else: it cannot
           change the show it is explaining.
@@ -214,6 +226,8 @@ export function WhatHappened() {
           <div className="answer pane" ref={answerRef}>
             {answer === "" ? <p className="quiet">thinking…</p> : <Markdown text={answer} />}
           </div>
+        )}
+            </>
         )}
       </section>
 

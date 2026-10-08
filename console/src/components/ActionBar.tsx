@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import type { RunView } from "../../shared/types.js";
-import { post } from "../api.js";
+import { post, showHref, showPath, useConsole, useShowKey } from "../api.js";
+import { readOnlyLine } from "../projections.js";
 
 /** The recovery actions for one run, and the reason any of them is unavailable.
  *
@@ -14,7 +15,17 @@ import { post } from "../api.js";
  *
  *  A disabled button says why it is disabled rather than vanishing. "Re-run from here" that is
  *  simply absent while a worker holds the run teaches nothing; one that is there, greyed, saying
- *  "pid 4821 is holding this run" tells the operator what to wait for. */
+ *  "pid 4821 is holding this run" tells the operator what to wait for.
+ *
+ *  **A read-only show is the one case where the buttons are absent rather than greyed**, and the
+ *  distinction is the point: a greyed button says "not yet, and here is what to wait for", while a
+ *  read-only show will never accept any of these — the server answers 403 to every POST to it
+ *  (ruling H-03). The two links that are GETs, the open gate and "what happened", stay: a
+ *  read-only show is read, and reading is all of what it offers.
+ *
+ *  The show key and `readOnly` are read from the url and from `ConsoleContext` rather than passed
+ *  in, because this component is only ever rendered inside one show's Run page and a prop would be
+ *  a second copy of a fact the url already carries. */
 
 export interface ActionBarProps {
   view: RunView;
@@ -24,7 +35,12 @@ export interface ActionBarProps {
 
 export function ActionBar({ view, onDone }: ActionBarProps) {
   const { episodeId, runId } = view;
-  const base = `/api/episodes/${encodeURIComponent(episodeId)}/runs/${encodeURIComponent(runId)}`;
+  const showKey = useShowKey();
+  const { show } = useConsole();
+  // See the Board: `canAct` waits for the show, `readOnly` speaks only once the show has said so.
+  const canAct = show !== null && !show.readOnly;
+  const readOnly = show !== null && show.readOnly;
+  const base = showPath(showKey, `/episodes/${encodeURIComponent(episodeId)}/runs/${encodeURIComponent(runId)}`);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -62,12 +78,12 @@ export function ActionBar({ view, onDone }: ActionBarProps) {
     <section className="actions">
       <div className="action-row">
         {view.status === "waiting" && view.openGate !== undefined && (
-          <Link className="btn btn-primary" to={`/episodes/${episodeId}/runs/${runId}/gate`}>
+          <Link className="btn btn-primary" to={showHref(showKey, `/episodes/${episodeId}/runs/${runId}/gate`)}>
             open gate · {view.openGate.stepId}
           </Link>
         )}
 
-        {view.status === "failed" && (
+        {view.status === "failed" && canAct && (
           <button
             type="button"
             className="btn btn-primary"
@@ -78,12 +94,16 @@ export function ActionBar({ view, onDone }: ActionBarProps) {
           </button>
         )}
 
-        {view.status === "crashed" && !confirmContinue && (
+        {view.status === "crashed" && canAct && !confirmContinue && (
           <button type="button" className="btn btn-primary" onClick={() => { setConfirmContinue(true); }}>continue</button>
         )}
 
-        <Link className="btn" to={`/episodes/${episodeId}/runs/${runId}/what-happened`}>what happened</Link>
+        <Link className="btn" to={showHref(showKey, `/episodes/${episodeId}/runs/${runId}/what-happened`)}>what happened</Link>
       </div>
+
+      {readOnly && (
+        <p className="action-reason">{readOnlyLine(showKey, "resume, continue, re-run from here and withdraw are all refused")}</p>
+      )}
 
       {confirmContinue && (
         <div className="action-confirm">
@@ -109,6 +129,7 @@ export function ActionBar({ view, onDone }: ActionBarProps) {
         </div>
       )}
 
+      {canAct && (
       <div className="action-row action-reset">
         <label htmlFor="reset-step">re-run from</label>
         <select
@@ -136,6 +157,7 @@ export function ActionBar({ view, onDone }: ActionBarProps) {
         {resetBlocked !== null && <span className="action-reason">{resetBlocked}</span>}
         {resetBlocked === null && <span className="action-reason">everything downstream of the step goes back to pending</span>}
       </div>
+      )}
 
       {notice !== null && <p className="notice-line">{notice}</p>}
       {error !== null && <p className="error-line">{error}</p>}
