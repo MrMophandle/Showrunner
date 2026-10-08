@@ -59,9 +59,16 @@ the show middleware, before it reaches a map or a path.
 | **An unknown key**, or a key the grammar rejects | `404 {"error": "no such show"}`, before any lookup or path join. |
 | **`"readOnly": true`** | **Every `POST` beneath that show is `403 {"error": "<key> is read-only"}`** — the launch, the gate answer, the New-episode form, the whole bible route family, and any path under the show that no route registered. The refusal is in the middleware and not in the write routes, so it covers the whole subtree rather than the paths somebody remembered. Reading a read-only show is unrestricted. Why a read-only entry exists at all is the engine `README.md`'s "Shows and the registry" to argue; the short of it is that a retired repository and its successor share a NAS root and a final filename. |
 | **The SSE channel** | One stream, and **every message names its show** — `{"type": "run", "show": "<key>", …}`, `{"type": "episodes", "show": "<key>"}`. Two shows holding an episode of the same id are otherwise the same notice twice, and a Board watching one would refetch on the other's every heartbeat. The `hello` carries the whole list: `{"type": "hello", "operator": …, "shows": [{"key", "showName", "readOnly"}]}`. |
-| **A show whose repository will not load** | Reported on stderr by key at startup and left out — its routes then answer 404, like any key the console does not hold. One unfinished edit in one `showrunner.json` must not take every other show's Board off the air. |
+| **A show whose repository will not load** | Reported on stderr by key at startup, left out of the maps — so its own routes answer 404, like any key the console does not hold — **and answered to the browser**: `GET /api/shows` and the `hello` carry it in a `failed` list (`{"key", "root", "error"}`), and the Shows page draws `<key> — could not be loaded: <reason>` with no link. One unfinished edit in one `showrunner.json` must not take every other show's Board off the air; it must also not make the show vanish without a word, because the operator who hits this is the one who restarts the console detached with its output in a log file and then looks at the browser. A console whose every entry failed used to draw "no shows are registered yet", which is indistinguishable from a fresh machine and suggests the one wrong remedy. |
 | **A show whose episode files throw** | Its Board answers one row, `{"id": "", "error": "<key>: its episodes could not be read — …"}`, rather than a 500 that names no show. A malformed `images/prompts.json` or `Canon/refs.json` is a real failure of the show's own files; every other registered show is gathered under its own request and is untouched. |
 | **A malformed registry file** | Fatal: the message on stderr and exit 65. A registry read as empty looks exactly like a machine with no shows on it, and the operator's remedy would then be to register every show again. |
+
+**The registry is read once, at startup.** Nothing re-reads the file, so a registry edited by hand —
+a new entry, a moved root, or `"readOnly": true` — takes effect at the console's next start. The
+direction that matters is the protective one: an operator who adds `"readOnly": true` to a retired
+repository's entry while the console is running still has a writable show until it is restarted.
+`POST /api/shows` is the one change a running server picks up by itself, because it appends the entry
+and sets the two maps in the same request; it never writes `readOnly`.
 
 **The registry file is the operator's, and the one write the console ever makes outside a show
 repository.** `POST /api/shows` appends the new show's entry to it after `initScaffold` has written
@@ -152,10 +159,20 @@ show repository while this console is brought up on the same machine. Plan F ret
 In development, Vite serves the client on its own port and proxies `/api` to the server:
 
     cd console && SHOWRUNNER_SHOW_ROOT=<show repository> npm run dev
+    cd console && SHOWRUNNER_REGISTRY=<registry file> npm run dev    # to develop /shows/new
 
-`npm run dev` starts `tsx watch server/main.ts --show $SHOWRUNNER_SHOW_ROOT` and `vite --port 5193`
-together, and the browser goes to the Vite port. The variable has no default, because a default
-would have to spell a show's directory name.
+`npm run dev` starts the watched server and `vite --port 5193` together, and the browser goes to the
+Vite port. Neither variable has a default, because a default would have to spell a path on this
+machine.
+
+**`SHOWRUNNER_REGISTRY` wins when it is set, and it is the one to use for the New-show form.** With
+it the server starts `--registry <file>`, which is a console that holds every show in that file and
+can append to it. With only `SHOWRUNNER_SHOW_ROOT` the server starts `--show <root>`: one show,
+keyed by its directory name, writing nothing on the machine — and in that mode `POST /api/shows` is
+refused with `409 this console was started with --show, which holds one show and writes no
+registry`, so `/shows/new` submits and fails. Point `SHOWRUNNER_REGISTRY` at a scratch file rather
+than at `~/.showrunner/shows.json` while developing, so a show created by the form is not registered
+on the machine.
 
 **`npm run dev` needs `npm run build -w console` to have been run once**, or `--worker <path>`.
 The server spawns the **compiled** worker (`console/dist/worker/main.js`), which the watched
@@ -183,7 +200,12 @@ that follows a launch or a gate answer is written by a detached worker, which is
 server owns no run (the rewrite design's §4.2) in its most literal form: **the setup worker and not
 the server makes the approval commit for a bible file**, so no git process runs in this server for a
 run at all. The server's own writes are the premise, the answers file, the registry entry, a new
-show's scaffold and its commits, and the empty run log.
+show's scaffold and its commits, the empty run log, and **the bible file a gate answer *is*** — a
+`default` file's house template before its first gate, the house template for "I will write this one
+myself", and the copy for an import. Those three are the console's only writes under `Canon/` and
+they are named in the row below, because a summary that left them out invited two mistakes: moving
+them somewhere else to "restore" a rule they never broke, and believing a read-only show's `Canon/`
+is unreachable for some reason other than the middleware's 403 (it is the 403).
 
 | What | Where | Written by |
 |---|---|---|
@@ -194,7 +216,7 @@ show's scaffold and its commits, and the empty run log.
 | The troubleshooting log | `<productionDir>/<id>/runs/<runId>.troubleshooting.jsonl` | The server, one line per question asked on the What-happened page. |
 | An episode's premise | `<episodesDir>/<id>/premise.md` | The server, once, when the New-episode form is submitted. It is written with `wx`, so a second submission for the same id is refused rather than overwriting an idea. |
 | A bible file's answers | `<productionDir>/setup/<key>/answers.md` | The server, when the Bible view's question form is saved. The whole file is rewritten — every heading the canon template declares, with `(blank)` under the unanswered ones, because that is the shape the writer agent and `bible-check` both read — so the posted record is **merged over what is on disk**: a heading the request carries wins even when it is empty, and a heading it does not carry keeps the answer it had. A straight write-through would have meant a form posting one field erasing the other eight answers. |
-| A bible file, and its commit | `<canonDir>/<BIBLE_FILES[key].file>` | The **setup worker**, never the server. The writer agent writes the file inside the worker's run; for "I will write this one myself" and for an import the server writes it before spawning the worker that records the answer. The commit that carries the file, its answers and its run log is the worker's too, taken when its run ends `completed` and after its lock is released — the log directory it stages holds the lock, and a lock is a process fact that belongs in no history. A commit that cannot be made leaves the file approved, logs the reason to `<runId>.worker.log` and exits 2; `showrunner-init --resume` makes the catch-up commit. |
+| A bible file, and its commit | `<canonDir>/<BIBLE_FILES[key].file>` | The **setup worker for a run, and the server for the three gate answers that *are* the file.** The writer agent writes the file inside the worker's run; for a `default` file's house template, for "I will write this one myself" and for an import the server writes it before spawning the worker that records the answer — the file has to be on disk before the gate that is about to show it. The commit that carries the file, its answers and its run log is the worker's too, taken when its run ends `completed` and after its lock is released — the log directory it stages holds the lock, and a lock is a process fact that belongs in no history. A commit that cannot be made leaves the file approved, logs the reason to `<runId>.worker.log` and exits 2; `showrunner-init --resume` makes the catch-up commit. |
 | A new show's whole repository | the path the New-show form named | The server, through `initScaffold`: the house layout, `showrunner.json`, the prompt set, the entity and outline templates, the two reference indices, the two scaffold bible files, the derived `.gitignore`, the show's README — and `git init` plus the scaffold commit. Every file is written with `wx`, so nothing it touches can overwrite an author's. |
 | The registry entry | `~/.showrunner/shows.json` (or `--registry`) | The server, once per show created, appending the key and its root. The one write outside a show repository. No entry is ever rewritten or removed. |
 

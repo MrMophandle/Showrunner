@@ -86,6 +86,23 @@ describe("the console's ports", () => {
     // The `vite --port` flag in the dev script overrides `server.port` in the config, so the two
     // numbers must be equal or `npm run dev` serves on a port the config does not name.
     expect(/port:\s*(\d+)/.exec(config)?.[1]).toBe("5193");
-    expect(/vite --port (\d+)/.exec(pkg.scripts["dev"] ?? "")?.[1]).toBe("5193");
+    expect(/vite --port (\d+)/.exec(pkg.scripts["dev:client"] ?? "")?.[1]).toBe("5193");
+    // And `dev` is still what starts both halves. The flag moved into `dev:client` when `dev:server`
+    // grew its `SHOWRUNNER_REGISTRY` branch — a conditional that would not survive being nested
+    // inside `concurrently`'s own quoting — so this asserts the chain as well as the number.
+    expect(pkg.scripts["dev"]).toContain("npm run dev:client");
+    expect(pkg.scripts["dev"]).toContain("npm run dev:server");
+  });
+
+  it("starts a registry console under SHOWRUNNER_REGISTRY and a single-show one without it", async () => {
+    const pkg = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8")) as { scripts: Record<string, string> };
+    const dev = pkg.scripts["dev:server"] ?? "";
+    // `--show` single mode answers `409` to `POST /api/shows` (`app.ts`: "this console was started
+    // with --show, which holds one show and writes no registry"), so the documented development
+    // command used to be the one mode in which the branch's own New-show form submits and fails.
+    // `SHOWRUNNER_REGISTRY` wins when it is set.
+    expect(dev).toContain('if [ -n "$SHOWRUNNER_REGISTRY" ]');
+    expect(dev).toContain('--registry "$SHOWRUNNER_REGISTRY"');
+    expect(dev).toContain('--show "$SHOWRUNNER_SHOW_ROOT"');
   });
 });

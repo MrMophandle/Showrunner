@@ -667,9 +667,13 @@ continues.
 **What the server writes, and it writes nothing else:** an episode's `premise.md`; the registry file,
 which is the one write the console ever makes outside a show repository; a new show's scaffold and
 its commits; `Production/setup/<key>/answers.md`, merged over what is on disk so a form that posts
-one field cannot erase the other eight answers; and the run log, created **zero-byte** before a
-worker is spawned, which is what makes the minted run the latest run from the moment the route
-answers. Each of the five is named in `console/README.md`.
+one field cannot erase the other eight answers; the run log, created **zero-byte** before a worker is
+spawned, which is what makes the minted run the latest run from the moment the route answers; and
+**the bible file a gate answer *is*** — a `default` file's house template before its first gate, the
+house template for "I will write it myself", and the copy for an import. Those three are the
+console's only writes under `Canon/`, and they are the server's because each of them *is* the
+answer: the file has to be on disk before the gate that is about to show it, and the worker spawned
+after the answer is the thing that records it. Each of the six is named in `console/README.md`.
 
 **The approval commit is the setup worker's, not the server's** — and that is what keeps this inside
 the rule that the server owns no run (spec §4.2). Every bible file's writing step runs in a detached

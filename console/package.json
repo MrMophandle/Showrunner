@@ -4,7 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "concurrently -k \"tsx watch server/main.ts --show ${SHOWRUNNER_SHOW_ROOT}\" \"vite --port 5193\"",
+    "dev": "concurrently -k \"npm run dev:server\" \"npm run dev:client\"",
+    "dev:server": "if [ -n \"$SHOWRUNNER_REGISTRY\" ]; then tsx watch server/main.ts --registry \"$SHOWRUNNER_REGISTRY\"; else tsx watch server/main.ts --show \"$SHOWRUNNER_SHOW_ROOT\"; fi",
+    "dev:client": "vite --port 5193",
     "build": "tsc -p tsconfig.server.json && vite build",
     "start": "node dist/server/main.js",
     "test": "vitest run",
