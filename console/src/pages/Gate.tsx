@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import type { GateArtifact, GateView } from "../../shared/types.js";
-import { ApiError, post, useApi, useSSE, useTextApi, type DirEntry } from "../api.js";
-import { composeNotesWithFlags } from "../projections.js";
+import { ApiError, post, showHref, showPath, useApi, useConsole, useSSE, useShowKey, useTextApi, type DirEntry } from "../api.js";
+import { composeNotesWithFlags, readOnlyLine } from "../projections.js";
 import { AudioSeek } from "../components/AudioSeek.js";
 import { AutoTextarea } from "../components/AutoTextarea.js";
 import { ContactSheet } from "../components/ContactSheet.js";
@@ -22,7 +22,13 @@ import { Verdicts } from "../components/Verdicts.js";
  *  else, and a stale answer is refused by the engine and reported here as what it is.
  *
  *  How long is between opening and answering: a gate is read on a couch, and the answer may be
- *  twenty minutes later. */
+ *  twenty minutes later.
+ *
+ *  **A read-only show renders the gate and no answer**, with one line naming the key in place of
+ *  the two buttons: the server answers 403 to every POST to such a show (ruling H-03), so the
+ *  gate here is a record of a question somebody else answered rather than a question addressed to
+ *  this reader. Every artifact url on this page is built by the server and already carries the
+ *  show (`server/gates.ts`'s `artifactUrl`), so the panes need nothing of this page's. */
 
 /** How long the page waits before taking the operator to the run view after the engine says the
  *  gate is not open at all — long enough to read the sentence that says why. */
@@ -82,12 +88,14 @@ function AudioArtifact({ artifact }: { artifact: GateArtifact }) {
 
 export function Gate() {
   const params = useParams();
+  const showKey = useShowKey();
   const episodeId = params["id"] ?? "";
   const runId = params["run"] ?? "";
-  const base = `/api/episodes/${encodeURIComponent(episodeId)}/runs/${encodeURIComponent(runId)}`;
-  const runHref = `/episodes/${episodeId}/runs/${runId}`;
+  const base = showPath(showKey, `/episodes/${encodeURIComponent(episodeId)}/runs/${encodeURIComponent(runId)}`);
+  const runHref = showHref(showKey, `/episodes/${episodeId}/runs/${runId}`);
   const gate = useApi<GateView>(`${base}/gate`);
   const navigate = useNavigate();
+  const { canAct, readOnly } = useConsole();
 
   const [notes, setNotes] = useState("");
   const [flags, setFlags] = useState<Record<string, string>>({});
@@ -106,7 +114,7 @@ export function Gate() {
 
   // A notice, never a refetch: see the file header.
   useSSE((message) => {
-    if (message.type === "run" && message.episodeId === episodeId && message.runId === runId) setChanged(true);
+    if (message.type === "run" && message.show === showKey && message.episodeId === episodeId && message.runId === runId) setChanged(true);
   });
 
   function applyFlags(next: Record<string, string>): void {
@@ -276,23 +284,28 @@ export function Gate() {
           rows={4}
         />
         <div className="action-row">
-          <button
-            type="button"
-            className="btn btn-primary btn-big"
-            disabled={busy !== null || gone !== null}
-            onClick={() => { void answer(true); }}
-          >
-            {busy === "approve" ? "approving…" : `approve attempt ${view.attempt}`}
-          </button>
-          <button
-            type="button"
-            className="btn btn-danger btn-big"
-            disabled={busy !== null || gone !== null || notes.trim() === ""}
-            onClick={() => { void answer(false); }}
-          >
-            {busy === "reject" ? "rejecting…" : `reject attempt ${view.attempt}`}
-          </button>
-          {notes.trim() === "" && <span className="action-reason">a rejection needs notes — the fix agent has nothing else to go on</span>}
+          {readOnly && <span className="action-reason">{readOnlyLine(showKey, "this gate is read here and answered where the show is writable")}</span>}
+          {canAct && (
+              <>
+                <button
+                  type="button"
+                  className="btn btn-primary btn-big"
+                  disabled={busy !== null || gone !== null}
+                  onClick={() => { void answer(true); }}
+                >
+                  {busy === "approve" ? "approving…" : `approve attempt ${view.attempt}`}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-danger btn-big"
+                  disabled={busy !== null || gone !== null || notes.trim() === ""}
+                  onClick={() => { void answer(false); }}
+                >
+                  {busy === "reject" ? "rejecting…" : `reject attempt ${view.attempt}`}
+                </button>
+                {notes.trim() === "" && <span className="action-reason">a rejection needs notes — the fix agent has nothing else to go on</span>}
+              </>
+          )}
         </div>
         {error !== null && <p className="error-line">{error}</p>}
       </section>

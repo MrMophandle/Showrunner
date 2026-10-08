@@ -3,18 +3,38 @@ import os from "node:os";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { loadShowConfig, type ShowConfig } from "@showrunner/engine";
+import { SHOW_KEY, type Registry } from "./registry.js";
 
-/** The one show this server is pointed at, resolved once at startup. Everything the server does
- *  afterwards is relative to it: the episode list, every log path, every artifact path and the
- *  argv of every worker it spawns. The server holds one of these and never a second, because a
- *  console that could be pointed at two shows at once would have to say which one every route
- *  meant, and no route does.
+/** One registered show, resolved once at startup. Everything the server does for that show is
+ *  relative to it: the episode list, every log path, every artifact path and the argv of every
+ *  worker it spawns.
+ *
+ *  **The server holds one of these per registered show, in a map keyed by `key`, and resolves
+ *  which one a request means from the request's own URL** — `/api/shows/:show/…`, through one
+ *  middleware in `server/app.ts`. The objection this module used to record against a second show
+ *  was that a console pointed at two shows "would have to say which one every route meant, and no
+ *  route does"; a show segment in front of every route and a middleware that reads it answer
+ *  exactly that objection without changing what a context is. That is why none of the twenty-two
+ *  signatures that take a `ShowContext` had to grow a show parameter: the caller resolves the
+ *  show, and the callee still works on one.
  *
  *  `productionDir` and `episodesDir` are lifted out of `show` because every path the server
  *  builds needs them and `show.productionDir` is optional with a default; resolving the default
  *  once here keeps the fallback from being written out at a dozen call sites, where one of them
  *  would eventually get it wrong. */
 export interface ShowContext {
+  /** The operator's own name for this show, from the registry — what a URL carries and what the
+   *  SSE channel stamps on every message. It is not derived from the config, because the only
+   *  identity fields a `showrunner.json` carries are `showName` and `showSlug` and both shows on
+   *  this machine declare the same pair of values (ruling H-02). Matches `SHOW_KEY`. */
+  key: string;
+  /** Whether this show refuses every POST. A read-only show is listed, read and browsed; nothing
+   *  the console does writes to it, because the retired repository and the live instance name the
+   *  same NAS root and the same final filename, so one finalize step run in the wrong tree
+   *  overwrites the other show's finished season (ruling H-03). Enforced in one place — the show
+   *  middleware in `server/app.ts` — and not in each write route, so a POST to a path no route
+   *  registered is refused too. */
+  readOnly: boolean;
   /** Absolute path of the show repository: the one tree the server reads and writes. */
   showRoot: string;
   show: ShowConfig;
@@ -42,11 +62,32 @@ export interface ShowContext {
  *  worker stamps when it is run by hand, and `workerCommand` to this console's own compiled
  *  worker. */
 export interface ShowContextOptions {
+  /** The registry key this show is reached by. */
+  key: string;
   showRoot: string;
+  /** Whether this show refuses every POST; defaults to false, the ordinary writable show. */
+  readOnly?: boolean;
   engineRoot: string;
   operator?: string;
   workerCommand?: string[];
   concurrency?: number;
+}
+
+/** What `loadShows` needs: everything a `ShowContext` takes except the three facts the registry
+ *  supplies per entry (`key`, `showRoot`, `readOnly`). The engine root, the operator, the worker
+ *  command and the concurrency are the console's own and are the same for every show it holds, so
+ *  a second show needs no second set of flags. */
+export interface LoadShowsOptions {
+  engineRoot: string;
+  operator?: string;
+  workerCommand?: string[];
+  concurrency?: number;
+  /** Where a show that would not load is reported. Defaults to a line on stderr; `main.ts` leaves
+   *  the default and a test passes a collector so it can assert the reason by key. A seam rather
+   *  than a thrown error because the reporting is the whole of the behaviour being specified: a
+   *  skipped show that nobody was told about is a show the operator looks for in the list and does
+   *  not find. */
+  report?: (line: string) => void;
 }
 
 /** The compiled worker entry, as a path relative to this module. `server/show.ts` compiles to
@@ -55,6 +96,18 @@ export interface ShowContextOptions {
  *  wherever the operator happens to be standing. */
 function defaultWorkerEntry(): string {
   return path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "worker", "main.js");
+}
+
+/** Who this console acts as when `--operator` is not given: `console:<username>`, matching what
+ *  the worker stamps when it is run by hand.
+ *
+ *  Exported because two places need the same value and one of them has no `ShowContext` to read it
+ *  from: `loadShowContext` stamps it on every context, and the SSE channel's `hello` has to name
+ *  the operator even on a console that holds no shows at all — the state a console is in before
+ *  the first show is registered. Two spellings of the default would mean a `hello` that named a
+ *  different operator from the one every gate answer was signed with. */
+export function defaultOperator(): string {
+  return `console:${os.userInfo().username}`;
 }
 
 /** Reads the show's config and resolves the paths and the identity the rest of the server works
@@ -77,13 +130,90 @@ export async function loadShowContext(opts: ShowContextOptions): Promise<ShowCon
     throw new Error(`the worker is not built: run npm run build -w console, or pass --worker <path>`);
   }
   return {
+    key: opts.key,
+    readOnly: opts.readOnly ?? false,
     showRoot,
     show,
     engineRoot: path.resolve(opts.engineRoot),
-    operator: opts.operator ?? `console:${os.userInfo().username}`,
+    operator: opts.operator ?? defaultOperator(),
     productionDir: show.productionDir ?? "Production",
     episodesDir: show.episodesDir ?? "Episodes",
     workerCommand,
     concurrency: opts.concurrency ?? 7,
   };
+}
+
+/** One registry entry that would not load: the key it was registered under, the root it pointed
+ *  at, and the loader's own message.
+ *
+ *  Carried rather than only logged because an operator who edits a `showrunner.json`, restarts the
+ *  console detached with its output in a log file and then looks at the **browser** was told
+ *  nothing at all: the Shows page drew a console with one fewer show, and on a machine where every
+ *  entry failed it drew "no shows are registered yet", which is indistinguishable from a fresh
+ *  machine. That is the same confusion `readRegistry` cites to make a malformed registry fatal,
+ *  one entry at a time. */
+export interface SkippedShow {
+  key: string;
+  root: string;
+  /** The loader's own words, never paraphrased — the message names the file and the reason, and it
+   *  is what the operator has to act on. */
+  reason: string;
+}
+
+/** Every `ShowContext` the registry yielded, keyed by the registry's key, **and** every entry it
+ *  did not. Two fields rather than a bare map, because a skipped entry is a fact the console has
+ *  to answer for and not only a line it printed once at startup. */
+export interface LoadShowsResult {
+  shows: Map<string, ShowContext>;
+  skipped: SkippedShow[];
+}
+
+/** One `ShowContext` per registered show, in registry order, keyed by the registry's key, beside
+ *  the entries that would not load.
+ *
+ *  **A show whose repository will not load is reported by key and skipped, not fatal** (ruling
+ *  H-14). A `showrunner.json` that is absent, unparseable or refused by the loader — an
+ *  `audio.guestRefsDir` with no `{episodeId}`, say — is one repository being edited, restored or
+ *  mounted, and the other shows on the machine have nothing to do with it. Refusing to start would
+ *  mean one unfinished edit in one show takes every other show's Board off the air, and the
+ *  operator's first move would be to stop the console rather than to look at the message. A
+ *  skipped show is absent from the map, so its routes answer 404 through the show middleware: as
+ *  far as a URL is concerned it is a show that does not exist, which is the honest answer, rather
+ *  than a show whose Board is an error row.
+ *
+ *  **Skipped is not silent, and that is the half this used to get wrong.** The reason goes to
+ *  `report` as it always did — one line on stderr, which is the operator's at startup — *and* comes
+ *  back in `skipped`, which `createApp` answers to the browser as a row saying
+ *  "<key> — could not be loaded: <reason>" with no link. The routes still 404; the list says the
+ *  entry exists and why it is not usable.
+ *
+ *  **A key the grammar rejects is refused and not skipped**, because that is the registry file
+ *  being wrong rather than a repository being wrong, and `readRegistry` has already refused the
+ *  same thing for the same reason — this check is the second line of defence for a registry built
+ *  in memory (`singleShowRegistry`, or Task 5's New-show surface) and never read from a file. */
+export async function loadShows(reg: Registry, opts: LoadShowsOptions): Promise<LoadShowsResult> {
+  const report = opts.report ?? ((line: string) => { process.stderr.write(`${line}\n`); });
+  const shows = new Map<string, ShowContext>();
+  const skipped: SkippedShow[] = [];
+  for (const [key, entry] of Object.entries(reg.shows)) {
+    if (!SHOW_KEY.test(key)) {
+      throw new Error(`${JSON.stringify(key)} is not a show key: expected [A-Za-z0-9][A-Za-z0-9_-]{0,63}`);
+    }
+    try {
+      shows.set(key, await loadShowContext({
+        key,
+        showRoot: entry.root,
+        readOnly: entry.readOnly ?? false,
+        engineRoot: opts.engineRoot,
+        ...(opts.operator !== undefined ? { operator: opts.operator } : {}),
+        ...(opts.workerCommand !== undefined ? { workerCommand: opts.workerCommand } : {}),
+        ...(opts.concurrency !== undefined ? { concurrency: opts.concurrency } : {}),
+      }));
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      skipped.push({ key, root: entry.root, reason });
+      report(`console: show ${key} (${entry.root}) was not loaded — ${reason}`);
+    }
+  }
+  return { shows, skipped };
 }

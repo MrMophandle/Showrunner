@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
-import { renderPrompt, TemplateError, REQUIRED_SECTIONS, BIBLE_FILES, headingMatches } from "@showrunner/engine";
+import { renderPrompt, TemplateError, REQUIRED_SECTIONS, BIBLE_FILES, headingMatches, parseCastSection } from "@showrunner/engine";
 import { templatesDir } from "../src/init/paths.js";
 
 const PROMPTS = path.join(templatesDir(), "prompts");
@@ -58,6 +58,29 @@ describe("prompt templates render against the invented show", () => {
       catch (err) { failures.push(`${name}: ${err instanceof TemplateError ? err.message : String(err)}`); }
     }
     expect(failures).toEqual([]);
+  });
+  it("tts-script.md names the show's own audio.guestRefsDir and no longer builds that path itself", async () => {
+    // H-19. The guest-reference directory is a config key (`engine/src/show-config.ts:88`) and this
+    // was the one prompt line that spelled it out as `<productionDir>/<episodeId>/guest-refs`, so a
+    // show that configured the key anywhere else was told to look in a directory the probe does not
+    // read. The key's value carries a literal `{episodeId}` on purpose — it is the one show path
+    // that is per-episode — and `renderPrompt` substitutes a `{{show.<path>}}` verbatim and leaves
+    // single braces alone, so the prompt has to say what the token stands for. That sentence is
+    // what this test pins: the key renders, and the token is explained beside it.
+    const context = JSON.parse(await readFile(path.join(__dirname, "fixtures/harbor-check-context.json"), "utf8"));
+    const text = await readFile(path.join(PROMPTS, "tts-script.md"), "utf8");
+    expect(text).toContain("{{show.audio.guestRefsDir}}");
+    const rendered = renderPrompt(
+      text,
+      { episodeId: context.episodeId, runId: context.runId, showRoot: context.showRoot, results: context.results },
+      { season: context.season, show: context.show },
+    );
+    const configured = context.show.audio.guestRefsDir as string;
+    expect(configured).toContain("{episodeId}");
+    expect(rendered).toContain(`${configured}/<guest-slug>*.wav`);
+    expect(rendered).toContain(`\`{episodeId}\`\n     stands for ${context.episodeId}`);
+    // And the literal the line used to build is gone from the rendered prompt entirely.
+    expect(rendered).not.toContain(`${context.show.productionDir}/${context.episodeId}/guest-refs`);
   });
   it("every prompt that is not a gate message opens with the role line", async () => {
     const bad: string[] = [];
@@ -264,6 +287,26 @@ describe("the outline template carries every section the prompts name", () => {
     // told the agent to write a heading the engine counts.
     const prompt = await readFile(path.join(PROMPTS, "outline.md"), "utf8");
     expect(prompt).toContain("### Beat <n>");
+  });
+
+  it("the outline template's own `## Cast` section parses, so the engine never refuses the template it ships", async () => {
+    // The engine's own template, through the engine's own parser. `engine/test/needs.test.ts` proves
+    // the comment-skip against a string in the *shape* of this template's comment; this is the half
+    // that reads the real file, and it lives here because this is the suite that walks
+    // `tools/templates/`. The fault it guards against is the one that was shipped: the template
+    // writes the section's instructions as a one-line HTML comment, `parseCastSection` reported that
+    // line as missing the grammar, and `missingRefs` turned the template's own instructions into a
+    // NEEDS_REFS stop. Wrapping that comment across two lines — a reflow nobody would think twice
+    // about — brings the fault straight back, and would otherwise be caught by nothing until an
+    // author's first episode stopped on it.
+    const { entries, malformed } = parseCastSection(await readFile(OUTLINE_TEMPLATE, "utf8"));
+    expect(malformed).toEqual([]);
+    // The two example subjects the template demonstrates the grammar with, and their tags, so the
+    // empty `malformed` above cannot be the emptiness of a section this parser never found.
+    expect(entries).toEqual([
+      { name: "Vale", tags: ["recurring", "speaks"] },
+      { name: "Harbor", tags: ["location"] },
+    ]);
   });
 
   it("no outline heading is also a bible section, so a fileless citation cannot be misfiled", async () => {

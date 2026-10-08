@@ -91,9 +91,17 @@ def test_a_publish_json_without_a_logline_is_the_same_error(episode: Path) -> No
 
 
 def test_the_placeholder_reminder_still_prints(episode: Path) -> None:
-    """F-17: the credit name is carried into config as the placeholder it has always been."""
+    """F-17: the credit name is carried into config as the placeholder it has always been.
+
+    H-20: and the reminder no longer promises that filling the key fills the sheets in. It does for
+    publish.playlistUrl, which is written into upload.md; publish.channelName is read only by the
+    test that decides whether this note fires, so what the note says about the name is that the
+    name is written nowhere until the key is filled.
+    """
     out = _run(episode).stdout
-    assert "NOTE: set publish.channelName" in out
+    assert "NOTE: set publish.channelName + publish.playlistUrl in showrunner.json once" in out
+    assert "the name is written nowhere until the key is filled" in out
+    assert "then all episodes fill in" not in out
 
 
 def test_the_reminder_goes_away_once_the_name_is_set(episode: Path) -> None:
@@ -101,7 +109,7 @@ def test_the_reminder_goes_away_once_the_name_is_set(episode: Path) -> None:
     cfg["publish"]["channelName"] = "A Real Name"
     (episode / "showrunner.json").write_text(json.dumps(cfg))
     out = _run(episode).stdout
-    assert "NOTE: set publish.channelName" not in out
+    assert "the name is written nowhere until the key is filled" not in out
 
 
 def test_the_result_line_is_last(episode: Path) -> None:

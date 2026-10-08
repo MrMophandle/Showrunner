@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import type { EventBatch, RunView, WireEvent } from "../../shared/types.js";
-import { getJson, post, useApi, useCoalesced, useConsole, useNow, useSSE } from "../api.js";
+import { getJson, post, showHref, showPath, useApi, useCoalesced, useConsole, useNow, useSSE, useShowKey } from "../api.js";
 import { elapsed, stageLabel, stallState } from "../projections.js";
 import { ActionBar } from "../components/ActionBar.js";
 import { AutoTextarea } from "../components/AutoTextarea.js";
@@ -26,7 +26,13 @@ import { StepRail } from "../components/StepRail.js";
  *
  *  The fetches are coalesced into one per 250 ms. A render at full tilt appends ten times a
  *  second, and a fetch per notice would be ten requests a second to draw a page that changes
- *  once a frame. */
+ *  once a frame.
+ *
+ *  **A notice is this page's only when it carries this page's show key** as well as its episode
+ *  and run ids. The key comes from the url rather than from the fetched `ShowInfo`, so the filter
+ *  is right on the first render: one channel carries every registered show's notices, two shows
+ *  can each hold an `s02e01` with a run called `r1`, and a page that waited for a fetch before it
+ *  could tell them apart would tail the wrong log for the length of that fetch (ruling H-12). */
 
 /** How many events the feed keeps. The spec's number: enough to hold a whole agent step's output
  *  and the failure after it, not enough for a four-hour render's line-per-second to cost the tab
@@ -39,12 +45,13 @@ function trimEvents(events: WireEvent[]): WireEvent[] {
 
 export function Run() {
   const params = useParams();
+  const showKey = useShowKey();
   const episodeId = params["id"] ?? "";
   const runId = params["run"] ?? "";
-  const base = `/api/episodes/${encodeURIComponent(episodeId)}/runs/${encodeURIComponent(runId)}`;
+  const base = showPath(showKey, `/episodes/${encodeURIComponent(episodeId)}/runs/${encodeURIComponent(runId)}`);
 
   const view = useApi<RunView>(base);
-  const { show } = useConsole();
+  const { show, canAct } = useConsole();
   const now = useNow();
   const [events, setEvents] = useState<WireEvent[]>([]);
   const [feedError, setFeedError] = useState<string | null>(null);
@@ -83,7 +90,7 @@ export function Run() {
   const refresh = useCoalesced(() => { view.refetch(); void pull(); }, 250);
 
   useSSE((message) => {
-    if (message.type === "run" && message.episodeId === episodeId && message.runId === runId) refresh();
+    if (message.type === "run" && message.show === showKey && message.episodeId === episodeId && message.runId === runId) refresh();
   });
 
   // The feed from the start, on mount and whenever the page is pointed at a different run.
@@ -145,11 +152,12 @@ export function Run() {
   const worker = run.worker;
 
   // One of the run's own files beside its log, as a url the artifact route serves — built the way
-  // the What-happened page builds the troubleshooting log's. Both are null until `GET /api/show`
-  // has answered, because the production directory's name is the show's and not this code's.
+  // the What-happened page builds the troubleshooting log's. Both are null until
+  // `GET /api/shows/<key>` has answered, because the production directory's name is the show's and
+  // not this code's.
   const runFileUrl = (suffix: string): string | null => show === null
     ? null
-    : `/api/episodes/${encodeURIComponent(episodeId)}/files/${encodeURIComponent(show.productionDir)}/${encodeURIComponent(episodeId)}/runs/${encodeURIComponent(`${runId}${suffix}`)}`;
+    : showPath(showKey, `/episodes/${encodeURIComponent(episodeId)}/files/${encodeURIComponent(show.productionDir)}/${encodeURIComponent(episodeId)}/runs/${encodeURIComponent(`${runId}${suffix}`)}`);
   const workerLogUrl = runFileUrl(".worker.log");
   const workerOutUrl = runFileUrl(".worker.out");
 
@@ -167,7 +175,7 @@ export function Run() {
     <div className="run">
       <div className="run-head">
         <h1>
-          <Link className="link-plain" to="/">◂ the board</Link>
+          <Link className="link-plain" to={showHref(showKey)}>◂ the board</Link>
           {" "}
           <span className="mono">{run.episodeId}</span> · <span className="mono run-id">{run.runId}</span>
         </h1>
@@ -230,7 +238,7 @@ export function Run() {
         <p className="gate-banner">
           <span className="mono">{run.openGate.stepId}</span> has been waiting for an answer since{" "}
           <span className="mono">{run.openGate.openedAt.slice(11, 19)}</span> (attempt {run.openGate.attempt}).{" "}
-          <Link to={`/episodes/${run.episodeId}/runs/${run.runId}/gate`}>read it</Link>
+          <Link to={showHref(showKey, `/episodes/${run.episodeId}/runs/${run.runId}/gate`)}>read it</Link>
         </p>
       )}
       {run.failed !== undefined && (
@@ -269,7 +277,7 @@ export function Run() {
       {notice !== null && <p className="notice-line">{notice}</p>}
       {error !== null && <p className="error-line">{error}</p>}
 
-      {withdrawFor !== null && (
+      {withdrawFor !== null && canAct && (
         <div className="action-confirm">
           <p>
             Withdrawing <span className="mono">{withdrawFor}</span>'s approval resets everything downstream of it and
@@ -308,7 +316,7 @@ export function Run() {
           events={events}
           now={now}
           withdrawing={withdrawing}
-          {...(run.openGate === undefined ? { onWithdraw: (stepId: string) => { setWithdrawFor(stepId); setNotice(null); setError(null); } } : {})}
+          {...(run.openGate === undefined && canAct ? { onWithdraw: (stepId: string) => { setWithdrawFor(stepId); setNotice(null); setError(null); } } : {})}
         />
       </section>
 

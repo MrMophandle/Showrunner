@@ -14,7 +14,11 @@ import type { ShowContext } from "./show.js";
  *  to the artifacts it refers to, as urls the artifact route serves. The table is the only place
  *  in the console that knows which file a gate is about, and it is keyed on the gate's step id so
  *  a pipeline that renames a gate loses its artifacts loudly (an empty list) rather than silently
- *  showing the wrong file. */
+ *  showing the wrong file.
+ *
+ *  Every url carries the show key, because every api route lives under `/api/shows/:show/` and
+ *  these urls are handed to the client complete. `artifactUrl` is the one builder, and it takes
+ *  the key from the `ShowContext` this table is already given. */
 
 /** Which `results` entries of a run are verdicts, and so belong in the gate view.
  *
@@ -39,10 +43,19 @@ function isVerdict(value: unknown): boolean {
 
 /** A show-relative path as a url the artifact route serves. Each segment is encoded on its own,
  *  so a separator stays a separator and a space in a filename — the mix is
- *  `<Slug> S02E01.wav` — does not break the url. */
-export function artifactUrl(episodeId: string, showRelative: string): string {
+ *  `<Slug> S02E01.wav` — does not break the url.
+ *
+ *  **The show key is built in here rather than prefixed by the client**, because this is the only
+ *  function in the console that knows the artifact route's address and the route's shape has to
+ *  live in exactly one place. A client that prefixed a server-given url would be a second
+ *  declaration of that shape, and the gate view's urls are handed out already complete — the Gate
+ *  page fetches them verbatim, with nothing of its own to add.
+ *
+ *  The parameters are in the url's own order (`shows/<key>/episodes/<id>/files/<path>`), so a call
+ *  site reads as the address it produces. */
+export function artifactUrl(showKey: string, episodeId: string, showRelative: string): string {
   const encoded = showRelative.split("/").map((seg) => encodeURIComponent(seg)).join("/");
-  return `/api/episodes/${encodeURIComponent(episodeId)}/files/${encoded}`;
+  return `/api/shows/${encodeURIComponent(showKey)}/episodes/${encodeURIComponent(episodeId)}/files/${encoded}`;
 }
 
 /** Whether a path exists, used for the one artifact whose identity depends on the disk: the final
@@ -52,14 +65,14 @@ async function exists(absolute: string): Promise<boolean> {
 }
 
 /** A file artifact: one url, no listing. */
-function file(episodeId: string, kind: GateArtifact["kind"], showRelative: string, label?: string): GateArtifact {
-  return { kind, label: label ?? path.posix.basename(showRelative), url: artifactUrl(episodeId, showRelative) };
+function file(showKey: string, episodeId: string, kind: GateArtifact["kind"], showRelative: string, label?: string): GateArtifact {
+  return { kind, label: label ?? path.posix.basename(showRelative), url: artifactUrl(showKey, episodeId, showRelative) };
 }
 
 /** A directory artifact: the same url twice, which is what marks it as a directory. See
  *  `GateArtifact` in `shared/types.ts` for why `listUrl` is not a different address. */
-function dir(episodeId: string, kind: GateArtifact["kind"], showRelative: string, label: string): GateArtifact {
-  const url = artifactUrl(episodeId, showRelative);
+function dir(showKey: string, episodeId: string, kind: GateArtifact["kind"], showRelative: string, label: string): GateArtifact {
+  const url = artifactUrl(showKey, episodeId, showRelative);
   return { kind, label, url, listUrl: url };
 }
 
@@ -77,33 +90,33 @@ export async function gateArtifacts(ctx: ShowContext, episodeId: string, gateId:
   const prod = `${ctx.productionDir}/${episodeId}`;
   switch (gateId) {
     case "outline-gate":
-      return [file(episodeId, "markdown", `${ep}/outline.md`)];
+      return [file(ctx.key, episodeId, "markdown", `${ep}/outline.md`)];
     case "script-gate":
-      return [file(episodeId, "markdown", `${ep}/script.md`)];
+      return [file(ctx.key, episodeId, "markdown", `${ep}/script.md`)];
     case "casting-gate":
       return [
-        file(episodeId, "json", `${prod}/tts-script.json`),
-        dir(episodeId, "audio", `${prod}/guest-refs`, "guest-refs/"),
+        file(ctx.key, episodeId, "json", `${prod}/tts-script.json`),
+        dir(ctx.key, episodeId, "audio", `${prod}/guest-refs`, "guest-refs/"),
       ];
     case "audio-gate":
-      return [file(episodeId, "audio", `${prod}/audio/${mixFilename(ctx.show, episodeId)}`)];
+      return [file(ctx.key, episodeId, "audio", `${prod}/audio/${mixFilename(ctx.show, episodeId)}`)];
     case "nano-banana-gate":
       return [
-        dir(episodeId, "images", `${prod}/images`, "images/"),
-        file(episodeId, "markdown", `${prod}/images/IMAGE-SHEET.md`),
+        dir(ctx.key, episodeId, "images", `${prod}/images`, "images/"),
+        file(ctx.key, episodeId, "markdown", `${prod}/images/IMAGE-SHEET.md`),
       ];
     case "image-gate":
-      return [dir(episodeId, "images", `${prod}/images`, "images/")];
+      return [dir(ctx.key, episodeId, "images", `${prod}/images`, "images/")];
     case "final-gate": {
       const mastered = `${prod}/video/episode-mastered.mp4`;
       const rendered = `${prod}/video/${ctx.show.output.videoFilename ?? "episode.mp4"}`;
       const video = (await exists(path.join(ctx.showRoot, mastered))) ? mastered : rendered;
-      return [file(episodeId, "video", video), file(episodeId, "json", `${ep}/publish.json`)];
+      return [file(ctx.key, episodeId, "video", video), file(ctx.key, episodeId, "json", `${ep}/publish.json`)];
     }
     case "canon-gate":
       return [
-        file(episodeId, "diff", `${prod}/canon-diff.patch`),
-        file(episodeId, "markdown", `${ep}/canon-ledger.md`),
+        file(ctx.key, episodeId, "diff", `${prod}/canon-diff.patch`),
+        file(ctx.key, episodeId, "markdown", `${ep}/canon-ledger.md`),
       ];
     default:
       return [];

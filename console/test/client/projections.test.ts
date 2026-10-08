@@ -2,13 +2,14 @@ import { describe, expect, it } from "vitest";
 import type { EpisodeRow, RunView, StepRow } from "../../shared/types.js";
 import {
   STALL_MS, composeNotesWithFlags, composeShotRejection, elapsed, firstLine, progressLabel,
-  safeHref, stageLabel, stallState, stalled, titleFor,
+  readOnlyLine, safeHref, showLabel, showReadFailure, stageLabel, stallState, stalled, titleFor,
 } from "../../src/projections.js";
 
 /** The client's pure helpers. Every one of them is a function of its arguments and a clock the
  *  caller passes in, which is the whole reason they live outside the components: a stall label
  *  that turns amber at fourteen minutes cannot be asserted through a rendered DOM without a
- *  fake timer, and there is no DOM in this suite at all (vitest.config.ts: environment node). */
+ *  fake timer, and this file runs with no DOM at all (`vitest.config.ts`: `environment: "node"` is
+ *  this suite's default, and only the `.test.tsx` files beside this one opt into jsdom). */
 
 /** A Board row with the fields a test cares about and nothing else. `exactOptionalPropertyTypes`
  *  refuses an explicit `undefined` for an optional field, so the overrides are spread rather than
@@ -139,17 +140,59 @@ describe("composeNotesWithFlags", () => {
   });
 });
 
-describe("titleFor", () => {
-  const show = "Harbor Light";
+describe("showLabel", () => {
+  it("names a show by its name and its key, which is what tells two of them apart", () => {
+    expect(showLabel({ showName: "Harbor Light", key: "HarborLight" })).toBe("Harbor Light · HarborLight");
+    // The measured case: the live instance and the retired first repository declare the same
+    // showName and the same showSlug (inventory §2.1), so the key is the only identity there is.
+    expect(showLabel({ showName: "One Name", key: "live" })).not.toBe(showLabel({ showName: "One Name", key: "archive" }));
+  });
+});
 
-  it("puts a waiting episode first, with the show's own name", () => {
+describe("showReadFailure", () => {
+  it("picks out the one row a show yields when its episodes could not be read at all", () => {
+    // The server's shape (ruling H-14): an empty id, and the reason on `error`.
+    expect(showReadFailure(row({ id: "", error: "broken: its episodes could not be read — Unexpected token" })))
+      .toBe("broken: its episodes could not be read — Unexpected token");
+  });
+
+  it("leaves an ordinary episode row alone, including one whose own log went unreadable", () => {
+    expect(showReadFailure(row({ id: "s02e01" }))).toBeUndefined();
+    // `logError` is the narrower fact — this row's own log stopped being readable — and that row
+    // is still an episode with a stage and an action, so it keeps the ordinary template.
+    expect(showReadFailure(row({ id: "s02e01", logError: "this run's log could not be read past byte 400" }))).toBeUndefined();
+    // An empty id with no reason is not a failure row either: there is nothing to print.
+    expect(showReadFailure(row({ id: "" }))).toBeUndefined();
+    expect(showReadFailure(row({ id: "", error: "   " }))).toBeUndefined();
+  });
+});
+
+describe("readOnlyLine", () => {
+  it("names the key, what is refused, and why a button is absent rather than greyed", () => {
+    expect(readOnlyLine("HarborLight-archive", "no run is launched here")).toBe(
+      "HarborLight-archive is read-only: no run is launched here. Two registered shows can name one NAS root, and a write in the wrong tree would overwrite a finished season.",
+    );
+  });
+});
+
+describe("titleFor", () => {
+  const show = { showName: "Harbor Light", key: "HarborLight", readOnly: false };
+
+  it("puts a waiting episode first, with the show's own name and key", () => {
     const rows = [row({ id: "s02e03", status: "running", stage: "DRAFT_SCRIPT" }), row({ id: "s02e01", status: "waiting", stage: "DRAFT_OUTLINE" })];
-    expect(titleFor(show, rows)).toBe("⏸ s02e01 NEEDS YOU — Harbor Light");
+    expect(titleFor(show, rows)).toBe("⏸ s02e01 NEEDS YOU — Harbor Light · HarborLight");
+  });
+
+  it("is idle for a read-only show, because none of the other three forms is actionable there", () => {
+    const archive = { ...show, key: "HarborLight-archive", readOnly: true };
+    const rows = [row({ id: "s02e01", status: "waiting", stage: "DRAFT_OUTLINE" })];
+    expect(titleFor(archive, rows)).toBe("Harbor Light · HarborLight-archive console");
+    expect(titleFor(show, rows)).toBe("⏸ s02e01 NEEDS YOU — Harbor Light · HarborLight");
   });
 
   it("reports a running episode with its stage and the minutes since its last event", () => {
     const rows = [row({ id: "s02e02", status: "running", stage: "DRAFT_AUDIO", lastEventAt: "2026-10-02T10:00:00Z" })];
-    expect(titleFor(show, rows, new Date("2026-10-02T10:03:40Z"))).toBe("● s02e02 DRAFT_AUDIO · 3m — Harbor Light");
+    expect(titleFor(show, rows, new Date("2026-10-02T10:03:40Z"))).toBe("● s02e02 DRAFT_AUDIO · 3m — Harbor Light · HarborLight");
   });
 
   it("ignores an archived episode: a finished season is not something the tab can ask for", () => {
@@ -157,17 +200,17 @@ describe("titleFor", () => {
       row({ id: "ep01", status: "archived", stage: "COMPLETE", archiveNote: "Season 1, made by console v1; final on the NAS 2026-07-18" }),
       row({ id: "ep10", status: "archived", stage: "COMPLETE" }),
     ];
-    expect(titleFor(show, rows)).toBe("Harbor Light console");
+    expect(titleFor(show, rows)).toBe("Harbor Light · HarborLight console");
     // An archived row beside a waiting one leaves the waiting one's claim on the title intact.
     expect(titleFor(show, [...rows, row({ id: "s02e01", status: "waiting", stage: "DRAFT_OUTLINE" })]))
-      .toBe("⏸ s02e01 NEEDS YOU — Harbor Light");
+      .toBe("⏸ s02e01 NEEDS YOU — Harbor Light · HarborLight");
   });
 
   it("falls back to the show's console for an idle, empty or unread board", () => {
-    expect(titleFor(show, [row({ status: "completed" })])).toBe("Harbor Light console");
-    expect(titleFor(show, [])).toBe("Harbor Light console");
-    expect(titleFor(show, null)).toBe("Harbor Light console");
-    expect(titleFor("Another Show", null)).toBe("Another Show console");
+    expect(titleFor(show, [row({ status: "completed" })])).toBe("Harbor Light · HarborLight console");
+    expect(titleFor(show, [])).toBe("Harbor Light · HarborLight console");
+    expect(titleFor(show, null)).toBe("Harbor Light · HarborLight console");
+    expect(titleFor({ showName: "Another Show", key: "another", readOnly: false }, null)).toBe("Another Show · another console");
   });
 });
 
@@ -237,7 +280,10 @@ describe("progressLabel", () => {
 describe("safeHref", () => {
   it("keeps http, https, mailto and in-app paths", () => {
     expect(safeHref("https://example.test/x")).toBe("https://example.test/x");
-    expect(safeHref("/api/episodes/s02e01/files/Episodes/s02e01/outline.md")).toBe("/api/episodes/s02e01/files/Episodes/s02e01/outline.md");
+    // The address shape the console actually serves since every route moved under its show: an
+    // in-app path with no scheme, which is kept as it came.
+    expect(safeHref("/api/shows/HarborLight/episodes/s02e01/files/Episodes/s02e01/outline.md"))
+      .toBe("/api/shows/HarborLight/episodes/s02e01/files/Episodes/s02e01/outline.md");
     expect(safeHref("mailto:someone@example.test")).toBe("mailto:someone@example.test");
     expect(safeHref("outline.md")).toBe("outline.md");
   });

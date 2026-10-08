@@ -1,18 +1,25 @@
 import path from "node:path";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { Hono } from "hono";
-import type { Context } from "hono";
+import type { Context, MiddlewareHandler } from "hono";
 import { stream as streamText, streamSSE } from "hono/streaming";
 import {
-  ENGINE_VERSION, EventLog, RUN_ID, STAGES, answerGate, deriveRunState, describePipeline, episodePipeline,
+  ENGINE_VERSION, EventLog, STAGES, answerGate, deriveRunState, describePipeline, episodePipeline,
   latestRunId, listEpisodeIds, mintRunId, parseEpisodeId, resetSteps, resumeRun, withdrawApproval,
   type Pipeline, type PipelineDescription, type QueryFn, type RunState,
 } from "@showrunner/engine";
-import type { EventBatch, SseMessage } from "../shared/types.js";
+import { ImportRefused, initScaffold, type GateChoice } from "@showrunner/tools";
+import type { EpisodeRow, EventBatch, FailedShow, ShowInfo, ShowsList, SseMessage } from "../shared/types.js";
 import { serveArtifact, serveRunLog } from "./artifacts.js";
+import {
+  answerBibleGate, bibleFile, bibleFilePath, bibleRows, collectingIO, finishBible, saveAnswers,
+  startBibleRun, unapprovedBibleFiles, type BibleDeps,
+} from "./bible.js";
 import { gateView } from "./gates.js";
-import type { RunStore } from "./runs.js";
-import type { ShowContext } from "./show.js";
+import { SHOW_KEY, readRegistry, registerShow } from "./registry.js";
+import { checkSetupRunId } from "../worker/setup.js";
+import { RunStore } from "./runs.js";
+import { defaultOperator, loadShowContext, type ShowContext } from "./show.js";
 import { assemble, ask } from "./what-happened.js";
 import { killRecordedGroups, readLock, spawnWorker } from "./workers.js";
 
@@ -21,7 +28,13 @@ import { killRecordedGroups, readLock, spawnWorker } from "./workers.js";
  *  is the six actions an operator can take on a run plus the gate view, the episode's own files
  *  and "what happened".
  *
- *  Three rules hold across every route.
+ *  Four rules hold across every route.
+ *
+ *  Every route but one lives under `/api/shows/:show/`, and one middleware turns that segment into
+ *  the `ShowContext` and the `RunStore` of the show the request means. The one exception is
+ *  `GET /api/events`, which is one channel across every registered show and stamps the show key on
+ *  every message instead. The middleware is also where a read-only show refuses a POST and where
+ *  an unknown key becomes a 404, so neither refusal is seven handlers' job to remember.
  *
  *  Every `:id` is validated with `parseEpisodeId` and every `:run` against `RUN_ID` **before** any
  *  path is built from it, because these are the strings that become filesystem paths: an unchecked
@@ -46,10 +59,15 @@ function checkEpisodeId(raw: string): { ok: true } | { ok: false; error: string 
 }
 
 /** A validated run id, or the message to answer 400 with. The alphabet is the engine's, so the
- *  console and the writer of the log agree on what a run id is. */
+ *  console and the writer of the log agree on what a run id is.
+ *
+ *  The refusal is `checkSetupRunId`'s and not a copy of it, the same way `checkEpisodeId` above is
+ *  `parseEpisodeId`'s: the message is load-bearing wire protocol — `bibleRefusal` matches
+ *  `/^invalid run id /` to turn a thrown refusal into a 400 rather than a 500 — so the episode
+ *  routes and the bible routes must refuse a bad run id in exactly the same words. The result shape
+ *  is what the routes here want; the thrower is what the store and the worker want. */
 function checkRunId(raw: string): { ok: true } | { ok: false; error: string } {
-  if (RUN_ID.test(raw)) return { ok: true };
-  return { ok: false, error: `invalid run id ${JSON.stringify(raw)}: expected [A-Za-z0-9_-]+` };
+  try { checkSetupRunId(raw); return { ok: true }; } catch (err) { return { ok: false, error: (err as Error).message }; }
 }
 
 /** What a route needs the request body to be: an object, or nothing it can use. A body that is
@@ -121,54 +139,395 @@ function survivingGatesOf(description: PipelineDescription, state: RunState, ste
     .map((step) => step.id);
 }
 
-/** The seams the app is built with. Production passes none: `query` defaults, inside
- *  `what-happened.ts`, to the engine's `sdkQuery`. A test passes a fake so the "what happened"
- *  route can be driven end to end without a model behind it. */
-export interface AppDeps {
-  query?: QueryFn;
-}
+/** What the show middleware puts on the Hono context, and what every route under
+ *  `/api/shows/:show/` reads back with `c.get`.
+ *
+ *  Declared as Hono's `Variables` rather than left to `any` so a route that asked for a variable
+ *  the middleware does not set would not compile. The two together are the whole of what resolving
+ *  a show means: the show's own context, and the store watching that show's logs. */
+export type ShowVars = { Variables: { ctx: ShowContext; store: RunStore } };
 
-/** The console's app, reading one show through one store. */
-export function createApp(ctx: ShowContext, store: RunStore, deps: AppDeps = {}): Hono {
-  const app = new Hono();
-
-  /** What the client needs once, at startup: who it is talking to and the stage vocabulary the
-   *  Board's columns are drawn from. */
-  app.get("/api/show", (c) => c.json({
+/** One show as the two show routes answer it: the registry's facts about it (`key`, `readOnly`)
+ *  joined to the config's and the engine's. Built in one function because `GET /api/shows` and
+ *  `GET /api/shows/:show` must not disagree about what a show is — the list is what the Shows page
+ *  draws and the single answer is what a Board reads at startup, and a field present in one and
+ *  absent from the other would be a page that works until the operator reloads it. */
+function showInfo(ctx: ShowContext): ShowInfo {
+  return {
+    key: ctx.key,
+    readOnly: ctx.readOnly,
     showName: ctx.show.showName,
     showSlug: ctx.show.showSlug,
     operator: ctx.operator,
     episodesDir: ctx.episodesDir,
     productionDir: ctx.productionDir,
-    stages: STAGES,
+    stages: [...STAGES],
     engineVersion: ENGINE_VERSION,
-  }));
+  };
+}
 
-  /** The Board: one row per episode of the show, in id order. */
-  app.get("/api/episodes", async (c) => {
-    const ids = await listEpisodeIds(ctx.showRoot, ctx.show);
-    const rows = await Promise.all(ids.map((id) => store.episodeRow(id)));
-    return c.json(rows);
+/** What `POST /api/shows` needs in order to make a show and hold it: the registry file to append
+ *  the entry to, and the four facts a `ShowContext` takes that are the console's own rather than
+ *  the registry's.
+ *
+ *  It is a dep and not derived from the shows the app already holds, because the case this route
+ *  exists for is **a console with no shows at all** — a new machine, whose registry file does not
+ *  exist yet — and there is then no context to copy an engine root or a worker command from. When
+ *  it is absent the route refuses: that is `--show <root>` single mode, which by ruling H-01 writes
+ *  nothing on the machine. */
+export interface NewShowDeps {
+  registryFile: string;
+  engineRoot: string;
+  operator?: string;
+  workerCommand?: string[];
+  concurrency?: number;
+}
+
+/** The seams the app is built with. Production passes `newShow` and nothing else: `query` defaults,
+ *  inside `what-happened.ts`, to the engine's `sdkQuery`; `setupWorkerCommand` defaults, inside
+ *  `server/bible.ts`, to this console's own compiled setup worker; and `makeStore` to one store per
+ *  show with the production poll. A test passes a fake worker, a temporary registry and a short
+ *  poll, so every route can be driven end to end with no model and nothing written outside a
+ *  temporary directory. */
+export interface AppDeps {
+  query?: QueryFn;
+  /** What a new show is made and registered with; absent in `--show` single mode. */
+  newShow?: NewShowDeps;
+  /** argv prefix of the setup worker, as `ShowContext.workerCommand` is for the episode worker. */
+  setupWorkerCommand?: string[];
+  /** How the store for a newly registered show is built, so a test can give it the same short
+   *  poll its other stores have. */
+  makeStore?: (ctx: ShowContext) => RunStore;
+  /** The registry entries this console holds but could not load, as `loadShows` reported them.
+   *
+   *  Carried so `GET /api/shows` and the channel's `hello` can answer for them. They are not shows:
+   *  there is no context and no store, so every route under their key still answers 404. What they
+   *  are is the answer to "why does this console list two shows when the registry names three",
+   *  which the browser had no way of asking — the reason went to stderr once, at startup, and an
+   *  operator who starts the console detached with its output in a log file and then looks at the
+   *  Shows page saw a console with a show silently missing. */
+  failedShows?: FailedShow[];
+}
+
+/** A refusal a bible route answers, or `undefined` for a failure that is not the operator's and
+ *  belongs on `app.onError` as a 500.
+ *
+ *  The statuses are the console's existing vocabulary, applied to the bible's own refusals: **404**
+ *  for a key that is not one of the fifteen `BIBLE_FILES` names, because as far as a URL is
+ *  concerned that file does not exist; **400** for a malformed run id and for an import path the
+ *  fence refuses, both of which the operator can correct; **409** for every refusal that names a
+ *  conflicting state — a run a worker holds, a gate that must be answered first, a file with no
+ *  answers yet, a scaffold file that has no gate, and the engine's own wording for a gate answered
+ *  at the wrong attempt.
+ *
+ *  Matched on the messages these functions produce, with `ImportRefused` matched on its class
+ *  rather than its prose, because that prose is `@showrunner/tools`' to reword. A message no
+ *  pattern here recognises is **not** turned into a 409 by default: an unrecognised failure
+ *  answered as a conflict would tell the operator to retry something that is broken. */
+function bibleRefusal(err: unknown): { status: 400 | 404 | 409; error: string } | undefined {
+  if (err instanceof ImportRefused) return { status: 400, error: err.message };
+  if (!(err instanceof Error)) return undefined;
+  const m = err.message;
+  if (/^no such bible file /.test(m)) return { status: 404, error: m };
+  if (/^invalid run id /.test(m)) return { status: 400, error: m };
+  if (/ is a scaffold file: /.test(m)) return { status: 409, error: m };
+  if (/ asks no questions: /.test(m)) return { status: 409, error: m };
+  if (/^run .* is held by pid /.test(m)) return { status: 409, error: m };
+  if (/^answer the gate on run /.test(m)) return { status: 409, error: m };
+  if (/ is not finished; /.test(m)) return { status: 409, error: m };
+  if (/^answer .*'s questions first: /.test(m)) return { status: 409, error: m };
+  if (/^a rejection needs notes/.test(m)) return { status: 400, error: m };
+  if (/^could not mint a free run id /.test(m)) return { status: 409, error: m };
+  // `answerGate`'s own refusals: "gate ... is open at attempt 2, not 1", "no gate is open on ...".
+  if (/\bgate\b/.test(m) && /\battempt\b|no gate is open/.test(m)) return { status: 409, error: m };
+  return undefined;
+}
+
+/** A path with every symlink in it resolved, or the path itself when it does not exist yet — which
+ *  is the ordinary case for a new show's directory. The comparisons below are string comparisons
+ *  on resolved paths, and on macOS a temporary directory under `/var` is reached through a
+ *  symlink, so two spellings of one directory would otherwise sit inside neither each other. */
+async function realish(p: string): Promise<string> {
+  try { return await realpath(p); } catch { /* not there yet */ }
+  try { return path.join(await realpath(path.dirname(p)), path.basename(p)); } catch { return p; }
+}
+
+/** Whether `child` is `parent` or sits under it. A path that merely shares a prefix with the
+ *  parent's name ("Showrunner-old" beside "Showrunner") is not inside it. */
+function inside(child: string, parent: string): boolean {
+  return child === parent || child.startsWith(parent + path.sep);
+}
+
+/** The console's app: one context and one store per registered show, resolved per request from the
+ *  URL's show segment.
+ *
+ *  The two maps are keyed alike and are expected to hold the same keys — `main.ts` builds the
+ *  store map by walking the show map — and the middleware refuses a key missing from either, so a
+ *  half-built pair can never reach a route as a context with no store behind it. */
+export function createApp(
+  shows: Map<string, ShowContext>, stores: Map<string, RunStore>, deps: AppDeps = {},
+): Hono<ShowVars> {
+  const app = new Hono<ShowVars>();
+
+  /** Any failure a route did not answer for itself, as JSON.
+   *
+   *  Without this, Hono answers its own `Internal Server Error` as `text/plain`, and every client
+   *  of this server parses an error body as `{error}` — so a 500 read as an empty object and the
+   *  page said nothing at all about what had gone wrong (ruling H-14). The message is the thrown
+   *  error's own, because that message is what the operator has to act on, and the console's rule
+   *  everywhere else is not to paraphrase the words the engine chose. */
+  app.onError((err, c) => c.json({ error: err instanceof Error ? err.message : String(err) }, 500));
+
+  /** What the bible's two actions spawn with: the setup worker's argv prefix, or nothing, in which
+   *  case `server/bible.ts` resolves this console's own compiled `dist/worker/setup.js`. */
+  const bibleDeps: BibleDeps = deps.setupWorkerCommand !== undefined ? { setupWorkerCommand: deps.setupWorkerCommand } : {};
+
+  /** The registry entries that would not load, as every answer that carries the show list reports
+   *  them. One expression rather than two, so the route and the `hello` cannot drift. */
+  const failedShows = (): FailedShow[] => deps.failedShows ?? [];
+
+  /** Every show this console holds, **and every registry entry it could not load**. The client's
+   *  first request: the Shows page is drawn from it, and a client cannot build any other url until
+   *  it knows a key.
+   *
+   *  An object and not the bare array this used to answer, because the failed entries have to reach
+   *  the browser and they are not `ShowInfo`s — a show whose `showrunner.json` could not be read has
+   *  no `showName`, so it cannot be a row of the same list without the server inventing one
+   *  (`shared/types.ts`'s `FailedShow` carries the argument). The Shows page draws them as
+   *  "<key> — could not be loaded: <error>" with no link, since their own routes answer 404. */
+  app.get("/api/shows", (c) => {
+    const body: ShowsList = { shows: [...shows.values()].map(showInfo), failed: failedShows() };
+    return c.json(body);
   });
 
-  app.get("/api/episodes/:id", async (c) => {
+  /** Creates a show and registers it, in one request: the scaffold `init` writes, then the
+   *  registry entry, then the context and the store this server holds it by.
+   *
+   *  **The three path refusals, each before anything is written** (spec §4.4, and ruling H-01's
+   *  reason for a registry file at all):
+   *
+   *  - **a key the grammar rejects** — the key is the one string that becomes a URL segment, a map
+   *    lookup and a log line, and `SHOW_KEY` is where that is decided for all three;
+   *  - **a key already registered**, refused here against the shows this server holds *and* against
+   *    the file on disk, so the scaffold is never written for a show whose key cannot be used
+   *    (`registerShow` refuses it again, as the second line of defence);
+   *  - **a path inside the engine root, or inside or containing a registered show's root.** The
+   *    engine root holds this console and the engine's own tests; a show scaffolded inside it would
+   *    put a show repository inside a repository, and the show-name grep over `engine/` would start
+   *    reporting the new show's own bible. A path that contains a registered root would make the new
+   *    show's repository the parent of an existing one, which is two shows with one git history.
+   *    Both directions are refused, on resolved and symlink-resolved spellings alike.
+   *
+   *  **The maps gain the show without a restart.** `createApp` closes over the two maps and the
+   *  show middleware reads them per request, so the `set` below is visible to the very next
+   *  request — which is the whole reason the registry is a file and not argv: a list that lived in
+   *  `process.argv` could not be appended to by the surface that creates a show (ruling H-01).
+   *  `watch()` is started here too, so the new show's first bible run is tailed from the moment it
+   *  starts rather than from the next console restart.
+   *
+   *  A console started with `--show <root>` refuses: that mode is one show, keyed by its directory
+   *  name, writing nothing on the machine. */
+  app.post("/api/shows", async (c) => {
+    const newShow = deps.newShow;
+    if (newShow === undefined) {
+      return c.json({ error: "this console was started with --show, which holds one show and writes no registry; start it with --registry <file> to create a show" }, 409);
+    }
+    const body = await readJsonBody(c);
+    const name = body["name"];
+    const rawPath = body["path"];
+    const github = body["github"] ?? "none";
+    if (typeof name !== "string" || name.trim() === "") return c.json({ error: "name must be a non-empty string" }, 400);
+    if (typeof rawPath !== "string" || rawPath.trim() === "") return c.json({ error: "path must be a non-empty string" }, 400);
+    if (github !== "private" && github !== "public" && github !== "none") return c.json({ error: 'github must be "private", "public" or "none"' }, 400);
+    for (const field of ["slug", "nasRoot", "importFrom", "key"]) {
+      const value = body[field];
+      if (value !== undefined && (typeof value !== "string" || value.trim() === "")) {
+        return c.json({ error: `${field} must be a non-empty string when it is given` }, 400);
+      }
+    }
+    const target = path.resolve(rawPath);
+    const key = typeof body["key"] === "string" ? body["key"] : path.basename(target);
+    if (!SHOW_KEY.test(key)) {
+      return c.json({ error: `${JSON.stringify(key)} is not a show key: expected [A-Za-z0-9][A-Za-z0-9_-]{0,63}` }, 400);
+    }
+    if (shows.has(key)) return c.json({ error: `${key} is already registered, at ${shows.get(key)?.showRoot ?? "another path"}` }, 409);
+    const registry = await readRegistry(newShow.registryFile);
+    const registered = registry.shows[key];
+    if (registered !== undefined) return c.json({ error: `${key} is already registered, at ${path.resolve(registered.root)}` }, 409);
+
+    const resolvedTarget = await realish(target);
+    const engineRoot = await realish(path.resolve(newShow.engineRoot));
+    if (inside(resolvedTarget, engineRoot) || inside(engineRoot, resolvedTarget)) {
+      return c.json({ error: `${target} is inside the engine repository at ${newShow.engineRoot}; a show lives in a repository of its own` }, 400);
+    }
+    for (const [otherKey, entry] of Object.entries(registry.shows)) {
+      const other = await realish(path.resolve(entry.root));
+      if (inside(resolvedTarget, other) || inside(other, resolvedTarget)) {
+        return c.json({ error: `${target} is inside or holds the show registered as ${otherKey} at ${entry.root}; a show lives in a repository of its own` }, 400);
+      }
+    }
+
+    const { io, said } = collectingIO();
+    let root: string;
+    let commits: string[];
+    try {
+      const scaffold = await initScaffold({
+        name: name.trim(),
+        path: target,
+        github,
+        engineRoot: newShow.engineRoot,
+        ...(typeof body["slug"] === "string" ? { slug: body["slug"] } : {}),
+        ...(typeof body["nasRoot"] === "string" ? { nasRoot: body["nasRoot"] } : {}),
+        ...(typeof body["importFrom"] === "string" ? { importFrom: body["importFrom"] } : {}),
+      }, io);
+      root = scaffold.root;
+      commits = scaffold.commits;
+    } catch (err) {
+      // Every refusal `initScaffold` makes is the author's to fix: an empty name, a slug that
+      // would not name a file, a directory that already holds something, an `--import` path that
+      // is not a show. The message is the one to show them.
+      return c.json({ error: err instanceof Error ? err.message : String(err) }, 400);
+    }
+    await registerShow(newShow.registryFile, key, { root });
+    const ctx = await loadShowContext({
+      key, showRoot: root, engineRoot: newShow.engineRoot,
+      ...(newShow.operator !== undefined ? { operator: newShow.operator } : {}),
+      ...(newShow.workerCommand !== undefined ? { workerCommand: newShow.workerCommand } : {}),
+      ...(newShow.concurrency !== undefined ? { concurrency: newShow.concurrency } : {}),
+    });
+    const store = deps.makeStore !== undefined ? deps.makeStore(ctx) : new RunStore(ctx);
+    shows.set(key, ctx);
+    stores.set(key, store);
+    await store.watch();
+    // Every stream that is already open is told to look at `stores` again, which is where it
+    // subscribes to the new store and sends a fresh `hello`. Without this the browser session that
+    // *created* the show — the one that navigates straight into its Bible page on the same
+    // `EventSource` — would learn of it only on its next fifteen-second ping, and that is the one
+    // path where silence reads as broken rather than as refused.
+    for (const nudge of streamWakes) nudge();
+    return c.json({ key, root, commits, said });
+  });
+
+  /** Resolves `:show` into the context and the store of the show a request means, and refuses the
+   *  two things no route beneath it should have to think about.
+   *
+   *  **404 for a key this console does not hold**, including a key the grammar rejects — tested
+   *  before the map lookup, because the key is the one string that reaches a URL path segment and
+   *  validating it once here is the fence spec §4.4 asks for (the episode ids beneath it are
+   *  fenced the same way, once, by `checkEpisodeId`).
+   *
+   *  **403 for any POST to a read-only show.** Here and not in the seven POST handlers, for a
+   *  measured reason: a POST to a path no route registered still matches `/api/shows/:show/*`, so
+   *  the refusal covers the whole subtree rather than the seven paths somebody remembered. The
+   *  retired repository and the live instance name the same NAS root and the same final filename,
+   *  so one write in the wrong tree overwrites a finished season (ruling H-03) — this is the line
+   *  that makes listing the retired show safe. */
+  const resolveShow: MiddlewareHandler<ShowVars> = async (c, next) => {
+    const key = c.req.param("show") ?? "";
+    if (!SHOW_KEY.test(key)) return c.json({ error: "no such show" }, 404);
+    const ctx = shows.get(key);
+    const store = stores.get(key);
+    if (ctx === undefined || store === undefined) return c.json({ error: "no such show" }, 404);
+    if (ctx.readOnly && c.req.method === "POST") return c.json({ error: `${key} is read-only` }, 403);
+    c.set("ctx", ctx);
+    c.set("store", store);
+    await next();
+  };
+  // Two registrations and not one: Hono's `/*` does not match `/api/shows/<key>` with nothing
+  // after it, and that is exactly the shape of the one-show route below.
+  app.use("/api/shows/:show", resolveShow);
+  app.use("/api/shows/:show/*", resolveShow);
+
+  /** What a client needs once per show, at startup: which show this is, whether it may be written
+   *  to, who it is talking to, and the directories its paths are built from.
+   *
+   *  `stages` and `showSlug` are on the answer and no file under `console/src` reads either — they
+   *  are the server's statement of the show's own vocabulary and identity (ruling H-12; `stages`
+   *  pre-dates Plan H in `ShowInfo`), and they stay because dropping a field a client may be
+   *  holding is a change the client has to make first. The claim that the Board's columns are drawn
+   *  from `stages` is the thing removed: the columns are the client's own, and a comment naming a
+   *  consumer that does not exist is how a field survives being dead. */
+  app.get("/api/shows/:show", (c) => c.json(showInfo(c.get("ctx"))));
+
+  /** The Board: one row per episode of the show, in id order.
+   *
+   *  **The gather is caught, and a show whose rows cannot be read becomes one row rather than a
+   *  500** (ruling H-14). The failures are real and are the show's own files, not the console's: a
+   *  malformed `Production/<id>/images/prompts.json` or `Canon/refs.json` throws out of the needs
+   *  probes, through `episodeRow`, and used to take this route with it — and the operator was told
+   *  "Internal Server Error" about a Board that names no show. One row carrying the reason says
+   *  which show and why, the other registered shows are untouched because each is gathered under
+   *  its own request, and the row's empty `id` is what marks it as a row about the show rather
+   *  than about an episode. */
+  app.get("/api/shows/:show/episodes", async (c) => {
+    const ctx = c.get("ctx");
+    const store = c.get("store");
+    try {
+      const ids = await listEpisodeIds(ctx.showRoot, ctx.show);
+      return c.json(await Promise.all(ids.map((id) => store.episodeRow(id))));
+    } catch (err) {
+      // `id: ""` is what marks the row as a row about the show; `stage: ""` because an
+      // unreadable show has no stage and claiming one would colour the chip with a fact nobody
+      // derived. The reason is the whole of the row's content.
+      const row: EpisodeRow = {
+        id: "",
+        title: ctx.show.showName,
+        stage: "",
+        status: "none",
+        needs: { ideaMissing: false, refsMissing: [], imagesMissing: [] },
+        error: `${ctx.key}: its episodes could not be read — ${err instanceof Error ? err.message : String(err)}`,
+      };
+      return c.json([row]);
+    }
+  });
+
+  app.get("/api/shows/:show/episodes/:id", async (c) => {
     const id = c.req.param("id");
     const valid = checkEpisodeId(id);
     if (!valid.ok) return c.json({ error: valid.error }, 400);
-    return c.json(await store.episodeRow(id));
+    return c.json(await c.get("store").episodeRow(id));
   });
 
-  /** One run at the middle altitude. A run id with no log is not an error: the view is the
-   *  pipeline with every step pending, which is what a run looks like in the second between its
-   *  launch and its worker's first write. */
-  app.get("/api/episodes/:id/runs/:run", async (c) => {
+  /** One run at the middle altitude: the pipeline's steps overlaid with the run's log.
+   *
+   *  **A run whose log file does not exist is a 404**, worded exactly as the log-download route
+   *  words it (`serveRunLog` in `server/artifacts.ts`), because the two routes are answering the
+   *  same question about the same file and one message for it is one thing to keep true.
+   *
+   *  The 404 closes Plan F's deferral (ruling H-08). `EventLog.readFrom` returns no events for a
+   *  log that is not there — it swallows `ENOENT` by design, so that a reader tailing a run is not
+   *  made to care whether the writer has created the file yet — which meant this route could not
+   *  tell an absent log from an empty one and answered **both** with the whole pipeline at
+   *  `pending`. An archived episode has no run logs at all (Season 1 was made by console v1, and
+   *  `Episodes/<id>/archive.json` is the whole of its record here), so every run id under one
+   *  reached a 200 describing a sixty-eight-step run that had never existed.
+   *
+   *  **An empty log is still a 200 with every step pending**, and that is not the same case: the
+   *  launch route creates the log with `wx` and zero bytes *before* it spawns the worker (see its
+   *  own comment below), so the file exists from the moment the launch answers. That window — the
+   *  second between a launch and its worker's first write — is what the all-pending view is for,
+   *  and the check here is existence and not emptiness so the window keeps it.
+   *
+   *  The check is in the route rather than in `RunStore.view` so that the store's log cache is
+   *  never given an entry for a run that does not exist, and so that the status this route answers
+   *  is chosen where the other refusals of the same request (the two 400s above) are chosen. */
+  app.get("/api/shows/:show/episodes/:id/runs/:run", async (c) => {
+    const ctx = c.get("ctx");
     const id = c.req.param("id");
     const run = c.req.param("run");
     const validId = checkEpisodeId(id);
     if (!validId.ok) return c.json({ error: validId.error }, 400);
     const validRun = checkRunId(run);
     if (!validRun.ok) return c.json({ error: validRun.error }, 400);
-    return c.json(await store.view(id, run));
+    // Built through `EventLog.logPath`, which is the one place a run log's address is composed —
+    // the same call the store, the worker and the log route make. A `stat` that throws is the
+    // missing file; a `stat` that succeeds on something that is not a file is a directory someone
+    // created where a log belongs, and neither is a run this console can show.
+    const log = EventLog.logPath(ctx.showRoot, id, run, ctx.productionDir);
+    let info: Awaited<ReturnType<typeof stat>>;
+    try { info = await stat(log); } catch { return c.json({ error: `no log for run ${run} of ${id}` }, 404); }
+    if (!info.isFile()) return c.json({ error: `no log for run ${run} of ${id}` }, 404);
+    return c.json(await c.get("store").view(id, run));
   });
 
   /** The bottom altitude: the raw events a client has not seen. `after` is a byte offset — the
@@ -176,7 +535,8 @@ export function createApp(ctx: ShowContext, store: RunStore, deps: AppDeps = {})
    *  writing hundreds of lines a minute transfers only the lines. Read from the log rather than
    *  from the store's cache because the cache holds no per-event offsets: the file is the only
    *  thing that can answer "the bytes after N" exactly. */
-  app.get("/api/episodes/:id/runs/:run/events", async (c) => {
+  app.get("/api/shows/:show/episodes/:id/runs/:run/events", async (c) => {
+    const ctx = c.get("ctx");
     const id = c.req.param("id");
     const run = c.req.param("run");
     const validId = checkEpisodeId(id);
@@ -197,43 +557,107 @@ export function createApp(ctx: ShowContext, store: RunStore, deps: AppDeps = {})
     return c.json(batch);
   });
 
+  /** The `hello` every stream opens with, and sends again whenever the set of shows grows.
+   *
+   *  One builder rather than a literal inside the handler, because it is written more than once now
+   *  and a second copy would be the one that forgot `failed`. */
+  const helloMessage = (): SseMessage => {
+    const first = [...shows.values()][0];
+    return {
+      type: "hello",
+      // Every context carries the same operator — one `--operator` is passed to every show, and
+      // the default is one function — so the first show's is the console's. A console holding no
+      // shows yet still has an operator to name, which is the state the New-show surface runs in.
+      operator: first?.operator ?? defaultOperator(),
+      shows: [...shows.values()].map((s) => ({ key: s.key, showName: s.show.showName, readOnly: s.readOnly })),
+      failed: failedShows(),
+    };
+  };
+
+  /** Every open stream's "look again" callback. `POST /api/shows` calls each of them after it has
+   *  put the new show in the two maps, so a stream parked on its fifteen-second ping learns of the
+   *  show at once instead of up to fifteen seconds later. The decision is still the stream's own —
+   *  these only say when to take it. Each stream removes its callback in its `finally`. */
+  const streamWakes = new Set<() => void>();
+
   /** The one channel. A `hello` first, so a client knows the stream is open and who answered;
    *  then one message per change the store saw, each of them a notice rather than a payload —
-   *  the client fetches what it is missing. The subscription is dropped when the client goes
-   *  away, which is the only cleanup this route owns. */
+   *  the client fetches what it is missing. The subscriptions are dropped when the client goes
+   *  away, which is the only cleanup this route owns.
+   *
+   *  **The subscriptions are taken again on every pass of the loop, not once at open.** A show
+   *  registered through `POST /api/shows` is in `stores` from the moment that route answers — the
+   *  maps are closed over, which is the whole reason the registry is a file — but a stream that had
+   *  subscribed once held nothing to the new store, and no `hello` followed. That broke exactly the
+   *  path Plan H exists for: the New-show form navigates client-side, so the same `EventSource`
+   *  survives into the new show's Bible page, and `RunningPanel` tells the author "this page keeps
+   *  up with it on its own" while nothing arrives for the whole twenty-minute writer run. The
+   *  author's move then is to reload on a hunch or to start the file again, at $2.25 a run. The new
+   *  show's Board was dead on that stream for the same reason.
+   *
+   *  So: a `Set` of the keys this stream has subscribed to, compared against `stores` on every wake
+   *  and every ping, and a fresh `hello` whenever it grows — which is also what makes
+   *  `Shows.tsx`'s and `NewShow.tsx`'s doc comments true, since both refetch their list on a
+   *  `hello`. Shrinking is not handled because nothing removes a show: no route unregisters one, and
+   *  a registry entry deleted by hand takes effect at the next start. */
   app.get("/api/events", (c) => streamSSE(c, async (stream) => {
-    const hello: SseMessage = { type: "hello", operator: ctx.operator, showName: ctx.show.showName };
-    await stream.writeSSE({ data: JSON.stringify(hello) });
-
     const queue: SseMessage[] = [];
     let wake: (() => void) | undefined;
     let open = true;
-    const unsubscribe = store.subscribe((m) => { queue.push(m); wake?.(); });
+    let showsChanged = false;
+
+    /** Subscribes to every store this stream has not subscribed to yet, and says whether the set
+     *  grew. Every subscription it takes — at open and later — goes into `unsubscribes`, which the
+     *  `finally` drains, so the cleanup owns the whole lifetime of the stream from one place. */
+    const subscribed = new Set<string>();
+    const unsubscribes: (() => void)[] = [];
+    const catchUp = (): boolean => {
+      let grew = false;
+      for (const [key, store] of stores) {
+        if (subscribed.has(key)) continue;
+        subscribed.add(key);
+        // One subscription per show, drained into one queue: the channel is one stream across every
+        // registered show, and each message says which show it is about.
+        unsubscribes.push(store.subscribe((m) => { queue.push(m); wake?.(); }));
+        grew = true;
+      }
+      return grew;
+    };
+
+    const nudge = (): void => { showsChanged = true; wake?.(); };
+    streamWakes.add(nudge);
+    catchUp();
+    await stream.writeSSE({ data: JSON.stringify(helloMessage()) });
     stream.onAbort(() => { open = false; wake?.(); });
 
     try {
       while (open && !stream.aborted) {
+        showsChanged = false;
+        if (catchUp()) await stream.writeSSE({ data: JSON.stringify(helloMessage()) });
         while (queue.length > 0) {
           const message = queue.shift();
           if (message !== undefined) await stream.writeSSE({ data: JSON.stringify(message) });
         }
         if (!open || stream.aborted) break;
         let timer: NodeJS.Timeout | undefined;
-        // The queue is re-checked inside the executor: a message published between the drain
-        // above and the assignment of `wake` would otherwise wait for the ping.
+        // The queue and the shows flag are re-checked inside the executor: a message published, or
+        // a show registered, between the work above and the assignment of `wake` would otherwise
+        // wait for the ping.
         const ticked = await new Promise<boolean>((resolve) => {
           wake = () => { resolve(false); };
-          if (queue.length > 0 || !open) { resolve(false); return; }
+          if (queue.length > 0 || showsChanged || !open) { resolve(false); return; }
           timer = setTimeout(() => { resolve(true); }, PING_MS);
         });
         wake = undefined;
         if (timer !== undefined) clearTimeout(timer);
         // A comment line: it keeps an idle connection open through anything that would close it,
-        // and it is the client's evidence that the server is still there.
+        // and it is the client's evidence that the server is still there. The loop's next pass
+        // checks `stores` again, so an idle stream picks up a new show on its own.
         if (ticked && open && !stream.aborted) await stream.write(": ping\n\n");
       }
     } finally {
-      unsubscribe();
+      streamWakes.delete(nudge);
+      for (const unsubscribe of unsubscribes) unsubscribe();
     }
   }));
 
@@ -266,7 +690,8 @@ export function createApp(ctx: ShowContext, store: RunStore, deps: AppDeps = {})
    *  `wx` rather than a read-then-write, so two operators creating the same episode cannot both
    *  believe they did. No `Production/<id>/` is made here: that directory is a run's to create,
    *  and an empty one would put a row on the Board for an episode with no idea in it. */
-  app.post("/api/episodes", async (c) => {
+  app.post("/api/shows/:show/episodes", async (c) => {
+    const ctx = c.get("ctx");
     const body = await readJsonBody(c);
     const id = body["id"];
     const premise = body["premise"];
@@ -316,7 +741,9 @@ export function createApp(ctx: ShowContext, store: RunStore, deps: AppDeps = {})
    *  and the file left behind would be the episode's latest run, empty and so unfinished —
    *  refusing every later launch while Continue refused it too. The episode would be wedged by a
    *  misconfiguration, which is a worse failure than the misconfiguration. */
-  app.post("/api/episodes/:id/runs", async (c) => {
+  app.post("/api/shows/:show/episodes/:id/runs", async (c) => {
+    const ctx = c.get("ctx");
+    const store = c.get("store");
     const id = c.req.param("id");
     const valid = checkEpisodeId(id);
     if (!valid.ok) return c.json({ error: valid.error }, 400);
@@ -364,7 +791,8 @@ export function createApp(ctx: ShowContext, store: RunStore, deps: AppDeps = {})
    *  `expectedAttempt` is the attempt the Gate page read. The engine refuses an answer that names
    *  a different one, which is the whole protection against a tab left open across a rejection:
    *  the showrunner would otherwise approve a message that a fix agent has already superseded. */
-  app.post("/api/episodes/:id/runs/:run/gate", async (c) => {
+  app.post("/api/shows/:show/episodes/:id/runs/:run/gate", async (c) => {
+    const ctx = c.get("ctx");
     const checked = checkIds(c);
     if (!checked.ok) return c.json({ error: checked.error }, 400);
     const { id, run } = checked;
@@ -393,7 +821,8 @@ export function createApp(ctx: ShowContext, store: RunStore, deps: AppDeps = {})
 
   /** Resumes a failed run: the failed step and everything it swept away go back to pending, and a
    *  worker continues from there. Only a run whose log ends failed can be resumed. */
-  app.post("/api/episodes/:id/runs/:run/resume", async (c) => {
+  app.post("/api/shows/:show/episodes/:id/runs/:run/resume", async (c) => {
+    const ctx = c.get("ctx");
     const checked = checkIds(c);
     if (!checked.ok) return c.json({ error: checked.error }, 400);
     const { id, run } = checked;
@@ -420,7 +849,9 @@ export function createApp(ctx: ShowContext, store: RunStore, deps: AppDeps = {})
    *  Refused for a run that is finished (resume it, or launch a new one) or waiting (answer the
    *  gate). Keyed on the log and the lock rather than on the status string, so it offers the same
    *  move whatever the Board happens to call the run. */
-  app.post("/api/episodes/:id/runs/:run/continue", async (c) => {
+  app.post("/api/shows/:show/episodes/:id/runs/:run/continue", async (c) => {
+    const ctx = c.get("ctx");
+    const store = c.get("store");
     const checked = checkIds(c);
     if (!checked.ok) return c.json({ error: checked.error }, 400);
     const { id, run } = checked;
@@ -442,7 +873,9 @@ export function createApp(ctx: ShowContext, store: RunStore, deps: AppDeps = {})
    *  is expensive: a gate is answered or withdrawn, and resetting around it would leave the run
    *  rebuilding the work the showrunner is being asked about. Gates themselves are never reset —
    *  that is the engine's rule, and `withdraw` is how an approval is taken back. */
-  app.post("/api/episodes/:id/runs/:run/reset", async (c) => {
+  app.post("/api/shows/:show/episodes/:id/runs/:run/reset", async (c) => {
+    const ctx = c.get("ctx");
+    const store = c.get("store");
     const checked = checkIds(c);
     if (!checked.ok) return c.json({ error: checked.error }, 400);
     const { id, run } = checked;
@@ -479,7 +912,9 @@ export function createApp(ctx: ShowContext, store: RunStore, deps: AppDeps = {})
    *  `gate_answered` changes the state it would be read from afterwards. The rail offers withdraw
    *  only on the latest approved gate, so an operator reaching this route for an earlier gate is
    *  acting deliberately — and is told exactly which approvals that spends. */
-  app.post("/api/episodes/:id/runs/:run/withdraw", async (c) => {
+  app.post("/api/shows/:show/episodes/:id/runs/:run/withdraw", async (c) => {
+    const ctx = c.get("ctx");
+    const store = c.get("store");
     const checked = checkIds(c);
     if (!checked.ok) return c.json({ error: checked.error }, 400);
     const { id, run } = checked;
@@ -503,15 +938,171 @@ export function createApp(ctx: ShowContext, store: RunStore, deps: AppDeps = {})
     return c.json({ runId: run, pid, reset, survivingGates });
   });
 
+  // ── the bible ─────────────────────────────────────────────────────────────────────────────
+  //
+  // The New-show surface's read and write sides. Four things make this family different from the
+  // episode routes above, and all four are ruling H-07's:
+  //
+  //   * the key is a **bible key**, one of the fifteen `BIBLE_FILES` names, validated by
+  //     `bibleEntry` inside `server/bible.ts` before it reaches a path — so these routes carry no
+  //     `checkEpisodeId`, because the reserved id `setup` is not an episode id and never will be;
+  //   * `GET bible/:key/file` is the one fence that serves a file under `Canon/`, and it serves
+  //     exactly the file the table names for the key — there is no path parameter to traverse;
+  //   * the gate's four answers are the terminal's four (`GATE_CHOICES`), two of which write the
+  //     file before they answer; and
+  //   * a read-only show refuses every one of the POSTs in the middleware above, not here.
+  //
+  // The write order inside each action is `server/bible.ts`' own, and its doc comments carry the
+  // argument for it.
+
+  /** The fifteen rows of the Bible view, in interview order. */
+  app.get("/api/shows/:show/bible", async (c) => c.json(await bibleRows(c.get("ctx"))));
+
+  /** One bible file: its row, its questions with whatever is answered, the gate's message when a
+   *  gate is open, the file itself, and the latest run. */
+  app.get("/api/shows/:show/bible/:key", async (c) => {
+    try {
+      return c.json(await bibleFile(c.get("ctx"), c.req.param("key"), c.get("store")));
+    } catch (err) {
+      const refusal = bibleRefusal(err);
+      if (refusal === undefined) throw err;
+      return c.json({ error: refusal.error }, refusal.status);
+    }
+  });
+
+  /** The bible file itself, as text — the raw view behind the gate's rendered Markdown.
+   *
+   *  A 404 for a key that is not one of the fifteen, and a 404 for a file that is not written yet:
+   *  both are "there is no such file here", which is the honest answer and the one the client's
+   *  raw toggle can render. */
+  app.get("/api/shows/:show/bible/:key/file", async (c) => {
+    const ctx = c.get("ctx");
+    const key = c.req.param("key");
+    let file: string;
+    try {
+      file = bibleFilePath(ctx, key);
+    } catch (err) {
+      const refusal = bibleRefusal(err);
+      if (refusal === undefined) throw err;
+      return c.json({ error: refusal.error }, refusal.status);
+    }
+    let text: string;
+    try {
+      text = await readFile(file, "utf8");
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+        return c.json({ error: `${path.relative(ctx.showRoot, file)} is not written yet` }, 404);
+      }
+      throw err;
+    }
+    c.header("Content-Type", "text/markdown; charset=utf-8");
+    c.header("Cache-Control", "no-store");
+    return c.body(text);
+  });
+
+  /** The author's answers for one bible file, saved the moment the form is saved — one of the four
+   *  writes this server makes. The record is merged over what is on disk, so a form that posts one
+   *  field cannot erase the other eight answers (`saveAnswers` records why). */
+  app.post("/api/shows/:show/bible/:key/answers", async (c) => {
+    const body = await readJsonBody(c);
+    const answers = body["answers"];
+    if (typeof answers !== "object" || answers === null || Array.isArray(answers)) {
+      return c.json({ error: "answers must be an object of heading → answer" }, 400);
+    }
+    for (const [heading, value] of Object.entries(answers)) {
+      if (typeof value !== "string") return c.json({ error: `the answer under ${JSON.stringify(heading)} must be a string` }, 400);
+    }
+    try {
+      const file = await saveAnswers(c.get("ctx"), c.req.param("key"), answers as Record<string, string>);
+      return c.json({ file });
+    } catch (err) {
+      const refusal = bibleRefusal(err);
+      if (refusal === undefined) throw err;
+      return c.json({ error: refusal.error }, refusal.status);
+    }
+  });
+
+  /** Starts the file's writing step: creates the log and spawns the setup worker on it. Refused
+   *  while the file's latest run is unfinished, and for an interview file with no answers. */
+  app.post("/api/shows/:show/bible/:key/runs", async (c) => {
+    try {
+      return c.json(await startBibleRun(c.get("ctx"), c.req.param("key"), bibleDeps));
+    } catch (err) {
+      const refusal = bibleRefusal(err);
+      if (refusal === undefined) throw err;
+      return c.json({ error: refusal.error }, refusal.status);
+    }
+  });
+
+  /** Answers the file's open gate with one of the four answers the terminal offers.
+   *
+   *  `expectedAttempt` is required and not optional, unlike the episode gate's, because every one
+   *  of these four answers is a decision about a file the page has just shown: an answer written
+   *  against a message a rejection has since superseded must be refused by the engine rather than
+   *  applied to a newer ask nobody read. */
+  app.post("/api/shows/:show/bible/:key/runs/:run/gate", async (c) => {
+    const ctx = c.get("ctx");
+    const body = await readJsonBody(c);
+    const choice = body["choice"];
+    const notes = body["notes"] ?? "";
+    const importPath = body["importPath"];
+    const expectedAttempt = body["expectedAttempt"];
+    const choices: GateChoice[] = ["approve", "reject", "myself", "import"];
+    if (typeof choice !== "string" || !choices.includes(choice as GateChoice)) {
+      return c.json({ error: `choice must be one of ${choices.join(", ")}` }, 400);
+    }
+    if (typeof notes !== "string") return c.json({ error: "notes must be a string" }, 400);
+    if (importPath !== undefined && typeof importPath !== "string") return c.json({ error: "importPath must be a string" }, 400);
+    if (!Number.isInteger(expectedAttempt)) return c.json({ error: "expectedAttempt must be an integer: the attempt the gate you read is open at" }, 400);
+    try {
+      return c.json(await answerBibleGate(ctx, c.req.param("key"), c.req.param("run"), {
+        choice: choice as GateChoice, notes, expectedAttempt: expectedAttempt as number, by: ctx.operator,
+        ...(typeof importPath === "string" ? { importPath } : {}),
+      }, bibleDeps));
+    } catch (err) {
+      const refusal = bibleRefusal(err);
+      if (refusal === undefined) throw err;
+      return c.json({ error: refusal.error }, refusal.status);
+    }
+  });
+
+  /** The end of a setup: the bible-check report, the GitHub repository, and the next steps out of
+   *  the show's own README.
+   *
+   *  **Refused while any gated bible file is unapproved**, with the list of them. `initFinish`
+   *  derives its own `stalled` from the run logs, so calling it part-way through would answer
+   *  "thirteen files are waiting on you" to an operator who asked to finish — and would create the
+   *  GitHub repository over a half-written bible, which `gh repo create --push` cannot be asked to
+   *  do twice under one name (Task 2's ruling, and its report's second concern).
+   *
+   *  The registry entry's `readOnly` is untouched: a show whose bible is finished is the show this
+   *  console writes to, and read-only is the retired repository's property, not a stage. */
+  app.post("/api/shows/:show/bible/finish", async (c) => {
+    const ctx = c.get("ctx");
+    const body = await readJsonBody(c);
+    const github = body["github"] ?? "none";
+    if (github !== "private" && github !== "public" && github !== "none") {
+      return c.json({ error: 'github must be "private", "public" or "none"' }, 400);
+    }
+    const unapproved = await unapprovedBibleFiles(ctx);
+    if (unapproved.length > 0) {
+      return c.json({
+        error: `${unapproved.length} bible file(s) are not approved yet: ${unapproved.join(", ")}. Finish them first — each one's gate is still the author's to answer.`,
+        unapproved,
+      }, 409);
+    }
+    return c.json(await finishBible(ctx, github));
+  });
+
   // ── the gate, the artifacts and "what happened" ───────────────────────────────────────────
 
   /** The open gate of one run: the question, the files it is about, the verdicts behind it, and
    *  the attempt the answer must name. A 404 means no gate is open, which is also what a client
    *  polling a gate sees the moment someone else answers it. */
-  app.get("/api/episodes/:id/runs/:run/gate", async (c) => {
+  app.get("/api/shows/:show/episodes/:id/runs/:run/gate", async (c) => {
     const checked = checkIds(c);
     if (!checked.ok) return c.json({ error: checked.error }, 400);
-    const view = await gateView(ctx, store, checked.id, checked.run);
+    const view = await gateView(c.get("ctx"), c.get("store"), checked.id, checked.run);
     if (view === undefined) return c.json({ error: `no gate is open on run ${checked.run} of ${checked.id}` }, 404);
     return c.json(view);
   });
@@ -519,32 +1110,34 @@ export function createApp(ctx: ShowContext, store: RunStore, deps: AppDeps = {})
   /** The episode's own files: a file with HTTP Range, or a directory as a JSON listing. The `*`
    *  is a show-relative path, and `resolveArtifactPath` is the only thing standing between it and
    *  the filesystem — see `server/artifacts.ts` for the three layers it applies. */
-  app.get("/api/episodes/:id/files/:path{.+}", async (c) => {
+  app.get("/api/shows/:show/episodes/:id/files/:path{.+}", async (c) => {
     const id = c.req.param("id");
     const valid = checkEpisodeId(id);
     if (!valid.ok) return c.json({ error: valid.error }, 400);
-    return serveArtifact(c, ctx, id, c.req.param("path"));
+    return serveArtifact(c, c.get("ctx"), id, c.req.param("path"));
   });
 
   /** The run's raw log, as a download: the file to attach to a bug report. */
-  app.get("/api/episodes/:id/runs/:run/log", async (c) => {
+  app.get("/api/shows/:show/episodes/:id/runs/:run/log", async (c) => {
     const checked = checkIds(c);
     if (!checked.ok) return c.json({ error: checked.error }, 400);
-    return serveRunLog(c, ctx, checked.id, checked.run);
+    return serveRunLog(c, c.get("ctx"), checked.id, checked.run);
   });
 
   /** Everything the troubleshooter would be handed, so the operator can read it first. */
-  app.get("/api/episodes/:id/runs/:run/context", async (c) => {
+  app.get("/api/shows/:show/episodes/:id/runs/:run/context", async (c) => {
     const checked = checkIds(c);
     if (!checked.ok) return c.json({ error: checked.error }, 400);
-    return c.json(await assemble(ctx, store, checked.id, checked.run));
+    return c.json(await assemble(c.get("ctx"), c.get("store"), checked.id, checked.run));
   });
 
   /** Asks the troubleshooter about one run, streaming the answer as plain text so the operator
    *  reads the first sentence while the agent is still working. Every question and the answer it
    *  produced are appended to `<runs>/<runId>.troubleshooting.jsonl` — beside the run's log, never
    *  in it. */
-  app.post("/api/episodes/:id/runs/:run/ask", async (c) => {
+  app.post("/api/shows/:show/episodes/:id/runs/:run/ask", async (c) => {
+    const ctx = c.get("ctx");
+    const store = c.get("store");
     const checked = checkIds(c);
     if (!checked.ok) return c.json({ error: checked.error }, 400);
     const { id, run } = checked;

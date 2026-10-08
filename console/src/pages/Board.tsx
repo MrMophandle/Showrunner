@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import type { EpisodeRow } from "../../shared/types.js";
-import { post, useConsole, useNow } from "../api.js";
-import { elapsed, firstLine, stageLabel, stalled } from "../projections.js";
+import { post, showHref, showPath, useConsole, useNow, useShowKey } from "../api.js";
+import { elapsed, firstLine, readOnlyLine, showLabel, showReadFailure, stageLabel, stalled } from "../projections.js";
 import { NewEpisode } from "../components/NewEpisode.js";
 
 /** The Board: one row per episode, and the one question it answers is which of them wants the
@@ -11,6 +11,20 @@ import { NewEpisode } from "../components/NewEpisode.js";
  *  Everything on a row comes from `EpisodeRow` (`shared/types.ts`), which is deliberately the one
  *  shape that can be built without opening a run: the Board is the page that is left open on a
  *  tablet, and it re-reads every episode of the show on every change notification.
+ *
+ *  **A read-only show draws no Launch button, no Continue button and no New-episode form, and one
+ *  line in their place naming the key.** The server answers 403 to every POST to such a show
+ *  (ruling H-03: the retired first repository and the live instance name one NAS root and one
+ *  final filename, so a single write in the wrong tree overwrites a finished season), and a button
+ *  that is offered and then refused teaches the operator that the console has a move it does not
+ *  have. `readOnly` arrives on the same `ShowInfo` this page already reads `episodesDir` from, so
+ *  knowing costs no request.
+ *
+ *  **A show whose episodes could not be read at all is one row and not a 500.** The server catches
+ *  per show and yields a single row with an empty id carrying the reason (ruling H-14), and this
+ *  page draws that row as the sentence it is — no stage chip, no status, no action — because there
+ *  is no episode behind it to act on and an empty title beside a blank chip would be a Board
+ *  saying nothing about a show that is missing.
  *
  *  An episode whose directory carries an `archive.json` marker and no run logs is drawn at the
  *  marker's stage with an "archived" chip and the marker's one line, no reasons beside it, and no
@@ -75,7 +89,8 @@ function needsLines(row: EpisodeRow, episodesDir: string): string[] {
 }
 
 export function Board() {
-  const { show, rows, rowsError, rowsLoading, refetchRows } = useConsole();
+  const { show, canAct, readOnly, rows, rowsError, rowsLoading, refetchRows } = useConsole();
+  const showKey = useShowKey();
   const navigate = useNavigate();
   const now = useNow();
   const [busy, setBusy] = useState<string | null>(null);
@@ -87,9 +102,9 @@ export function Board() {
     setBusy(id);
     setError(null);
     try {
-      const { runId } = await post<{ runId: string }>(`/api/episodes/${encodeURIComponent(id)}/runs`, {});
+      const { runId } = await post<{ runId: string }>(showPath(showKey, `/episodes/${encodeURIComponent(id)}/runs`), {});
       refetchRows();
-      navigate(`/episodes/${id}/runs/${runId}`);
+      navigate(showHref(showKey, `/episodes/${id}/runs/${runId}`));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -103,7 +118,7 @@ export function Board() {
     setError(null);
     setConfirmContinue(null);
     try {
-      await post(`/api/episodes/${encodeURIComponent(row.id)}/runs/${encodeURIComponent(row.runId)}/continue`, {});
+      await post(showPath(showKey, `/episodes/${encodeURIComponent(row.id)}/runs/${encodeURIComponent(row.runId)}/continue`), {});
       refetchRows();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -115,8 +130,9 @@ export function Board() {
   return (
     <div className="board">
       <div className="board-head">
-        <h1>{show === null ? "the board" : `${show.showName} — the board`}</h1>
-        <NewEpisode episodesDir={episodesDir} onCreated={() => { refetchRows(); }} />
+        <h1>{show === null ? "the board" : `${showLabel(show)} — the board`}</h1>
+        {canAct && <NewEpisode showKey={showKey} episodesDir={episodesDir} onCreated={() => { refetchRows(); }} />}
+        {readOnly && <p className="action-reason">{readOnlyLine(showKey, "no episode is created here")}</p>}
       </div>
 
       {error !== null && <p className="error-line">{error}</p>}
@@ -126,11 +142,21 @@ export function Board() {
 
       <ul className="rows">
         {(rows ?? []).map((row) => {
+          // The show's own read failure, before anything episode-shaped is derived from a row that
+          // describes no episode.
+          const failure = showReadFailure(row);
+          if (failure !== undefined) {
+            return (
+              <li className="row row-show-error" key="show-read-failure">
+                <p className="error-line">{failure}</p>
+              </li>
+            );
+          }
           const stage = stageLabel(row.stage);
           const chip = statusChip(row, now);
           const reasons = needsLines(row, episodesDir);
           const quiet = stalled(row.lastEventAt, now) && (row.status === "running" || row.status === "crashed");
-          const runHref = row.runId === undefined ? null : `/episodes/${row.id}/runs/${row.runId}`;
+          const runHref = row.runId === undefined ? null : showHref(showKey, `/episodes/${row.id}/runs/${row.runId}`);
           return (
             <li className={`row row-${row.status}`} key={row.id}>
               <div className="row-name">
@@ -168,7 +194,7 @@ export function Board() {
               </div>
 
               <div className="row-actions">
-                {row.status === "none" && (
+                {row.status === "none" && canAct && (
                   <>
                     <button
                       type="button"
@@ -183,6 +209,9 @@ export function Board() {
                     )}
                   </>
                 )}
+                {row.status === "none" && readOnly && (
+                  <span className="action-reason">{readOnlyLine(showKey, "no run is launched here")}</span>
+                )}
                 {/* No launch button for an archived episode. The marker says the episode was
                     finished outside the engine, and what a run over a finished episode should do
                     is Plan F's question, not a button's. */}
@@ -192,10 +221,13 @@ export function Board() {
                 {row.status === "waiting" && runHref !== null && (
                   <Link className="btn btn-primary" to={`${runHref}/gate`}>open gate</Link>
                 )}
-                {row.status === "crashed" && confirmContinue !== row.id && (
+                {row.status === "crashed" && readOnly && (
+                  <span className="action-reason">{readOnlyLine(showKey, "no run is continued here")}</span>
+                )}
+                {row.status === "crashed" && canAct && confirmContinue !== row.id && (
                   <button type="button" className="btn btn-primary" onClick={() => { setConfirmContinue(row.id); }}>continue</button>
                 )}
-                {row.status === "crashed" && confirmContinue === row.id && (
+                {row.status === "crashed" && canAct && confirmContinue === row.id && (
                   <>
                     <button
                       type="button"

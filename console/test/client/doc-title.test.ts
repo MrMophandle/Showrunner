@@ -1,12 +1,23 @@
 import { describe, expect, it } from "vitest";
 import type { EpisodeRow } from "../../shared/types.js";
+import type { TitleShow } from "../../src/projections.js";
 import { titleFor } from "../../src/useDocTitle.js";
 
 /** The document title is the whole alerting story on the home network: the spec rules out web
  *  notifications (LAN http is not a secure context) and the console makes no sound, so the tab's
  *  own string is what answers "does it need me?" from across the room. These assertions are the
  *  hook's pure part — `titleFor`, which `useDocTitle` sets `document.title` from — because that is
- *  the part that can be wrong in a way nobody notices. */
+ *  the part that can be wrong in a way nobody notices.
+ *
+ *  **Every form carries the show's key as well as its name** (`showLabel`), because one console
+ *  holds every show on the machine and two of them can declare the same `showName` — the two this
+ *  console was measured against declare one name between them. A tab that asked for the
+ *  showrunner without saying which show was asking would be the alerting story failing at the one
+ *  moment it matters. */
+
+/** The show every assertion below is about: the invented one `test/helpers.ts` uses, under the key
+ *  an operator would have registered it with. */
+const SHOW: TitleShow = { showName: "Harbor Light", key: "HarborLight", readOnly: false };
 
 function row(over: Partial<EpisodeRow> = {}): EpisodeRow {
   return {
@@ -18,8 +29,20 @@ function row(over: Partial<EpisodeRow> = {}): EpisodeRow {
 
 describe("titleFor, the document title's pure part", () => {
   it("names the show it was given and never one of its own", () => {
-    expect(titleFor("Harbor Light", [])).toBe("Harbor Light console");
-    expect(titleFor("Second Show", [])).toBe("Second Show console");
+    expect(titleFor(SHOW, [])).toBe("Harbor Light · HarborLight console");
+    expect(titleFor({ showName: "Second Show", key: "second", readOnly: false }, [])).toBe("Second Show · second console");
+  });
+
+  it("tells two shows apart by their keys when they declare the same name", () => {
+    // The measured case, and the whole reason the key is in the title: the live instance and the
+    // retired first repository declare the same showName and the same showSlug (inventory §2.1),
+    // so the name is not an identity and the key is.
+    const live = { showName: "One Name", key: "live", readOnly: false };
+    const archive = { showName: "One Name", key: "archive", readOnly: false };
+    const rows = [row({ id: "s02e04", status: "waiting" })];
+    expect(titleFor(live, rows)).toBe("⏸ s02e04 NEEDS YOU — One Name · live");
+    expect(titleFor(archive, rows)).toBe("⏸ s02e04 NEEDS YOU — One Name · archive");
+    expect(titleFor(live, rows)).not.toBe(titleFor(archive, rows));
   });
 
   it("asks for the showrunner the moment any episode is waiting, whatever else is running", () => {
@@ -27,30 +50,49 @@ describe("titleFor, the document title's pure part", () => {
       row({ id: "s02e01", status: "running", stage: "DRAFT_SCRIPT", lastEventAt: "2026-10-02T10:00:00Z" }),
       row({ id: "s02e04", status: "waiting", stage: "DRAFT_IMAGES" }),
     ];
-    expect(titleFor("Harbor Light", rows, new Date("2026-10-02T10:01:00Z"))).toBe("⏸ s02e04 NEEDS YOU — Harbor Light");
+    expect(titleFor(SHOW, rows, new Date("2026-10-02T10:01:00Z"))).toBe("⏸ s02e04 NEEDS YOU — Harbor Light · HarborLight");
   });
 
   it("names the first waiting episode in board order when two are waiting", () => {
     const rows = [row({ id: "s02e02", status: "waiting" }), row({ id: "s02e05", status: "waiting" })];
-    expect(titleFor("Harbor Light", rows)).toBe("⏸ s02e02 NEEDS YOU — Harbor Light");
+    expect(titleFor(SHOW, rows)).toBe("⏸ s02e02 NEEDS YOU — Harbor Light · HarborLight");
+  });
+
+  it("is idle for a read-only show, whatever its rows say", () => {
+    // The tab is the whole alerting story on this network, and every alerting form is a claim
+    // about something the reader can do. A read-only show refuses every POST (ruling H-03), so
+    // its gate draws no answer and its action bar no recovery: a tab saying NEEDS YOU there would
+    // send the showrunner to a page with no button on it.
+    const archive: TitleShow = { showName: "Harbor Light", key: "HarborLight-archive", readOnly: true };
+    const parked = [row({ id: "s02e04", status: "waiting", stage: "DRAFT_IMAGES" })];
+    expect(titleFor(archive, parked)).toBe("Harbor Light · HarborLight-archive console");
+    // The same rows under the writable key do ask, which is what makes the suppression the show's
+    // doing and not the rows'.
+    expect(titleFor(SHOW, parked)).toBe("⏸ s02e04 NEEDS YOU — Harbor Light · HarborLight");
+    // The other two alerting forms go the same way: nothing in this console can continue a crashed
+    // run or act on a running one in a show it may not write to.
+    expect(titleFor(archive, [row({ id: "s02e07", status: "crashed", stage: "DRAFT_ASSEMBLY" })]))
+      .toBe("Harbor Light · HarborLight-archive console");
+    expect(titleFor(archive, [row({ id: "s02e02", status: "running", stage: "DRAFT_AUDIO", lastEventAt: "2026-10-02T10:00:00Z" })], new Date("2026-10-02T10:14:59Z")))
+      .toBe("Harbor Light · HarborLight-archive console");
   });
 
   it("reports a running episode's stage and the minutes since it last moved", () => {
     const rows = [row({ id: "s02e02", status: "running", stage: "DRAFT_AUDIO", lastEventAt: "2026-10-02T10:00:00Z" })];
-    expect(titleFor("Harbor Light", rows, new Date("2026-10-02T10:14:59Z"))).toBe("● s02e02 DRAFT_AUDIO · 14m — Harbor Light");
+    expect(titleFor(SHOW, rows, new Date("2026-10-02T10:14:59Z"))).toBe("● s02e02 DRAFT_AUDIO · 14m — Harbor Light · HarborLight");
   });
 
   it("reports zero minutes for a running episode whose log has no last event yet", () => {
     const rows = [row({ id: "s02e02", status: "running", stage: "IDEA" })];
-    expect(titleFor("Harbor Light", rows)).toBe("● s02e02 IDEA · 0m — Harbor Light");
+    expect(titleFor(SHOW, rows)).toBe("● s02e02 IDEA · 0m — Harbor Light · HarborLight");
   });
 
   it("warns about a failed or a crashed run, which will not restart itself", () => {
     // The fourth form. A run that failed or crashed has stopped and nothing will move it until the
     // operator does, so a tab that reported it as idle would let an episode sit broken for as long
     // as nobody opened the Board.
-    expect(titleFor("Harbor Light", [row({ id: "s02e07", status: "crashed", stage: "DRAFT_ASSEMBLY" })])).toBe("⚠ s02e07 CRASHED — Harbor Light");
-    expect(titleFor("Harbor Light", [row({ id: "s02e08", status: "failed", stage: "CASTING" })])).toBe("⚠ s02e08 FAILED — Harbor Light");
+    expect(titleFor(SHOW, [row({ id: "s02e07", status: "crashed", stage: "DRAFT_ASSEMBLY" })])).toBe("⚠ s02e07 CRASHED — Harbor Light · HarborLight");
+    expect(titleFor(SHOW, [row({ id: "s02e08", status: "failed", stage: "CASTING" })])).toBe("⚠ s02e08 FAILED — Harbor Light · HarborLight");
   });
 
   it("asks for the showrunner before it warns, and warns before it reports a run that is working", () => {
@@ -59,15 +101,15 @@ describe("titleFor, the document title's pure part", () => {
     const broken = row({ id: "s02e07", status: "crashed", stage: "DRAFT_ASSEMBLY" });
     const working = row({ id: "s02e02", status: "running", stage: "DRAFT_AUDIO", lastEventAt: "2026-10-02T10:00:00Z" });
     const asking = row({ id: "s02e04", status: "waiting", stage: "DRAFT_IMAGES" });
-    expect(titleFor("Harbor Light", [working, broken])).toBe("⚠ s02e07 CRASHED — Harbor Light");
-    expect(titleFor("Harbor Light", [broken, asking])).toBe("⏸ s02e04 NEEDS YOU — Harbor Light");
+    expect(titleFor(SHOW, [working, broken])).toBe("⚠ s02e07 CRASHED — Harbor Light · HarborLight");
+    expect(titleFor(SHOW, [broken, asking])).toBe("⏸ s02e04 NEEDS YOU — Harbor Light · HarborLight");
     // The first match in Board order, so a show with two broken episodes names the earlier one and
     // the title does not flicker between them.
-    expect(titleFor("Harbor Light", [row({ id: "s02e05", status: "failed" }), broken])).toBe("⚠ s02e05 FAILED — Harbor Light");
+    expect(titleFor(SHOW, [row({ id: "s02e05", status: "failed" }), broken])).toBe("⚠ s02e05 FAILED — Harbor Light · HarborLight");
   });
 
   it("is idle for a board of finished and never-run episodes, and for one it could not read", () => {
-    expect(titleFor("Harbor Light", [row({ status: "completed" }), row({ id: "s02e09", status: "none" })])).toBe("Harbor Light console");
-    expect(titleFor("Harbor Light", null)).toBe("Harbor Light console");
+    expect(titleFor(SHOW, [row({ status: "completed" }), row({ id: "s02e09", status: "none" })])).toBe("Harbor Light · HarborLight console");
+    expect(titleFor(SHOW, null)).toBe("Harbor Light · HarborLight console");
   });
 });

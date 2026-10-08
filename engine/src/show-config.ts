@@ -85,7 +85,7 @@ export const SHOW_CONFIG_KEYS: readonly ShowConfigKey[] = [
   { path: "audio.narratorSpeakerKey", requiredBy: "scripts", readBy: "scripts/audio-mix.py:50, scripts/breath-qc.py:109, scripts/pace-qc.py:46" },
   { path: "audio.mainCast", requiredBy: "scripts", readBy: "scripts/validate-manifest.py:73 (the speaker keys a manifest may use without a guest WAV)" },
   { path: "audio.voiceRefsDir", requiredBy: "none", default: "Production/voice-refs", readBy: "engine/src/pipelines/episode.ts:67, engine/src/needs.ts:47 (both defaulted); no script site names it" },
-  { path: "audio.guestRefsDir", requiredBy: "none", default: "<productionDir>/<episodeId>/guest-refs", readBy: "engine/src/needs.ts (missingRefs: the directory one episode's guest-voice WAVs sit in, and the directory its refusal names). The value's literal `{episodeId}` placeholder is substituted with the run's episode id through formatFilename, which is why the key is written with the token rather than resolved: it is the one show path that is per-episode. A configured value is refused by name in two cases: one carrying no `{episodeId}` (one shared directory for every episode would let one episode's guest WAV satisfy every other episode's guest of the same name, so the shared case is not supported) and one that is the empty string (absent is this row's default, and an empty value is a mistake in showrunner.json rather than a request for the default). A trailing slash is trimmed" },
+  { path: "audio.guestRefsDir", requiredBy: "none", default: "<productionDir>/<episodeId>/guest-refs", readBy: "engine/src/needs.ts (missingRefs: the directory one episode's guest-voice WAVs sit in, and the directory its refusal names). The value's literal `{episodeId}` placeholder is substituted with the run's episode id through formatFilename, which is why the key is written with the token rather than resolved: it is the one show path that is per-episode. **Validated at load**: `checkGuestRefsDir` below is called by `loadShowConfig` before it builds the config, and again by needs.ts's `missingRefs` as a second line of defence for a config no loader built. A configured value is refused by name in three cases: one carrying no `{episodeId}` (one shared directory for every episode would let one episode's guest WAV satisfy every other episode's guest of the same name, so the shared case is not supported), one that is the empty string (absent is this row's default, and an empty value is a mistake in showrunner.json rather than a request for the default), and one that is not a string at all. A trailing slash is trimmed" },
   { path: "audio.voiceRegistry", requiredBy: "scripts", default: "Canon/voice-registry.md", readBy: "engine/src/pipelines/episode.ts:68 (defaulted to <canonDir>/voice-registry.md); scripts/validate-manifest.py:74 (sc.path, no default)" },
   { path: "visual.refs", requiredBy: "scripts", default: "Canon/refs.json", readBy: "engine/src/pipelines/episode.ts:69, engine/src/needs.ts:48 (defaulted); scripts/design-visual.py:61, scripts/image-generate.py:78, scripts/nano-banana-generate.py:423, scripts/registry-append.py:117 (sc.path, no default)" },
   { path: "visual.style", requiredBy: "scripts", default: "Canon/visual-style.md", readBy: "engine/src/pipelines/episode.ts:70 (defaulted); scripts/image-sheet.py:72, scripts/nano-banana-generate.py:426, scripts/populator-check.py:69 (no default)" },
@@ -140,6 +140,50 @@ function optRec(obj: Record<string, unknown>, key: string): Record<string, unkno
   return v;
 }
 
+/** Refuses a configured `audio.guestRefsDir` by name, in the three shapes that would make the
+ *  reference probe report a check it did not perform. Absent is the key's default and loads.
+ *
+ *  Exported because it is called from two places that must never disagree about the wording.
+ *  `loadShowConfig` below calls it so the refusal lands at load: a show whose config named one
+ *  shared guest-references directory used to start the console cleanly and then make the whole
+ *  Board answer 500 from inside the probe, with the reason reaching no operator (Plan H's H-14).
+ *  `missingRefs` in needs.ts calls it too, as a second line of defence, because that function takes
+ *  a `ShowConfig` **value** rather than a show root: any caller can hand it a config that never
+ *  passed through `loadShowConfig` (every `ShowConfig` literal in the engine's own tests does), and
+ *  the `audio?: Record<string, unknown>` declaration above is an index-signature bag that carries
+ *  no type-level evidence the key was ever checked. Validating in only one of the two would let a
+ *  hand-built config pass `refs-ready` having proved nothing.
+ *
+ *  Why each shape is refused rather than honoured:
+ *
+ *  A value with no `{episodeId}` gives every episode one shared directory, and the probe matches a
+ *  guest WAV by slug prefix (`guestWavs.some((f) => f.startsWith(slug))` in `missingRefs`), so one
+ *  episode's `dock-hand-pim-1.wav` would satisfy every other episode's Dock Hand Pim and
+ *  `refs-ready` would pass having proved nothing. A show that wants one shared guest-references
+ *  directory is therefore not supported, and the refusal says so.
+ *
+ *  An empty string is a mistake in `showrunner.json`, not a default: absent means "use
+ *  `<productionDir>/<episodeId>/guest-refs`" and `""` means a scaffolding or templating step left
+ *  the field blank, and collapsing the two would write an episode's guest WAVs into a directory the
+ *  show never named. This matches scripts/lib/showconfig.py's `production_dir`, which refuses `""`
+ *  for `productionDir` by name for the same reason.
+ *
+ *  A value that is present and is not a string reached neither check before Plan H and silently
+ *  took the default, which is the same fault in a third shape. */
+export function checkGuestRefsDir(audio: Record<string, unknown> | undefined): void {
+  const configured = audio?.["guestRefsDir"];
+  if (configured === undefined) return;
+  if (typeof configured !== "string") {
+    throw new ShowConfigError(`${SHOW_CONFIG_FILE}: audio.guestRefsDir must be a string naming the directory one episode's guest-voice WAVs sit in, with {episodeId} in it — got ${typeof configured}`);
+  }
+  if (configured === "") {
+    throw new ShowConfigError(`${SHOW_CONFIG_FILE}: audio.guestRefsDir is empty — an empty value is a mistake, not a default: omit the key to get <productionDir>/<episodeId>/guest-refs`);
+  }
+  if (!configured.includes("{episodeId}")) {
+    throw new ShowConfigError(`${SHOW_CONFIG_FILE}: audio.guestRefsDir ${JSON.stringify(configured)} names no {episodeId} — one shared guest-references directory for every episode is not supported: the probe matches a guest WAV by slug prefix, so a shared directory would accept another episode's guest and pass refs-ready`);
+  }
+}
+
 export async function loadShowConfig(showRoot: string): Promise<ShowConfig> {
   const file = path.join(showRoot, SHOW_CONFIG_FILE);
   let raw: string;
@@ -176,6 +220,12 @@ export async function loadShowConfig(showRoot: string): Promise<ShowConfig> {
   const finalFilename = optStr(output, "finalFilename", "output.");
   const mixFilename = optStr(output, "mixFilename", "output.");
   const videoFilename = optStr(output, "videoFilename", "output.");
+  // The `audio` group is read here rather than only in the group loop below, so the one key inside
+  // it this loader validates is refused before `cfg` exists: a config the loader returned is a
+  // config every reader may trust, and `audio.guestRefsDir` is the first key that makes that worth
+  // stating. The loop below assigns the value this line read instead of reading the key twice.
+  const audio = optRec(parsed, "audio");
+  checkGuestRefsDir(audio);
   const cfg: ShowConfig = {
     showName: str(parsed, "showName", ""),
     showSlug: str(parsed, "showSlug", ""),
@@ -199,7 +249,8 @@ export async function loadShowConfig(showRoot: string): Promise<ShowConfig> {
     const v = optStr(parsed, key, "");
     if (v !== undefined) cfg[key] = v;
   }
-  for (const key of ["audio", "visual", "video", "publish"] as const) {
+  if (audio !== undefined) cfg.audio = audio;
+  for (const key of ["visual", "video", "publish"] as const) {
     const v = optRec(parsed, key);
     if (v !== undefined) cfg[key] = v;
   }

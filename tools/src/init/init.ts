@@ -8,7 +8,10 @@ import {
 import { bibleCheck, bibleCheckLines } from "../bible-check.js";
 import { buildShowConfig, showConfigText } from "./config.js";
 import { ghAuthOk, ghRepoCreate, gitCommit, gitDirty, gitHasHead, gitInit, gitRemotes, type GitDeps } from "./git.js";
-import { CAST_KEY, interviewFile, isApproved, type InitIO, type InterviewDeps, type InterviewResult } from "./interview.js";
+import {
+  CAST_KEY, interviewFile, interviewPromptsDir, isApproved,
+  type InitIO, type InterviewDeps, type InterviewResult,
+} from "./interview.js";
 import { templatesDir } from "./paths.js";
 import { templateWithoutQuestions, writeCastSheets, writeScaffold } from "./scaffold.js";
 
@@ -63,6 +66,33 @@ export interface InitReport {
   nextSteps: string;
 }
 
+/** What `initScaffold` left behind: a show repository nobody has been interviewed about yet.
+ *  `root` is the show's directory with every symlink in it resolved, which is the value a registry
+ *  entry needs and the path every later phase is addressed by. `config` is `showrunner.json` as
+ *  `loadShowConfig` validated it, and it is a plain record rather than the engine's `ShowConfig`
+ *  because the console answers this phase as JSON and a caller that only forwards the config should
+ *  not have to depend on the engine's type to do it. `commits` is the sha of the scaffold's own
+ *  commit, and of one commit per scaffold bible file an `--import` supplied. */
+export interface ScaffoldResult {
+  root: string;
+  config: Record<string, unknown>;
+  commits: string[];
+}
+
+/** What `initFinish` reports at the end of a setup. `stalled` is the key of every gated bible file
+ *  whose interview has not been approved — derived from the run logs rather than remembered, so the
+ *  answer is the same for a setup driven from the terminal in one sitting and for one driven from
+ *  the browser over a week. `remote` is the GitHub URL when one was created. `nextSteps` is the
+ *  show README's own "Your first episode" section, read back from the show on disk. `bibleCheck` is
+ *  the report, not a refusal: an author who said "I will write this one myself" has files to write,
+ *  and the console renders the two lists as the work that is left. */
+export interface FinishResult {
+  stalled: string[];
+  remote?: string;
+  nextSteps: string;
+  bibleCheck: { missingFiles: string[]; missingSections: { file: string; heading: string }[] };
+}
+
 /** A slug is what names files: it starts with a letter and carries only letters and digits, because
  *  it is rendered into `output.mixFilename` and into the names of files on the NAS. */
 const SLUG_OK = /^[A-Za-z][A-Za-z0-9]*$/;
@@ -73,13 +103,6 @@ const NAS_PARENT = "/Volumes/media";
 
 /** The README section `init` reads back and prints as the next steps. */
 const NEXT_STEPS_HEADING = "Your first episode";
-
-/** The interview's own prompt directory: `write.md`, `gate.md` and `revise.md` ship with the
- *  engine's templates rather than being copied into the show, because they are the setup's prompts
- *  and not the show's. The show's own prompt set is copied into `prompts/` by the scaffold. */
-function interviewPromptsDir(): string {
-  return path.join(templatesDir(), "interview");
-}
 
 /** The failure `interviewFile` throws when a gate has been rejected its maximum number of times.
  *  `init` treats it as a stall rather than an abort: the file on disk is the last revision the
@@ -317,24 +340,22 @@ async function writeMainCast(root: string, mainCast: string[]): Promise<void> {
   await writeFile(file, showConfigText(config), "utf8");
 }
 
-/** Creates a new show repository and interviews its author for the bible, one file and one commit
- *  at a time.
- *
- *  The order of the steps is the whole design. The layout, the config and the prompt set are
- *  written and committed first, so that every later commit is a change to a repository that already
- *  works. Then each bible file is interviewed and committed on its own, after its gate is answered
- *  and its run log is closed — a commit taken while the interview's log was still open would record
- *  a run that is permanently waiting for an answer it has already had. Then `bible-check` reports
- *  what is still missing, as a report and not a refusal, because an author who said "I will write
- *  this one myself" has files to write. The GitHub repository is created last of all, and only
- *  then: `gh repo create --push` refuses a repository with no commits, an interview that is
- *  abandoned half-way would otherwise have left an empty repository on GitHub under a name a second
- *  attempt could not reuse, and everything before this point works with no network and no account.
- *
- *  Nothing here is destructive. The scaffold writes every file with `wx`, a non-empty directory is
- *  refused unless `resume` says the author means it, and `resume` skips every file whose interview
- *  the run log says was approved. */
-export async function runInit(opts: InitOptions, io: InitIO, deps: InitDeps = {}): Promise<InitReport> {
+/** The scaffold phase's own result, which carries two things `ScaffoldResult` does not: the config
+ *  as the engine's `ShowConfig` rather than as a plain record, because `runInit` builds the real
+ *  executors from it; and `--import`'s show resolved once, because the per-file loop offers a
+ *  candidate out of it for every interviewed file and re-resolving it would check the author's path
+ *  thirteen more times. */
+interface Scaffolded {
+  root: string;
+  config: ShowConfig;
+  commits: string[];
+  importFrom: string | undefined;
+}
+
+/** The scaffold, as both the terminal and the console need it. Separate from `initScaffold` only
+ *  so `runInit` can have the `ShowConfig` and the resolved `--import` show without them appearing
+ *  in the phase's public result. */
+async function scaffoldShow(opts: InitOptions, io: InitIO, deps: InitDeps): Promise<Scaffolded> {
   const resume = opts.resume === true;
   const name = opts.name.trim();
   if (name === "") throw new Error("the show needs a name");
@@ -374,17 +395,6 @@ export async function runInit(opts: InitOptions, io: InitIO, deps: InitDeps = {}
     commits.push(await gitCommit(root, `init: ${name} — the house layout, the prompts, the scaffolds`, ["."], deps.git));
   }
 
-  const productionDir = config.productionDir ?? "Production";
-  const canonDir = config.canonDir ?? "Canon";
-  const built = realInterviewDeps(config);
-  const interviewDeps: InterviewDeps = {
-    executors: deps.executors ?? built.executors,
-    renderGateMessage: deps.renderGateMessage ?? built.renderGateMessage,
-    operator: deps.operator ?? "showrunner-init",
-    productionDir,
-    ...(deps.now !== undefined ? { now: deps.now } : {}),
-  };
-
   // The scaffold rows, before any interview: an imported continuity ledger is what the first
   // episode of a fresh instance proposes against, and the author should not have to answer
   // thirteen files' worth of questions to find out whether it came across.
@@ -396,67 +406,97 @@ export async function runInit(opts: InitOptions, io: InitIO, deps: InitDeps = {}
     commits.push(await gitCommit(root, `canon: ${entry.file} — imported from ${source}`, [entry.file], deps.git));
   }
 
-  const files: InterviewResult[] = [];
+  return { root, config, commits, importFrom };
+}
+
+/** Everything a new show has before anybody is interviewed: the path checked, the directory made,
+ *  `showrunner.json` written and validated, the layout and the prompt set written, a git repository
+ *  with one commit in it, and — when `--import` named a show to draw from — the two bible files the
+ *  pipeline fills, copied across and committed.
+ *
+ *  This is the first half of `runInit`, exported because the console's New-show form must be able to
+ *  make a show in one request and register it, and then interview its bible over days: a form
+ *  submission cannot hold a thirteen-file interview open. It is the one phase that is safe to call
+ *  before anything exists, and the only one that refuses a directory outright — the scaffold writes
+ *  every file with `wx`, a non-empty directory is refused unless `opts.resume` says the author means
+ *  it, and nothing here is destructive.
+ *
+ *  It does not interview, and it does not ask the author anything: it only says what it did. */
+export async function initScaffold(opts: InitOptions, io: InitIO, deps: InitDeps = {}): Promise<ScaffoldResult> {
+  const scaffolded = await scaffoldShow(opts, io, deps);
+  return { root: scaffolded.root, config: { ...scaffolded.config }, commits: scaffolded.commits };
+}
+
+/** The step after one bible file's gate is answered, with what it wrote — the cast sheets it
+ *  created and the main cast it recorded — alongside the commit it made. `afterFileApproved`
+ *  exposes only the shas, because that is all a caller has to carry; this returns the rest so that
+ *  the terminal can say the same sentence about the sheets it has always said, with the count the
+ *  writer actually produced rather than a count rebuilt from the cast. */
+async function applyApproval(
+  root: string, entry: BibleFile, result: InterviewResult, deps: InitDeps,
+): Promise<{ commits: string[]; sheets: string[]; mainCast: string[] | undefined }> {
+  const config = await loadShowConfig(root);
+  const dirs = { productionDir: config.productionDir ?? "Production", canonDir: config.canonDir ?? "Canon" };
+  let sheets: string[] = [];
+  let mainCast: string[] | undefined;
+  if (result.cast !== undefined) {
+    // The cast is known only after the first interviewed file, so the character sheets and the
+    // config's main-cast list are written here, between the driver returning and the commit.
+    // Both are in `commitPaths`' list for this entry, so a crash in this window is recoverable:
+    // `--resume` makes the same commit from the same list.
+    sheets = await writeCastSheets(root, config, result.cast);
+    mainCast = ["narrator", ...result.cast.map((c) => c.name)];
+    await writeMainCast(root, mainCast);
+  }
+  const paths = await existing(root, [...new Set([...result.commits, ...commitPaths(root, entry, dirs)])]);
+  return { commits: [await gitCommit(root, `canon: ${entry.file} — ${result.outcome}`, paths, deps.git)], sheets, mainCast };
+}
+
+/** What happens once a bible file's gate has been answered and its run log is closed: for
+ *  `world-overview`, the character sheets are written and `audio.mainCast` is rewritten from the
+ *  cast its interview collected; then the file, its answers, its run log — and for that one file the
+ *  config and the characters directory as well — are committed under one message naming the gate's
+ *  outcome. Returns the sha it made.
+ *
+ *  Exported because the console answers a gate exactly as it answers an episode's gate (`answerGate`
+ *  and then a fresh worker) and must then make the same commit the terminal makes: a bible file
+ *  approved in the browser and left uncommitted would be work no later commit ever picks up, since
+ *  every other commit names only its own paths.
+ *
+ *  The commit is taken after the gate and never before it. A commit taken while the interview's log
+ *  was still open would record a run that is permanently waiting for an answer it has already had.
+ *  The config is read from disk here rather than passed in, because by the time a file is approved
+ *  the author may have edited it — in the browser, days may have passed — and this phase must write
+ *  over the file as it is now. */
+export async function afterFileApproved(root: string, entry: BibleFile, result: InterviewResult, deps: InitDeps = {}): Promise<string[]> {
+  return (await applyApproval(root, entry, result, deps)).commits;
+}
+
+/** The end of a setup: what is still the author's to write, and the GitHub repository.
+ *
+ *  Three things happen, in this order. Every gated bible file whose interview has not been approved
+ *  is named, read out of the run logs by `isApproved` rather than remembered, so this phase gives
+ *  the same answer to a terminal setup finished in one sitting and to a browser setup finished a
+ *  week after it was started. `bible-check` then reports what is missing, as a report and not a
+ *  refusal, because an author who said "I will write this one myself" has files to write. The GitHub
+ *  repository is created last of all, and only then: `gh repo create --push` refuses a repository
+ *  with no commits, an interview abandoned half-way would otherwise have left an empty repository on
+ *  GitHub under a name a second attempt could not reuse, and everything before this point works with
+ *  no network and no account.
+ *
+ *  Exported because the console's Finish panel is this phase: the two bible-check lists, the GitHub
+ *  choice, and the next steps read back out of the show's own README. */
+export async function initFinish(
+  root: string, opts: Pick<InitOptions, "github" | "engineRoot">, io: InitIO, deps: InitDeps = {},
+): Promise<FinishResult> {
+  const config = await loadShowConfig(root);
+  const productionDir = config.productionDir ?? "Production";
+
   const stalled: string[] = [];
   for (const entry of BIBLE_FILES) {
-    // A scaffold file has no gate: the pipeline fills the continuity ledger and the NEEDS_REFS
-    // stop fills the voice registry, and the scaffold has already written both with their
-    // headings. The loop above has already offered an import for one.
     if (entry.mode === "scaffold") continue;
-    const staged = commitPaths(root, entry, { productionDir, canonDir });
-
-    if (resume && (await isApproved(root, entry, productionDir))) {
-      io.say(`${entry.file} is already approved; skipping it.`);
-      // The approval is in the run log and the commit that was to carry it is a later step, so a
-      // crash can land between the two. What that leaves is committed now, under its own message:
-      // every other commit names only its own paths, so nothing else would ever pick it up. The
-      // list is `commitPaths`' list and not a shorter one, so a crash after the `world-overview`
-      // interview also commits the character sheets and the config's rewritten main cast.
-      const candidates = await existing(root, staged);
-      if (await gitDirty(root, candidates, deps.git)) {
-        io.say(`${entry.file} was approved but not committed, so it is committed now.`);
-        commits.push(await gitCommit(root, `canon: ${entry.file} — approved, committed on resume`, candidates, deps.git));
-      }
-      continue;
-    }
-
-    const candidate = await importCandidate(importFrom, entry);
-
-    let result: InterviewResult;
-    try {
-      result = await interviewFile(root, entry, io, interviewDeps, candidate);
-    } catch (err) {
-      if (err instanceof Error && GATE_EXHAUSTED.test(err.message)) {
-        // Ten rejections. The file on disk is the writer's last revision, which is worth keeping
-        // and worth committing: it is where the author picks the file up by hand. The interview
-        // moves on, because the rest of the bible is still worth doing in this sitting.
-        stalled.push(entry.key);
-        io.say(`${entry.file} was rejected ten times, so the interview has stopped asking about it. The file on disk is the writer's last revision: finish it by hand, or run init again with --resume to interview it afresh. The rest of the bible carries on.`);
-        const paths = await existing(root, staged);
-        if (await gitDirty(root, paths, deps.git)) {
-          commits.push(await gitCommit(root, `canon: ${entry.file} — not approved, rejected ten times`, paths, deps.git));
-        }
-        continue;
-      }
-      throw err;
-    }
-
-    if (result.cast !== undefined) {
-      // The cast is known only after the first interviewed file, so the character sheets and the
-      // config's main-cast list are written here, between the driver returning and the commit.
-      // Both are in `commitPaths`' list for this entry, so a crash in this window is recoverable:
-      // `--resume` makes the same commit from the same list.
-      const sheets = await writeCastSheets(root, config, result.cast);
-      const mainCast = ["narrator", ...result.cast.map((c) => c.name)];
-      await writeMainCast(root, mainCast);
-      if (config.audio !== undefined) config.audio["mainCast"] = mainCast;
-      io.say(`${sheets.length} character sheet(s) written, and audio.mainCast is now ${mainCast.join(", ")}.`);
-    }
-    const paths = await existing(root, [...new Set([...result.commits, ...staged])]);
-    commits.push(await gitCommit(root, `canon: ${entry.file} — ${result.outcome}`, paths, deps.git));
-    files.push(result);
+    if (!(await isApproved(root, entry, productionDir))) stalled.push(entry.key);
   }
-
   if (stalled.length > 0) io.say(`${stalled.length} file(s) are waiting on you: ${stalled.join(", ")}.`);
 
   // The check, as a report. An author who took a file over, imported a partial one, or ran out of
@@ -491,5 +531,112 @@ export async function runInit(opts: InitOptions, io: InitIO, deps: InitDeps = {}
   io.say(nextSteps);
   io.say(`In that command, <this directory> is ${root} and <the engine repository> is ${opts.engineRoot}.`);
 
-  return { root, files, stalled, commits, nextSteps, ...(remote !== undefined ? { remote } : {}) };
+  return {
+    stalled,
+    nextSteps,
+    bibleCheck: { missingFiles: check.missingFiles, missingSections: check.missingSections },
+    ...(remote !== undefined ? { remote } : {}),
+  };
+}
+
+/** Creates a new show repository and interviews its author for the bible, one file and one commit
+ *  at a time — the terminal's whole `init`, composed from the three phases above.
+ *
+ *  The order of the steps is the whole design. `initScaffold` writes and commits the layout, the
+ *  config and the prompt set first, so that every later commit is a change to a repository that
+ *  already works. Then each bible file is interviewed by `interviewFile` and handed to
+ *  `afterFileApproved` on its own, after its gate is answered and its run log is closed. Then
+ *  `initFinish` reports what is still missing and creates the GitHub repository.
+ *
+ *  What is left here, and nowhere else, is the composition: the loop over the thirteen gated files,
+ *  the import candidate offered before any question is asked, the `--resume` skip and its catch-up
+ *  commit, and the one error this driver treats as news rather than as a failure — a gate rejected
+ *  to exhaustion, which stalls one file and carries on with the rest of the bible.
+ *
+ *  Nothing here is destructive. The scaffold writes every file with `wx`, a non-empty directory is
+ *  refused unless `resume` says the author means it, and `resume` skips every file whose interview
+ *  the run log says was approved. */
+export async function runInit(opts: InitOptions, io: InitIO, deps: InitDeps = {}): Promise<InitReport> {
+  const resume = opts.resume === true;
+  const { root, config, commits, importFrom } = await scaffoldShow(opts, io, deps);
+
+  const productionDir = config.productionDir ?? "Production";
+  const canonDir = config.canonDir ?? "Canon";
+  const built = realInterviewDeps(config);
+  const interviewDeps: InterviewDeps = {
+    executors: deps.executors ?? built.executors,
+    renderGateMessage: deps.renderGateMessage ?? built.renderGateMessage,
+    operator: deps.operator ?? "showrunner-init",
+    productionDir,
+    ...(deps.now !== undefined ? { now: deps.now } : {}),
+  };
+
+  const files: InterviewResult[] = [];
+  for (const entry of BIBLE_FILES) {
+    // A scaffold file has no gate: the pipeline fills the continuity ledger and the NEEDS_REFS
+    // stop fills the voice registry, and the scaffold has already written both with their
+    // headings. The loop above has already offered an import for one.
+    if (entry.mode === "scaffold") continue;
+    const staged = commitPaths(root, entry, { productionDir, canonDir });
+
+    if (resume && (await isApproved(root, entry, productionDir))) {
+      io.say(`${entry.file} is already approved; skipping it.`);
+      // The approval is in the run log and the commit that was to carry it is a later step, so a
+      // crash can land between the two. What that leaves is committed now, under its own message:
+      // every other commit names only its own paths, so nothing else would ever pick it up. The
+      // list is `commitPaths`' list and not a shorter one, so a crash after the `world-overview`
+      // interview also commits the character sheets and the config's rewritten main cast.
+      const candidates = await existing(root, staged);
+      if (await gitDirty(root, candidates, deps.git)) {
+        io.say(`${entry.file} was approved but not committed, so it is committed now.`);
+        commits.push(await gitCommit(root, `canon: ${entry.file} — approved, committed on resume`, candidates, deps.git));
+      }
+      continue;
+    }
+
+    const candidate = await importCandidate(importFrom, entry);
+
+    let result: InterviewResult;
+    try {
+      result = await interviewFile(root, entry, io, interviewDeps, candidate);
+    } catch (err) {
+      if (err instanceof Error && GATE_EXHAUSTED.test(err.message)) {
+        // Ten rejections. The file on disk is the writer's last revision, which is worth keeping
+        // and worth committing: it is where the author picks the file up by hand. The interview
+        // moves on, because the rest of the bible is still worth doing in this sitting. The file is
+        // named again at the end by `initFinish`, which reads the run log rather than being told:
+        // the log says this file's latest run failed, and an unapproved file is an unapproved file
+        // whether it was rejected ten times in this sitting or abandoned in a browser tab.
+        io.say(`${entry.file} was rejected ten times, so the interview has stopped asking about it. The file on disk is the writer's last revision: finish it by hand, or run init again with --resume to interview it afresh. The rest of the bible carries on.`);
+        const paths = await existing(root, staged);
+        if (await gitDirty(root, paths, deps.git)) {
+          commits.push(await gitCommit(root, `canon: ${entry.file} — not approved, rejected ten times`, paths, deps.git));
+        }
+        continue;
+      }
+      throw err;
+    }
+
+    // The cast sheets, the config's main-cast list and this file's commit — `afterFileApproved`'s
+    // work, called here through the helper underneath it so the terminal can still say what was
+    // written. The `io.say` stays in this driver because the phase the console calls takes no IO:
+    // a browser is told what happened by the response, not by a line of text.
+    const applied = await applyApproval(root, entry, result, deps);
+    if (applied.mainCast !== undefined) {
+      io.say(`${applied.sheets.length} character sheet(s) written, and audio.mainCast is now ${applied.mainCast.join(", ")}.`);
+    }
+    commits.push(...applied.commits);
+    files.push(result);
+  }
+
+  const finish = await initFinish(root, { github: opts.github, engineRoot: opts.engineRoot }, io, deps);
+
+  return {
+    root,
+    files,
+    stalled: finish.stalled,
+    commits,
+    nextSteps: finish.nextSteps,
+    ...(finish.remote !== undefined ? { remote: finish.remote } : {}),
+  };
 }

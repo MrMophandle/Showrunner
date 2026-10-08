@@ -5,6 +5,11 @@ import path from "node:path";
 import { episodeNeeds, missingRefs, missingShowrunnerImages, parseCastSection } from "../src/needs.js";
 import type { ShowConfig } from "../src/show-config.js";
 
+/** The probe's message for an outline whose `## Cast` section is absent or holds nothing it can
+ *  read, asserted by text rather than by shape: it is the one line an author sees when a run stops
+ *  at NEEDS_REFS with no cast at all, so it has to say what to write and in what grammar. */
+const NO_CAST = 'the outline has no readable ## Cast section (write one line per subject as "- <Name> (<tags>)")';
+
 const show: ShowConfig = {
   showName: "S", showSlug: "Show", promptsDir: "prompts",
   models: { medium: "m", large: "l", writer: "w" }, airMap: {}, output: { nasRoot: "/nas" },
@@ -41,6 +46,50 @@ describe("parseCastSection", () => {
     expect(parseCastSection("# Ep\n## Beat outline\n- x\n")).toEqual({ entries: [], malformed: [] });
     // a blank line between entries is layout, not a slip
     expect(parseCastSection("## Cast\n\n- Vale (recurring)\n\n")).toEqual({ entries: [{ name: "Vale", tags: ["recurring"] }], malformed: [] });
+  });
+
+  it("skips a line that is entirely an HTML comment, which is what the shipped outline template writes under ## Cast", () => {
+    // The template at `tools/templates/episodes/_TEMPLATE/outline.md:10` writes the section's
+    // instructions as a one-line HTML comment between the heading and the first entry. Before the
+    // skip, this parser reported that line in `malformed` and `missingRefs` turned the engine's own
+    // template into a NEEDS_REFS stop naming the instructions as a cast member.
+    const comment = "<!-- One line per character and location, as `- <Name> (<tags>)`, tags from: recurring, guest, speaks, location. -->";
+    expect(parseCastSection(`## Cast\n${comment}\n- Vale (recurring, speaks)\n- Harbor (location)\n`)).toEqual({
+      entries: [{ name: "Vale", tags: ["recurring", "speaks"] }, { name: "Harbor", tags: ["location"] }],
+      malformed: [],
+    });
+    // Indented, and with nothing else on the line, is the same thing: the test is on the trimmed line.
+    expect(parseCastSection(`## Cast\n   ${comment}   \n- Vale (recurring)\n`).malformed).toEqual([]);
+    // A comment that is not the whole line is still a cast line that misses the grammar, because the
+    // part outside the comment is a subject this probe would otherwise never check.
+    expect(parseCastSection("## Cast\n- Vale <!-- recurring -->\n").malformed).toEqual(["- Vale <!-- recurring -->"]);
+    // And a comment opened on one line and closed on another is reported rather than skipped: it has
+    // swallowed every line between the two, cast lines included.
+    expect(parseCastSection("## Cast\n<!-- opened here\n- Vale (recurring)\nclosed here -->\n").malformed).toEqual([
+      "<!-- opened here", "closed here -->",
+    ]);
+  });
+
+  it("ends the section at a heading of any level, which is where the shipped template's beats begin", () => {
+    // The other half of the template fault, and the one the comment skip alone did not fix. The
+    // outline template's `## Cast` is followed by `### Beat 1` and `### Beat 2` *before* the next
+    // level-2 heading, so a section closed only by `## ` swallowed both beat headings and reported
+    // them as cast lines missing the grammar. `tools/test/templates.test.ts` asserts this against
+    // the real template; this is the shape, in one string.
+    const outline = "# s02e01\n\n## Cast\n<!-- instructions -->\n- Vale (recurring, speaks)\n- Harbor (location)\n\n### Beat 1 — <title>\n<!-- what a beat is -->\n\n### Beat 2 — <title>\n\n## Ending duties\n- not cast either\n";
+    expect(parseCastSection(outline)).toEqual({
+      entries: [{ name: "Vale", tags: ["recurring", "speaks"] }, { name: "Harbor", tags: ["location"] }],
+      malformed: [],
+    });
+    // A heading is a boundary and never an entry, whatever its depth and whatever follows it: the
+    // list under a later heading is that heading's, not the cast's.
+    expect(parseCastSection("## Cast\n- Vale (recurring)\n#### Notes\n- a note, not a subject\n")).toEqual({
+      entries: [{ name: "Vale", tags: ["recurring"] }],
+      malformed: [],
+    });
+    // And the heading test is the ATX one: `#hashtag` with no space is prose, so it is still a line
+    // inside the section that misses the grammar.
+    expect(parseCastSection("## Cast\n#notaheading\n").malformed).toEqual(["#notaheading"]);
   });
 });
 
@@ -132,12 +181,49 @@ describe("missingRefs", () => {
     expect(await missingRefs(root, "s02e01", slashed)).toEqual([]);
   });
 
-  it("finds a guest voice by slug prefix, and is empty without a cast section", async () => {
+  it("finds a guest voice by slug prefix, and names the missing cast section", async () => {
     const { root, w } = await show1();
     await w("Episodes/s02e01/outline.md", "## Cast\n- Dock Hand Pim (guest, speaks)\n");
     await w("Production/s02e01/guest-refs/dock-hand-pim-1.wav", "wav");
     expect(await missingRefs(root, "s02e01", show)).toEqual([]);
+    // An outline with no `## Cast` heading at all. This used to return [] and pass refs-ready with
+    // "all references present" having checked nothing (Plan H's H-09): the only thing between such
+    // an outline and synthesis was the canon reviewer's willingness to put the absent section in
+    // its `issues` array, which is an agent's judgment and not a guard.
     await w("Episodes/s02e01/outline.md", "## Beat outline\n- x\n");
+    expect(await missingRefs(root, "s02e01", show)).toEqual([NO_CAST]);
+  });
+
+  it("names the missing cast section for a ## Cast heading with nothing under it, and reports nothing for an episode with no outline", async () => {
+    const { root, w } = await show1();
+    // The shape a writer leaves when it writes the heading and no lines under it. parseCastSection
+    // skips a blank line inside the section, so `entries` and `malformed` are both empty exactly as
+    // they are for an outline carrying no heading at all, and one message covers both shapes. A
+    // section holding a line that misses the grammar is a different finding and keeps its own
+    // message (the grammar test above), because that line names a subject the probe can see.
+    await w("Episodes/s02e01/outline.md", "# Ep\n\n## Cast\n\n## Beat outline\n### Beat 1\n");
+    expect(await missingRefs(root, "s02e01", show)).toEqual([NO_CAST]);
+    // An outline that does not exist is not this probe's finding, and must stay empty. The episode
+    // pipeline's `premise` guard refuses an episode with nothing in it as NEEDS_IDEA five steps
+    // before refs-ready runs, so a message here would blame refs-ready for a state premise owns —
+    // and because the console puts this list on every Board row regardless of stage, it would put
+    // a "references missing" line on every episode nobody has started yet.
+    expect(await missingRefs(root, "s02e02", show)).toEqual([]);
+  });
+
+  it("is empty for an outline written from the shipped template, whose ## Cast carries an instruction comment", async () => {
+    // The behavioural half of the comment skip. An author who fills in the template's own cast
+    // lines and leaves its instruction comment in place — which is the ordinary thing to do, since
+    // the comment does not render — must get a clean probe, not a line blaming the instructions for
+    // missing the grammar.
+    // The whole template shape, not just its cast lines: the instruction comment under the heading
+    // *and* the two `### Beat <n>` headings that follow the cast, which are what the next section
+    // of this file proves are a boundary rather than cast lines.
+    const { root, w } = await show1();
+    await w(
+      "Episodes/s02e01/outline.md",
+      "# s02e01\n\n## Scene synopsis\n<!-- One paragraph. -->\n\n## Cast\n<!-- One line per character and location, as `- <Name> (<tags>)`, tags from: recurring, guest, speaks, location. -->\n- Vale (recurring, speaks)\n- Harbor (location)\n\n### Beat 1 — <title>\n<!-- One beat per heading. -->\n\n### Beat 2 — <title>\n\n## Ending duties\n<!-- How the ending pays its duties. -->\n",
+    );
     expect(await missingRefs(root, "s02e01", show)).toEqual([]);
   });
 });

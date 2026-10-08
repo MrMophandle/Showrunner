@@ -12,6 +12,9 @@ describe("RunStore", () => {
     const log = new EventLog(EventLog.logPath(root, "s02e01", "20261002T100000Z-ab12"));
     await log.append({ runId: "20261002T100000Z-ab12", kind: "run_started", payload: { pipeline: "episode", episodeId: "s02e01" } });
     await waitFor(() => seen.some((m) => m.type === "run"));
+    // Every notice names the show it is about: one channel carries every registered show, and two
+    // shows each holding an s02e01 would otherwise be indistinguishable on the wire (ruling H-12).
+    expect(seen.find((m) => m.type === "run")).toMatchObject({ show: "show", episodeId: "s02e01", runId: "20261002T100000Z-ab12" });
     const first = await store.get("s02e01", "20261002T100000Z-ab12");
     expect(first.events.map((e) => e.kind)).toEqual(["run_started"]);
     await log.append({ runId: "20261002T100000Z-ab12", stepId: "premise", kind: "step_started", payload: { kind: "guard" } });
@@ -34,6 +37,7 @@ describe("RunStore", () => {
     const before = seen.filter((m) => m.type === "episodes").length;
     await writeIn(root, "Production/s02e02/runs/r1.lock", JSON.stringify({ pid: process.pid, startedAt: "t", heartbeatAt: "t", groups: [] }));
     await waitFor(() => seen.filter((m) => m.type === "episodes").length > before);
+    expect(seen.find((m) => m.type === "episodes")).toEqual({ type: "episodes", show: "show" });
     store.close();
   });
 

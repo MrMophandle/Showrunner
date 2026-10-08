@@ -1,25 +1,30 @@
 import { describe, it, expect } from "vitest";
-import { mkdir, readFile, readdir, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, stat } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { RUN_ID } from "@showrunner/engine";
 import { createApp } from "../server/app.js";
-import type { EventBatch, EpisodeRow, RunView } from "../shared/types.js";
-import { appWith, makeShow, seedRun, waitFor, writeIn, writeLock } from "./helpers.js";
+import type { RunStore } from "../server/runs.js";
+import type { EventBatch, EpisodeRow, RunView, ShowsList, SseMessage } from "../shared/types.js";
+import { appWith, appWithShows, makeShow, seedRun, sseMessages, waitFor, writeIn, writeLock } from "./helpers.js";
 
 describe("the read routes", () => {
-  it("GET /api/show names the show and the operator", async () => {
+  it("GET /api/shows/:show names the show, its key and whether it may be written to", async () => {
     const { app, store } = await appWith(await makeShow());
-    const res = await app.request("/api/show");
+    const res = await app.request("/api/shows/show");
     expect(res.status).toBe(200);
-    expect(await res.json()).toMatchObject({ showName: "Harbor Light", operator: "console:test" });
+    expect(await res.json()).toMatchObject({
+      key: "show", readOnly: false, showName: "Harbor Light", showSlug: "HarborLight", operator: "console:test",
+      episodesDir: "Episodes", productionDir: "Production",
+    });
     store.close();
   });
 
-  it("GET /api/episodes lists every episode of the show, sorted", async () => {
+  it("GET /api/shows/:show/episodes lists every episode of the show, sorted", async () => {
     const { root, app, store } = await appWith(await makeShow());
     await writeIn(root, "Episodes/s02e03/premise.md", "A dive.\n");
     await mkdir(path.join(root, "Production", "s02e02", "runs"), { recursive: true });
-    const res = await app.request("/api/episodes");
+    const res = await app.request("/api/shows/show/episodes");
     expect(res.status).toBe(200);
     const rows = await res.json() as EpisodeRow[];
     expect(rows.map((r) => r.id)).toEqual(["s02e01", "s02e02", "s02e03"]);
@@ -27,49 +32,76 @@ describe("the read routes", () => {
     store.close();
   });
 
-  it("GET /api/episodes/:id returns the row, and refuses an id that is not one", async () => {
+  it("GET /api/shows/:show/episodes/:id returns the row, and refuses an id that is not one", async () => {
     const { app, store } = await appWith(await makeShow());
-    expect((await app.request("/api/episodes/s02e01")).status).toBe(200);
-    const bad = await app.request("/api/episodes/zz");
+    expect((await app.request("/api/shows/show/episodes/s02e01")).status).toBe(200);
+    const bad = await app.request("/api/shows/show/episodes/zz");
     expect(bad.status).toBe(400);
     expect(await bad.json()).toMatchObject({ error: expect.stringContaining("invalid episode id") });
     store.close();
   });
 
-  it("GET /api/episodes/:id/runs/:run returns the view, and refuses a run id that is not one", async () => {
+  it("GET /api/shows/:show/episodes/:id/runs/:run returns the view, and refuses a run id that is not one", async () => {
     const { root, app, store } = await appWith(await makeShow());
     await seedRun(root, "s02e01", "r1", [
       { kind: "run_started", payload: { pipeline: "episode", episodeId: "s02e01" } },
       { stepId: "outline", kind: "step_started", payload: { kind: "agent" } },
     ]);
-    const res = await app.request("/api/episodes/s02e01/runs/r1");
+    const res = await app.request("/api/shows/show/episodes/s02e01/runs/r1");
     expect(res.status).toBe(200);
     const view = await res.json() as RunView;
     expect(view).toMatchObject({ episodeId: "s02e01", runId: "r1", pipeline: { name: "episode" } });
     expect(view.steps.length).toBe(68);
     expect(view.offset).toBeGreaterThan(0);
-    expect((await app.request("/api/episodes/s02e01/runs/bad.id")).status).toBe(400);
+    expect((await app.request("/api/shows/show/episodes/s02e01/runs/bad.id")).status).toBe(400);
     store.close();
   });
 
-  it("GET /api/episodes/:id/runs/:run/events?after=<offset> returns only what is new", async () => {
+  /** Plan F's deferral, closed by ruling H-08. The route used to answer 200 for a run id it had
+   *  never heard of, because `EventLog.readFrom` swallows `ENOENT` and no events is also what an
+   *  empty log yields — so the view came back as the whole sixty-eight-step pipeline at `pending`.
+   *  An archived episode is where that is worst: Season 1 was made by console v1, its record here
+   *  is an `Episodes/<id>/archive.json` marker and nothing else, and every run id under one
+   *  therefore described a run that had never existed. */
+  it("GET /api/shows/:show/episodes/:id/runs/:run is a 404 for a run whose log does not exist", async () => {
+    const { root, app, store } = await appWith(await makeShow());
+    // The marker and nothing else: no `Production/s01e01/runs/` directory and no log. The marker's
+    // own behaviour is `test/episodes.test.ts`'s subject; here it is only what makes s01e01 an
+    // episode the Board draws, so that the 404 below is about the run and not about the episode.
+    await writeIn(root, "Episodes/s01e01/archive.json", JSON.stringify({ stage: "COMPLETE", note: "made by console v1; final on the NAS" }));
+    const row = await app.request("/api/shows/show/episodes/s01e01");
+    expect(row.status).toBe(200);
+    expect(await row.json()).toMatchObject({ id: "s01e01", status: "archived" });
+
+    const res = await app.request("/api/shows/show/episodes/s01e01/runs/anything");
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ error: "no log for run anything of s01e01" });
+    // The same refusal for the episode that does have runs, asked for a run it never had: the
+    // check is the log file's existence and not the episode's history.
+    const other = await app.request("/api/shows/show/episodes/s02e01/runs/r404");
+    expect(other.status).toBe(404);
+    expect(await other.json()).toEqual({ error: "no log for run r404 of s02e01" });
+    store.close();
+  });
+
+  it("GET /api/shows/:show/episodes/:id/runs/:run/events?after=<offset> returns only what is new", async () => {
     const { root, app, store } = await appWith(await makeShow());
     await seedRun(root, "s02e01", "r1", [
       { kind: "run_started", payload: { pipeline: "episode", episodeId: "s02e01" } },
       { stepId: "outline", kind: "step_started", payload: { kind: "agent" } },
       { stepId: "outline", kind: "step_completed", payload: { toolCalls: 2 } },
     ]);
-    const first = await (await app.request("/api/episodes/s02e01/runs/r1/events?after=0")).json() as EventBatch;
+    const first = await (await app.request("/api/shows/show/episodes/s02e01/runs/r1/events?after=0")).json() as EventBatch;
     expect(first.events.map((e) => e.kind)).toEqual(["run_started", "step_started", "step_completed"]);
     expect(first.offset).toBeGreaterThan(0);
-    const second = await (await app.request(`/api/episodes/s02e01/runs/r1/events?after=${first.offset}`)).json() as EventBatch;
+    const second = await (await app.request(`/api/shows/show/episodes/s02e01/runs/r1/events?after=${first.offset}`)).json() as EventBatch;
     expect(second.events).toEqual([]);
     expect(second.offset).toBe(first.offset);
-    expect((await app.request("/api/episodes/s02e01/runs/r1/events?after=-1")).status).toBe(400);
+    expect((await app.request("/api/shows/show/episodes/s02e01/runs/r1/events?after=-1")).status).toBe(400);
     store.close();
   });
 
-  it("GET /api/events opens the SSE channel with a hello", async () => {
+  it("GET /api/events opens the SSE channel with a hello that lists every show", async () => {
     const { app, store } = await appWith(await makeShow());
     const res = await app.request("/api/events");
     expect(res.status).toBe(200);
@@ -78,9 +110,273 @@ describe("the read routes", () => {
     const { value } = await reader.read();
     const chunk = new TextDecoder().decode(value);
     expect(chunk).toContain("data: ");
-    expect(JSON.parse(chunk.slice(chunk.indexOf("{"), chunk.lastIndexOf("}") + 1))).toEqual({ type: "hello", operator: "console:test", showName: "Harbor Light" });
+    expect(JSON.parse(chunk.slice(chunk.indexOf("{"), chunk.lastIndexOf("}") + 1))).toEqual({
+      type: "hello", operator: "console:test",
+      shows: [{ key: "show", showName: "Harbor Light", readOnly: false }],
+      failed: [],
+    });
     await reader.cancel();
     store.close();
+  });
+});
+
+/** The registry's own surface: the list, the show segment every other route hangs off, and the two
+ *  refusals the show middleware owns. Each test here holds two shows, because every assertion is
+ *  about one show not being the other. */
+describe("the shows", () => {
+  const json = (body: unknown) => ({ method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+
+  /** Two shows: `show` writable, `archive` read-only — the shape of the live check, where the
+   *  retired first repository is listed beside the live instance and nothing may write to it. */
+  async function twoShows(): Promise<Awaited<ReturnType<typeof appWithShows>>> {
+    return appWithShows([
+      { root: await makeShow(), key: "show" },
+      { root: await makeShow(), key: "archive", readOnly: true },
+    ]);
+  }
+
+  function closeAll(stores: Map<string, RunStore>): void {
+    for (const store of stores.values()) store.close();
+  }
+
+  it("GET /api/shows lists every registered show with its key and its readOnly flag", async () => {
+    const { app, stores } = await twoShows();
+    const res = await app.request("/api/shows");
+    expect(res.status).toBe(200);
+    const body = await res.json() as ShowsList;
+    const rows = body.shows;
+    // Key order, not registration order: `writeRegistry` sorts the file's keys, so the list a
+    // client draws is stable across a registration rather than reordering itself.
+    expect(rows.map((r) => [r.key, r.readOnly])).toEqual([["archive", true], ["show", false]]);
+    // Each row carries everything the one-show route carries, so a client drawn from the list and
+    // a client drawn from one show cannot disagree about what a show is.
+    expect(rows[0]).toMatchObject({ showName: "Harbor Light", showSlug: "HarborLight", operator: "console:test", engineVersion: expect.any(String) });
+    expect(rows[0]?.stages.length).toBeGreaterThan(0);
+    // Two shows, nothing refused: the list carries the second field whether or not anything is in
+    // it, so a client never has to tell "no failures" from "an older server".
+    expect(body.failed).toEqual([]);
+    closeAll(stores);
+  });
+
+  it("serves each show's episodes under its own key", async () => {
+    const { app, stores } = await twoShows();
+    for (const key of ["show", "archive"]) {
+      const res = await app.request(`/api/shows/${key}/episodes`);
+      expect(res.status).toBe(200);
+      expect((await res.json() as EpisodeRow[]).map((r) => r.id)).toEqual(["s02e01"]);
+    }
+    closeAll(stores);
+  });
+
+  it("answers 404 for a show this console does not hold, and for a key that is not a key", async () => {
+    const { app, stores } = await twoShows();
+    const missing = await app.request("/api/shows/nosuchshow/episodes");
+    expect(missing.status).toBe(404);
+    expect(await missing.json()).toEqual({ error: "no such show" });
+    // The grammar is tested before the map, so a key carrying a dot or a leading hyphen never
+    // reaches a lookup — let alone a path join.
+    for (const bad of ["a.b", "-x", "a_b!"]) {
+      const res = await app.request(`/api/shows/${bad}/episodes`);
+      expect(res.status, bad).toBe(404);
+      expect(await res.json()).toEqual({ error: "no such show" });
+    }
+    // A `..` segment never reaches the middleware at all: the url layer collapses it before Hono
+    // routes, so `/api/shows/../episodes` is `/api/episodes` — a path no route registers now that
+    // every route lives under a show — and both spellings are a 404 before any show is resolved.
+    for (const walk of ["/api/shows/../episodes", "/api/shows/%2E%2E/episodes"]) {
+      expect((await app.request(walk)).status, walk).toBe(404);
+    }
+    expect((await app.request("/api/shows/nosuchshow")).status).toBe(404);
+    closeAll(stores);
+  });
+
+  it("refuses every POST to a read-only show with 403, and writes nothing", async () => {
+    const { app, shows, stores } = await twoShows();
+    const archiveRoot = shows.get("archive")!.showRoot;
+
+    const made = await app.request("/api/shows/archive/episodes", json({ id: "s02e09", premise: "A week." }));
+    expect(made.status).toBe(403);
+    expect(await made.json()).toEqual({ error: "archive is read-only" });
+    // The 403 is the whole point: the retired repository and the live instance name the same NAS
+    // root, so a write that happened anyway would be the collision the flag exists to prevent.
+    await expect(stat(path.join(archiveRoot, "Episodes", "s02e09"))).rejects.toThrow();
+
+    // Every POST, not only the ones somebody listed: the launch route, a gate answer, and a path
+    // no route registered at all.
+    expect((await app.request("/api/shows/archive/episodes/s02e01/runs", { method: "POST" })).status).toBe(403);
+    expect((await app.request("/api/shows/archive/episodes/s02e01/runs/r1/resume", { method: "POST" })).status).toBe(403);
+    expect((await app.request("/api/shows/archive/episodes/s02e01/runs/r1/gate", json({ stepId: "outline-gate", approved: true }))).status).toBe(403);
+    expect((await app.request("/api/shows/archive/nothing-is-here", { method: "POST" })).status).toBe(403);
+    // No run was minted in the read-only show either.
+    await expect(readdir(path.join(archiveRoot, "Production", "s02e01", "runs"))).resolves.toEqual([]);
+
+    // A read-only show is still fully readable, and the writable show beside it still writes.
+    expect((await app.request("/api/shows/archive/episodes/s02e01")).status).toBe(200);
+    expect((await app.request("/api/shows/show/episodes", json({ id: "s02e09", premise: "A week." }))).status).toBe(200);
+    closeAll(stores);
+  });
+
+  it("stamps the show key on every SSE notice, so one Board ignores the other show's heartbeat", async () => {
+    const { shows, stores } = await twoShows();
+    const seen: SseMessage[] = [];
+    for (const store of stores.values()) store.subscribe((m) => seen.push(m));
+    // Both shows hold an s02e01, each with its own `r1`. The notices are provoked by reading each
+    // run rather than by waiting on `fs.watch`, whose latency is the filesystem's: what is being
+    // asserted here is the key on the message, and `runs.test.ts` covers the watcher path.
+    for (const key of ["archive", "show"]) {
+      await seedRun(shows.get(key)!.showRoot, "s02e01", "r1", [
+        { kind: "run_started", payload: { pipeline: "episode", episodeId: "s02e01" } },
+      ]);
+      await stores.get(key)!.get("s02e01", "r1");
+    }
+    // Without the key the two runs are the same message twice, and a Board watching one show
+    // would refetch on the other show's every heartbeat (ruling H-12).
+    expect(seen.filter((m) => m.type === "run")).toEqual([
+      { type: "run", show: "archive", episodeId: "s02e01", runId: "r1", offset: expect.any(Number) },
+      { type: "run", show: "show", episodeId: "s02e01", runId: "r1", offset: expect.any(Number) },
+    ]);
+    closeAll(stores);
+  });
+
+  it("the hello lists both shows and marks which one is read-only", async () => {
+    const { app, stores } = await twoShows();
+    const res = await app.request("/api/events");
+    const reader = res.body!.getReader();
+    const chunk = new TextDecoder().decode((await reader.read()).value);
+    expect(JSON.parse(chunk.slice(chunk.indexOf("{"), chunk.lastIndexOf("}") + 1))).toEqual({
+      type: "hello", operator: "console:test",
+      shows: [
+        { key: "archive", showName: "Harbor Light", readOnly: true },
+        { key: "show", showName: "Harbor Light", readOnly: false },
+      ],
+      failed: [],
+    });
+    await reader.cancel();
+    closeAll(stores);
+  });
+
+  it("a show whose rows cannot be read is one error row, and the other show's rows are intact", async () => {
+    const good = await makeShow();
+    const broken = await makeShow();
+    // A config that loads — so the show is in the map and its routes answer — whose episode files
+    // throw: `missingShowrunnerImages` parses this file with no try, so the failure comes out
+    // through `readNeeds`, `idleEpisodeRow` and `episodeRow` into the Board route.
+    await writeIn(broken, "Production/s02e01/images/prompts.json", "{ not json");
+    const { app, stores } = await appWithShows([{ root: good, key: "show" }, { root: broken, key: "broken" }]);
+
+    const rows = await (await app.request("/api/shows/broken/episodes")).json() as EpisodeRow[];
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.id).toBe("");
+    expect(rows[0]?.error).toContain("broken: its episodes could not be read");
+
+    // The Board is not down: the other show answers its own rows, and the broken show's own
+    // single-episode route still reports the failure as a 500 carrying the reason rather than
+    // Hono's own text body.
+    const intact = await app.request("/api/shows/show/episodes");
+    expect(intact.status).toBe(200);
+    expect((await intact.json() as EpisodeRow[]).map((r) => r.id)).toEqual(["s02e01"]);
+
+    const thrown = await app.request("/api/shows/broken/episodes/s02e01");
+    expect(thrown.status).toBe(500);
+    expect(thrown.headers.get("content-type")).toContain("application/json");
+    expect(await thrown.json()).toMatchObject({ error: expect.any(String) });
+    closeAll(stores);
+  });
+
+  it("refuses a malformed run id in one wording, on an episode route and a bible route alike", async () => {
+    // The message is load-bearing wire protocol: `bibleRefusal` matches `/^invalid run id /` to
+    // turn a thrown refusal into a 400, so a reworded second copy of this sentence becomes a 500
+    // on one of the two route families. It had been written three times — here, in the store's
+    // cache key, and in the worker's fence — and all three now call the one thrower.
+    const { app, store } = await appWith(await makeShow());
+    const episode = await app.request("/api/shows/show/episodes/s02e01/runs/..%2Foops");
+    expect(episode.status).toBe(400);
+    const bible = await app.request(new Request("http://local/api/shows/show/bible/world-overview/runs/..%2Foops/gate", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ choice: "approve", expectedAttempt: 1 }),
+    }));
+    expect(bible.status).toBe(400);
+    const wording = 'invalid run id "../oops": expected [A-Za-z0-9_-]+';
+    expect((await episode.json() as { error: string }).error).toBe(wording);
+    expect((await bible.json() as { error: string }).error).toBe(wording);
+    store.close();
+  });
+
+  it("carries a show registered while a stream is open to that stream — a second hello, then its notices", async () => {
+    // **The one live defect of the whole branch** (I-1). The channel took its subscriptions once,
+    // at open, and wrote `hello` once. `POST /api/shows` then put the new show in the two maps,
+    // which the *request* path picked up immediately — but an already-open stream held no
+    // subscription to the new store and was never told. That is exactly Plan H's headline path: the
+    // New-show form navigates client-side, so the same `EventSource` survives into the new show's
+    // Bible page, where `RunningPanel` promises the author "this page keeps up with it on its own"
+    // and nothing arrived for the whole twenty-minute writer run. Its Board was dead for the same
+    // reason.
+    const existing = await appWithShows([{ root: await makeShow(), key: "show" }]);
+    const parent = await mkdtemp(path.join(tmpdir(), "new-show-sse-"));
+    const target = path.join(parent, "Lantern");
+
+    const stream = sseMessages((await existing.app.request("/api/events")).body!);
+    expect(await stream.next()).toEqual({
+      type: "hello", operator: "console:test",
+      shows: [{ key: "show", showName: "Harbor Light", readOnly: false }],
+      failed: [],
+    });
+
+    const created = await existing.app.request(new Request("http://local/api/shows", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Lantern Hill", path: target, github: "none", nasRoot: path.join(parent, "nas") }),
+    }));
+    expect(created.status).toBe(200);
+
+    // A second `hello`, on the stream that was open before the show existed, carrying both keys.
+    // This is also what makes `Shows.tsx`'s and `NewShow.tsx`'s doc comments true: both refetch
+    // their list on a `hello`, and neither had ever received a second one.
+    const second = await stream.next();
+    expect(second.type).toBe("hello");
+    expect(second.type === "hello" ? second.shows.map((show) => show.key).sort() : []).toEqual(["Lantern", "show"]);
+
+    // And the new show's own notices reach the same stream, which is the half that matters: the
+    // `hello` tells a Shows page to refetch, while this is what a Bible page and a Board tail.
+    await seedRun(path.join(parent, "Lantern"), "s02e01", "r1", [
+      { kind: "run_started", payload: { pipeline: "episode", episodeId: "s02e01" } },
+    ]);
+    await existing.stores.get("Lantern")!.get("s02e01", "r1");
+    expect(await stream.next()).toEqual({
+      type: "run", show: "Lantern", episodeId: "s02e01", runId: "r1", offset: expect.any(Number),
+    });
+
+    await stream.cancel();
+    closeAll(existing.stores);
+  });
+
+  it("a show whose config will not load is reported by key and left out, so its routes 404 — and the browser is told", async () => {
+    const good = await makeShow();
+    const nothing = await mkdtemp(path.join(tmpdir(), "console-noconfig-"));
+    const { app, shows, stores } = await appWithShows([{ root: good, key: "show" }, { root: nothing, key: "gone" }]);
+    expect([...shows.keys()]).toEqual(["show"]);
+    expect((await app.request("/api/shows/gone/episodes")).status).toBe(404);
+
+    // The list carries the loadable show in `shows` and the refused entry in `failed`, with the
+    // loader's own reason. Before this the entry was reported once on stderr and nowhere else, so
+    // the Shows page drew a console with one fewer show and no explanation — and a machine where
+    // every entry failed read exactly like a fresh machine with no shows on it (I-4).
+    const body = await (await app.request("/api/shows")).json() as ShowsList;
+    expect(body.shows.map((r) => r.key)).toEqual(["show"]);
+    expect(body.failed).toHaveLength(1);
+    expect(body.failed[0]).toMatchObject({ key: "gone", root: nothing });
+    expect(body.failed[0]?.error).toContain("showrunner.json");
+
+    // And the channel says the same thing, so a Shows page that is already open learns of it on
+    // the next connection rather than only from its own fetch.
+    const res = await app.request("/api/events");
+    const reader = res.body!.getReader();
+    const chunk = new TextDecoder().decode((await reader.read()).value);
+    const hello = JSON.parse(chunk.slice(chunk.indexOf("{"), chunk.lastIndexOf("}") + 1)) as { shows: unknown[]; failed: { key: string; error: string }[] };
+    expect(hello.shows).toHaveLength(1);
+    expect(hello.failed.map((f) => f.key)).toEqual(["gone"]);
+    expect(hello.failed[0]?.error).toContain("showrunner.json");
+    await reader.cancel();
+    closeAll(stores);
   });
 });
 
@@ -101,30 +397,30 @@ describe("the actions", () => {
     return text.trim() === "" ? [] : text.trim().split("\n").map((l) => JSON.parse(l) as { stepId?: string; kind: string; payload: Record<string, unknown> });
   }
 
-  it("POST /api/episodes writes the premise once, and refuses a second one", async () => {
+  it("POST /api/shows/:show/episodes writes the premise once, and refuses a second one", async () => {
     const { root, app, store } = await appWith(await makeShow());
-    const made = await app.request("/api/episodes", json({ id: "s02e05", premise: "A week." }));
+    const made = await app.request("/api/shows/show/episodes", json({ id: "s02e05", premise: "A week." }));
     expect(made.status).toBe(200);
     expect(await made.json()).toEqual({ id: "s02e05" });
     expect(await readFile(path.join(root, "Episodes", "s02e05", "premise.md"), "utf8")).toBe("A week.\n");
     // Nothing under Production/ — an episode that has never run has no run directory.
     await expect(stat(path.join(root, "Production", "s02e05"))).rejects.toThrow();
 
-    const again = await app.request("/api/episodes", json({ id: "s02e05", premise: "A different week." }));
+    const again = await app.request("/api/shows/show/episodes", json({ id: "s02e05", premise: "A different week." }));
     expect(again.status).toBe(409);
     expect(await again.json()).toMatchObject({ error: expect.stringContaining("already exists") });
     expect(await readFile(path.join(root, "Episodes", "s02e05", "premise.md"), "utf8")).toBe("A week.\n");
 
-    const bad = await app.request("/api/episodes", json({ id: "nope", premise: "A week." }));
+    const bad = await app.request("/api/shows/show/episodes", json({ id: "nope", premise: "A week." }));
     expect(bad.status).toBe(400);
     expect(await bad.json()).toMatchObject({ error: expect.stringContaining("invalid episode id") });
-    expect((await app.request("/api/episodes", json({ id: "s02e06" }))).status).toBe(400);
+    expect((await app.request("/api/shows/show/episodes", json({ id: "s02e06" }))).status).toBe(400);
     store.close();
   });
 
-  it("POST /api/episodes/:id/runs mints a run, creates its log before spawning, and the worker writes run_started", async () => {
+  it("POST /api/shows/:show/episodes/:id/runs mints a run, creates its log before spawning, and the worker writes run_started", async () => {
     const { root, app, store } = await appWith(await makeShow());
-    const res = await app.request("/api/episodes/s02e01/runs", { method: "POST" });
+    const res = await app.request("/api/shows/show/episodes/s02e01/runs", { method: "POST" });
     expect(res.status).toBe(200);
     const body = await res.json() as { runId: string; pid: number };
     expect(body.runId).toMatch(RUN_ID);
@@ -138,6 +434,19 @@ describe("the actions", () => {
     const log = path.join(root, "Production", "s02e01", "runs", `${body.runId}.jsonl`);
     expect((await stat(log)).size).toBeGreaterThanOrEqual(0);
 
+    // And the view of the run inside that same window is a 200 with every step pending, which is
+    // the case the run route's 404 must not take with it: the 404 is for a log that is **not
+    // there** (ruling H-08), and the launch's `wx` write is what puts one there before the worker
+    // exists. `toMatchObject` on the first row rather than on all 68, and the count of pending
+    // rows, because the worker is detached and may have completed a step by the time this runs —
+    // the assertion is that the view is the pipeline, not that the pipeline has not moved.
+    const inWindow = await app.request(`/api/shows/show/episodes/s02e01/runs/${body.runId}`);
+    expect(inWindow.status).toBe(200);
+    const windowView = await inWindow.json() as RunView;
+    expect(windowView).toMatchObject({ episodeId: "s02e01", runId: body.runId, pipeline: { name: "episode" } });
+    expect(windowView.steps.length).toBe(68);
+    expect(windowView.steps.filter((s) => s.status === "pending").length).toBeGreaterThan(60);
+
     await waitFor(async () => (await logText(root, body.runId)).includes("run_started"), 2000);
     const events = await logEvents(root, body.runId);
     expect(events[0]).toMatchObject({ kind: "run_started" });
@@ -145,17 +454,17 @@ describe("the actions", () => {
     store.close();
   });
 
-  it("POST /api/episodes/:id/runs refuses while a worker holds the latest run", async () => {
+  it("POST /api/shows/:show/episodes/:id/runs refuses while a worker holds the latest run", async () => {
     const { root, app, store } = await appWith(await makeShow());
     await seedRun(root, "s02e01", "r1", [{ kind: "run_started", payload: { pipeline: "episode", episodeId: "s02e01" } }]);
     await writeLock(root, "s02e01", "r1", process.pid);
-    const res = await app.request("/api/episodes/s02e01/runs", { method: "POST" });
+    const res = await app.request("/api/shows/show/episodes/s02e01/runs", { method: "POST" });
     expect(res.status).toBe(409);
     expect(await res.json()).toMatchObject({ error: `run r1 is held by pid ${process.pid}` });
     store.close();
   });
 
-  it("POST /api/episodes/:id/runs refuses while the latest run is unfinished, and allows a relaunch after a completed one", async () => {
+  it("POST /api/shows/:show/episodes/:id/runs refuses while the latest run is unfinished, and allows a relaunch after a completed one", async () => {
     const { root, app, store } = await appWith(await makeShow());
     // A crashed run: a step in flight, no terminal event, and no lock — the `finally` of a
     // rejected `run()` took it. Nothing above refuses this, and two workers on one episode would
@@ -164,7 +473,7 @@ describe("the actions", () => {
       { kind: "run_started", payload: { pipeline: "episode", episodeId: "s02e01" } },
       { stepId: "render", kind: "step_started", payload: { kind: "script" } },
     ]);
-    const refused = await app.request("/api/episodes/s02e01/runs", { method: "POST" });
+    const refused = await app.request("/api/shows/show/episodes/s02e01/runs", { method: "POST" });
     expect(refused.status).toBe(409);
     expect(await refused.json()).toEqual({ error: "run r1 is not finished; continue it, answer its gate, or resume it" });
 
@@ -174,20 +483,20 @@ describe("the actions", () => {
       { kind: "run_started", payload: { pipeline: "episode", episodeId: "s02e01" } },
       { kind: "run_finished", payload: { status: "completed" } },
     ]);
-    const allowed = await app.request("/api/episodes/s02e01/runs", { method: "POST" });
+    const allowed = await app.request("/api/shows/show/episodes/s02e01/runs", { method: "POST" });
     expect(allowed.status).toBe(200);
     store.close();
   });
 
-  it("POST /api/episodes/:id/runs leaves no run behind when the spawn fails", async () => {
-    const { root, app, ctx, store } = await appWith(await makeShow());
+  it("POST /api/shows/:show/episodes/:id/runs leaves no run behind when the spawn fails", async () => {
+    const { root, app, key, ctx, store } = await appWith(await makeShow());
     // A context whose worker cannot be spawned at all: `spawnWorker` throws before any process
     // starts. The log for the minted run was already created — that is what makes the run the
     // episode's latest — so it has to be removed, or the episode is wedged: the launch refusal
     // would turn every later launch away as "not finished" while Continue refused the same run as
     // having no log.
-    const broken = createApp({ ...ctx, workerCommand: [] }, store);
-    const failed = await broken.request("/api/episodes/s02e01/runs", { method: "POST" });
+    const broken = createApp(new Map([[key, { ...ctx, workerCommand: [] }]]), new Map([[key, store]]));
+    const failed = await broken.request("/api/shows/show/episodes/s02e01/runs", { method: "POST" });
     expect(failed.status).toBe(500);
     expect(await failed.json()).toMatchObject({ error: expect.stringContaining("workerCommand is empty") });
 
@@ -195,18 +504,18 @@ describe("the actions", () => {
     expect((await readdir(runsDir)).filter((n) => n.endsWith(".jsonl"))).toEqual([]);
 
     // And the episode is still launchable: nothing is the latest run, so no refusal applies.
-    const after = await app.request("/api/episodes/s02e01/runs", { method: "POST" });
+    const after = await app.request("/api/shows/show/episodes/s02e01/runs", { method: "POST" });
     expect(after.status).toBe(200);
     store.close();
   });
 
-  it("POST /api/episodes/:id/runs refuses while a gate is open on the latest run", async () => {
+  it("POST /api/shows/:show/episodes/:id/runs refuses while a gate is open on the latest run", async () => {
     const { root, app, store } = await appWith(await makeShow());
     await seedRun(root, "s02e01", "r1", [
       { kind: "run_started", payload: { pipeline: "episode", episodeId: "s02e01" } },
       { stepId: "outline-gate", kind: "gate_opened", payload: { attempt: 1, message: "approve it" } },
     ]);
-    const res = await app.request("/api/episodes/s02e01/runs", { method: "POST" });
+    const res = await app.request("/api/shows/show/episodes/s02e01/runs", { method: "POST" });
     expect(res.status).toBe(409);
     expect(await res.json()).toMatchObject({ error: "answer the gate on run r1 first" });
     store.close();
@@ -217,33 +526,33 @@ describe("the actions", () => {
     process.env["FAKE_WORKER_GATE"] = "outline-gate";
     let runId = "";
     try {
-      const launched = await app.request("/api/episodes/s02e01/runs", { method: "POST" });
+      const launched = await app.request("/api/shows/show/episodes/s02e01/runs", { method: "POST" });
       expect(launched.status).toBe(200);
       runId = (await launched.json() as { runId: string }).runId;
       await waitFor(async () => (await logText(root, runId)).includes("gate_opened"), 4000);
 
-      const view = await app.request(`/api/episodes/s02e01/runs/${runId}/gate`);
+      const view = await app.request(`/api/shows/show/episodes/s02e01/runs/${runId}/gate`);
       expect(view.status).toBe(200);
       expect(await view.json()).toMatchObject({ stepId: "outline-gate", attempt: 1, episodeId: "s02e01", runId });
 
-      const stale = await app.request(`/api/episodes/s02e01/runs/${runId}/gate`, json({ stepId: "outline-gate", approved: true, notes: "", expectedAttempt: 2 }));
+      const stale = await app.request(`/api/shows/show/episodes/s02e01/runs/${runId}/gate`, json({ stepId: "outline-gate", approved: true, notes: "", expectedAttempt: 2 }));
       expect(stale.status).toBe(409);
       expect(await stale.json()).toEqual({ error: 'gate "outline-gate" is open at attempt 1, not 2' });
 
-      const early = await app.request(`/api/episodes/s02e01/runs/${runId}/reset`, json({ stepIds: ["outline"] }));
+      const early = await app.request(`/api/shows/show/episodes/s02e01/runs/${runId}/reset`, json({ stepIds: ["outline"] }));
       expect(early.status).toBe(409);
       expect(await early.json()).toMatchObject({ error: expect.stringContaining("is open; answer it or withdraw, not reset") });
     } finally {
       delete process.env["FAKE_WORKER_GATE"];
     }
 
-    const ok = await app.request(`/api/episodes/s02e01/runs/${runId}/gate`, json({ stepId: "outline-gate", approved: true, notes: "ship it", expectedAttempt: 1 }));
+    const ok = await app.request(`/api/shows/show/episodes/s02e01/runs/${runId}/gate`, json({ stepId: "outline-gate", approved: true, notes: "ship it", expectedAttempt: 1 }));
     expect(ok.status).toBe(200);
     expect(await ok.json()).toMatchObject({ runId, pid: expect.any(Number) });
     const answered = (await logEvents(root, runId)).find((e) => e.kind === "gate_answered");
     expect(answered).toMatchObject({ stepId: "outline-gate" });
     expect(answered?.payload).toMatchObject({ approved: true, notes: "ship it", by: "console:test", attempt: 1 });
-    expect((await app.request(`/api/episodes/s02e01/runs/${runId}/gate`)).status).toBe(404);
+    expect((await app.request(`/api/shows/show/episodes/s02e01/runs/${runId}/gate`)).status).toBe(404);
     store.close();
   });
 
@@ -253,7 +562,7 @@ describe("the actions", () => {
       { kind: "run_started", payload: { pipeline: "episode", episodeId: "s02e01" } },
       { kind: "run_finished", payload: { status: "completed" } },
     ]);
-    const res = await app.request("/api/episodes/s02e01/runs/r1/resume", { method: "POST" });
+    const res = await app.request("/api/shows/show/episodes/s02e01/runs/r1/resume", { method: "POST" });
     expect(res.status).toBe(409);
     expect(await res.json()).toEqual({ error: "run r1 is not failed, so there is nothing to resume" });
     store.close();
@@ -266,7 +575,7 @@ describe("the actions", () => {
       { stepId: "render", kind: "step_failed", payload: { error: "the NAS was not mounted" } },
       { kind: "run_finished", payload: { status: "failed" } },
     ]);
-    const res = await app.request("/api/episodes/s02e01/runs/r1/resume", { method: "POST" });
+    const res = await app.request("/api/shows/show/episodes/s02e01/runs/r1/resume", { method: "POST" });
     expect(res.status).toBe(200);
     const resumed = (await logEvents(root, "r1")).find((e) => e.kind === "run_resumed");
     expect(resumed?.payload["by"]).toBe("console:test");
@@ -280,13 +589,13 @@ describe("the actions", () => {
       { stepId: "outline", kind: "step_completed", payload: { result: "ok" } },
       { stepId: "draft", kind: "step_completed", payload: { result: "ok" } },
     ]);
-    const res = await app.request("/api/episodes/s02e01/runs/r1/reset", json({ stepIds: ["outline"] }));
+    const res = await app.request("/api/shows/show/episodes/s02e01/runs/r1/reset", json({ stepIds: ["outline"] }));
     expect(res.status).toBe(200);
     const body = await res.json() as { runId: string; pid: number; reset: string[] };
     expect(body.reset).toEqual(["outline", "draft"]);
     const resets = (await logEvents(root, "r1")).filter((e) => e.kind === "step_reset");
     expect(resets.map((e) => e.stepId)).toEqual(["outline", "draft"]);
-    expect((await app.request("/api/episodes/s02e01/runs/r1/reset", json({ stepIds: [] }))).status).toBe(400);
+    expect((await app.request("/api/shows/show/episodes/s02e01/runs/r1/reset", json({ stepIds: [] }))).status).toBe(400);
     store.close();
   });
 
@@ -299,14 +608,14 @@ describe("the actions", () => {
       { stepId: "draft", kind: "step_completed", payload: { result: "ok" } },
       { kind: "run_finished", payload: { status: "completed" } },
     ]);
-    const res = await app.request("/api/episodes/s02e01/runs/r1/withdraw", json({ stepId: "outline-gate", notes: "the cast list is wrong" }));
+    const res = await app.request("/api/shows/show/episodes/s02e01/runs/r1/withdraw", json({ stepId: "outline-gate", notes: "the cast list is wrong" }));
     expect(res.status).toBe(200);
     const events = await logEvents(root, "r1");
     const withdrawn = events.filter((e) => e.kind === "gate_answered").at(-1);
     expect(withdrawn?.payload).toMatchObject({ approved: false, withdrawn: true, notes: "the cast list is wrong", by: "console:test" });
     expect(events.filter((e) => e.kind === "step_reset").map((e) => e.stepId)).toEqual(["draft"]);
     // A gate that was never approved cannot be withdrawn.
-    const nope = await app.request("/api/episodes/s02e01/runs/r1/withdraw", json({ stepId: "script-gate", notes: "no" }));
+    const nope = await app.request("/api/shows/show/episodes/s02e01/runs/r1/withdraw", json({ stepId: "script-gate", notes: "no" }));
     expect(nope.status).toBe(409);
     store.close();
   });
@@ -329,7 +638,7 @@ describe("the actions", () => {
       ...approved("casting-gate"),
       { kind: "run_finished", payload: { status: "completed" } },
     ]);
-    const res = await app.request("/api/episodes/s02e01/runs/r1/withdraw", json({ stepId: "outline-gate", notes: "the cast list is wrong" }));
+    const res = await app.request("/api/shows/show/episodes/s02e01/runs/r1/withdraw", json({ stepId: "outline-gate", notes: "the cast list is wrong" }));
     expect(res.status).toBe(200);
     const body = await res.json() as { reset: string[]; survivingGates: string[] };
     expect(body.survivingGates).toEqual(["script-gate", "casting-gate"]);
@@ -343,7 +652,7 @@ describe("the actions", () => {
       ...approved("outline-gate"),
       { kind: "run_finished", payload: { status: "completed" } },
     ]);
-    const latest = await app.request("/api/episodes/s02e01/runs/r2/withdraw", json({ stepId: "outline-gate", notes: "again" }));
+    const latest = await app.request("/api/shows/show/episodes/s02e01/runs/r2/withdraw", json({ stepId: "outline-gate", notes: "again" }));
     expect(latest.status).toBe(200);
     expect((await latest.json() as { survivingGates: string[] }).survivingGates).toEqual([]);
     store.close();
@@ -357,7 +666,7 @@ describe("the actions", () => {
     ]);
     // A stale lock that recorded a process group: the group is signalled before the worker starts.
     await writeLock(root, "s02e01", "r1", 999_999, [1]);
-    const res = await app.request("/api/episodes/s02e01/runs/r1/continue", { method: "POST" });
+    const res = await app.request("/api/shows/show/episodes/s02e01/runs/r1/continue", { method: "POST" });
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ runId: "r1", pid: expect.any(Number) });
 
@@ -365,7 +674,7 @@ describe("the actions", () => {
       { kind: "run_started", payload: { pipeline: "episode", episodeId: "s02e01" } },
       { kind: "run_finished", payload: { status: "completed" } },
     ]);
-    const done = await app.request("/api/episodes/s02e01/runs/r2/continue", { method: "POST" });
+    const done = await app.request("/api/shows/show/episodes/s02e01/runs/r2/continue", { method: "POST" });
     expect(done.status).toBe(409);
     expect(await done.json()).toMatchObject({ error: expect.stringContaining("is finished") });
 
@@ -373,7 +682,7 @@ describe("the actions", () => {
       { kind: "run_started", payload: { pipeline: "episode", episodeId: "s02e01" } },
       { stepId: "outline-gate", kind: "gate_opened", payload: { attempt: 1, message: "approve it" } },
     ]);
-    const waiting = await app.request("/api/episodes/s02e01/runs/r3/continue", { method: "POST" });
+    const waiting = await app.request("/api/shows/show/episodes/s02e01/runs/r3/continue", { method: "POST" });
     expect(waiting.status).toBe(409);
     expect(await waiting.json()).toMatchObject({ error: expect.stringContaining("answer the gate") });
     store.close();
@@ -390,15 +699,15 @@ describe("the actions", () => {
       { kind: "run_started", payload: { pipeline: "episode", episodeId: "s02e01" } },
       { stepId: "render", kind: "step_failed", payload: { error: "the NAS was not mounted" } },
     ]);
-    const context = await app.request("/api/episodes/s02e01/runs/r1/context");
+    const context = await app.request("/api/shows/show/episodes/s02e01/runs/r1/context");
     expect(context.status).toBe(200);
     expect(await context.json()).toMatchObject({ pipeline: { name: "episode" }, run: { runId: "r1" }, outputs: [] });
 
-    const answered = await app.request("/api/episodes/s02e01/runs/r1/ask", json({ question: "What happened?" }));
+    const answered = await app.request("/api/shows/show/episodes/s02e01/runs/r1/ask", json({ question: "What happened?" }));
     expect(answered.status).toBe(200);
     expect(answered.headers.get("content-type")).toContain("text/plain");
     expect(await answered.text()).toBe("It stopped at render.");
-    expect((await app.request("/api/episodes/s02e01/runs/r1/ask", json({}))).status).toBe(400);
+    expect((await app.request("/api/shows/show/episodes/s02e01/runs/r1/ask", json({}))).status).toBe(400);
     const rows = (await readFile(path.join(root, "Production", "s02e01", "runs", "r1.troubleshooting.jsonl"), "utf8")).trim().split("\n");
     expect(rows.length).toBe(1);
     expect(JSON.parse(rows[0]!)).toMatchObject({ question: "What happened?", answer: "It stopped at render.", by: "console:test" });
@@ -407,9 +716,9 @@ describe("the actions", () => {
 
   it("refuses an action on an id or a run id that is not one", async () => {
     const { app, store } = await appWith(await makeShow());
-    expect((await app.request("/api/episodes/zz/runs", { method: "POST" })).status).toBe(400);
-    expect((await app.request("/api/episodes/s02e01/runs/bad.id/resume", { method: "POST" })).status).toBe(400);
-    expect((await app.request("/api/episodes/s02e01/runs/r1/gate", json({ stepId: "", approved: true }))).status).toBe(400);
+    expect((await app.request("/api/shows/show/episodes/zz/runs", { method: "POST" })).status).toBe(400);
+    expect((await app.request("/api/shows/show/episodes/s02e01/runs/bad.id/resume", { method: "POST" })).status).toBe(400);
+    expect((await app.request("/api/shows/show/episodes/s02e01/runs/r1/gate", json({ stepId: "", approved: true }))).status).toBe(400);
     store.close();
   });
 });

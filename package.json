@@ -9,5 +9,10 @@
     "test:render": "npm test --prefix render",
     "typecheck:render": "npm run typecheck --prefix render"
   },
-  "engines": { "node": ">=22" }
+  "engines": { "node": ">=22" },
+  "overrides": {
+    "shell-quote": "^1.11.0",
+    "source-map-js": "^1.2.2",
+    "@modelcontextprotocol/sdk": "^1.31.0"
+  }
 }

@@ -2,13 +2,17 @@ import path from "node:path";
 import { watch, type FSWatcher } from "node:fs";
 import { readFile, readdir, stat } from "node:fs/promises";
 import {
-  BYPASS_REASON, EPISODE_STAGE_MAP, EventLog, RUN_ID, deriveRunState, deriveStage, describePipeline,
+  BIBLE_FILES, BYPASS_REASON, EPISODE_STAGE_MAP, EventLog, RUN_ID, bibleFilePipeline, bibleLogDir,
+  deriveRunState, deriveStage, describePipeline,
   episodePipeline, latestRunId, listEpisodeIds, parseEpisodeId, pipelineHash,
   type Event, type Needs, type RunState, type StepDescription,
 } from "@showrunner/engine";
-import type { EpisodeRow, RunStatus, RunView, SseMessage, StepRow } from "../shared/types.js";
+import { buildVars } from "@showrunner/tools";
+import type { EpisodeRow, RunStatus, RunView, SetupRunView, SseMessage, StepRow } from "../shared/types.js";
 import { episodeTitle, idleEpisodeRow, readNeeds } from "./episodes.js";
 import { readLock } from "./workers.js";
+import { readLockFile } from "../worker/lock.js";
+import { bibleEntry, checkSetupRunId, listSetupRuns, setupLockPath, setupLogPath } from "../worker/setup.js";
 import type { ShowContext } from "./show.js";
 
 /** How long a run with no live lock and nothing in flight may go without an event before it is
@@ -303,13 +307,25 @@ function failedOf(events: Event[], state: RunState): { stepId: string; error: st
   return undefined;
 }
 
-/** Every run log of the show, tailed by byte offset, projected into the views the console draws,
- *  and announced on one channel.
+/** Every run log of **one** show, tailed by byte offset, projected into the views the console
+ *  draws, and announced on one channel.
  *
  *  The store writes nothing and owns nothing. It reads logs that detached workers append to, and
  *  the only thing it knows that a log does not is whether a process is holding the run — which
  *  it reads from the lock beside the log. A console that believed it owned a run would be a
- *  console that could kill one by restarting. */
+ *  console that could kill one by restarting.
+ *
+ *  **One store per registered show, not one store that knows about several.** The server builds
+ *  the map in `server/main.ts` and the show middleware hands a request the store for its own show,
+ *  which is why every key inside here — `#logs`, `#tails`, `#watchers` — stays keyed as it was,
+ *  on the episode id and the run id alone. Two shows each holding an `s02e01` sit in two stores
+ *  with two `#watchers` maps, so neither can take the other's watcher entry; had one store served
+ *  both shows, every one of these five maps would have needed a show segment and a single missed
+ *  one would have been two shows sharing a tail.
+ *
+ *  What the show key *is* needed for is the channel: every notice this store publishes carries
+ *  `show: this.#ctx.key`, because the SSE channel is one stream across every registered show and a
+ *  client watching one Board must be able to ignore another show's heartbeat (ruling H-12). */
 export class RunStore {
   readonly #ctx: ShowContext;
   readonly #pollMs: number;
@@ -318,6 +334,12 @@ export class RunStore {
    *  the same offset and append the same events twice. */
   readonly #tails = new Map<string, Promise<void>>();
   readonly #watchers = new Map<string, FSWatcher>();
+  /** One watcher per bible file whose `Production/setup/<key>/runs/` directory exists. Kept apart
+   *  from `#watchers` because the two key spaces are different — an episode id there, a bible key
+   *  here — and a single map would let one show's `world-overview` and an episode called
+   *  `world-overview` take each other's entry. (No episode id can be a bible key, so this is
+   *  belt and braces; the maps are separate so that the reasoning does not have to be repeated.) */
+  readonly #setupWatchers = new Map<string, FSWatcher>();
   readonly #subscribers = new Set<(m: SseMessage) => void>();
   #episodeIds: string[] = [];
   #poll: NodeJS.Timeout | undefined;
@@ -342,11 +364,18 @@ export class RunStore {
     };
   }
 
-  /** Starts watching every runs directory the show has, and polls for ones that appear later.
-   *  Called once before the server listens. */
+  /** Starts watching every runs directory the show has — the episodes' and the bible's — and polls
+   *  for ones that appear later. Called once before the server listens. */
   async watch(): Promise<void> {
     this.#episodeIds = await listEpisodeIds(this.#ctx.showRoot, this.#ctx.show);
     for (const id of this.#episodeIds) await this.#watchEpisode(id);
+    // The thirteen interviewable bible files. Almost none of their directories exist on a new
+    // show, and `fs.watch` cannot watch a directory that is not there, so the poll below attaches
+    // the rest: a bible run creates `Production/setup/<key>/runs/` as its first act, exactly as an
+    // episode's first run creates `Production/<id>/runs/`.
+    for (const entry of BIBLE_FILES) {
+      if (entry.mode !== "scaffold") await this.#watchSetup(entry.key);
+    }
     this.#poll = setInterval(() => { void this.#rescan(); }, this.#pollMs);
     // The HTTP server keeps the process alive; this timer must not, or a console whose server
     // has closed would hang on exit.
@@ -394,24 +423,115 @@ export class RunStore {
     return row;
   }
 
+  /** The events of one bible run, tailing its log first so the answer includes everything on disk
+   *  at the moment of the call, with the byte offset they were read to. The twin of `get` for the
+   *  reserved setup id, which `get` cannot serve: its `#key` validates the episode id and `setup`
+   *  is deliberately not one. */
+  async setupGet(key: string, runId: string): Promise<{ events: Event[]; offset: number; lastError?: string }> {
+    const cacheKey = this.#setupKey(key, runId);
+    await this.#tailAndPublishSetup(key, runId);
+    const cached = this.#logs.get(cacheKey) ?? { events: [], offset: 0 };
+    return {
+      events: [...cached.events], offset: cached.offset,
+      ...(cached.lastError !== undefined ? { lastError: cached.lastError } : {}),
+    };
+  }
+
+  /** One bible run as the Bible page draws it: the file's own pipeline described, overlaid with
+   *  its log.
+   *
+   *  **A projection of `bibleFilePipeline` and not of the episode's.** A bible file's pipeline is
+   *  `write` then `gate` for an interviewed file and the gate alone for a default one; the episode
+   *  projection would have described this run as a sixty-eight-step episode with every step
+   *  pending, and `#project` cannot be reached for it in any case — it builds `episodePipeline`
+   *  and calls `parseEpisodeId`, both of which throw on the reserved id (inventory §4.3).
+   *
+   *  The status comes from `deriveRunStatus`, the same six-rule ladder the Board's rows use, read
+   *  against the lock beside this run's own log — which is what "crashed" means here as there: a
+   *  step in flight with no live worker holding the run, or a minute of silence. The pipeline is
+   *  built per call with the current clock, because only its name and its steps' ids and kinds are
+   *  read from it: `describePipeline` renders no prompt, so the `vars` a prompt would render are
+   *  not load-bearing here — the worker builds its own from the same function. */
+  async setupView(key: string, runId: string): Promise<SetupRunView> {
+    const entry = bibleEntry(key);
+    const { events, offset } = await this.setupGet(key, runId);
+    const state = deriveRunState(events);
+    const pipeline = bibleFilePipeline({
+      entry,
+      vars: buildVars(this.#ctx.showRoot, entry, new Date(), this.#ctx.productionDir),
+      productionDir: this.#ctx.productionDir,
+    });
+    const lock = await readLockFile(setupLockPath(this.#ctx.showRoot, key, runId, this.#ctx.productionDir));
+    const described = describePipeline(pipeline).steps;
+    // The gate's own rejection cap, carried so the page stops holding it as a literal. It is read
+    // off the description rather than from a constant here because this view and the setup worker
+    // build the pipeline from the same factory with the same entry, so the number reported is the
+    // number the author's next rejection will actually be counted against. Absent for a gate that
+    // declares no cap, which `describePipeline` reports by omitting the field.
+    const maxAttempts = described.find((step) => step.id === "gate")?.maxAttempts;
+    const view: SetupRunView = {
+      runId,
+      // The cast is safe and narrowing: `deriveRunStatus` returns one of six values and
+      // `SetupRunView["status"]` is exactly those six — `RunStatus`' seventh, "archived", comes
+      // from an episode's `archive.json` marker, which `idleEpisodeRow` reads and this ladder
+      // never produces. A bible file has no archive marker and never will.
+      status: deriveRunStatus(state, lock, events.length) as SetupRunView["status"],
+      steps: projectSteps(described, events).map((row) => ({
+        id: row.id, status: row.status, ...(row.startedAt !== undefined ? { startedAt: row.startedAt } : {}),
+      })),
+      offset,
+      ...(maxAttempts !== undefined ? { maxAttempts } : {}),
+    };
+    if (state.openGate !== undefined) view.gate = { attempt: state.openGate.attempt, message: state.openGate.message };
+    const failed = failedOf(events, state);
+    if (failed !== undefined) view.error = `${failed.stepId} failed: ${failed.error}`;
+    return view;
+  }
+
   /** Stops every watcher and the poll, and drops every subscriber. The runs the store was
    *  watching are unaffected: they belong to their workers. */
   close(): void {
     this.#closed = true;
     if (this.#poll !== undefined) { clearInterval(this.#poll); this.#poll = undefined; }
-    for (const w of this.#watchers.values()) { try { w.close(); } catch { /* already closed */ } }
+    for (const w of [...this.#watchers.values(), ...this.#setupWatchers.values()]) { try { w.close(); } catch { /* already closed */ } }
     this.#watchers.clear();
+    this.#setupWatchers.clear();
     this.#subscribers.clear();
   }
 
+  /** The cache key of one episode run, with both ids validated first. `checkSetupRunId` is the
+   *  console's one run-id refusal and is called here rather than re-worded: the message is wire
+   *  protocol (`bibleRefusal` matches `/^invalid run id /` to answer 400), so a second spelling of
+   *  it becomes a 500. */
   #key(episodeId: string, runId: string): string {
     parseEpisodeId(episodeId);
-    if (!RUN_ID.test(runId)) throw new Error(`invalid run id ${JSON.stringify(runId)}: expected [A-Za-z0-9_-]+`);
+    checkSetupRunId(runId);
     return `${episodeId}/${runId}`;
   }
 
   #logPath(episodeId: string, runId: string): string {
     return EventLog.logPath(this.#ctx.showRoot, episodeId, runId, this.#ctx.productionDir);
+  }
+
+  /** The cache key of one bible run, with both ids validated first — the bible key against
+   *  `BIBLE_FILES` and the run id against the engine's alphabet, which is the fence spec §4.4 asks
+   *  for applied once, here, for every setup log the store touches.
+   *
+   *  Three segments where an episode's key (`#key`) has two, and the first of them is the reserved
+   *  id `setup`, which `parseEpisodeId` refuses: so a bible run and an episode run can never
+   *  collide in `#logs` or `#tails`, and the two key spaces need no further separation. */
+  #setupKey(key: string, runId: string): string {
+    bibleEntry(key);
+    checkSetupRunId(runId);
+    return `setup/${key}/${runId}`;
+  }
+
+  #setupLogPath(key: string, runId: string): string {
+    return setupLogPath(this.#ctx.showRoot, key, runId, this.#ctx.productionDir);
+  }
+
+  #setupDir(key: string): string {
+    return bibleLogDir(this.#ctx.showRoot, key, this.#ctx.productionDir);
   }
 
   #publish(message: SseMessage): void {
@@ -468,7 +588,12 @@ export class RunStore {
   }
 
   /** Reads whatever has been appended to one log since the store last read it, and says how many
-   *  events arrived. Three cases, all of them `EventLog.readFrom`'s:
+   *  events arrived. **One implementation for both ladders** — an episode's runs and a bible
+   *  file's — taking the cache key and the log it belongs to, because the cases below are the only
+   *  hard part and maintaining them twice meant maintaining four freeze-and-report messages. The
+   *  two wrappers under it compose their own key and address.
+   *
+   *  Three cases, all of them `EventLog.readFrom`'s:
    *
    *  - the writer appended whole lines: they are parsed and appended to the cache, and the
    *    offset advances past the last newline;
@@ -488,16 +613,14 @@ export class RunStore {
    *  `EpisodeRow.logError` can say which run stopped being readable and where. The strictness is
    *  kept deliberately: a malformed line is skipped by nobody, because an event the store
    *  silently dropped would be a projection that is wrong rather than frozen. */
-  async #tailOnce(episodeId: string, runId: string): Promise<number> {
-    const key = this.#key(episodeId, runId);
-    const cached = this.#logs.get(key) ?? { events: [], offset: 0 };
-    const log = new EventLog(this.#logPath(episodeId, runId));
+  async #tailOnceAt(cacheKey: string, log: EventLog): Promise<number> {
+    const cached = this.#logs.get(cacheKey) ?? { events: [], offset: 0 };
     let next: { events: Event[]; offset: number };
     try {
       next = await log.readFrom(cached.offset);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      this.#logs.set(key, {
+      this.#logs.set(cacheKey, {
         events: cached.events, offset: cached.offset,
         lastError: `this run's log could not be read past byte ${cached.offset}: ${message}`,
       });
@@ -509,18 +632,23 @@ export class RunStore {
         fresh = await log.readFrom(0);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        this.#logs.set(key, { events: [], offset: 0, lastError: `this run's log could not be read past byte 0: ${message}` });
+        this.#logs.set(cacheKey, { events: [], offset: 0, lastError: `this run's log could not be read past byte 0: ${message}` });
         return 0;
       }
-      this.#logs.set(key, { events: fresh.events, offset: fresh.offset });
+      this.#logs.set(cacheKey, { events: fresh.events, offset: fresh.offset });
       return fresh.events.length;
     }
     if (next.events.length === 0) {
-      this.#logs.set(key, { events: cached.events, offset: next.offset });
+      this.#logs.set(cacheKey, { events: cached.events, offset: next.offset });
       return 0;
     }
-    this.#logs.set(key, { events: [...cached.events, ...next.events], offset: next.offset });
+    this.#logs.set(cacheKey, { events: [...cached.events, ...next.events], offset: next.offset });
     return next.events.length;
+  }
+
+  /** One episode run's tail: `#tailOnceAt` at that run's cache key and log path. */
+  #tailOnce(episodeId: string, runId: string): Promise<number> {
+    return this.#tailOnceAt(this.#key(episodeId, runId), new EventLog(this.#logPath(episodeId, runId)));
   }
 
   /** Tails one log and, if anything arrived, says so on the channel. The message carries the new
@@ -531,10 +659,88 @@ export class RunStore {
     const previous = this.#tails.get(key) ?? Promise.resolve();
     const next = previous.then(async () => {
       const added = await this.#tailOnce(episodeId, runId);
-      if (added > 0) this.#publish({ type: "run", episodeId, runId, offset: this.#logs.get(key)?.offset ?? 0 });
+      if (added > 0) this.#publish({ type: "run", show: this.#ctx.key, episodeId, runId, offset: this.#logs.get(key)?.offset ?? 0 });
     }).catch(() => undefined);
     this.#tails.set(key, next);
     return next;
+  }
+
+  /** One bible run's tail: `#tailOnceAt` at that run's cache key and log path.
+   *
+   *  **The three cases, the cache, the offsets and the freeze-and-report are not reimplemented
+   *  here** — they are `#tailOnceAt`'s, the same code an episode's tail runs. Only the log's
+   *  address and the key differ, which is what these two wrappers are. The doc comment above
+   *  `#tailOnceAt` said that before it was true. */
+  #tailOnceSetup(key: string, runId: string): Promise<number> {
+    return this.#tailOnceAt(this.#setupKey(key, runId), new EventLog(this.#setupLogPath(key, runId)));
+  }
+
+  /** Tails one bible run's log and, if anything arrived, says so on the channel as
+   *  `{type: "setup", show, key, runId, offset}`.
+   *
+   *  **Only on growth**, like the episode notice: the message carries the new offset and nothing
+   *  else, so one notification costs one small message however many events landed and the client
+   *  asks for the bytes between its offset and this one. The show key is on it because the channel
+   *  is one stream across every registered show (ruling H-12), and the bible key because a client
+   *  watching `world-overview` must be able to ignore `series-arc`'s writer. */
+  #tailAndPublishSetup(key: string, runId: string): Promise<void> {
+    const cacheKey = this.#setupKey(key, runId);
+    const previous = this.#tails.get(cacheKey) ?? Promise.resolve();
+    const next = previous.then(async () => {
+      const added = await this.#tailOnceSetup(key, runId);
+      if (added > 0) this.#publish({ type: "setup", show: this.#ctx.key, key, runId, offset: this.#logs.get(cacheKey)?.offset ?? 0 });
+    }).catch(() => undefined);
+    this.#tails.set(cacheKey, next);
+    return next;
+  }
+
+  /** Attaches one watcher to one bible file's runs directory, and tails what is already in it. A
+   *  directory that does not exist is left to the poll — which is the ordinary case: a show's
+   *  thirteen setup directories are created one at a time, by the first run of each file. */
+  async #watchSetup(key: string): Promise<void> {
+    if (this.#closed || this.#setupWatchers.has(key)) return;
+    const dir = this.#setupDir(key);
+    if (!(await isDir(dir))) return;
+    let watcher: FSWatcher;
+    try { watcher = watch(dir, (_eventType, filename) => { this.#onSetupChange(key, filename); }); }
+    catch { return; }
+    watcher.on("error", () => { try { watcher.close(); } catch { /* already closed */ } this.#setupWatchers.delete(key); });
+    this.#setupWatchers.set(key, watcher);
+    await this.#rescanSetupDir(key);
+  }
+
+  /** One change inside a bible file's runs directory. A `*.jsonl` whose stem is a run id is
+   *  tailed; an undefined filename (which some platforms and editors produce) re-reads the
+   *  directory; and a lock appearing or disappearing is a run starting or stopping — nothing new
+   *  to read, but the file's state turns on it, so the notice goes out with the offset the store
+   *  already holds. */
+  #onSetupChange(key: string, filename: string | null): void {
+    if (this.#closed) return;
+    if (filename === null || filename === "") { void this.#rescanSetupDir(key); return; }
+    if (filename.endsWith(".jsonl")) {
+      const runId = filename.slice(0, -".jsonl".length);
+      if (RUN_ID.test(runId)) void this.#tailAndPublishSetup(key, runId);
+      return;
+    }
+    if (filename.endsWith(".lock")) {
+      const runId = filename.slice(0, -".lock".length);
+      if (RUN_ID.test(runId)) {
+        this.#publish({ type: "setup", show: this.#ctx.key, key, runId, offset: this.#logs.get(this.#setupKey(key, runId))?.offset ?? 0 });
+      }
+    }
+  }
+
+  /** Tails the logs in one bible file's runs directory: its latest run, and any run the store is
+   *  already caching. The same two-of-them rule the episode directories use, and for the same
+   *  reason — the latest run is the only log anything will ever append to, and older ones are
+   *  finished and inert. */
+  async #rescanSetupDir(key: string): Promise<void> {
+    let runIds: string[];
+    try { runIds = await listSetupRuns(this.#ctx.showRoot, key, this.#ctx.productionDir); } catch { return; }
+    const latest = runIds[runIds.length - 1];
+    for (const runId of runIds) {
+      if (runId === latest || this.#logs.has(this.#setupKey(key, runId))) await this.#tailAndPublishSetup(key, runId);
+    }
   }
 
   /** Attaches one watcher to one episode's runs directory, and tails what is already in it. A
@@ -561,7 +767,7 @@ export class RunStore {
     if (filename === null || filename === "") {
       const dir = path.join(this.#ctx.showRoot, this.#ctx.productionDir, episodeId, "runs");
       void this.#rescanDir(episodeId, dir);
-      this.#publish({ type: "episodes" });
+      this.#publish({ type: "episodes", show: this.#ctx.key });
       return;
     }
     if (filename.endsWith(".jsonl")) {
@@ -574,7 +780,7 @@ export class RunStore {
     // A lock appearing or disappearing is a run starting or stopping, which is a Board fact
     // rather than a log one: there is nothing new to read, but every row's status may have
     // changed.
-    if (filename.endsWith(".lock")) this.#publish({ type: "episodes" });
+    if (filename.endsWith(".lock")) this.#publish({ type: "episodes", show: this.#ctx.key });
   }
 
   /** Tails the run logs in one directory — used when a watcher is first attached, and whenever a
@@ -606,11 +812,17 @@ export class RunStore {
    *  says so when the list itself changed — a new episode is a new Board row. */
   async #rescan(): Promise<void> {
     if (this.#closed) return;
+    // The bible pass first and in its own try, so a show whose episode list cannot be read — a
+    // directory being restored, a volume being mounted — still has its interview watched. The
+    // first run of a bible file is created by the route that starts it, and this is what notices.
+    for (const entry of BIBLE_FILES) {
+      if (entry.mode !== "scaffold") await this.#watchSetup(entry.key);
+    }
     let ids: string[];
     try { ids = await listEpisodeIds(this.#ctx.showRoot, this.#ctx.show); } catch { return; }
     const changed = ids.length !== this.#episodeIds.length || ids.some((id, i) => id !== this.#episodeIds[i]);
     this.#episodeIds = ids;
     for (const id of ids) await this.#watchEpisode(id);
-    if (changed) this.#publish({ type: "episodes" });
+    if (changed) this.#publish({ type: "episodes", show: this.#ctx.key });
   }
 }

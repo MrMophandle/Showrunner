@@ -1,6 +1,6 @@
 import path from "node:path";
 import { readFile, readdir, stat } from "node:fs/promises";
-import { SHOW_CONFIG_FILE, ShowConfigError, formatFilename, resolveShowPath, type ShowConfig } from "./show-config.js";
+import { checkGuestRefsDir, formatFilename, resolveShowPath, type ShowConfig } from "./show-config.js";
 import type { Needs } from "./stages.js";
 
 export interface CastEntry { name: string; tags: string[] }
@@ -11,14 +11,32 @@ export interface CastEntry { name: string; tags: string[] }
  *  outside the section are ignored; a non-blank line inside it that does not match
  *  `- <Name> (<tag>, <tag>)` is returned in `malformed` rather than dropped, because a dropped
  *  line is a cast member the reference probe never checks — an em-dash instead of parentheses
- *  used to pass `refs-ready` silently and take an unregistered subject into synthesis. */
+ *  used to pass `refs-ready` silently and take an unregistered subject into synthesis.
+ *
+ *  **A line that is entirely an HTML comment is layout, like a blank line, and is skipped.** The
+ *  outline template the engine ships writes the section's instructions as exactly that — a
+ *  `<!-- … -->` line under `## Cast` saying what the tags are — so an outline written from the
+ *  template carried a line this parser reported as missing the grammar, and `missingRefs` turned
+ *  the template's own instructions into a NEEDS_REFS stop. The test is per-line and not across
+ *  lines on purpose: a comment opened on one line and closed on another has swallowed whatever is
+ *  between them, cast lines included, and must still be reported rather than skipped.
+ *
+ *  **A heading of any level ends the section, and is never itself an entry.** The section used to
+ *  be closed only by the next level-2 heading, and the shipped outline template puts its
+ *  `### Beat 1` and `### Beat 2` headings between `## Cast` and the next `## ` one — so those two
+ *  headings fell inside the cast section and were reported as missing the grammar, which is the
+ *  same NEEDS_REFS stop the comment skip above was added to remove and was only half of. Treating
+ *  every heading as a boundary is the conservative reading in both directions: a heading line can
+ *  never be `- <Name> (<tags>)`, so nothing that was an entry stops being one, and a cast list that
+ *  a heading has interrupted is over whatever the heading's depth, so no line under some later
+ *  subsection is read as cast. */
 export function parseCastSection(outline: string): { entries: CastEntry[]; malformed: string[] } {
   const entries: CastEntry[] = [];
   const malformed: string[] = [];
   let inSection = false;
   for (const line of outline.split("\n")) {
-    if (/^## /.test(line)) { inSection = /^## Cast\b/.test(line); continue; }
-    if (!inSection || line.trim() === "") continue;
+    if (/^#{1,6} /.test(line)) { inSection = /^## Cast\b/.test(line); continue; }
+    if (!inSection || line.trim() === "" || /^<!--.*-->$/.test(line.trim())) continue;
     const m = /^- (.+?) \(([^)]*)\)\s*$/.exec(line);
     if (!m || m[1] === undefined || m[2] === undefined) { malformed.push(line.trim()); continue; }
     entries.push({ name: m[1].trim(), tags: m[2].split(",").map((t) => t.trim().toLowerCase()).filter((t) => t !== "") });
@@ -57,31 +75,17 @@ function dirs(show: ShowConfig) {
  *  the literal this probe hardcoded before Plan F -- rather than required, because a show that
  *  never casts a speaking guest should not have to name a directory it will never fill.
  *
- *  Two configured values are refused by name instead of honoured, because both would make the
- *  probe below report a check it did not perform.
- *
- *  A value with no `{episodeId}` gives every episode one shared directory, and the probe matches a
- *  guest WAV by slug prefix (`guestWavs.some((f) => f.startsWith(slug))` in missingRefs), so one
- *  episode's `dock-hand-pim-1.wav` would satisfy every other episode's Dock Hand Pim and
- *  `refs-ready` would pass having proved nothing. A show that wants one shared guest-references
- *  directory is therefore not supported, and the refusal says so.
- *
- *  An empty string is a mistake in showrunner.json, not a default: absent means "use
- *  `<productionDir>/<episodeId>/guest-refs`" and `""` means a scaffolding or templating step left
- *  the field blank, and collapsing the two would write an episode's guest WAVs into a directory the
- *  show never named. This matches scripts/lib/showconfig.py's production_dir, which refuses `""`
- *  for productionDir by name for the same reason. */
+ *  Three configured values are refused by name instead of honoured, because each would make the
+ *  probe below report a check it did not perform. The refusals and their wording live in
+ *  `checkGuestRefsDir` (show-config.ts), which `loadShowConfig` also calls, so the refusal lands at
+ *  config load for every config read from disk and the two layers cannot say different things. The
+ *  call is kept here rather than dropped because this function takes a `ShowConfig` value and not a
+ *  show root: a config assembled in memory never passed the loader, and `audio` is an
+ *  index-signature bag that carries no evidence the key was checked. */
 function guestRefsDir(show: ShowConfig, episodeId: string): string {
+  checkGuestRefsDir(show.audio);
   const configured = show.audio?.["guestRefsDir"];
-  if (typeof configured === "string") {
-    if (configured === "") {
-      throw new ShowConfigError(`${SHOW_CONFIG_FILE}: audio.guestRefsDir is empty — an empty value is a mistake, not a default: omit the key to get <productionDir>/<episodeId>/guest-refs`);
-    }
-    if (!configured.includes("{episodeId}")) {
-      throw new ShowConfigError(`${SHOW_CONFIG_FILE}: audio.guestRefsDir ${JSON.stringify(configured)} names no {episodeId} — one shared guest-references directory for every episode is not supported: the probe matches a guest WAV by slug prefix, so a shared directory would accept another episode's guest and pass refs-ready`);
-    }
-    return stripTrailingSlash(formatFilename(configured, { episodeId }));
-  }
+  if (typeof configured === "string") return stripTrailingSlash(formatFilename(configured, { episodeId }));
   return path.posix.join(dirs(show).production, episodeId, "guest-refs");
 }
 
@@ -99,15 +103,26 @@ function stripTrailingSlash(dir: string): string {
  *  whose voice is not LOCKED or whose WAV is absent, a speaking guest with no WAV under the
  *  episode's guest-refs. Two authoring slips are reported the same way, because a cast line this
  *  probe cannot read is a subject it cannot check: a line inside the section that misses the
- *  grammar, and an entry whose tags name none of `recurring`, `guest` or `location`. Empty when
- *  the outline has no `## Cast` section — the section's absence is the canon reviewer's finding,
- *  not this probe's. */
+ *  grammar, and an entry whose tags name none of `recurring`, `guest` or `location`.
+ *
+ *  An outline with no readable `## Cast` section is refused rather than passed (Plan H's H-09), in
+ *  both shapes: no `## Cast` heading at all, and a heading with nothing under it that
+ *  `parseCastSection` can read as either an entry or a malformed line. The canon reviewer prompt
+ *  flags a missing section, which puts it in an agent's `issues` array; a guard must refuse it, or
+ *  synthesis runs with an unchecked cast — every subject unregistered, every voice unverified, and
+ *  `refs-ready` reporting "all references present" having looked at nothing.
+ *
+ *  Empty when the outline does not exist, which is a different thing and stays a different thing:
+ *  an episode with no outline is the `premise` guard's finding (NEEDS_IDEA), five steps upstream of
+ *  `refs-ready`, and the console puts this list on every Board row whatever the row's stage. */
 export async function missingRefs(showRoot: string, episodeId: string, show: ShowConfig): Promise<string[]> {
   const d = dirs(show);
   const outlinePath = path.join(showRoot, d.episodes, episodeId, "outline.md");
   if (!(await exists(outlinePath))) return [];
   const { entries: cast, malformed } = parseCastSection(await readFile(outlinePath, "utf8"));
-  if (cast.length === 0 && malformed.length === 0) return [];
+  if (cast.length === 0 && malformed.length === 0) {
+    return ['the outline has no readable ## Cast section (write one line per subject as "- <Name> (<tags>)")'];
+  }
 
   const biblePath = resolveShowPath(showRoot, d.visualRefs);
   const bibleRaw = (await exists(biblePath)) ? await readJson(biblePath) : {};

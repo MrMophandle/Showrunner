@@ -8,7 +8,7 @@ import { appWith, makeShow, seedRun, writeIn } from "./helpers.js";
  *  which one does the refusing, because they catch different requests: the prefix rule refuses a
  *  file that is not this episode's, the segment rule refuses a traversal or a dotfile, and
  *  `safeResolve` refuses anything that lands outside the show root after resolution. */
-const FILES = "/api/episodes/s02e01/files";
+const FILES = "/api/shows/show/episodes/s02e01/files";
 
 /** A thousand bytes whose every byte is its own index mod 251, so a Range response can be
  *  checked against the offsets it claims rather than only against its length. */
@@ -128,14 +128,14 @@ describe("the artifact route", () => {
       { kind: "run_started", payload: { pipeline: "episode", episodeId: "s02e01" } },
       { stepId: "outline", kind: "step_completed", payload: { result: "ok" } },
     ]);
-    const res = await app.request("/api/episodes/s02e01/runs/r1/log");
+    const res = await app.request("/api/shows/show/episodes/s02e01/runs/r1/log");
     expect(res.status).toBe(200);
     expect(res.headers.get("content-disposition")).toContain("attachment");
     expect(res.headers.get("content-disposition")).toContain("r1.jsonl");
     const lines = (await res.text()).trim().split("\n");
     expect(lines.length).toBe(2);
     expect((JSON.parse(lines[0]!) as { kind: string }).kind).toBe("run_started");
-    expect((await app.request("/api/episodes/s02e01/runs/nosuchrun/log")).status).toBe(404);
+    expect((await app.request("/api/shows/show/episodes/s02e01/runs/nosuchrun/log")).status).toBe(404);
     store.close();
   });
 });

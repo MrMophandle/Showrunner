@@ -1,7 +1,37 @@
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { renderPrompt, type ShowConfig } from "@showrunner/engine";
 import { templatesDir } from "./paths.js";
+
+/** The file `writeScaffold` leaves in a new show's prompts directory recording what it copied:
+ *  `{ "<file>": "<sha256>" }`, one entry per file, keyed by the path relative to the prompts
+ *  directory.
+ *
+ *  **Why a show needs one.** A show's prompts are *copies*, and both sides of a copy move: the
+ *  author edits a prompt to suit their show, and the engine's own template is improved under them.
+ *  With only two files to compare — the show's and the engine's current one — a difference says
+ *  nothing about which side moved, so the question an operator actually has ("is this my edit, or
+ *  have I fallen behind?") cannot be answered. A third fixed point answers it. The baseline is that
+ *  fixed point, written once at `init` and never updated, and `check-prompts --baseline` reads it.
+ *
+ *  Exported because `check-prompts.ts` reads the file this module writes, and the two must not
+ *  spell its name independently. */
+export const PROMPT_BASELINE_FILE = ".templates-baseline.json";
+
+/** The hash the baseline records, and the one `check-prompts --baseline` recomputes: sha256 of the
+ *  file's text as UTF-8.
+ *
+ *  Of the *text* and not of the bytes on disk, deliberately. Both sides of every comparison read
+ *  their file with `readFile(..., "utf8")` and hash the result through this function, so the two can
+ *  never disagree about an encoding detail — a byte-order mark, a lone surrogate — that no prompt
+ *  has and that would otherwise show up as drift nobody introduced. What the baseline states is
+ *  "this is the text that was copied", which is the thing a drift report is about.
+ *
+ *  Exported for the same reason the filename is: one definition, read and written by two modules. */
+export function promptHash(text: string): string {
+  return createHash("sha256").update(text, "utf8").digest("hex");
+}
 
 /** One question the interview asks, and the bible section whose answer it is. `heading` is the
  *  template heading's text without its `#` marks, so the driver can write the answer under it and
@@ -91,7 +121,25 @@ function dirKey(value: unknown, fallback: string): string {
  *  months because the two were written independently). The generated binaries are ignored and the
  *  manifests beside them are not. `Finalized` appears twice on purpose: the show's `Finalized` is a
  *  symlink to the NAS, and git matches a symlink by the bare name and a real directory by the
- *  trailing slash. */
+ *  trailing slash.
+ *
+ *  **`*.worker.out`, `*.lock` and `*.lock.tmp` are runtime state beside a run log, and a show that
+ *  tracked them could not have a clean working tree.** The console's server creates
+ *  `<runId>.worker.out` empty before it spawns a worker, and the kernel appends that worker's
+ *  output — its closing line included — *after* the approving commit has been taken, so every
+ *  approved bible file would otherwise leave a modified file behind that the next commit would
+ *  sweep in. The lock is a statement about a live process (`console/worker/lock.ts`) and belongs in
+ *  no history at all: it is created with `O_EXCL` and removed in a `finally`, so a tracked lock
+ *  would be a tracked deletion on every run. `<runId>.lock.tmp` is the lock's own write target —
+ *  each heartbeat writes it and renames it over the lock, so a reader never sees the empty file a
+ *  truncating rewrite leaves behind — and it is ignored as its own row because `release()` removes
+ *  it but `killOnSignal` does not: a worker that takes SIGTERM exits 143 without the `finally`, and
+ *  the tmp file it leaves behind would otherwise be an untracked file in the show. Every pattern
+ *  matches at any depth rather than at one fixed depth, because
+ *  the two run-log trees are not at the same depth — an episode's is
+ *  `<productionDir>/<id>/runs/` and a bible file's is `<productionDir>/setup/<key>/runs/`, one
+ *  segment deeper. The ignore is what makes them stay out: `commitPaths`
+ *  stages a run's log *directory*, and `git add -- <dir>` honours `.gitignore`. */
 export function gitignoreFor(config: ShowConfig): string {
   const production = dirKey(config.productionDir, "Production");
   const candidates = dirKey(config.visual?.["candidatesDir"], "Canon/_candidates");
@@ -103,6 +151,9 @@ export function gitignoreFor(config: ShowConfig): string {
       `${production}/*/images/*.png`,
       `${production}/*/images/*.jpg`,
       `${production}/*/images/.*.bak`,
+      `${production}/**/*.worker.out`,
+      `${production}/**/*.lock`,
+      `${production}/**/*.lock.tmp`,
       `${candidates}/`,
       "Finalized",
       "Finalized/",
@@ -215,8 +266,9 @@ export async function writeCastSheets(root: string, config: ShowConfig, cast: re
  *  four entity templates, the outline template the outline prompt and the draft loop require, the
  *  two reference indices with their shapes and no entries, the two bible files the pipeline itself
  *  fills, the `.gitignore` derived from the config, the show's README rendered with its name, the
- *  whole prompt set, and a sheet per cast member. The thirteen interviewed and default bible files
- *  are not written here — the interview writes those, one commit each.
+ *  whole prompt set with its `PROMPT_BASELINE_FILE` baseline, and a sheet per cast member. The
+ *  thirteen interviewed and default bible files are not written here — the interview writes those,
+ *  one commit each.
  *
  *  Every file is written with `wx`. The function is therefore not atomic: a failure part-way leaves
  *  what it had already written on disk and throws. That is the right trade, because the alternative
@@ -273,10 +325,17 @@ export async function writeScaffold(root: string, config: ShowConfig, cast: read
     ),
   );
 
+  // The prompt set, and the baseline recording what each file's text was when it was copied. The
+  // baseline is built from the same strings that are written, so it describes this show's files and
+  // not the template directory as some later reader finds it.
   const promptsRoot = templatePath("prompts");
+  const baseline: Record<string, string> = {};
   for (const rel of await filesUnder(promptsRoot)) {
-    written.push(await writeNew(root, `${prompts}/${rel}`, await readFile(path.join(promptsRoot, rel), "utf8")));
+    const text = await readFile(path.join(promptsRoot, rel), "utf8");
+    written.push(await writeNew(root, `${prompts}/${rel}`, text));
+    baseline[rel] = promptHash(text);
   }
+  written.push(await writeNew(root, `${prompts}/${PROMPT_BASELINE_FILE}`, `${JSON.stringify(baseline, null, 2)}\n`));
 
   written.push(...(await writeCastSheets(root, config, cast)));
   return written.sort();

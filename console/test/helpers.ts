@@ -4,9 +4,11 @@ import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import type { Hono } from "hono";
 import { EventLog, type QueryFn } from "@showrunner/engine";
-import { createApp } from "../server/app.js";
-import { loadShowContext, type ShowContext } from "../server/show.js";
+import { createApp, type ShowVars } from "../server/app.js";
+import { readRegistry, writeRegistry, type RegistryEntry } from "../server/registry.js";
+import { loadShows, type ShowContext } from "../server/show.js";
 import { RunStore } from "../server/runs.js";
+import type { SseMessage } from "../shared/types.js";
 
 /** Not a test file: the fixtures Tasks 4 and 5 both build their tests on. One invented show on
  *  disk ("Harbor Light" — the engine repository names no real show), one way to write a run log
@@ -21,6 +23,13 @@ export const ENGINE_ROOT = path.resolve(here, "..", "..");
 /** The fake worker the server's tests spawn instead of the real one: it appends a run_started, a
  *  completed step and either a run_finished or an open gate, and exits. */
 export const FAKE_WORKER = path.join(here, "fixtures", "fake-worker.mjs");
+
+/** The fake **setup** worker, spawned instead of `dist/worker/setup.js`: it reads the bible run's
+ *  log and appends whatever comes next in the gate cycle — the first run's `write` and
+ *  `gate_opened`, an approved gate's `run_finished`, or a rejected gate's next attempt — then
+ *  exits. One fixture drives the whole cycle, so a test that answers a gate gets the same log a
+ *  real worker would have written. */
+export const FAKE_SETUP_WORKER = path.join(here, "fixtures", "fake-setup-worker.mjs");
 
 /** The eight gates of the episode pipeline, so `makeShow` can write the message file each one
  *  names. A gate with no message file is a load-time error in `orderSteps`, so a fixture show
@@ -92,19 +101,84 @@ export async function writeLock(root: string, episodeId: string, runId: string, 
   return file;
 }
 
-/** What the server's tests drive: the app, the context it was built from, and the store the app
- *  reads through. The worker command is the fake worker, so an action spawns a process that
- *  writes a log and exits rather than one that calls a model. `pollMs` is short so a test that
- *  wants the store's directory poll does not wait the production two seconds for it, and `query`
- *  is the seam the "what happened" route asks a model through — a test passes a fake so the
- *  route can be driven without a model behind it. */
-export async function appWith(root: string, opts: { pollMs?: number; query?: QueryFn } = {}): Promise<{ root: string; app: Hono; ctx: ShowContext; store: RunStore }> {
-  const ctx = await loadShowContext({
-    showRoot: root, engineRoot: ENGINE_ROOT, operator: "console:test",
-    workerCommand: [process.execPath, FAKE_WORKER],
+/** The key `appWith` registers its one show under, so every single-show test's urls are literals
+ *  (`/api/shows/show/episodes/…`) rather than a temporary directory's basename. */
+export const SHOW_KEY_FIXTURE = "show";
+
+/** One show in a temporary registry, as `appWithShows` takes it. */
+export interface FixtureShow {
+  root: string;
+  /** Defaults to `SHOW_KEY_FIXTURE` for the first show; later ones must name their own. */
+  key?: string;
+  readOnly?: boolean;
+}
+
+/** A registry file in a temporary directory of its own, holding the given shows.
+ *
+ *  **Never `~/.showrunner/shows.json`**: a test that wrote the operator's own registry would
+ *  register a temporary directory as a show on this machine and leave it there, and the next
+ *  console the operator started would try to load a show that had been deleted. */
+export async function makeRegistry(entries: FixtureShow[]): Promise<string> {
+  const dir = await mkdtemp(path.join(tmpdir(), "console-registry-"));
+  const file = path.join(dir, "shows.json");
+  const shows: Record<string, RegistryEntry> = {};
+  for (const [i, entry] of entries.entries()) {
+    const key = entry.key ?? (i === 0 ? SHOW_KEY_FIXTURE : `show${i + 1}`);
+    shows[key] = { root: entry.root, ...(entry.readOnly === true ? { readOnly: true } : {}) };
+  }
+  await writeRegistry(file, { shows });
+  return file;
+}
+
+/** What a multi-show test drives: the app over a temporary registry, and the maps behind it so a
+ *  test can reach one show's store directly. The worker command is the fake worker for every show,
+ *  so an action spawns a process that writes a log and exits rather than one that calls a model. */
+export async function appWithShows(
+  entries: FixtureShow[], opts: { pollMs?: number; query?: QueryFn } = {},
+): Promise<{ registryFile: string; app: Hono<ShowVars>; shows: Map<string, ShowContext>; stores: Map<string, RunStore> }> {
+  const registryFile = await makeRegistry(entries);
+  const pollMs = opts.pollMs ?? 2000;
+  const workerCommand = [process.execPath, FAKE_WORKER];
+  const { shows, skipped } = await loadShows(await readRegistry(registryFile), {
+    engineRoot: ENGINE_ROOT, operator: "console:test",
+    workerCommand,
+    // A show that would not load is the subject of its own tests; here it would be a silent skip,
+    // so the reason is swallowed rather than printed into the suite's output.
+    report: () => undefined,
   });
-  const store = new RunStore(ctx, { pollMs: opts.pollMs ?? 2000 });
-  return { root, app: createApp(ctx, store, opts.query !== undefined ? { query: opts.query } : {}), ctx, store };
+  const stores = new Map<string, RunStore>();
+  for (const [key, ctx] of shows) stores.set(key, new RunStore(ctx, { pollMs }));
+  // `newShow` points at **this registry**, in a temporary directory of its own, which is what
+  // makes `POST /api/shows` testable without any test ever touching `~/.showrunner/shows.json`:
+  // a test that wrote the operator's own registry would register a temporary directory as a show
+  // on this machine and leave it there. A show created through the route is built with the same
+  // fake workers and the same short poll as the fixtures above.
+  const app = createApp(shows, stores, {
+    // The skipped entries reach the app as they do in `main.ts`, so a test that registers an
+    // unloadable root asserts the same `/api/shows` and `hello` bodies the operator sees.
+    failedShows: skipped.map((entry) => ({ key: entry.key, root: entry.root, error: entry.reason })),
+    ...(opts.query !== undefined ? { query: opts.query } : {}),
+    newShow: { registryFile, engineRoot: ENGINE_ROOT, operator: "console:test", workerCommand, concurrency: 1 },
+    setupWorkerCommand: [process.execPath, FAKE_SETUP_WORKER],
+    makeStore: (ctx) => new RunStore(ctx, { pollMs }),
+  });
+  return { registryFile, app, shows, stores };
+}
+
+/** What most of the server's tests drive: the app over a registry of exactly one show, that
+ *  show's context, and the store the app reads it through — reachable at `/api/shows/show/…`.
+ *
+ *  The worker command is the fake worker, so an action spawns a process that writes a log and
+ *  exits rather than one that calls a model. `pollMs` is short so a test that wants the store's
+ *  directory poll does not wait the production two seconds for it, and `query` is the seam the
+ *  "what happened" route asks a model through — a test passes a fake so the route can be driven
+ *  without a model behind it. */
+export async function appWith(root: string, opts: { pollMs?: number; query?: QueryFn } = {}): Promise<{ root: string; key: string; app: Hono<ShowVars>; ctx: ShowContext; store: RunStore; shows: Map<string, ShowContext>; stores: Map<string, RunStore> }> {
+  const { app, shows, stores } = await appWithShows([{ root }], opts);
+  const ctx = shows.get(SHOW_KEY_FIXTURE);
+  const store = stores.get(SHOW_KEY_FIXTURE);
+  if (ctx === undefined || store === undefined) throw new Error(`the fixture show at ${root} did not load`);
+  return { root, key: SHOW_KEY_FIXTURE, app, ctx, store, shows, stores };
 }
 
 /** Polls a condition until it holds, then returns; throws when it has not held by `timeoutMs`.
@@ -117,4 +191,51 @@ export async function waitFor(condition: () => boolean | Promise<boolean>, timeo
     if (Date.now() > deadline) throw new Error(`waitFor: condition did not hold within ${timeoutMs}ms`);
     await new Promise((r) => setTimeout(r, everyMs));
   }
+}
+
+/** Reads one SSE stream's messages, one at a time, in the order the server wrote them.
+ *
+ *  The three tests that read a `hello` decode the first chunk and slice between the outermost
+ *  braces, which is enough for one message and wrong for two: a stream that writes a second
+ *  `hello` and then a notice may flush them in one chunk, and `: ping` comment lines carry no
+ *  `data:` at all. This reads frames (`\n\n`-separated), keeps whatever is left of a partial one,
+ *  skips the comments, and parses each `data:` line — so a test can say "the next message" and mean
+ *  it.
+ *
+ *  `next()` waits for the stream, so a test asserting a message that never comes fails on the
+ *  suite's twenty-second timeout rather than returning something wrong. `cancel()` is the one piece
+ *  of cleanup a reader owns and must be called, or the handler's loop stays parked on its ping. */
+export function sseMessages(body: ReadableStream<Uint8Array>): {
+  next: () => Promise<SseMessage>;
+  cancel: () => Promise<void>;
+} {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  const pending: SseMessage[] = [];
+  let buffer = "";
+  const drain = (): void => {
+    for (;;) {
+      const at = buffer.indexOf("\n\n");
+      if (at === -1) return;
+      const frame = buffer.slice(0, at);
+      buffer = buffer.slice(at + 2);
+      for (const line of frame.split("\n")) {
+        if (!line.startsWith("data: ")) continue;
+        pending.push(JSON.parse(line.slice("data: ".length)) as SseMessage);
+      }
+    }
+  };
+  return {
+    next: async () => {
+      for (;;) {
+        drain();
+        const message = pending.shift();
+        if (message !== undefined) return message;
+        const { value, done } = await reader.read();
+        if (done) throw new Error("the stream closed before the next message arrived");
+        buffer += decoder.decode(value, { stream: true });
+      }
+    },
+    cancel: async () => { await reader.cancel(); },
+  };
 }

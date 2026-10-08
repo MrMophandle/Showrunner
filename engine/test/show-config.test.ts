@@ -49,6 +49,44 @@ describe("loadShowConfig", () => {
     await expect(loadShowConfig(await root({ ...good, airMap: { "s01e01": [1, 1] } }))).rejects.toThrow(/production id/);
   });
 
+  it("refuses a bad audio.guestRefsDir at load, and loads one that is absent or carries {episodeId}", async () => {
+    // The key's two bad shapes were refused only where needs.ts reads them, which is inside the
+    // reference probe, which is inside the console's Board route: a show whose config named one
+    // shared guest-references directory started the console cleanly and then answered 500 for the
+    // whole Board, with the reason reaching no operator (Plan H's inventory §6.3, ruling H-14).
+    // Refusing at load means the config is refused where it is read, by name, once.
+    const audio = (guestRefsDir: unknown) => ({ ...good, audio: { sampleRate: 48_000, guestRefsDir } });
+
+    // Absent is this key's documented default, <productionDir>/<episodeId>/guest-refs: a show that
+    // never casts a speaking guest must not have to name a directory it will never fill. Absent
+    // with other audio keys present is the same case, and is the one a real config is in.
+    expect((await loadShowConfig(await root(good))).audio).toBeUndefined();
+    expect((await loadShowConfig(await root({ ...good, audio: { sampleRate: 48_000 } }))).audio).toEqual({ sampleRate: 48_000 });
+
+    // One shared directory for every episode: the probe matches a guest WAV by slug prefix, so
+    // s02e01's dock-hand-pim-1.wav would satisfy s02e02's Dock Hand Pim and refs-ready would pass
+    // having proved nothing. The message says the shared case is unsupported, or an author reads
+    // the refusal as a bug rather than as a ruling.
+    await expect(loadShowConfig(await root(audio("Production/guest-refs")))).rejects.toThrow(ShowConfigError);
+    await expect(loadShowConfig(await root(audio("Production/guest-refs")))).rejects.toThrow(/audio\.guestRefsDir "Production\/guest-refs" names no \{episodeId\}/);
+    await expect(loadShowConfig(await root(audio("Production/guest-refs")))).rejects.toThrow(/one shared guest-references directory for every episode is not supported/);
+
+    // Present and empty is a mistake in showrunner.json rather than a request for the default: a
+    // scaffolding step that left the field blank would otherwise write an episode's guest WAVs
+    // into a directory the show never named.
+    await expect(loadShowConfig(await root(audio("")))).rejects.toThrow(/audio\.guestRefsDir is empty/);
+
+    // Present and not a string reached no check before and silently took the default, which is the
+    // same "report a check it did not perform" fault as the two above.
+    await expect(loadShowConfig(await root(audio(42)))).rejects.toThrow(/audio\.guestRefsDir must be a string/);
+
+    // The value a show that does name the directory writes. The loader validates and does not
+    // rewrite: the literal {episodeId} is substituted per run by formatFilename in needs.ts, so the
+    // string on the way out is the string in the file.
+    const named = await loadShowConfig(await root(audio("Production/{episodeId}/guest-refs")));
+    expect(named.audio?.["guestRefsDir"]).toBe("Production/{episodeId}/guest-refs");
+  });
+
   it("rejects invalid JSON with the file named", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "show-"));
     await writeFile(path.join(dir, SHOW_CONFIG_FILE), "{ not json");
