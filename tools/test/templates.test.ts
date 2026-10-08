@@ -59,6 +59,29 @@ describe("prompt templates render against the invented show", () => {
     }
     expect(failures).toEqual([]);
   });
+  it("tts-script.md names the show's own audio.guestRefsDir and no longer builds that path itself", async () => {
+    // H-19. The guest-reference directory is a config key (`engine/src/show-config.ts:88`) and this
+    // was the one prompt line that spelled it out as `<productionDir>/<episodeId>/guest-refs`, so a
+    // show that configured the key anywhere else was told to look in a directory the probe does not
+    // read. The key's value carries a literal `{episodeId}` on purpose — it is the one show path
+    // that is per-episode — and `renderPrompt` substitutes a `{{show.<path>}}` verbatim and leaves
+    // single braces alone, so the prompt has to say what the token stands for. That sentence is
+    // what this test pins: the key renders, and the token is explained beside it.
+    const context = JSON.parse(await readFile(path.join(__dirname, "fixtures/harbor-check-context.json"), "utf8"));
+    const text = await readFile(path.join(PROMPTS, "tts-script.md"), "utf8");
+    expect(text).toContain("{{show.audio.guestRefsDir}}");
+    const rendered = renderPrompt(
+      text,
+      { episodeId: context.episodeId, runId: context.runId, showRoot: context.showRoot, results: context.results },
+      { season: context.season, show: context.show },
+    );
+    const configured = context.show.audio.guestRefsDir as string;
+    expect(configured).toContain("{episodeId}");
+    expect(rendered).toContain(`${configured}/<guest-slug>*.wav`);
+    expect(rendered).toContain(`\`{episodeId}\`\n     stands for ${context.episodeId}`);
+    // And the literal the line used to build is gone from the rendered prompt entirely.
+    expect(rendered).not.toContain(`${context.show.productionDir}/${context.episodeId}/guest-refs`);
+  });
   it("every prompt that is not a gate message opens with the role line", async () => {
     const bad: string[] = [];
     for (const name of await mdFiles(PROMPTS)) {

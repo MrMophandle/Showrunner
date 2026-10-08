@@ -1,25 +1,30 @@
 # The console
 
 **The console is the showrunner's operating layer over the engine: it shows what every episode is
-doing, it opens the gates for an answer, and it starts and restarts runs — and it does all of that
-without owning a single one of them.** A run belongs to the detached worker process holding its
-lock, so this server can be restarted, upgraded or killed while a four-hour render keeps writing.
+doing, it opens the gates for an answer, it starts and restarts runs, and it starts a whole show and
+interviews its bible — and it does all of that without owning a single run.** A run belongs to the
+detached worker process holding its lock, so this server can be restarted, upgraded or killed while
+a four-hour render keeps writing, or while a bible file's writer agent is twenty minutes into its
+twenty-five.
 
 The console names no show. It holds **every show a registry lists** — one `ShowContext` and one
 `RunStore` each, built at startup — and reads each repository's `showrunner.json` for everything it
 needs to know about the show it is operating. Which show a request means is a segment of its own
 url: `/api/shows/<key>/…`. `--show <path>` still works and is one show keyed by its directory name.
 
-## The four surfaces
+## The surfaces
 
-The shows list, then four pages of one show, each at one altitude. The client routes in the
+The shows list and the New-show form, then five pages of one show, each at one altitude — the four
+the rewrite design's §7.2 names, plus the Bible view the setup needed. The client routes in the
 browser; the server serves the built bundle and answers `/api/*` beneath it. **Every page of a show
 lives under `/shows/<key>/`**, because one console holds every show on the machine and there is no
 page that can be "the Board" without saying whose.
 
 | Surface | Route | What it shows |
 |---|---|---|
-| The shows | `/` | One card per registered show: the key, the name, whether it is writable or read-only, its episodes and production directory names, and a link to its Board. A "new show" link points at `/shows/new`, which says the New-show form is still to come. |
+| The shows | `/` | One card per registered show: the key, the name, whether it is writable or read-only, its episodes and production directory names, and a link to its Board. A "new show" link points at `/shows/new`. |
+| New show | `/shows/new` | The seven fields that make a show, and the one `POST /api/shows` that makes it. The slug, the NAS root and the registry key follow the name until one of them is edited; the grammar the server applies to the key is applied here too, so "that is not a key" is said while it is being typed rather than after the POST. On success it navigates to the new show's Bible view. Absent on a console started with `--show`, which holds one show and writes no registry. |
+| The Bible view | `/shows/:show/bible`, `/shows/:show/bible/:key` | The show's fifteen bible files as a rail, one file's panel beside it, and the Finish panel once every gated file is approved. **This is the interview, in the browser:** each file's questions are a form whose answers land on disk the moment they are saved, each file's writing runs in a detached setup worker, and each gate takes the four answers the terminal offers — approve, reject with notes, "I will write this one myself", "import this file". Two routes and one component, so the rail stays mounted across a navigation between files. A read-only show renders every panel's content and none of its buttons. |
 | The Board | `/shows/:show` | One row per episode: the id, the title taken from the episode's outline heading, the stage chip with the reasons underneath it, the open gate's step id and attempt, the run's status, the time since the run's last event, and the row's one action. A New-episode form posts a new episode's `premise.md`. A read-only show draws no launch, no continue and no form, and one line saying why. |
 | The Run view | `/shows/:show/episodes/:id/runs/:run` | Three altitudes at once: the stage, the step in flight with its elapsed time and progress bar, and the time since the last event; then the step rail, every step of the pipeline in order with its status; then the event feed, the last 2,000 events. The action bar carries the recovery moves, and carries none on a read-only show. |
 | The Gate view | `/shows/:show/episodes/:id/runs/:run/gate` | The gate's rendered message as markdown, `attempt N of M`, the notes from previous rejections, the verdict board of what the reviewers found, one pane per artifact the gate is about, and the Approve and Reject buttons — one line instead of the buttons on a read-only show. |
@@ -41,27 +46,45 @@ a canon file.
       }
     }
 
-**The key is the operator's, and that is not a convenience.** The only identity fields a
-`showrunner.json` carries are `showName` and `showSlug`, and a show repository and its successor
-carry the same values for both — and often the same `output.nasRoot` as well. A url keyed on the
-slug could not tell them apart, so the registry carries a key the operator chose. It must match
-`/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/`: no dot, so it can never be `..`; no slash, so it is one url
-segment; no leading hyphen, so nothing downstream reads it as a flag. It is validated once, in the
-show middleware, before it reaches a map or a path.
+**The key is the operator's and not the show's**, for the reason the engine's `README.md` section
+"Shows and the registry" states: two show repositories can carry the same `showName`, the same
+`showSlug` and the same `output.nasRoot`, so no field of a `showrunner.json` can key a url. It must
+match `/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/`: no dot, so it can never be `..`; no slash, so it is one
+url segment; no leading hyphen, so nothing downstream reads it as a flag. It is validated once, in
+the show middleware, before it reaches a map or a path.
 
 | What | How the server behaves |
 |---|---|
 | **Every api route** | Under `/api/shows/:show/`, with one exception: `GET /api/shows` is the list and `GET /api/events` is one channel across every show. One middleware turns the segment into that show's `ShowContext` and `RunStore`, so the fifty-odd functions beneath it still take one show and never ask which. |
 | **An unknown key**, or a key the grammar rejects | `404 {"error": "no such show"}`, before any lookup or path join. |
-| **`"readOnly": true`** | **Every `POST` beneath that show is `403 {"error": "<key> is read-only"}`** — the launch, the gate answer, the New-episode form, and any path under the show that no route registered. The refusal is in the middleware and not in the seven write routes, so it covers the whole subtree rather than the paths somebody remembered. Reading a read-only show is unrestricted. This is what makes it safe to list a retired repository beside its successor: the two name the same NAS root and the same final filename, so one finalize step run in the wrong tree would overwrite a finished season. |
+| **`"readOnly": true`** | **Every `POST` beneath that show is `403 {"error": "<key> is read-only"}`** — the launch, the gate answer, the New-episode form, the whole bible route family, and any path under the show that no route registered. The refusal is in the middleware and not in the write routes, so it covers the whole subtree rather than the paths somebody remembered. Reading a read-only show is unrestricted. Why a read-only entry exists at all is the engine `README.md`'s "Shows and the registry" to argue; the short of it is that a retired repository and its successor share a NAS root and a final filename. |
 | **The SSE channel** | One stream, and **every message names its show** — `{"type": "run", "show": "<key>", …}`, `{"type": "episodes", "show": "<key>"}`. Two shows holding an episode of the same id are otherwise the same notice twice, and a Board watching one would refetch on the other's every heartbeat. The `hello` carries the whole list: `{"type": "hello", "operator": …, "shows": [{"key", "showName", "readOnly"}]}`. |
 | **A show whose repository will not load** | Reported on stderr by key at startup and left out — its routes then answer 404, like any key the console does not hold. One unfinished edit in one `showrunner.json` must not take every other show's Board off the air. |
 | **A show whose episode files throw** | Its Board answers one row, `{"id": "", "error": "<key>: its episodes could not be read — …"}`, rather than a 500 that names no show. A malformed `images/prompts.json` or `Canon/refs.json` is a real failure of the show's own files; every other registered show is gathered under its own request and is untouched. |
 | **A malformed registry file** | Fatal: the message on stderr and exit 65. A registry read as empty looks exactly like a machine with no shows on it, and the operator's remedy would then be to register every show again. |
 
-**The registry file is the operator's, and this server only reads it.** Nothing in the console
-writes `~/.showrunner/shows.json` today; the New-show surface that appends to it is a later task of
-the same plan, and it is the one write the console ever makes outside a show repository.
+**The registry file is the operator's, and the one write the console ever makes outside a show
+repository.** `POST /api/shows` appends the new show's entry to it after `initScaffold` has written
+and committed the show's own repository, and the two maps the server closes over gain the show
+without a restart — which is the whole reason the registry is a file and not argv: a list that lived
+in `process.argv` could not be appended to by the surface that creates a show. Nothing else in the
+console writes it, nothing in it ever rewrites or removes an entry, and a console started with
+`--show` refuses the route outright.
+
+**The routes that are not about one episode.** Everything else is `/api/shows/:show/episodes/…`
+and is documented under **Recovery** below.
+
+| Route | What it does |
+|---|---|
+| `GET /api/shows` | The registered shows, each with its key, name, read-only flag and directory names. |
+| `POST /api/shows` | Creates a show: `initScaffold` writes and commits the repository, the entry is appended to the registry, and the show is added to the live maps. Refuses a key the grammar rejects or already held, and a path inside the engine repository or inside or containing a registered show's root — in both directions, on resolved and symlink-resolved spellings alike. 409 on a console started with `--show`. |
+| `GET /api/shows/:show/bible` | The fifteen rows: the file, its mode and purpose, its state, its latest run id and gate attempt, and how many of its questions are answered. |
+| `GET /api/shows/:show/bible/:key` | One row with its questions and saved answers, its gate message and the file's text, and its latest run. |
+| `GET /api/shows/:show/bible/:key/file` | The bible file itself. **The fence:** exactly the one path `BIBLE_FILES` names for that key under the show's canon directory, and nothing else — the key is not a path segment the caller supplies. |
+| `POST /api/shows/:show/bible/:key/answers` | Writes `Production/setup/<key>/answers.md`, merged over what is on disk. Refuses a `default` or `scaffold` file, which asks nothing. |
+| `POST /api/shows/:show/bible/:key/runs` | Mints a run id, creates its log, spawns the setup worker. Refused unless the file's latest run is finished. |
+| `POST /api/shows/:show/bible/:key/runs/:run/gate` | One of the four answers, carrying `expectedAttempt`; the engine appends, then a worker is spawned — with the file written first for "I will write it myself" and for an import. |
+| `POST /api/shows/:show/bible/finish` | The end of a setup: the gated files still unapproved, `bible-check`'s report, and the GitHub repository. |
 
 ## The archive marker — an episode the engine never ran
 
@@ -145,9 +168,22 @@ that never started.
 
 ## What the console writes
 
-**The console writes six things, all of them inside the show repository, and nothing else** (seven paths, counting the lock's temporary file, which exists only between a beat's write and its rename). No
-file is written anywhere under the engine repository, and no file is written outside the episode
-the operator acted on.
+**The console writes ten things, and nothing else** (eleven paths, counting the lock's temporary
+file, which exists only between a beat's write and its rename). Nine of the ten are inside a show
+repository; the tenth is the registry file, which is the one write anywhere else. No file is written
+under the engine repository.
+
+The first four rows are written for a bible file's run as well as for an episode's, under
+`<productionDir>/setup/<key>/runs/` instead of `<productionDir>/<id>/runs/` — one segment deeper,
+because `setup` is a reserved episode id that never matches the episode-id grammar, so a bible run's
+log can never be mistaken for an episode's.
+
+**Only one of the nine is written by the server for a run, and it is zero bytes long.** Everything
+that follows a launch or a gate answer is written by a detached worker, which is the rule that the
+server owns no run (the rewrite design's §4.2) in its most literal form: **the setup worker and not
+the server makes the approval commit for a bible file**, so no git process runs in this server for a
+run at all. The server's own writes are the premise, the answers file, the registry entry, a new
+show's scaffold and its commits, and the empty run log.
 
 | What | Where | Written by |
 |---|---|---|
@@ -157,11 +193,15 @@ the operator acted on.
 | The worker's output | `<productionDir>/<id>/runs/<runId>.worker.out` | The spawned worker's stdout and stderr, appended by the kernel. The server opens the file; it writes nothing into it. |
 | The troubleshooting log | `<productionDir>/<id>/runs/<runId>.troubleshooting.jsonl` | The server, one line per question asked on the What-happened page. |
 | An episode's premise | `<episodesDir>/<id>/premise.md` | The server, once, when the New-episode form is submitted. It is written with `wx`, so a second submission for the same id is refused rather than overwriting an idea. |
+| A bible file's answers | `<productionDir>/setup/<key>/answers.md` | The server, when the Bible view's question form is saved. The whole file is rewritten — every heading the canon template declares, with `(blank)` under the unanswered ones, because that is the shape the writer agent and `bible-check` both read — so the posted record is **merged over what is on disk**: a heading the request carries wins even when it is empty, and a heading it does not carry keeps the answer it had. A straight write-through would have meant a form posting one field erasing the other eight answers. |
+| A bible file, and its commit | `<canonDir>/<BIBLE_FILES[key].file>` | The **setup worker**, never the server. The writer agent writes the file inside the worker's run; for "I will write this one myself" and for an import the server writes it before spawning the worker that records the answer. The commit that carries the file, its answers and its run log is the worker's too, taken when its run ends `completed` and after its lock is released — the log directory it stages holds the lock, and a lock is a process fact that belongs in no history. A commit that cannot be made leaves the file approved, logs the reason to `<runId>.worker.log` and exits 2; `showrunner-init --resume` makes the catch-up commit. |
+| A new show's whole repository | the path the New-show form named | The server, through `initScaffold`: the house layout, `showrunner.json`, the prompt set, the entity and outline templates, the two reference indices, the two scaffold bible files, the derived `.gitignore`, the show's README — and `git init` plus the scaffold commit. Every file is written with `wx`, so nothing it touches can overwrite an author's. |
+| The registry entry | `~/.showrunner/shows.json` (or `--registry`) | The server, once per show created, appending the key and its root. The one write outside a show repository. No entry is ever rewritten or removed. |
 
-**A read-only visit writes nothing.** Every one of the six is reached either from a `POST` route or
+**A read-only visit writes nothing.** Every one of the ten is reached either from a `POST` route or
 from a worker, and a worker starts only from a `POST` route. Opening the Board, a Run view, a Gate
-view or an artifact issues `GET` requests that read the filesystem and never touch it — which is
-what makes it safe to point the console at a finished season and look.
+view, the Bible view or an artifact issues `GET` requests that read the filesystem and never touch
+it — which is what makes it safe to point the console at a finished season and look.
 
 The console does not create `<productionDir>/<id>/` when an episode is created: that directory is a
 run's to make, and an empty one would put a row on the Board for an episode with no idea in it.
@@ -329,8 +369,10 @@ development that directory does not exist and Vite serves the client instead.
 
 `console/test/fixtures/seed-show.mjs` writes a complete invented show — episodes parked at a gate,
 failed, crashed mid-loop, and with no premise at all — into a temporary directory, and
-`console/test/fixtures/fake-worker.mjs` stands in for the real worker. Together they are how the
-console is exercised end to end without a model, a render, or a real show.
+`console/test/fixtures/fake-worker.mjs` and `fake-setup-worker.mjs` stand in for the episode worker
+and the setup worker. Together they are how the console is exercised end to end without a model, a
+render, or a real show — which for the bible interview is the difference between a test suite and
+$2.24 a file.
 
 **No show's name may appear anywhere under `console/`.** The rule and the grep that checks it are in
 the repository root's `README.md`, under **Develop**; `console/` has no exemption from it.

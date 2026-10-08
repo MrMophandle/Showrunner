@@ -198,8 +198,12 @@ Then in the Subtitles section, upload:  {out}/captions.srt
 
     # F-17: the credit name is carried in config as the placeholder it has always been, and the
     # reminder still fires until somebody sets publish.channelName.
+    # H-20: and the reminder says what is true of the name. `playlist_url` is written into the
+    # sheet above; `channel_name` is read at the top of this function and reaches nothing but the
+    # test below, so "then all episodes fill in" was a promise this script keeps for one of the two
+    # keys and not the other. The name is written nowhere until the key is filled.
     filled = channel_name != "[YOUR NAME]" and playlist_url != "[PLAYLIST URL]"
-    print(f"  {len(chapters)} chapters" + ("" if filled else "  |  NOTE: set publish.channelName + publish.playlistUrl in showrunner.json once, then all episodes fill in"))
+    print(f"  {len(chapters)} chapters" + ("" if filled else "  |  NOTE: set publish.channelName + publish.playlistUrl in showrunner.json once; the name is written nowhere until the key is filled"))
     # The last line is this step's RESULT: the gate message after it reads it verbatim, so the
     # reminder above it stays an ordinary script_line rather than displacing the result.
     print(f"PUBLISH_KIT {slug} -> {out}/upload.md  (+ captions.srt, {len(man['segments'])} cues, {ts(total, comma=False)})")

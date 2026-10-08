@@ -11,14 +11,22 @@ export interface CastEntry { name: string; tags: string[] }
  *  outside the section are ignored; a non-blank line inside it that does not match
  *  `- <Name> (<tag>, <tag>)` is returned in `malformed` rather than dropped, because a dropped
  *  line is a cast member the reference probe never checks — an em-dash instead of parentheses
- *  used to pass `refs-ready` silently and take an unregistered subject into synthesis. */
+ *  used to pass `refs-ready` silently and take an unregistered subject into synthesis.
+ *
+ *  **A line that is entirely an HTML comment is layout, like a blank line, and is skipped.** The
+ *  outline template the engine ships writes the section's instructions as exactly that — a
+ *  `<!-- … -->` line under `## Cast` saying what the tags are — so an outline written from the
+ *  template carried a line this parser reported as missing the grammar, and `missingRefs` turned
+ *  the template's own instructions into a NEEDS_REFS stop. The test is per-line and not across
+ *  lines on purpose: a comment opened on one line and closed on another has swallowed whatever is
+ *  between them, cast lines included, and must still be reported rather than skipped. */
 export function parseCastSection(outline: string): { entries: CastEntry[]; malformed: string[] } {
   const entries: CastEntry[] = [];
   const malformed: string[] = [];
   let inSection = false;
   for (const line of outline.split("\n")) {
     if (/^## /.test(line)) { inSection = /^## Cast\b/.test(line); continue; }
-    if (!inSection || line.trim() === "") continue;
+    if (!inSection || line.trim() === "" || /^<!--.*-->$/.test(line.trim())) continue;
     const m = /^- (.+?) \(([^)]*)\)\s*$/.exec(line);
     if (!m || m[1] === undefined || m[2] === undefined) { malformed.push(line.trim()); continue; }
     entries.push({ name: m[1].trim(), tags: m[2].split(",").map((t) => t.trim().toLowerCase()).filter((t) => t !== "") });

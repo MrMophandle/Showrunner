@@ -485,21 +485,97 @@ buttons; and "What happened" hands a read-only agent the run's own record. Every
 through the engine's verbs — `answerGate`, `resumeRun`, `resetSteps` and `withdrawApproval` — and
 then spawns a detached worker, so the event log stays the only thing that decides what a run is.
 
-The console names no show. It is pointed at a show repository with `--show <path>` and reads that
-repository's `showrunner.json`, exactly as the engine does.
+The console names no show. **It holds every show a registry lists** — one show context and one run
+store each, built at startup — and reads each repository's `showrunner.json` for everything it needs
+to know about that show, exactly as the engine does. Which show a request means is a segment of its
+own url, `/api/shows/<key>/…`, and every browser page of a show lives under `/shows/<key>/`.
+`--show <path>` still works and is one show keyed by its own directory name.
 
 **An episode that was finished before the engine existed says so in a marker,
 `<episodesDir>/<id>/archive.json` — `{"stage": "COMPLETE", "note": "…"}` — which the Board reads
 only for an episode with no run logs, and shows at that stage with an "archived" chip, no needs
 and no launch button.**
 
-    npm run build && node console/dist/server/main.js --show <show repository> --port 4410
+    npm run build && node console/dist/server/main.js --port 4410                      # every show in ~/.showrunner/shows.json
+    npm run build && node console/dist/server/main.js --show <show repository> --port 4410   # one show
 
-**`console/README.md` is the console's own documentation**: the four surfaces and what is deferred,
-the three processes, every file the console writes, the flags and the home-network rule for
-`--host`, the four recovery moves with what each appends and when each is refused, the four files
-beside a run log, the artifact route's three-layer fence, and why the browser tab's title is the
-whole alerting story.
+**`console/README.md` is the console's own documentation**: the surfaces and what is deferred, the
+three processes, every file the console writes, the flags and the home-network rule for `--host`,
+the registry's behaviour row by row, the four recovery moves with what each appends and when each is
+refused, the four files beside a run log, the artifact route's three-layer fence, and why the browser
+tab's title is the whole alerting story. The three sections below are the argument behind those
+tables rather than a second copy of them.
+
+### Shows and the registry
+
+**One console holds every show on the machine, and `~/.showrunner/shows.json` is the list.**
+
+    {
+      "shows": {
+        "the-live-show": { "root": "/Users/me/GitHub/TheLiveShow" },
+        "the-old-one":   { "root": "/Users/me/GitHub/TheOldOne", "readOnly": true }
+      }
+    }
+
+`--registry <file>` names a different file. A file that does not exist is an empty registry and the
+server still starts, saying so — that is the state a machine is in before its first show is
+registered. A file that exists and is malformed is fatal, exit **65**: a registry read as empty looks
+exactly like a machine with no shows on it, and the operator's remedy would then be to register every
+show again. `--show <path>` is the other mode, one show keyed by its own directory name, registering
+nothing and writing nothing; `--show` together with `--registry` exits **64**, because they are two
+answers to one question and silently preferring one would be a console holding shows the operator did
+not ask for.
+
+**The key is the operator's, and that is not a convenience.** The only identity fields a
+`showrunner.json` carries are `showName` and `showSlug`, and a show repository and its successor
+carry the same values for both — **and the two can share `output.nasRoot` as well**. A url keyed on
+the slug could not tell them apart, so the registry carries a key the operator chose. It must match
+`/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/`: no dot, so it can never be `..`; no slash, so it is one url
+segment; no leading hyphen, so nothing downstream reads it as a flag. It is validated once, in the
+show middleware, before it reaches a map or a path join, and a key the console does not hold — or one
+the grammar rejects — is `404 {"error": "no such show"}`.
+
+**A read-only entry exists so that a retired repository can be listed beside its successor.**
+`"readOnly": true` makes **every `POST` beneath that show `403`** — the launch, the gate answer, the
+New-episode form, the whole bible route family, and any path under the show that no route registered,
+because the refusal is in the middleware and not in the write routes. Reading is unrestricted. The
+reason it is needed: two show repositories that share `output.nasRoot` also share the final
+filename, so one finalize step run in the wrong tree would overwrite a finished season. Read-only is
+the line that makes looking at the old one safe.
+
+### The Bible view
+
+**`/shows/<key>/bible` is the interview in the browser: the show's fifteen bible files as a rail,
+one file's panel beside it, and the Finish panel once every gated file is approved.** The rows are
+the same fifteen for every show, because `key`, `file`, `mode` and `purpose` come from the engine's
+`BIBLE_FILES` table and not from the show: eleven **interview** files, three **default** files that
+carry a house template and a gate over it, and two **scaffold** files — the continuity ledger and the
+voice registry — which the pipeline fills, so no run can be started for them and their rows stay
+`pending` for the life of the show.
+
+**Each row's state is derived from four things and nothing else:** its `BIBLE_FILES` row, its
+`Production/setup/<key>/answers.md`, the latest log under `Production/setup/<key>/runs/`, and the
+lock beside that log. The file's own presence on disk is deliberately not one of the four —
+`showrunner-init` scaffolds or imports every bible file before anybody is interviewed, so a file
+existing says nothing about whether its interview has happened. The state is the interview's, not the
+file's.
+
+The nine states, in the order an interview passes through them. **`pending`**: nothing has happened,
+no run and no answer saved. **`answering`**: answers are on disk and the writer has not been started.
+**`running`**: a worker is holding the file's latest run. **`gate`**: the run is parked at its gate,
+waiting for one of the four answers. **`approved`**, **`imported`** and **`written-by-author`**: the
+three ways an approval is recorded, told apart by the notes on the approving `gate_answered`, so a
+file approved at the terminal reads the same as one approved in the browser. **`stalled`**: the gate
+was rejected its maximum ten times and the file on disk is the fix agent's last revision, which is
+the author's to finish. **`failed`**: anything else that ended badly. There is no `crashed` state,
+because a crash is a fact about a run and not about a file — the row says `failed` and the run says
+`crashed`, which is what lets the page offer "start again" with the worker's own account beside it.
+
+A row also carries how many questions its canon template asks and how many have a real answer (nine
+for `world-overview`, zero for the three default and two scaffold files), and, once the file has run,
+its latest run id and the attempt its gate is open at. That attempt is what an answer carries back as
+`expectedAttempt`, which is the protection against a tab left open across a rejection: the author
+answers the attempt they read.
 
 ## Starting a show
 
@@ -560,10 +636,49 @@ refusal, because an author who answered a gate with "I will write this one mysel
 to write. The engine's `bible-ready` guard runs the same two functions before an episode, where the
 answer is a refusal rather than a report.
 
-**A show registry and the console's own "New show" surface are Plan H, not this plan.** Until Plan H
-lands, a new show is started with the `node tools/dist/init/main.js` command line at the top of
-this **Starting a show** section, and the console is then pointed with `--show` at the directory
-`showrunner-init` created.
+### Starting a show from the console
+
+**The same setup runs in the browser: `/shows/new` is the seven fields that make a show, and
+`/shows/<key>/bible` is the thirteen-file interview, one request at a time.** The form creates the
+show and hands the author straight to its Bible view; the slug, the NAS root and the registry key
+follow the name until one of them is edited, and are shown rather than derived silently because the
+slug is rendered into `output.mixFilename` and into the names of files on the NAS, and the key
+becomes the segment of every url for this show. There is no `engineRoot` field — the route takes it
+from the console's own `--engine-root`, and a form that let an author name a different engine would
+be a form that can scaffold a show against an engine this server is not running. There is no
+`--resume` field either, because resuming *is* the Bible view: every answer is on disk the moment it
+is saved and every approval is in a run log, so closing the tab loses nothing and a second visit
+continues.
+
+**What the server writes, and it writes nothing else:** an episode's `premise.md`; the registry file,
+which is the one write the console ever makes outside a show repository; a new show's scaffold and
+its commits; `Production/setup/<key>/answers.md`, merged over what is on disk so a form that posts
+one field cannot erase the other eight answers; and the run log, created **zero-byte** before a
+worker is spawned, which is what makes the minted run the latest run from the moment the route
+answers. Each of the five is named in `console/README.md`.
+
+**The approval commit is the setup worker's, not the server's** — and that is what keeps this inside
+the rule that the server owns no run (spec §4.2). Every bible file's writing step runs in a detached
+setup worker, exactly as an episode's step does. When that worker's run ends `completed` it makes the
+file's commit itself, in the same order `showrunner-init` uses at the terminal: the engine writes
+`run_finished`, *and then* the commit is taken, so the commit carries the log's closing line and no
+approved bible file is left with a modified `.jsonl` beside it. The commit is taken after the lock is
+released, because it stages the run's whole log directory and the lock lives in that directory —
+committing while holding it would put a statement about a live pid into the show's history, and the
+`finally` that removes the lock would leave a tracked deletion behind. A lock is a process fact and
+never history. The result is that no git process runs in the console's server for a run at all. A
+commit that cannot be made leaves the file approved and logs the reason; `showrunner-init --resume`
+makes the catch-up commit, as it does for a terminal interview interrupted between its approval and
+its commit.
+
+**The fences the form applies before anything is written.** A registry key outside
+`/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/` is refused; a key already held, or already in the registry file,
+is refused by name with the path it is registered at; and a target path inside the engine repository,
+or inside or containing a registered show's root, is refused in both directions and on resolved and
+symlink-resolved spellings alike — a show scaffolded inside the engine would put a repository inside
+a repository and start the engine's own show-name grep reporting the new show's bible, and a path
+holding an existing show would be two shows with one git history. A console started with `--show`
+refuses outright: that mode holds one show and writes no registry.
 
 ## The progress contract
 
@@ -753,6 +868,22 @@ an injectable seam in its tests. `bible-check` only reads a show and reports on 
   `results`, and optionally `season`, `show` and **`vars`** — the last being the sample
   `{{vars.<name>}}` values, which belong to a pipeline step and so cannot be derived by a checker
   that has no pipeline.
+- **`check-prompts --baseline`** answers the other question about a show's prompts: not "does this
+  render?" but "which side of this copy has moved?" A show's prompts are copies of
+  `tools/templates/prompts/`, and both sides move — the author tunes a prompt for their show, and
+  the engine improves a template under them — so a plain comparison of the two says only "these
+  differ", which is true of almost every prompt in a show a month old. `showrunner-init` therefore
+  writes a third fixed point: `prompts/.templates-baseline.json`, the sha256 of every prompt file's
+  text as it was copied, written once and never updated. `--baseline` compares the show's file to
+  that baseline and the engine's current template to that same baseline, and reports one of four
+  verdicts per prompt — **`unchanged`** (neither moved), **`show-edited`** (the author's own edit,
+  which an update would overwrite), **`template-moved`** (safe to refresh, nothing is lost) and
+  **`both`** (the one case that needs a person to merge) — plus three a two-hash comparison cannot
+  express and which are not folded into the four: `no-baseline` for a prompt added after `init`,
+  `missing` for a baseline entry whose file the show no longer has, and `no-template` for one the
+  engine no longer ships. Drift is a report and exits 0; only a baseline that cannot be read is an
+  error, which is the state of every show scaffolded before the file existed. The bible has no
+  baseline, deliberately: every bible file is meant to differ from its template.
 - **`showrunner-init`** creates a new show repository from the generic templates under
   `tools/templates/` and interviews its author for the bible, one file and one commit at a time.
   **Starting a show** above is its documentation: the command line and every flag, the gate's four
@@ -769,6 +900,8 @@ an injectable seam in its tests. `bible-check` only reads a show and reports on 
     node tools/dist/check-prompts.js --prompts <show-root>/prompts \
         --context tools/show-data/<show>-check-context.json
         # the context file: { episodeId, runId, showRoot, results, season?, show?, vars? }
+    node tools/dist/check-prompts.js --prompts <show-root>/prompts --baseline
+        # one of --context and --baseline is required; both may be given
     node tools/dist/init/main.js --name "<show name>" --path <new directory> --github private
     node tools/dist/bible-check.js --show <show-root>
 

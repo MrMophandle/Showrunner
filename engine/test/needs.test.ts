@@ -47,6 +47,28 @@ describe("parseCastSection", () => {
     // a blank line between entries is layout, not a slip
     expect(parseCastSection("## Cast\n\n- Vale (recurring)\n\n")).toEqual({ entries: [{ name: "Vale", tags: ["recurring"] }], malformed: [] });
   });
+
+  it("skips a line that is entirely an HTML comment, which is what the shipped outline template writes under ## Cast", () => {
+    // The template at `tools/templates/episodes/_TEMPLATE/outline.md:10` writes the section's
+    // instructions as a one-line HTML comment between the heading and the first entry. Before the
+    // skip, this parser reported that line in `malformed` and `missingRefs` turned the engine's own
+    // template into a NEEDS_REFS stop naming the instructions as a cast member.
+    const comment = "<!-- One line per character and location, as `- <Name> (<tags>)`, tags from: recurring, guest, speaks, location. -->";
+    expect(parseCastSection(`## Cast\n${comment}\n- Vale (recurring, speaks)\n- Harbor (location)\n`)).toEqual({
+      entries: [{ name: "Vale", tags: ["recurring", "speaks"] }, { name: "Harbor", tags: ["location"] }],
+      malformed: [],
+    });
+    // Indented, and with nothing else on the line, is the same thing: the test is on the trimmed line.
+    expect(parseCastSection(`## Cast\n   ${comment}   \n- Vale (recurring)\n`).malformed).toEqual([]);
+    // A comment that is not the whole line is still a cast line that misses the grammar, because the
+    // part outside the comment is a subject this probe would otherwise never check.
+    expect(parseCastSection("## Cast\n- Vale <!-- recurring -->\n").malformed).toEqual(["- Vale <!-- recurring -->"]);
+    // And a comment opened on one line and closed on another is reported rather than skipped: it has
+    // swallowed every line between the two, cast lines included.
+    expect(parseCastSection("## Cast\n<!-- opened here\n- Vale (recurring)\nclosed here -->\n").malformed).toEqual([
+      "<!-- opened here", "closed here -->",
+    ]);
+  });
 });
 
 describe("missingRefs", () => {
@@ -165,6 +187,19 @@ describe("missingRefs", () => {
     // and because the console puts this list on every Board row regardless of stage, it would put
     // a "references missing" line on every episode nobody has started yet.
     expect(await missingRefs(root, "s02e02", show)).toEqual([]);
+  });
+
+  it("is empty for an outline written from the shipped template, whose ## Cast carries an instruction comment", async () => {
+    // The behavioural half of the comment skip. An author who fills in the template's own cast
+    // lines and leaves its instruction comment in place — which is the ordinary thing to do, since
+    // the comment does not render — must get a clean probe, not a line blaming the instructions for
+    // missing the grammar.
+    const { root, w } = await show1();
+    await w(
+      "Episodes/s02e01/outline.md",
+      "# s02e01\n\n## Cast\n<!-- One line per character and location, as `- <Name> (<tags>)`, tags from: recurring, guest, speaks, location. -->\n- Vale (recurring, speaks)\n- Harbor (location)\n",
+    );
+    expect(await missingRefs(root, "s02e01", show)).toEqual([]);
   });
 });
 

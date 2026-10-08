@@ -138,9 +138,10 @@ cast "direction". Rules:
   2. Pick that guest's most characteristic line from the script.
   3. The voice itself was designed by the showrunner before this step ran
      (the pipeline stops at NEEDS_REFS until it exists) and lives at
-     {{show.productionDir}}/{{episodeId}}/guest-refs/<guest-slug>*.wav — the slug is
-     the guest's name lowercased with hyphens ("Harbormaster Quill" →
-     harbormaster-quill). Do not run design-voice.py.
+     {{show.audio.guestRefsDir}}/<guest-slug>*.wav, in which `{episodeId}`
+     stands for {{episodeId}} and the slug is the guest's name lowercased
+     with hyphens ("Harbormaster Quill" → harbormaster-quill). Do not run
+     design-voice.py.
   4. Cast entry: ref = that WAV, ref_text = the exact line it renders (the
      showrunner recorded it beside the WAV as <guest-slug>.txt if he wrote
      one; else transcribe the line from the script), direction = your

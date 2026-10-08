@@ -1,8 +1,10 @@
 import { describe, it, expect } from "vitest";
+import { execFile } from "node:child_process";
 import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import type { ShowConfig } from "@showrunner/engine";
 import { templatesDir } from "../src/init/paths.js";
 import {
@@ -15,6 +17,8 @@ import {
 } from "../src/init/scaffold.js";
 
 const FIXTURE = fileURLToPath(new URL("fixtures/harbor-check-context.json", import.meta.url));
+
+const execFileAsync = promisify(execFile);
 
 /** The Harbor Lights config Task 4's render fixture already carries, so the scaffold's tests and
  *  the prompt harness describe the same invented show. */
@@ -103,6 +107,8 @@ describe("gitignoreFor", () => {
       "Out/*/images/*.png",
       "Out/*/images/*.jpg",
       "Out/*/images/.*.bak",
+      "Out/**/*.worker.out",
+      "Out/**/*.lock",
       "Canon/_cands/",
       "Finalized",
       "Finalized/",
@@ -117,6 +123,46 @@ describe("gitignoreFor", () => {
     const lines = gitignoreFor(config).split("\n");
     expect(lines).toContain("Production/*/audio/");
     expect(lines).toContain("Canon/_candidates/");
+    expect(lines).toContain("Production/**/*.worker.out");
+    expect(lines).toContain("Production/**/*.lock");
+  });
+
+  it("ignores a worker's output and a run's lock at both run-log depths, and tracks the record beside them", async () => {
+    // The two files the console leaves beside a run log that must never be committed: the server
+    // creates `<runId>.worker.out` empty before a spawn and the kernel appends to it after the
+    // approving commit, and `<runId>.lock` is a statement about a live pid. The depths differ —
+    // an episode's runs live under `<productionDir>/<id>/runs/` and a bible file's under
+    // `<productionDir>/setup/<key>/runs/` — which is why the patterns carry `**`.
+    //
+    // Asked of git itself rather than of a glob matcher written here. The patterns are only worth
+    // anything if git reads them the way this file intends, and a reimplementation of gitignore in
+    // a test proves what the reimplementation does.
+    const root = await tempRoot();
+    try {
+      await writeFile(path.join(root, ".gitignore"), gitignoreFor(await harborConfig()), "utf8");
+      await execFileAsync("git", ["init", "-q"], { cwd: root });
+      const ignored = async (rel: string): Promise<boolean> => {
+        const result = await execFileAsync("git", ["check-ignore", "-q", "--no-index", "--", rel], { cwd: root })
+          .then(() => true)
+          .catch((err: { code?: number }) => {
+            // 0 is ignored, 1 is not ignored, anything else is a broken invocation and must not
+            // read as "not ignored".
+            if (err.code === 1) return false;
+            throw err;
+          });
+        return result;
+      };
+      expect(await ignored("Production/s02e01/runs/20261007T120000Z-ab12.worker.out")).toBe(true);
+      expect(await ignored("Production/s02e01/runs/20261007T120000Z-ab12.lock")).toBe(true);
+      expect(await ignored("Production/setup/world-overview/runs/20261007T120000Z-ab12.worker.out")).toBe(true);
+      expect(await ignored("Production/setup/world-overview/runs/20261007T120000Z-ab12.lock")).toBe(true);
+      // The run log, the worker's own log line and the author's answers are the record, and stay tracked.
+      expect(await ignored("Production/s02e01/runs/20261007T120000Z-ab12.jsonl")).toBe(false);
+      expect(await ignored("Production/setup/world-overview/runs/20261007T120000Z-ab12.worker.log")).toBe(false);
+      expect(await ignored("Production/setup/world-overview/answers.md")).toBe(false);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });
 
