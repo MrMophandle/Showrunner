@@ -57,6 +57,33 @@ describe("the read routes", () => {
     store.close();
   });
 
+  /** Plan F's deferral, closed by ruling H-08. The route used to answer 200 for a run id it had
+   *  never heard of, because `EventLog.readFrom` swallows `ENOENT` and no events is also what an
+   *  empty log yields — so the view came back as the whole sixty-eight-step pipeline at `pending`.
+   *  An archived episode is where that is worst: Season 1 was made by console v1, its record here
+   *  is an `Episodes/<id>/archive.json` marker and nothing else, and every run id under one
+   *  therefore described a run that had never existed. */
+  it("GET /api/shows/:show/episodes/:id/runs/:run is a 404 for a run whose log does not exist", async () => {
+    const { root, app, store } = await appWith(await makeShow());
+    // The marker and nothing else: no `Production/s01e01/runs/` directory and no log. The marker's
+    // own behaviour is `test/episodes.test.ts`'s subject; here it is only what makes s01e01 an
+    // episode the Board draws, so that the 404 below is about the run and not about the episode.
+    await writeIn(root, "Episodes/s01e01/archive.json", JSON.stringify({ stage: "COMPLETE", note: "made by console v1; final on the NAS" }));
+    const row = await app.request("/api/shows/show/episodes/s01e01");
+    expect(row.status).toBe(200);
+    expect(await row.json()).toMatchObject({ id: "s01e01", status: "archived" });
+
+    const res = await app.request("/api/shows/show/episodes/s01e01/runs/anything");
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ error: "no log for run anything of s01e01" });
+    // The same refusal for the episode that does have runs, asked for a run it never had: the
+    // check is the log file's existence and not the episode's history.
+    const other = await app.request("/api/shows/show/episodes/s02e01/runs/r404");
+    expect(other.status).toBe(404);
+    expect(await other.json()).toEqual({ error: "no log for run r404 of s02e01" });
+    store.close();
+  });
+
   it("GET /api/shows/:show/episodes/:id/runs/:run/events?after=<offset> returns only what is new", async () => {
     const { root, app, store } = await appWith(await makeShow());
     await seedRun(root, "s02e01", "r1", [
@@ -314,6 +341,19 @@ describe("the actions", () => {
     // assertion's point, which is existence and not emptiness.
     const log = path.join(root, "Production", "s02e01", "runs", `${body.runId}.jsonl`);
     expect((await stat(log)).size).toBeGreaterThanOrEqual(0);
+
+    // And the view of the run inside that same window is a 200 with every step pending, which is
+    // the case the run route's 404 must not take with it: the 404 is for a log that is **not
+    // there** (ruling H-08), and the launch's `wx` write is what puts one there before the worker
+    // exists. `toMatchObject` on the first row rather than on all 68, and the count of pending
+    // rows, because the worker is detached and may have completed a step by the time this runs —
+    // the assertion is that the view is the pipeline, not that the pipeline has not moved.
+    const inWindow = await app.request(`/api/shows/show/episodes/s02e01/runs/${body.runId}`);
+    expect(inWindow.status).toBe(200);
+    const windowView = await inWindow.json() as RunView;
+    expect(windowView).toMatchObject({ episodeId: "s02e01", runId: body.runId, pipeline: { name: "episode" } });
+    expect(windowView.steps.length).toBe(68);
+    expect(windowView.steps.filter((s) => s.status === "pending").length).toBeGreaterThan(60);
 
     await waitFor(async () => (await logText(root, body.runId)).includes("run_started"), 2000);
     const events = await logEvents(root, body.runId);

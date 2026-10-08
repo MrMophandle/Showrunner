@@ -1,5 +1,5 @@
 import path from "node:path";
-import { mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { Hono } from "hono";
 import type { Context, MiddlewareHandler } from "hono";
 import { stream as streamText, streamSSE } from "hono/streaming";
@@ -462,16 +462,45 @@ export function createApp(
     return c.json(await c.get("store").episodeRow(id));
   });
 
-  /** One run at the middle altitude. A run id with no log is not an error: the view is the
-   *  pipeline with every step pending, which is what a run looks like in the second between its
-   *  launch and its worker's first write. */
+  /** One run at the middle altitude: the pipeline's steps overlaid with the run's log.
+   *
+   *  **A run whose log file does not exist is a 404**, worded exactly as the log-download route
+   *  words it (`serveRunLog` in `server/artifacts.ts`), because the two routes are answering the
+   *  same question about the same file and one message for it is one thing to keep true.
+   *
+   *  The 404 closes Plan F's deferral (ruling H-08). `EventLog.readFrom` returns no events for a
+   *  log that is not there — it swallows `ENOENT` by design, so that a reader tailing a run is not
+   *  made to care whether the writer has created the file yet — which meant this route could not
+   *  tell an absent log from an empty one and answered **both** with the whole pipeline at
+   *  `pending`. An archived episode has no run logs at all (Season 1 was made by console v1, and
+   *  `Episodes/<id>/archive.json` is the whole of its record here), so every run id under one
+   *  reached a 200 describing a sixty-eight-step run that had never existed.
+   *
+   *  **An empty log is still a 200 with every step pending**, and that is not the same case: the
+   *  launch route creates the log with `wx` and zero bytes *before* it spawns the worker (see its
+   *  own comment below), so the file exists from the moment the launch answers. That window — the
+   *  second between a launch and its worker's first write — is what the all-pending view is for,
+   *  and the check here is existence and not emptiness so the window keeps it.
+   *
+   *  The check is in the route rather than in `RunStore.view` so that the store's log cache is
+   *  never given an entry for a run that does not exist, and so that the status this route answers
+   *  is chosen where the other refusals of the same request (the two 400s above) are chosen. */
   app.get("/api/shows/:show/episodes/:id/runs/:run", async (c) => {
+    const ctx = c.get("ctx");
     const id = c.req.param("id");
     const run = c.req.param("run");
     const validId = checkEpisodeId(id);
     if (!validId.ok) return c.json({ error: validId.error }, 400);
     const validRun = checkRunId(run);
     if (!validRun.ok) return c.json({ error: validRun.error }, 400);
+    // Built through `EventLog.logPath`, which is the one place a run log's address is composed —
+    // the same call the store, the worker and the log route make. A `stat` that throws is the
+    // missing file; a `stat` that succeeds on something that is not a file is a directory someone
+    // created where a log belongs, and neither is a run this console can show.
+    const log = EventLog.logPath(ctx.showRoot, id, run, ctx.productionDir);
+    let info: Awaited<ReturnType<typeof stat>>;
+    try { info = await stat(log); } catch { return c.json({ error: `no log for run ${run} of ${id}` }, 404); }
+    if (!info.isFile()) return c.json({ error: `no log for run ${run} of ${id}` }, 404);
     return c.json(await c.get("store").view(id, run));
   });
 

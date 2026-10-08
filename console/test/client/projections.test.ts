@@ -8,7 +8,8 @@ import {
 /** The client's pure helpers. Every one of them is a function of its arguments and a clock the
  *  caller passes in, which is the whole reason they live outside the components: a stall label
  *  that turns amber at fourteen minutes cannot be asserted through a rendered DOM without a
- *  fake timer, and there is no DOM in this suite at all (vitest.config.ts: environment node). */
+ *  fake timer, and this file runs with no DOM at all (`vitest.config.ts`: `environment: "node"` is
+ *  this suite's default, and only the `.test.tsx` files beside this one opt into jsdom). */
 
 /** A Board row with the fields a test cares about and nothing else. `exactOptionalPropertyTypes`
  *  refuses an explicit `undefined` for an optional field, so the overrides are spread rather than
