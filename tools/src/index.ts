@@ -17,13 +17,15 @@ export { initScaffold, afterFileApproved, initFinish, runInit, slugFrom } from "
 export type { InitOptions, InitDeps, InitReport, ScaffoldResult, FinishResult } from "./init/init.js";
 export { interviewFile, isApproved, questionsFor, readAnswers, writeAnswers, buildVars, latestSetupLog, interviewPromptsDir, GATE_CHOICES } from "./init/interview.js";
 export type { InitIO, InterviewResult, GateChoice, Question } from "./init/interview.js";
-// The import fence, the cast parser and the three strings a gate answer is recorded with. The
-// console's gate route calls exactly these, so the browser's four answers and the terminal's are
-// one implementation: `resolveImport` is the symlink-and-path fence (a second copy of it in the
-// console would be the copy that diverges), `ImportRefused` is how a refused path becomes a 400
-// rather than a 500, `parseCast`/`castSectionOf`/`CAST_HEADING` build the cast that
-// `afterFileApproved` turns into character sheets, and `AUTHOR_NOTES`/`IMPORT_NOTES_PREFIX` are
-// both written on the approval and read back as the row's state.
+// The import fence, the cast parser and the three strings a gate answer is recorded with, so that
+// the browser's four answers and the terminal's are one implementation rather than two.
+// `resolveImport` and `ImportRefused` are the console gate route's: the first is the
+// symlink-and-path fence (a second copy of it in the console would be the copy that diverges) and
+// the second is how a refused path becomes a 400 rather than a 500.
+// `parseCast`/`castSectionOf`/`CAST_KEY`/`CAST_HEADING` are the console **setup worker's**, which
+// builds the cast that `afterFileApproved` turns into character sheets after its run completes.
+// `AUTHOR_NOTES`/`IMPORT_NOTES_PREFIX` are written on the approval by the route and read back by
+// both — the row's state and the commit's subject are the same three words.
 export { resolveImport, ImportRefused, parseCast, castSectionOf, CAST_KEY, CAST_HEADING, AUTHOR_NOTES, IMPORT_NOTES_PREFIX } from "./init/interview.js";
 export { templatesDir } from "./init/paths.js";
 export { parseCanonTemplate, templateWithoutQuestions, writeCastSheets } from "./init/scaffold.js";

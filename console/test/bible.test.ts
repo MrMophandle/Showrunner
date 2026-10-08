@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { mkdir, mkdtemp, readFile, stat, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { BIBLE_FILES, EventLog, bibleLogDir, deriveRunState } from "@showrunner/engine";
 import { initScaffold, type InitIO } from "@showrunner/tools";
@@ -186,7 +186,7 @@ describe("the Bible view", () => {
     expect(text).not.toContain("<!-- Q:");
   });
 
-  it("approves a gate: the answer is in the log, the commit is made, and the row reads approved", async () => {
+  it("approves a gate: the answer is in the log, a worker is spawned, and the server commits nothing", async () => {
     const { app, root } = await bibleShow();
     await app.request(post("bible/world-overview/answers", { answers: { "The primary cast": CAST_ANSWER } }));
     const { runId } = await (await app.request(post("bible/world-overview/runs"))).json() as { runId: string };
@@ -196,24 +196,29 @@ describe("the Bible view", () => {
 
     const res = await app.request(post(`bible/world-overview/runs/${runId}/gate`, { choice: "approve", expectedAttempt: 1 }));
     expect(res.status).toBe(200);
-    const answered = await res.json() as { commits: string[] };
-    expect(answered.commits).toHaveLength(1);
+    const answered = await res.json() as { runId: string; pid: number };
+    expect(answered.runId).toBe(runId);
+    expect(answered.pid).toBeGreaterThan(0);
 
     const events = await new EventLog(path.join(bibleLogDir(root, "world-overview"), `${runId}.jsonl`)).read();
     const gate = events.filter((e) => e.kind === "gate_answered");
     expect(gate).toHaveLength(1);
     expect(gate[0]?.payload).toMatchObject({ approved: true, by: "console:test", attempt: 1 });
 
-    // `afterFileApproved`'s commit, the cast sheets and the rewritten main cast.
-    expect(await gitLog(root)).toContain("canon: Canon/world-overview.md — approved");
-    expect(JSON.parse(await readFile(path.join(root, "showrunner.json"), "utf8")).audio.mainCast).toEqual(["narrator", "Vale", "Pim"]);
-    expect(await (await stat(path.join(root, "Canon/characters/Vale/vale.md"))).isFile()).toBe(true);
-
     // The worker the answer spawned closes the run, which is what `isApproved` reads.
     await waitFor(async () => (await view(app, "world-overview")).state === "approved");
     const v = await view(app, "world-overview");
     expect(v.run?.status).toBe("completed");
     expect(v.content).toContain("# Harbor Lights");
+
+    // **The commit is the setup worker's, not this server's** (the ledger's ruling of 2026-10-07,
+    // asserted in `setup-worker.test.ts`). The fixture worker writes no commit, so the repository
+    // still holds only the scaffold's own — which is what proves the server made none.
+    expect(await gitLog(root)).toEqual(["init: Harbor Lights — the house layout, the prompts, the scaffolds"]);
+    // Nor did the server write the cast sheets or rewrite the main cast: both are the approval's
+    // work and both belong to the worker that completes the run.
+    await expect(stat(path.join(root, "Canon/characters/Vale"))).rejects.toThrow();
+    expect(JSON.parse(await readFile(path.join(root, "showrunner.json"), "utf8")).audio.mainCast).not.toContain("Vale");
   });
 
   it("rejects a gate with notes, and the next attempt opens", async () => {
@@ -225,8 +230,9 @@ describe("the Bible view", () => {
     expect((await app.request(post(`bible/world-overview/runs/${runId}/gate`, { choice: "reject", expectedAttempt: 1 }))).status).toBe(400);
     const res = await app.request(post(`bible/world-overview/runs/${runId}/gate`, { choice: "reject", notes: "the tone is wrong", expectedAttempt: 1 }));
     expect(res.status).toBe(200);
-    expect((await res.json() as { commits: string[] }).commits).toEqual([]);
-    // No commit for a rejection, and the fix agent's revision reopens the gate at attempt 2.
+    expect((await res.json() as { runId: string }).runId).toBe(runId);
+    // The fix agent's revision reopens the gate at attempt 2, and a rejection is not an approval:
+    // no worker of a rejected run ever reaches `afterFileApproved`.
     expect(await gitLog(root)).not.toContain("canon: Canon/world-overview.md — approved");
     await waitFor(async () => (await view(app, "world-overview")).attempt === 2);
     expect((await view(app, "world-overview")).state).toBe("gate");
@@ -254,7 +260,10 @@ describe("the Bible view", () => {
     const text = await readFile(path.join(root, "Canon/world-overview.md"), "utf8");
     expect(text).toContain("## The primary cast");
     expect(text).not.toContain("<!-- Q:");
-    expect(await gitLog(root)).toContain("canon: Canon/world-overview.md — written-by-author");
+    // The notes the approval carries are what the row and the worker's commit subject both read.
+    const answered = (await new EventLog(path.join(bibleLogDir(root, "world-overview"), `${runId}.jsonl`)).read())
+      .filter((e) => e.kind === "gate_answered");
+    expect(answered[0]?.payload["notes"]).toBe("the author writes this file");
     await waitFor(async () => (await view(app, "world-overview")).state === "written-by-author");
   });
 
@@ -294,7 +303,8 @@ describe("the Bible view", () => {
     const res = await app.request(post(`bible/series-arc/runs/${runId}/gate`, { choice: "import", importPath: source, expectedAttempt: 1 }));
     expect(res.status).toBe(200);
     expect(await readFile(path.join(root, "Canon/series-arc.md"), "utf8")).toBe("# The arc\n\nA tide that never turns.\n");
-    expect(await gitLog(root)).toContain("canon: Canon/series-arc.md — imported");
+    const notes = String((await new EventLog(log).read()).filter((e) => e.kind === "gate_answered").at(-1)?.payload["notes"] ?? "");
+    expect(notes).toBe(`imported from ${await realpath(source)}`);
     await waitFor(async () => (await view(app, "series-arc")).state === "imported");
   });
 

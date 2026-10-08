@@ -5,9 +5,13 @@ import { fileURLToPath } from "node:url";
 import {
   BIBLE_FILES, EventLog, RUN_ID, SETUP_ID, bibleFilePipeline, bibleLogDir, createAgentExecutor,
   createGateMessageRenderer, loadShowConfig, run, scriptExecutor, sdkQuery,
-  type BibleFile, type Executors, type GateMessageRenderer, type QueryFn, type RunResult,
+  type BibleFile, type Event, type Executors, type GateMessageRenderer, type QueryFn, type RunResult,
+  type ShowConfig,
 } from "@showrunner/engine";
-import { buildVars, interviewPromptsDir } from "@showrunner/tools";
+import {
+  AUTHOR_NOTES, CAST_HEADING, CAST_KEY, IMPORT_NOTES_PREFIX, afterFileApproved, buildVars,
+  castSectionOf, interviewPromptsDir, parseCast, readAnswers, type InterviewResult,
+} from "@showrunner/tools";
 import { killOnSignal, lockFileFor, startHeartbeat, takeLock, type HeartbeatDeps } from "./lock.js";
 import type { WorkerOutcome } from "./main.js";
 
@@ -31,7 +35,18 @@ import type { WorkerOutcome } from "./main.js";
  *  before any run, in the browser, and are recorded in `answers.md`; the gate is answered the way
  *  an episode gate is — the engine's `answerGate` and then a fresh one of these (the comment at
  *  `tools/src/init/interview.ts` says so: "the same two steps the console takes"). A detached
- *  worker cannot call `io.ask`, and it is never asked to. */
+ *  worker cannot call `io.ask`, and it is never asked to.
+ *
+ *  **What it does do beyond running the pipeline: the approved file's commit.** A run that ends
+ *  `completed` is a bible file whose gate was approved, and this worker then calls
+ *  `afterFileApproved` — the character sheets, `audio.mainCast` and the per-file commit — before it
+ *  exits, inside the lock it already holds. That is the terminal `init`'s own order (`run()` writes
+ *  `run_finished`, *then* the commit is taken), and keeping it here is what makes the two paths
+ *  produce the same repository: the commit carries the log's last line, so no approved file leaves a
+ *  modified `.jsonl` behind. It also leaves the server with nothing to commit, which is the
+ *  direction spec §4.2 points — the server's writes are `answers.md`, the registry, a new show's
+ *  scaffold, and the zero-byte log it creates before spawning. (Plan H's Task 5 text had the server
+ *  make this commit in `answerBibleGate`; the ledger's ruling of 2026-10-07 moved it here.) */
 
 /** Which bible file to write, and as whom. `key` is one of the fifteen `BIBLE_FILES` keys and
  *  `runId` names the log this segment appends to; both are validated before either reaches a path.
@@ -116,6 +131,66 @@ export function setupLockPath(showRoot: string, key: string, runId: string, prod
   return lockFileFor(setupLogPath(showRoot, key, runId, productionDir));
 }
 
+/** One bible file's path relative to the show root, with the show's own canon directory in it.
+ *  `BIBLE_FILES` writes every row as `Canon/<name>.md`; a show that renamed its canon directory in
+ *  `showrunner.json` has it rewritten here, the way `bibleFilesFor` rewrites it for the
+ *  `bible-ready` guard.
+ *
+ *  Exported because the worker and the server both address the file and must agree: the worker
+ *  reads it for the cast of an approved `world-overview`, and the server serves it through the one
+ *  bible file route.
+ */
+export function bibleFileRelative(entry: BibleFile, canonDir?: string): string {
+  return entry.file.replace(/^Canon\//, `${canonDir ?? "Canon"}/`);
+}
+
+/** How an approved bible file came to be approved, read from the notes on the approving
+ *  `gate_answered` — `undefined` when the run holds no approval at all.
+ *
+ *  The notes are the only record of which of the gate's four answers was given: nothing for a plain
+ *  approval, `imported from <path>` for an import, and `the author writes this file` when the author
+ *  took the file over. Both readers need the same mapping and get it here: this worker words the
+ *  commit's subject from it (`canon: <file> — <outcome>`, as the terminal does), and the server's
+ *  Bible row reports it as the file's state. Two copies of this test would be a file that read
+ *  `imported` in the browser and `approved` in its own git history.
+ *
+ *  Read backwards, so a file rejected twice and then approved reports the approval. */
+export function approvalOutcome(events: Event[]): InterviewResult["outcome"] | undefined {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i];
+    if (e?.kind !== "gate_answered" || e.payload["approved"] !== true) continue;
+    const notes = String(e.payload["notes"] ?? "");
+    if (notes === AUTHOR_NOTES) return "written-by-author";
+    if (notes.startsWith(IMPORT_NOTES_PREFIX)) return "imported";
+    return "approved";
+  }
+  return undefined;
+}
+
+/** The cast an approved `world-overview` yields, for `afterFileApproved` to turn into character
+ *  sheets and `audio.mainCast` — and `undefined` for every other file, which has no cast to record.
+ *
+ *  The order of preference is `interviewFile`'s own: the author's typed answer under
+ *  `## The primary cast`, then that section of the file on disk when the answer is empty, which is
+ *  the imported file's case and the "I will write it myself" case. Parsed by the one grammar
+ *  `@showrunner/tools` declares, never a second one here: a parser that disagreed would either drop
+ *  a name `writeCastSheets` accepts or hand it one it throws on.
+ *
+ *  An empty list is still a list and is still passed, because that is what the terminal does for a
+ *  `world-overview` whose cast question went unanswered: it rewrites `audio.mainCast` to the
+ *  narrator alone rather than leaving the scaffold's placeholder in the config. */
+async function castForApproval(showRoot: string, entry: BibleFile, show: ShowConfig, productionDir: string): Promise<{ name: string; line: string }[] | undefined> {
+  if (entry.key !== CAST_KEY) return undefined;
+  const answers = await readAnswers(showRoot, entry, productionDir);
+  const typed = answers[CAST_HEADING];
+  if (typed !== undefined && typed.trim() !== "") {
+    const listed = parseCast(typed);
+    if (listed.cast.length > 0) return listed.cast;
+  }
+  const inFile = await castSectionOf(path.join(showRoot, bibleFileRelative(entry, show.canonDir)));
+  return inFile?.cast ?? [];
+}
+
 /** Every run id already under one bible file's log directory, ascending — `<runId>.jsonl` and
  *  nothing else, with the engine's run-id alphabet applied to the name. Lexical order is creation
  *  order, because `mintRunId` stamps the time into the id, so the last entry is the latest run.
@@ -151,13 +226,32 @@ export async function listSetupRuns(showRoot: string, key: string, productionDir
  *  field, and sharing its `WorkerOutcome` rather than declaring a second one — two entries that
  *  meant different things by "crashed" would be two vocabularies in one console. */
 export async function runSetupOnce(opts: SetupWorkerOptions, deps: SetupWorkerDeps = {}): Promise<WorkerOutcome> {
+  const segment = await runSegment(opts, deps);
+  if (segment.outcome.status !== "completed" || segment.commit === undefined) return segment.outcome;
+  const commit = await segment.commit();
+  if (commit.ok) return segment.outcome;
+  await segment.note(commit.error);
+  return { status: "crashed", detail: commit.error };
+}
+
+/** The locked part of one segment: take the lock, build, `run()` once, release. Split out so that
+ *  the approval's commit — which stages the directory the lock sits in — happens after the release;
+ *  `commitApproval` records why that matters. `note` is handed back so the caller can write the
+ *  commit's own failure into the same worker log. */
+async function runSegment(opts: SetupWorkerOptions, deps: SetupWorkerDeps): Promise<{
+  outcome: WorkerOutcome;
+  note: (line: string) => Promise<void>;
+  commit?: () => Promise<{ ok: true; commits: string[] } | { ok: false; error: string }>;
+}> {
   const now = deps.now ?? ((): Date => new Date());
   let entry: BibleFile;
   try {
     entry = bibleEntry(opts.key);
     checkSetupRunId(opts.runId);
   } catch (err) {
-    return { status: "crashed", detail: err instanceof Error ? err.message : String(err) };
+    // Refused before a path exists, so there is no worker log to write into: the refusal is the
+    // return value and the entry writes it to stderr.
+    return { outcome: { status: "crashed", detail: err instanceof Error ? err.message : String(err) }, note: async () => undefined };
   }
 
   const show = await loadShowConfig(opts.showRoot);
@@ -175,7 +269,7 @@ export async function runSetupOnce(opts: SetupWorkerOptions, deps: SetupWorkerDe
   if (!lock.ok) {
     const detail = `run ${opts.runId} is held by pid ${lock.holder}`;
     await note(detail);
-    return { status: "crashed", detail };
+    return { outcome: { status: "crashed", detail }, note };
   }
   const heartbeat = await startHeartbeat(lockFile, tookAt, deps);
 
@@ -211,14 +305,63 @@ export async function runSetupOnce(opts: SetupWorkerOptions, deps: SetupWorkerDe
     } catch (err) {
       const detail = `run() rejected: ${err instanceof Error ? err.stack ?? err.message : String(err)}`;
       await note(detail);
-      return { status: "crashed", detail };
+      return { outcome: { status: "crashed", detail }, note };
     }
     const detail = result.status === "waiting" ? `waiting at ${result.gate.stepId} (attempt ${result.gate.attempt})`
       : result.status === "failed" ? `failed at ${result.stepId}: ${result.error}` : "completed";
     await note(detail);
-    return { status: result.status, detail };
+    // The note goes in before the commit below, never after it: `commitPaths` names this run's log
+    // directory, so a line appended afterwards would leave `<runId>.worker.log` modified in the
+    // very commit the line is about. The sha is in git, which is where a sha belongs.
+    if (result.status !== "completed") return { outcome: { status: result.status, detail }, note };
+    await note(`committing the approval of ${bibleFileRelative(entry, show.canonDir)}`);
+    return {
+      outcome: { status: result.status, detail },
+      note,
+      commit: () => commitApproval(opts, entry, show, productionDir, logFile),
+    };
   } finally {
     await heartbeat.release();
+  }
+}
+
+/** The approval's own work, after the run that produced it has completed: the character sheets,
+ *  `audio.mainCast` and the per-file commit, through `afterFileApproved`.
+ *
+ *  **Taken after the lock is released, which is the one ordering subtlety here.** The commit stages
+ *  the run's whole log directory (`commitPaths`, `tools/src/init/init.ts`), and the lock lives in
+ *  that directory: committing while holding it would put `<runId>.lock` — a statement that some pid
+ *  is running this run — into the show's history, and the `finally` that removes the lock a
+ *  moment later would leave a tracked deletion staring at the operator forever. A lock is a process
+ *  fact and never history. Nothing is at risk in the gap: the run is finished, its log is closed,
+ *  and the only thing that spawns a worker for an existing run id is a gate answer, which
+ *  `answerGate` refuses for a run with no open gate.
+ *
+ *  Returns the shas, or the refusal as a string. **A refusal leaves the file approved**: the run log
+ *  says `completed` and nothing undoes that, so the Bible row still reads approved, imported or
+ *  written-by-author — what is missing is the commit. The operator sees the reason in
+ *  `<runId>.worker.log`, the worker exits 2 so a supervisor sees it too, and `git status` in the
+ *  show shows the file, its answers and its log uncommitted. The remedy is the one the terminal
+ *  already has for an interview interrupted between its approval and its commit:
+ *  `showrunner-init --resume` makes the catch-up commit for an approved file that was never
+ *  committed, or the operator commits the three paths by hand. */
+async function commitApproval(
+  opts: SetupWorkerOptions, entry: BibleFile, show: ShowConfig, productionDir: string, logFile: string,
+): Promise<{ ok: true; commits: string[] } | { ok: false; error: string }> {
+  try {
+    const outcome = approvalOutcome(await new EventLog(logFile).read()) ?? "approved";
+    const cast = await castForApproval(opts.showRoot, entry, show, productionDir);
+    const approved: InterviewResult = {
+      key: opts.key, outcome, runId: opts.runId,
+      // `applyApproval` unions this with `commitPaths`, which already names the file, the answers,
+      // this log directory and — for `world-overview` — `showrunner.json` and the characters
+      // directory. Naming the file here as well costs nothing and says what changed.
+      commits: [bibleFileRelative(entry, show.canonDir)],
+      ...(cast !== undefined ? { cast } : {}),
+    };
+    return { ok: true, commits: await afterFileApproved(opts.showRoot, entry, approved, { operator: opts.operator }) };
+  } catch (err) {
+    return { ok: false, error: `the run completed but the approval could not be committed: ${err instanceof Error ? err.message : String(err)}` };
   }
 }
 

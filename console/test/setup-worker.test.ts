@@ -1,14 +1,18 @@
 import { describe, it, expect } from "vitest";
 import path from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import {
-  BIBLE_FILES, EventLog, bibleLogDir, deriveRunState,
-  type AgentMessage, type AgentQueryOptions, type BibleFile, type Executors, type QueryFn,
+  BIBLE_FILES, EventLog, answerGate, bibleLogDir, deriveRunState,
+  type AgentMessage, type AgentQueryOptions, type BibleFile, type Executors, type Event, type QueryFn,
 } from "@showrunner/engine";
-import { writeAnswers } from "@showrunner/tools";
-import { bibleEntry, listSetupRuns, runSetupOnce, setupLockPath, setupLogPath } from "../worker/setup.js";
+import { initScaffold, writeAnswers, type InitIO } from "@showrunner/tools";
+import { approvalOutcome, bibleEntry, listSetupRuns, runSetupOnce, setupLockPath, setupLogPath } from "../worker/setup.js";
 import { ENGINE_ROOT } from "./helpers.js";
+
+const execFileAsync = promisify(execFile);
 
 /** The setup worker, driven through its exported seam the way `worker.test.ts` drives the episode
  *  worker's `runOnce`. Nothing here calls a model: either the executors are replaced outright, or
@@ -188,5 +192,104 @@ describe("the setup worker", () => {
     expect(BIBLE_FILES).toHaveLength(15);
     expect(BIBLE_FILES.filter((b) => b.mode !== "scaffold")).toHaveLength(13);
     expect(bibleEntry("readme").mode).toBe("default");
+  });
+});
+
+/** The approval's own work — the character sheets, `audio.mainCast` and the per-file commit — which
+ *  this worker takes after its run ends `completed`, as the terminal `init` does. The server makes
+ *  no commit at all (the ledger's ruling of 2026-10-07), so this is the only place it is asserted. */
+describe("the setup worker's commit", () => {
+  const io = (): InitIO => ({
+    say: () => undefined,
+    ask: async () => { throw new Error("initScaffold asks nothing"); },
+    choose: async () => { throw new Error("initScaffold asks nothing"); },
+  });
+
+  /** A scaffolded show: a real git repository with one commit, the canon templates, and
+   *  `world-overview`'s answers with a cast in them. */
+  async function scaffolded() {
+    const parent = await mkdtemp(path.join(tmpdir(), "setup-commit-"));
+    const scaffold = await initScaffold({ name: "Harbor Lights", path: path.join(parent, "HarborLights"), github: "none", engineRoot: ENGINE_ROOT }, io());
+    await writeAnswers(scaffold.root, bibleEntry("world-overview"), {
+      "The primary cast": "Vale — the keeper of the light\nPim — the boy who rows",
+    });
+    return scaffold.root;
+  }
+
+  const git = async (root: string, args: string[]): Promise<string> =>
+    (await execFileAsync("git", args, { cwd: root })).stdout.trim();
+
+  /** Runs the file to its gate, approves it the way the console's gate route does — the engine's
+   *  `answerGate` and nothing else — and runs the worker again, which is the segment that completes
+   *  the run and commits it. */
+  async function approveAndFinish(root: string, key: string): Promise<{ runId: string; outcome: Awaited<ReturnType<typeof runSetupOnce>> }> {
+    const f = fakes();
+    const first = await runSetupOnce(opts(root, { key }), { executors: f.executors, renderGateMessage });
+    expect(first.status).toBe("waiting");
+    const log = new EventLog(setupLogPath(root, key, RUN));
+    await answerGate(log, RUN, "gate", { approved: true, by: "console:test", expectedAttempt: 1 });
+    return { runId: RUN, outcome: await runSetupOnce(opts(root, { key }), { executors: f.executors, renderGateMessage }) };
+  }
+
+  it("commits the file, its answers and the whole log after the run completes", async () => {
+    const root = await scaffolded();
+    const { outcome } = await approveAndFinish(root, "world-overview");
+    expect(outcome).toEqual({ status: "completed", detail: "completed" });
+
+    // The terminal's own commit subject, with the outcome the approval's notes name.
+    expect((await git(root, ["log", "--format=%s"])).split("\n")).toContain("canon: Canon/world-overview.md — approved");
+
+    // **The log's last line is inside the commit**, which is the whole point of the commit being
+    // the worker's: `run()` writes `run_finished` and only then is the commit taken.
+    const rel = path.relative(root, setupLogPath(root, "world-overview", RUN));
+    expect(await git(root, ["show", `HEAD:${rel}`])).toContain("run_finished");
+
+    // And nothing the approval touched is left uncommitted.
+    const paths = ["Canon/world-overview.md", "Production/setup/world-overview", "showrunner.json", "Canon/characters"];
+    expect(await git(root, ["status", "--porcelain", "--", ...paths])).toBe("");
+
+    // The cast sheets and the main cast, from the answers' own cast question.
+    expect(JSON.parse(await readFile(path.join(root, "showrunner.json"), "utf8")).audio.mainCast).toEqual(["narrator", "Vale", "Pim"]);
+    expect(await (await stat(path.join(root, "Canon/characters/Vale/vale.md"))).isFile()).toBe(true);
+  });
+
+  it("words the commit from the approval's notes: imported, or written by the author", async () => {
+    const root = await scaffolded();
+    const f = fakes();
+    await runSetupOnce(opts(root, { key: "world-overview" }), { executors: f.executors, renderGateMessage });
+    const log = new EventLog(setupLogPath(root, "world-overview", RUN));
+    await answerGate(log, RUN, "gate", { approved: true, notes: "imported from /elsewhere/world.md", by: "console:test", expectedAttempt: 1 });
+    expect((await runSetupOnce(opts(root, { key: "world-overview" }), { executors: f.executors, renderGateMessage })).status).toBe("completed");
+    expect((await git(root, ["log", "--format=%s"])).split("\n")).toContain("canon: Canon/world-overview.md — imported");
+
+    // The mapping itself, over the three shapes of notes and a run with no approval in it.
+    const answered = (notes?: string): Event[] => [{
+      ts: "t", runId: "r", stepId: "gate", kind: "gate_answered",
+      payload: { approved: true, ...(notes !== undefined ? { notes } : {}) },
+    }];
+    expect(approvalOutcome(answered())).toBe("approved");
+    expect(approvalOutcome(answered("imported from /x.md"))).toBe("imported");
+    expect(approvalOutcome(answered("the author writes this file"))).toBe("written-by-author");
+    expect(approvalOutcome([])).toBeUndefined();
+    expect(approvalOutcome([{ ts: "t", runId: "r", stepId: "gate", kind: "gate_answered", payload: { approved: false, notes: "no" } }])).toBeUndefined();
+  });
+
+  it("leaves the file approved and exits crashed when the commit cannot be made", async () => {
+    // A show that is not a git repository: `afterFileApproved` spawns `git add` and it fails.
+    const { root } = await show();
+    const f = fakes();
+    await runSetupOnce(opts(root), { executors: f.executors, renderGateMessage });
+    await answerGate(new EventLog(setupLogPath(root, "world-overview", RUN)), RUN, "gate", { approved: true, by: "console:test", expectedAttempt: 1 });
+
+    const r = await runSetupOnce(opts(root), { executors: f.executors, renderGateMessage });
+    expect(r.status).toBe("crashed");
+    expect(r.detail).toMatch(/the run completed but the approval could not be committed/);
+    // The run is still completed in the log, so the Bible row still reads approved: what is
+    // missing is the commit, and the worker log says so.
+    const state = deriveRunState(await events(root, "world-overview", RUN));
+    expect(state.finished).toBe(true);
+    expect(state.status).toBe("completed");
+    expect(await readFile(setupLogPath(root, "world-overview", RUN).replace(/\.jsonl$/, ".worker.log"), "utf8"))
+      .toMatch(/could not be committed/);
   });
 });

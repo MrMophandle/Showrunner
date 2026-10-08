@@ -8,12 +8,14 @@ import {
   type BibleFile, type Event, type RunState,
 } from "@showrunner/engine";
 import {
-  AUTHOR_NOTES, CAST_HEADING, CAST_KEY, IMPORT_NOTES_PREFIX,
-  afterFileApproved, castSectionOf, initFinish, isApproved, parseCast, questionsFor, readAnswers,
+  AUTHOR_NOTES, IMPORT_NOTES_PREFIX, initFinish, isApproved, questionsFor, readAnswers,
   resolveImport, templateWithoutQuestions, templatesDir, writeAnswers,
-  type FinishResult, type GateChoice, type InitIO, type InterviewResult,
+  type FinishResult, type GateChoice, type InitIO,
 } from "@showrunner/tools";
-import { bibleEntry, bibleFileFor, checkSetupRunId, listSetupRuns, setupLockPath, setupLogPath } from "../worker/setup.js";
+import {
+  approvalOutcome, bibleEntry, bibleFileFor, bibleFileRelative, checkSetupRunId, listSetupRuns,
+  setupLockPath, setupLogPath,
+} from "../worker/setup.js";
 import { readLockFile } from "../worker/lock.js";
 import type { BibleFileView, BibleRow, BibleState } from "../shared/types.js";
 import { deriveRunStatus, type RunStore } from "./runs.js";
@@ -33,18 +35,20 @@ import type { ShowContext } from "./show.js";
  *
  *  **What the server writes here, and nothing else** (spec §4.2, the plan's Global Constraints):
  *  `Production/setup/<key>/answers.md`, as a one-shot write like `premise.md`; the zero-byte run
- *  log a start creates before it spawns; the file a gate answer *is* (the house template for "I
- *  will write it myself", the copy for an import, and a default file's template before its first
- *  gate); and the per-file commit `afterFileApproved` makes. Every event in a run log is written by
- *  the detached worker or by the engine's `answerGate`. No agent, no step and no `git` process runs
- *  inside the server's own run of the pipeline, because the server has none.
+ *  log a start creates before it spawns; and the file a gate answer *is* (the house template for
+ *  "I will write it myself", the copy for an import, and a default file's template before its first
+ *  gate). Every event in a run log is written by the detached worker or by the engine's
+ *  `answerGate`. **No `git` process runs in the server at all**: the approved file's commit is the
+ *  setup worker's, taken after its run completes, which is the terminal `init`'s own order (the
+ *  ledger's ruling of 2026-10-07; `worker/setup.ts` carries the argument). No agent and no step
+ *  runs here either, because the server owns no run.
  *
  *  **Why the pieces of the interview come from `@showrunner/tools` and are never re-implemented
- *  here.** `resolveImport` is the import fence, `parseCast` the cast grammar, `AUTHOR_NOTES` and
- *  `IMPORT_NOTES_PREFIX` the two strings a row's state is read back from, `writeAnswers` the
+ *  here.** `resolveImport` is the import fence, `AUTHOR_NOTES` and `IMPORT_NOTES_PREFIX` the two
+ *  strings a gate answer is recorded with and a row's state read back from, `writeAnswers` the
  *  answers file's shape. A second copy of any of them would be the copy that diverges, and the
- *  divergence would show up as a bible file approved in the browser that reads differently from
- *  one approved in the terminal — or, for the fence, as a symlink nobody refused. */
+ *  divergence would show up as a bible file approved in the browser that reads differently from one
+ *  approved in the terminal — or, for the fence, as a symlink nobody refused. */
 
 /** The seams the Bible routes are driven with. Production passes none: `setupWorkerCommand`
  *  defaults to this console's own compiled setup worker. A test points it at a fake that writes a
@@ -63,12 +67,10 @@ function defaultSetupWorkerCommand(): string[] {
   return [process.execPath, path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "worker", "setup.js")];
 }
 
-/** The bible file's path, relative to the show root, with the show's own canon directory in it.
- *  `BIBLE_FILES` writes every row as `Canon/<name>.md`; a show that renamed its canon directory in
- *  `showrunner.json` has it rewritten here, the way `bibleFilesFor` rewrites it for the
- *  `bible-ready` guard. */
+/** The bible file's path relative to the show root, through the one function the worker addresses
+ *  it with, so the file the page serves and the file the commit names cannot differ. */
 function relativeFile(ctx: ShowContext, entry: BibleFile): string {
-  return entry.file.replace(/^Canon\//, `${ctx.show.canonDir ?? "Canon"}/`);
+  return bibleFileRelative(entry, ctx.show.canonDir);
 }
 
 /** **The one fence this task adds**: the absolute path of one bible file, and no other path, ever.
@@ -131,17 +133,6 @@ async function latestRun(ctx: ShowContext, entry: BibleFile): Promise<{ runId: s
   };
 }
 
-/** The approving `gate_answered` of a finished run, if it was approved — the event whose notes say
- *  *how* the file came to be approved. Read backwards, so a file rejected twice and then approved
- *  reports the approval and not one of the rejections. */
-function approval(events: Event[]): Event | undefined {
-  for (let i = events.length - 1; i >= 0; i--) {
-    const e = events[i];
-    if (e?.kind === "gate_answered" && e.payload["approved"] === true) return e;
-  }
-  return undefined;
-}
-
 /** Whether a failed run failed because its gate was rejected its maximum ten times, rather than
  *  because a step broke. The engine writes `rejected <n> times` as the gate step's error
  *  (`engine/src/runner.ts`), which is the same string `init`'s `GATE_EXHAUSTED` matches to call a
@@ -177,12 +168,11 @@ function bibleStateOf(
   if (latest === undefined) return answered > 0 ? "answering" : "pending";
   const status = deriveRunStatus(latest.state, latest.lock, latest.events.length);
   switch (status) {
-    case "completed": {
-      const notes = String(approval(latest.events)?.payload["notes"] ?? "");
-      if (notes === AUTHOR_NOTES) return "written-by-author";
-      if (notes.startsWith(IMPORT_NOTES_PREFIX)) return "imported";
-      return "approved";
-    }
+    // The three approved states are the gate's own three outcomes, told apart by the notes on the
+    // approving `gate_answered` — through `approvalOutcome`, the same function the setup worker
+    // words its commit's subject from, so a file's row and its git history cannot disagree about
+    // how it came to be approved. The names are identical by construction.
+    case "completed": return approvalOutcome(latest.events) ?? "approved";
     case "waiting": return "gate";
     case "running": return "running";
     case "failed": return exhausted(latest.events) ? "stalled" : "failed";
@@ -403,30 +393,6 @@ export async function startBibleRun(ctx: ShowContext, key: string, deps: BibleDe
   }
 }
 
-/** The cast one approved `world-overview` yields, for `afterFileApproved` to turn into character
- *  sheets and `audio.mainCast`.
- *
- *  The order of preference is `interviewFile`'s own: the author's typed answer under
- *  `## The primary cast`, then the file on disk when that answer is empty — which is the imported
- *  file's case and the "I will write it myself" case, neither of which has a typed answer. Parsed
- *  by the one grammar `tools` declares, never by a second one here: a parser that disagreed would
- *  either drop a name `writeCastSheets` accepts or hand it one it throws on.
- *
- *  An empty list is still a list, and is still passed: that is what the terminal does for a
- *  `world-overview` whose cast question went unanswered, and it is what rewrites `audio.mainCast`
- *  to the narrator alone rather than leaving the scaffold's placeholder behind. */
-async function castFor(ctx: ShowContext, entry: BibleFile): Promise<{ name: string; line: string }[] | undefined> {
-  if (entry.key !== CAST_KEY) return undefined;
-  const answers = await readAnswers(ctx.showRoot, entry, ctx.productionDir);
-  const typed = answers[CAST_HEADING];
-  if (typed !== undefined && typed.trim() !== "") {
-    const listed = parseCast(typed);
-    if (listed.cast.length > 0) return listed.cast;
-  }
-  const inFile = await castSectionOf(bibleFilePath(ctx, entry.key));
-  return inFile?.cast ?? [];
-}
-
 /** What one gate answer carries. `choice` is one of `GATE_CHOICES`' four keys, so the browser's
  *  buttons and the terminal's menu offer the same four and mean the same thing by them; `notes`
  *  belongs to a rejection, `importPath` to an import, and `expectedAttempt` is the attempt the
@@ -441,27 +407,29 @@ export interface GateAnswer {
 
 /** Answers one bible file's gate — the four answers the terminal offers, in the browser.
  *
- *  **The order, which is load-bearing.** For `approve`: `answerGate`, then
- *  `afterFileApproved`, then the worker. For `myself` and `import`: the file is written **first**,
- *  then `answerGate`, then `afterFileApproved`, then the worker. Each step is where it is for a
- *  reason:
+ *  **The order, which is load-bearing.** For `approve` and `reject`: `answerGate`, then the
+ *  worker. For `myself` and `import`: the file is written **first**, then `answerGate` as an
+ *  approval, then the worker. Each step is where it is for a reason:
  *
  *  - *the file before the answer*, because an approval appended to the log and a copy that then
  *    failed would record an approval for a file nobody ever put there. This is `resolveImport`'s
  *    own argument — every check happens before the gate is answered — carried one step further.
- *  - *the answer before the commit*, because the commit is the record of a decision and the log is
- *    where the decision lives.
- *  - *the commit before the worker, and no waiting on it.* The gate is the pipeline's last step and
- *    nothing writes a file after an approval, so there is nothing for the commit to wait for. A
- *    server that waited for the worker it had just spawned would be supervising a run, which spec
- *    §4.2 forbids — the console must be killable at any moment without a run noticing. The worker
- *    is spawned last so that a spawn that fails leaves the decision and the commit in place, and
- *    the operator's next move is to start the file again rather than to decide again.
+ *  - *the worker last, and never waited on.* It must come after the append: a worker spawned first
+ *    would read a log in which nothing had changed, report `waiting` at the same gate, release its
+ *    lock and exit, leaving the answer in a log with no process behind it. And it is not awaited,
+ *    because a server that waited for a worker's exit would be supervising a run, which spec §4.2
+ *    forbids — this console must be killable at any moment without a run noticing.
  *  - *the worker at all*, because an approval is not a finished run: `run()` must read the answer
  *    out of the log, complete the gate and write `run_finished`, and `isApproved` — which is what
  *    makes the row read `approved` and what `initFinish` counts — asks for a **finished** log. This
  *    is exactly how an episode gate is answered (`answerGate`, then a worker), and
  *    `interviewFile`'s own comment says so.
+ *
+ *  **No commit is made here.** Plan H's Task 5 text put `afterFileApproved` in this function; the
+ *  ledger's ruling of 2026-10-07 moved it into the setup worker, which calls it after its run ends
+ *  `completed` — the terminal `init`'s own order, so the commit carries the log's closing
+ *  `run_finished` line and no approved file is left with a modified `.jsonl` beside it. It also
+ *  leaves no `git` process running inside this server.
  *
  *  `expectedAttempt` is refused by the engine when it names an attempt the gate is not open at,
  *  which is the whole protection against a tab left open across a rejection: the operator would
@@ -472,7 +440,7 @@ export interface GateAnswer {
  *  the terminal's gate, as a 400. */
 export async function answerBibleGate(
   ctx: ShowContext, key: string, runId: string, answer: GateAnswer, deps: BibleDeps = {},
-): Promise<{ runId: string; pid: number; commits: string[] }> {
+): Promise<{ runId: string; pid: number }> {
   const entry = bibleEntry(key);
   checkSetupRunId(runId);
   const logFile = setupLogPath(ctx.showRoot, key, runId, ctx.productionDir);
@@ -483,26 +451,20 @@ export async function answerBibleGate(
   const destination = bibleFilePath(ctx, key);
   const template = async (): Promise<string> => templateWithoutQuestions(await readFile(canonTemplatePath(key), "utf8"));
 
-  let outcome: InterviewResult["outcome"];
   switch (answer.choice) {
     case "approve":
       await answerGate(log, runId, "gate", { approved: true, ...stamp });
-      outcome = "approved";
       break;
     case "reject": {
       const notes = answer.notes ?? "";
       if (notes.trim() === "") throw new Error("a rejection needs notes: the fix agent revises the file against them");
       await answerGate(log, runId, "gate", { approved: false, notes, ...stamp });
-      // No commit: the file is not approved, and the next worker runs the fix agent and reopens
-      // the gate at the next attempt.
-      const rejected = await spawnSetupWorker(ctx, key, runId, deps);
-      return { runId, pid: rejected.pid, commits: [] };
+      break;
     }
     case "myself":
       await mkdir(path.dirname(destination), { recursive: true });
       await writeFile(destination, await template(), "utf8");
       await answerGate(log, runId, "gate", { approved: true, notes: AUTHOR_NOTES, ...stamp });
-      outcome = "written-by-author";
       break;
     case "import": {
       // The fence is `@showrunner/tools`', not a copy of it: a symlink, a path under the show's
@@ -512,25 +474,14 @@ export async function answerBibleGate(
       await mkdir(path.dirname(destination), { recursive: true });
       await copyFile(source, destination);
       await answerGate(log, runId, "gate", { approved: true, notes: `${IMPORT_NOTES_PREFIX}${source}`, ...stamp });
-      outcome = "imported";
       break;
     }
   }
-
-  const cast = await castFor(ctx, entry);
-  const result: InterviewResult = {
-    key,
-    outcome,
-    runId,
-    // `applyApproval` unions this with `commitPaths`, which already names the file, the answers,
-    // the log directory and — for `world-overview` — `showrunner.json` and the characters
-    // directory, so the console names only the file it knows it changed.
-    commits: [relativeFile(ctx, entry)],
-    ...(cast !== undefined ? { cast } : {}),
-  };
-  const commits = await afterFileApproved(ctx.showRoot, entry, result, { operator: ctx.operator });
+  // The same two steps for all four answers: the engine's append, then a worker. What the worker
+  // does next is the log's business — the fix agent and the next attempt for a rejection, the
+  // gate completed, `run_finished` and the commit for the three approvals.
   const { pid } = await spawnSetupWorker(ctx, key, runId, deps);
-  return { runId, pid, commits };
+  return { runId, pid };
 }
 
 /** Every gated bible file whose interview has not been approved, in interview order — read out of
