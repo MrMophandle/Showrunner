@@ -223,6 +223,51 @@ describe("interviewFile: import this file", () => {
     expect(events.find((e) => e.kind === "gate_answered")?.payload).toMatchObject({ approved: true, notes: `imported from ${await realpath(source)}` });
   });
 
+  it("records the source path on the approval of an import taken before the questions, so the log reads `imported from`", async () => {
+    // The path Ryan's live instance took for thirteen of its fifteen files: `init` found a
+    // candidate in the imported show, the author accepted it before a single question was asked,
+    // and then simply approved the gate. The approval carried no notes, so every reader that
+    // derives a file's history from its log — `approvalOutcome` in the console, the Bible row's
+    // state, the commit subject's three words — read `approved`: an agent had apparently written
+    // the file from answers nobody gave. The notes below are what the gate's own `import` branch
+    // writes, so one import taken before the questions and one taken at the gate leave identical
+    // logs.
+    const root = await tempRoot();
+    const outside = await mkdtemp(path.join(tmpdir(), "author-"));
+    const source = path.join(outside, "my-style-guide.md");
+    await writeFile(source, "# Mine\n\n## Narration\nFirst person, past tense.\n", "utf8");
+    // No scripted answer at all: the pre-question choice takes the import, which skips the
+    // questions and the writer agent, and the gate's choice is the approval.
+    const io = scriptedIO([], ["import", "approve"], undefined);
+    const d = await deps(root);
+    const result = await interviewFile(root, styleGuide, io.io, d, source);
+
+    expect(result.outcome).toBe("imported");
+    // The writer agent never ran: an imported file's pipeline is the gate alone.
+    expect(d.ran).toEqual([]);
+    expect(await readFile(path.join(root, "Canon/style-guide.md"))).toEqual(await readFile(source));
+    const events = await logEvents(root, styleGuide, result.runId);
+    expect(events.find((e) => e.kind === "gate_answered")?.payload).toMatchObject({
+      approved: true, notes: `imported from ${await realpath(source)}`,
+    });
+  });
+
+  it("leaves an ordinary approval's notes off the log entirely, rather than recording an empty string", async () => {
+    // The other side of the line above: a file the writer drafted from the author's own answers is
+    // approved with no notes at all, because the three approved states are told apart by this
+    // field and a present-but-empty `notes` would be a fourth state nobody reads.
+    const root = await tempRoot();
+    const template = await readFile(path.join(templatesDir(), "canon", "style-guide.md"), "utf8");
+    const questions = template.match(/<!--[ \t]*Q:/g)?.length ?? 0;
+    const io = scriptedIO(Array.from({ length: questions }, () => "a"), ["approve"]);
+    const result = await interviewFile(root, styleGuide, io.io, await deps(root));
+
+    expect(result.outcome).toBe("approved");
+    const answered = (await logEvents(root, styleGuide, result.runId)).find((e) => e.kind === "gate_answered");
+    expect(answered?.payload["approved"]).toBe(true);
+    expect("notes" in (answered?.payload ?? {})).toBe(false);
+  });
+
   it("refuses a path under the show's production directory, the file itself, a sibling bible file, and a directory — and asks again", async () => {
     const root = await tempRoot();
     const outside = await mkdtemp(path.join(tmpdir(), "author-"));

@@ -233,8 +233,20 @@ function inside(child: string, parent: string): boolean {
  *  else, with the run-id alphabet applied to the name exactly as `listRuns` applies it. This is
  *  `runLogPaths` for the reserved setup id, which `listRuns` cannot serve: it validates the
  *  episode id, and the setup id is deliberately not one. Lexical order is creation order, because
- *  `mintRunId` stamps the time into the id. Empty for a file that has never been interviewed. */
-async function runLogsIn(dir: string): Promise<string[]> {
+ *  `mintRunId` stamps the time into the id. Empty for a file that has never been interviewed.
+ *
+ *  The filter is two rules and both matter: a name must end in `.jsonl` **and** its stem must be a
+ *  run id. The second is what excludes `<runId>.troubleshooting.jsonl`, whose would-be stem carries
+ *  a dot that `RUN_ID` refuses — so a troubleshooting transcript is never read back as a run.
+ *
+ *  Exported because the console's setup worker lists the same directory for the same purpose (its
+ *  prior logs, the server's "is the latest run finished" refusal, and the store's tail of a
+ *  directory it has just started watching) and had written the algorithm a second time. Two filters
+ *  over one directory is the pair that diverges, and the divergence would be a run the terminal
+ *  reads as prior and the console does not — or a troubleshooting file one of them parses as a log.
+ *  A directory that cannot be read for any reason other than its absence is thrown rather than
+ *  swallowed: the caller that wants "no runs" for an unreadable directory says so itself. */
+export async function runLogsIn(dir: string): Promise<string[]> {
   let names: string[];
   try {
     names = await readdir(dir);
@@ -724,7 +736,21 @@ export async function interviewFile(showRoot: string, entry: BibleFile, io: Init
       const stamp = { by: deps.operator, expectedAttempt: gate.attempt };
       switch (choice) {
         case "approve":
-          await answerGate(log, runId, GATE_ID, { approved: true, ...stamp });
+          // **An untouched import's approval records where the file came from.** The outcome below
+          // words the commit's subject, but the commit is `init`'s and the log is the show's
+          // permanent record: without these notes the only trace of the import was the subject
+          // line, and every reader that derives a file's history from its log — `approvalOutcome`
+          // in the console, which reads this same `notes` back to tell `imported` from `approved` —
+          // saw a file an agent had apparently written from answers nobody gave. The notes are the
+          // same string the `import` branch below writes, so one import answered before the
+          // questions and one answered at the gate leave identical logs. Omitted rather than
+          // assigned `undefined` for the ordinary approval, because `exactOptionalPropertyTypes`
+          // makes the two different things.
+          await answerGate(log, runId, GATE_ID, {
+            approved: true,
+            ...(untouchedImport && imported !== undefined ? { notes: `${IMPORT_NOTES_PREFIX}${imported}` } : {}),
+            ...stamp,
+          });
           outcome = untouchedImport ? "imported" : "approved";
           break answering;
         case "reject": {

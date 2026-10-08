@@ -123,14 +123,19 @@ function dirKey(value: unknown, fallback: string): string {
  *  symlink to the NAS, and git matches a symlink by the bare name and a real directory by the
  *  trailing slash.
  *
- *  **`*.worker.out` and `*.lock` are runtime state beside a run log, and a show that tracked them
- *  could not have a clean working tree.** The console's server creates `<runId>.worker.out` empty
- *  before it spawns a worker, and the kernel appends that worker's output — its closing line
- *  included — *after* the approving commit has been taken, so every approved bible file would
- *  otherwise leave a modified file behind that the next commit would sweep in. The lock is a
- *  statement about a live process (`console/worker/lock.ts`) and belongs in no history at all: it
- *  is created with `O_EXCL` and removed in a `finally`, so a tracked lock would be a tracked
- *  deletion on every run. Both patterns match at any depth rather than at one fixed depth, because
+ *  **`*.worker.out`, `*.lock` and `*.lock.tmp` are runtime state beside a run log, and a show that
+ *  tracked them could not have a clean working tree.** The console's server creates
+ *  `<runId>.worker.out` empty before it spawns a worker, and the kernel appends that worker's
+ *  output — its closing line included — *after* the approving commit has been taken, so every
+ *  approved bible file would otherwise leave a modified file behind that the next commit would
+ *  sweep in. The lock is a statement about a live process (`console/worker/lock.ts`) and belongs in
+ *  no history at all: it is created with `O_EXCL` and removed in a `finally`, so a tracked lock
+ *  would be a tracked deletion on every run. `<runId>.lock.tmp` is the lock's own write target —
+ *  each heartbeat writes it and renames it over the lock, so a reader never sees the empty file a
+ *  truncating rewrite leaves behind — and it is ignored as its own row because `release()` removes
+ *  it but `killOnSignal` does not: a worker that takes SIGTERM exits 143 without the `finally`, and
+ *  the tmp file it leaves behind would otherwise be an untracked file in the show. Every pattern
+ *  matches at any depth rather than at one fixed depth, because
  *  the two run-log trees are not at the same depth — an episode's is
  *  `<productionDir>/<id>/runs/` and a bible file's is `<productionDir>/setup/<key>/runs/`, one
  *  segment deeper. The ignore is what makes them stay out: `commitPaths`
@@ -148,6 +153,7 @@ export function gitignoreFor(config: ShowConfig): string {
       `${production}/*/images/.*.bak`,
       `${production}/**/*.worker.out`,
       `${production}/**/*.lock`,
+      `${production}/**/*.lock.tmp`,
       `${candidates}/`,
       "Finalized",
       "Finalized/",

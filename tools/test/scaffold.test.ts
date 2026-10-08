@@ -109,6 +109,7 @@ describe("gitignoreFor", () => {
       "Out/*/images/.*.bak",
       "Out/**/*.worker.out",
       "Out/**/*.lock",
+      "Out/**/*.lock.tmp",
       "Canon/_cands/",
       "Finalized",
       "Finalized/",
@@ -125,12 +126,15 @@ describe("gitignoreFor", () => {
     expect(lines).toContain("Canon/_candidates/");
     expect(lines).toContain("Production/**/*.worker.out");
     expect(lines).toContain("Production/**/*.lock");
+    expect(lines).toContain("Production/**/*.lock.tmp");
   });
 
-  it("ignores a worker's output and a run's lock at both run-log depths, and tracks the record beside them", async () => {
-    // The two files the console leaves beside a run log that must never be committed: the server
+  it("ignores a worker's output, a run's lock and the lock's tmp file at both run-log depths, and tracks the record beside them", async () => {
+    // The three files the console leaves beside a run log that must never be committed: the server
     // creates `<runId>.worker.out` empty before a spawn and the kernel appends to it after the
-    // approving commit, and `<runId>.lock` is a statement about a live pid. The depths differ —
+    // approving commit, `<runId>.lock` is a statement about a live pid, and `<runId>.lock.tmp` is
+    // the heartbeat's write target, which `release()` removes but a worker killed by a signal
+    // (exit 143, no `finally`) leaves behind. The depths differ —
     // an episode's runs live under `<productionDir>/<id>/runs/` and a bible file's under
     // `<productionDir>/setup/<key>/runs/` — which is why the patterns carry `**`.
     //
@@ -156,6 +160,8 @@ describe("gitignoreFor", () => {
       expect(await ignored("Production/s02e01/runs/20261007T120000Z-ab12.lock")).toBe(true);
       expect(await ignored("Production/setup/world-overview/runs/20261007T120000Z-ab12.worker.out")).toBe(true);
       expect(await ignored("Production/setup/world-overview/runs/20261007T120000Z-ab12.lock")).toBe(true);
+      expect(await ignored("Production/s02e01/runs/20261007T120000Z-ab12.lock.tmp")).toBe(true);
+      expect(await ignored("Production/setup/world-overview/runs/20261007T120000Z-ab12.lock.tmp")).toBe(true);
       // The run log, the worker's own log line and the author's answers are the record, and stay tracked.
       expect(await ignored("Production/s02e01/runs/20261007T120000Z-ab12.jsonl")).toBe(false);
       expect(await ignored("Production/setup/world-overview/runs/20261007T120000Z-ab12.worker.log")).toBe(false);

@@ -7,15 +7,16 @@
  *  cannot call `runInit`: a browser form submission cannot hold a thirteen-file interview open for
  *  the hour it takes, and spec §4.2's rule is that the server owns no run. So the console calls the
  *  phases one request at a time — `initScaffold` to make the show, `questionsFor`/`readAnswers`/
- *  `writeAnswers` for each file's questions, `buildVars` and `interviewPromptsDir` inside the
- *  detached setup worker that runs the writer, `afterFileApproved` once a gate is answered, and
- *  `initFinish` at the end — while `runInit` composes exactly the same phases for the terminal.
+ *  `writeAnswers` for each file's questions, `buildVars`, `interviewPromptsDir` and `runLogsIn`
+ *  inside the detached setup worker that runs the writer, `afterFileApproved` once a gate is
+ *  answered, and `initFinish` at the end — while `runInit` composes exactly the same phases for the
+ *  terminal.
  *
  *  Every symbol is re-exported from the module that declares it, and carries its reasoning there. */
 
 export { initScaffold, afterFileApproved, initFinish, runInit, slugFrom } from "./init/init.js";
 export type { InitOptions, InitDeps, InitReport, ScaffoldResult, FinishResult } from "./init/init.js";
-export { interviewFile, isApproved, questionsFor, readAnswers, writeAnswers, buildVars, latestSetupLog, interviewPromptsDir, GATE_CHOICES } from "./init/interview.js";
+export { interviewFile, isApproved, questionsFor, readAnswers, writeAnswers, buildVars, latestSetupLog, interviewPromptsDir, runLogsIn, GATE_CHOICES } from "./init/interview.js";
 export type { InitIO, InterviewResult, GateChoice, Question } from "./init/interview.js";
 // The import fence, the cast parser and the three strings a gate answer is recorded with, so that
 // the browser's four answers and the terminal's are one implementation rather than two.
