@@ -237,6 +237,11 @@ select { min-height: var(--tap); }
 
 .show-row-readonly { border-left-color: var(--border); }
 
+/* A registry entry whose repository would not load. The danger edge rather than the dim one a
+   read-only show gets: a read-only show is a deliberate state of the machine, while this is
+   something the operator has to go and fix. */
+.show-row-failed { border-left-color: var(--danger); }
+
 @media (max-width: 760px) {
   .show-row { grid-template-columns: 1fr; }
 }

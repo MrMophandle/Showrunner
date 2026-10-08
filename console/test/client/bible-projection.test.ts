@@ -3,7 +3,7 @@ import { GATE_CHOICES, slugFrom } from "@showrunner/tools";
 import type { BibleRow, BibleState } from "../../shared/types.js";
 import {
   BIBLE_APPROVED_STATES, GATE_BUTTONS, answersDirty, bibleChipClass, bibleFinishable,
-  biblePanelFor, showSlugFrom,
+  biblePanelFor, setupNoticeIsNews, showSlugFrom, showsPageIsEmpty,
 } from "../../src/projections.js";
 
 /** The Bible page's pure projections: which panel a file gets, whether its form holds anything
@@ -140,5 +140,38 @@ describe("the two copies out of @showrunner/tools", () => {
     expect(GATE_BUTTONS.map((c) => c.key)).toEqual(GATE_CHOICES.map((c) => c.key));
     expect(GATE_BUTTONS.map((c) => c.label)).toEqual(GATE_CHOICES.map((c) => c.label));
     expect(GATE_BUTTONS).toHaveLength(4);
+  });
+});
+
+describe("setupNoticeIsNews, the gate banner's one condition", () => {
+  it("is true only when the notice carries bytes the view on screen has not read", () => {
+    // The page does not refetch under an open gate — the attempt the author is reading is the
+    // attempt their answer carries back — so this decides whether a banner is raised instead.
+    expect(setupNoticeIsNews(1200, 1013)).toBe(true);
+    // A lock appearing or disappearing publishes the offset the store already holds: a run starting
+    // or stopping, with nothing new in the log. The banner used to fire on those, telling the
+    // author the file had written to its log when it had not — and a banner that cries wolf is one
+    // the author learns to ignore.
+    expect(setupNoticeIsNews(1013, 1013)).toBe(false);
+    // A notice behind the view is a message that overtook its own fetch; there is nothing to read.
+    expect(setupNoticeIsNews(900, 1013)).toBe(false);
+    // A view with no run at all: any notice is news.
+    expect(setupNoticeIsNews(1, undefined)).toBe(true);
+    expect(setupNoticeIsNews(0, undefined)).toBe(false);
+  });
+});
+
+describe("showsPageIsEmpty, the fresh-machine line's condition", () => {
+  it("is false for a console whose every registry entry was refused", () => {
+    expect(showsPageIsEmpty([], [])).toBe(true);
+    // The measured failure: three registry entries, none of them loadable, and the page said "no
+    // shows are registered yet — start one above". The remedy that suggests is registering every
+    // show again, which is the wrong one.
+    expect(showsPageIsEmpty([], [{ key: "gone" }])).toBe(false);
+    expect(showsPageIsEmpty([{ key: "live" }], [])).toBe(false);
+    expect(showsPageIsEmpty([{ key: "live" }], [{ key: "gone" }])).toBe(false);
+    // Not answered yet is not the empty machine either: the line must not flash up for the length
+    // of a fetch.
+    expect(showsPageIsEmpty(null, [])).toBe(false);
   });
 });

@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
-import type { EpisodeRow, FailedShow, ShowInfo, SseMessage } from "../shared/types.js";
+import type { EpisodeRow, FailedShow, ShowInfo, ShowsList, SseMessage } from "../shared/types.js";
 
 /** The client's one way of talking to the console's server: a fetch hook, a POST, one SSE channel
  *  shared by every page, and the context the app's chrome (the show's name and the Board's rows)
@@ -463,14 +463,20 @@ export function useNow(everyMs = 1_000): number {
 
 // ── the chrome ────────────────────────────────────────────────────────────────────────────────
 
-/** Every registered show, as the Shows page lists them: `GET /api/shows`.
+/** Every registered show, as the Shows page lists them, **and every registry entry this console
+ *  could not load**: `GET /api/shows`.
  *
  *  This is the Shows page's hook and no other page's. A page that is looking at one show reads
  *  that show's own `ShowInfo` out of `ConsoleContext` — fetched once by the `/shows/:show` layout
  *  from `GET /api/shows/<key>`, which carries the same nine fields — rather than fetching every
- *  show on the machine to answer a question about one of them. */
-export function useShows(): ApiState<ShowInfo[]> {
-  return useApi<ShowInfo[]>("/api/shows");
+ *  show on the machine to answer a question about one of them.
+ *
+ *  `failed` is beside `shows` and not inside it, because an entry whose `showrunner.json` would not
+ *  read has no `showName` to list it under (`shared/types.ts`'s `FailedShow` carries the argument).
+ *  Both lists matter to this page: a key in either one is a key the server will refuse to register
+ *  again, and a console with three entries and two shows has to say so rather than drawing two. */
+export function useShows(): ApiState<ShowsList> {
+  return useApi<ShowsList>("/api/shows");
 }
 
 /** What every page beneath `/shows/:show` can read without fetching it again: the show it is

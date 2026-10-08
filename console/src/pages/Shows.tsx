@@ -1,5 +1,6 @@
 import { Link } from "react-router-dom";
 import { bibleHref, showHref, useSSE, useShows } from "../api.js";
+import { showsPageIsEmpty } from "../projections.js";
 
 /** The Shows page: every show this console holds, and the way to start another.
  *
@@ -16,10 +17,19 @@ import { bibleHref, showHref, useSSE, useShows } from "../api.js";
  *  **A read-only show is marked here rather than only inside it**, because the mark is the answer
  *  to "why is there no Launch button in there": the server refuses every POST to a read-only show,
  *  which is how the retired first repository is listed beside the live instance without one launch
- *  writing over the instance's finals on the NAS root they share (ruling H-03). */
+ *  writing over the instance's finals on the NAS root they share (ruling H-03).
+ *
+ *  **An entry the console could not load is a row here too**, below the shows, with its reason and
+ *  no link. It is not a show — its own routes answer 404 — but a console that drew one fewer show
+ *  and said nothing was the failure that mattered: the operator who hits it is the one who edits a
+ *  `showrunner.json`, restarts the console detached with its output in a log file, and then looks
+ *  at the browser rather than at the log. On a machine where every entry failed, this page used to
+ *  read exactly like a machine with no shows on it, and the remedy that suggests — registering
+ *  every show again — is the wrong one. */
 export function Shows() {
   const shows = useShows();
-  const rows = shows.data;
+  const rows = shows.data?.shows ?? null;
+  const failed = shows.data?.failed ?? [];
 
   // The page subscribes to the one channel for two reasons, and the second is the smaller one.
   // The first: `hello` carries the server's own list of shows, sent on every connection, so a
@@ -34,8 +44,12 @@ export function Shows() {
     if (message.type !== "hello") return;
     const held = shows.data;
     if (held === null) return;
-    const announced = message.shows.map((s) => s.key).join("\n");
-    if (announced !== held.map((s) => s.key).join("\n")) shows.refetch();
+    // Both lists are in the comparison: a console restarted against a registry whose third entry
+    // has stopped loading announces the same two shows and a new `failed` row, and that is a change
+    // this page draws.
+    const signature = (keys: { key: string }[]) => keys.map((s) => s.key).join("\n");
+    const announced = `${signature(message.shows)}\u0000${signature(message.failed)}`;
+    if (announced !== `${signature(held.shows)}\u0000${signature(held.failed)}`) shows.refetch();
   });
 
   return (
@@ -50,7 +64,7 @@ export function Shows() {
       {/* The state a console on a fresh machine comes up in: the registry does not exist yet, the
           server says so on its startup line, and the New-show surface that writes the first entry
           is served by this same server. */}
-      {rows !== null && rows.length === 0 && (
+      {showsPageIsEmpty(rows, failed) && (
         <p className="quiet">no shows are registered yet — start one above, or run the console with <span className="mono">--show &lt;root&gt;</span></p>
       )}
 
@@ -77,12 +91,38 @@ export function Shows() {
             </div>
           </li>
         ))}
+        {/* The entries the console holds and could not load, after the shows and in the same list.
+            No `Link` on either side of the row: every route under the key answers 404, so a link
+            would take the operator to the server's "no such show" instead of to the show. The
+            reason is the loader's own words, because that is the sentence that names the file and
+            says what is wrong with it. */}
+        {failed.map((entry) => (
+          <li className="show-row show-row-failed" key={`failed:${entry.key}`}>
+            <div>
+              <div className="row-title">
+                <span className="mono row-id">{entry.key}</span> — could not be loaded: {entry.error}
+              </div>
+              <div className="quiet mono">{entry.root}</div>
+            </div>
+            <div><span className="chip chip-failed">not loaded</span></div>
+            <div className="row-actions" />
+          </li>
+        ))}
       </ul>
 
       {rows !== null && rows.length > 0 && (
         <p className="legend">
           <span className="chip chip-readonly">read-only</span> the console refuses every POST to this show: no launch,
           no gate answer, no new episode. Registered so it can be read beside a show that shares its NAS root.
+        </p>
+      )}
+
+      {failed.length > 0 && (
+        <p className="legend">
+          <span className="chip chip-failed">not loaded</span> this key is in the registry and its repository would not
+          load, so the console holds no show for it and every address under it answers
+          <span className="mono"> no such show</span>. Fix the repository and restart the console: the registry is read
+          once, at startup.
         </p>
       )}
     </div>

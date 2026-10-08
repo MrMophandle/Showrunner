@@ -405,6 +405,24 @@ export function bibleFinishable(rows: BibleRow[] | null): boolean {
   return rows.every((row) => row.mode === "scaffold" || BIBLE_APPROVED_STATES.includes(row.state));
 }
 
+/** Whether a `setup` notice carries anything the open gate has not already been shown — the one
+ *  question the Bible page's channel handler asks while a gate is on screen.
+ *
+ *  **The page does not refetch under an open gate**, because the attempt the author is reading is
+ *  the attempt their answer will carry back as `expectedAttempt`; it raises a banner instead. The
+ *  comparison here is what decides whether there is anything to raise one about: `at` is the
+ *  notice's offset and `seen` the offset the view on screen was built from
+ *  (`SetupRunView.offset`). A lock appearing or disappearing publishes the offset the store
+ *  already holds — a run starting or stopping, with nothing new in the log — and the banner used to
+ *  fire on those, telling the author "this file has written to its log since you opened the gate"
+ *  when nothing had. A banner that cries wolf is a banner the author learns to ignore, and this is
+ *  the one banner on the page that matters.
+ *
+ *  `seen` is `undefined` for a view with no run, where any notice is news. */
+export function setupNoticeIsNews(at: number, seen: number | undefined): boolean {
+  return at > (seen ?? 0);
+}
+
 /** A show name as a slug: every non-alphanumeric character removed, so "Harbor Lights" becomes
  *  "HarborLights". Nothing is lower-cased and nothing is substituted for a space.
  *
@@ -444,3 +462,17 @@ export const GATE_BUTTONS: readonly { key: GateChoiceKey; label: string }[] = [
   { key: "myself", label: "I will write this one myself — write the empty template over it and approve" },
   { key: "import", label: "Import a file I already have — copy it over this one and approve" },
 ];
+
+
+/** Whether the Shows page should say "no shows are registered yet" — true only when the console
+ *  holds no shows **and** refused no registry entry.
+ *
+ *  The second half is the point. A machine whose every registry entry fails to load holds no shows,
+ *  and the page used to draw the fresh-machine line for it: "no shows are registered yet — start
+ *  one above". The remedy that line suggests is registering every show again, which is the wrong
+ *  one and is destructive to look at — it is the same confusion `readRegistry`'s doc comment cites
+ *  to make a malformed registry fatal rather than empty. `null` is "the list has not answered yet",
+ *  which is not the empty machine either. */
+export function showsPageIsEmpty(shows: unknown[] | null, failed: unknown[]): boolean {
+  return shows !== null && shows.length === 0 && failed.length === 0;
+}

@@ -6,7 +6,8 @@ import {
   useShowKey,
 } from "../api.js";
 import {
-  bibleFinishable, biblePanelFor, elapsed, readOnlyLine, showLabel, type GateChoiceKey,
+  BIBLE_APPROVED_STATES, bibleFinishable, biblePanelFor, elapsed, readOnlyLine, setupNoticeIsNews,
+  showLabel, type GateChoiceKey,
 } from "../projections.js";
 import { BibleRail } from "../components/BibleRail.js";
 import { GatePanel } from "../components/GatePanel.js";
@@ -107,14 +108,26 @@ function RunningPanel({ run, now }: { run: SetupRunView | undefined; now: number
  *  "imported from <path>", or "the author writes this file" — so a file approved from the terminal
  *  reads the same here as one approved from the browser. The note is the state's own sentence
  *  because "approved" alone does not tell the author whether the writer wrote this file or whether
- *  they still owe it a draft, and for `written-by-author` they do. */
-function ApprovedPanel({ view, rawUrl }: { view: BibleFileView; rawUrl: string }) {
+ *  they still owe it a draft, and for `written-by-author` they do.
+ *
+ *  Exported for `test/client/bible-page.test.tsx`: which of the three sentences a state gets, and
+ *  the rule that the approving gate's notes are shown for an imported file and only for one, are
+ *  decisions that fail silently — the panel still renders, it just stops naming the file the author
+ *  imported. */
+export function ApprovedPanel({ view, rawUrl }: { view: BibleFileView; rawUrl: string }) {
   const [raw, setRaw] = useState(false);
   const note = view.state === "imported"
     ? "imported: a file you already had was copied over this one, and its gate was approved with that path in the log."
     : view.state === "written-by-author"
       ? "you took this one over: the empty template was written over it and approved, so the headings the prompts read by name are there and the prose is yours to write."
       : "approved as the writer wrote it.";
+  // The approving gate's own notes, shown for an imported file and only for one. For `imported`
+  // the notes are `imported from <path>`, which is the source the sentence above promises and
+  // could not name; for `written-by-author` they are the constant the sentence already says in
+  // better words, and a plain approval records none. Rendered verbatim rather than with the prefix
+  // stripped, because the prefix is declared in `@showrunner/tools` and that module reads the
+  // filesystem — importing it here would pull `node:fs` into the browser bundle.
+  const source = view.state === "imported" ? view.note : undefined;
   return (
     <section className="bible-approved">
       <div className="bible-file-head">
@@ -126,6 +139,7 @@ function ApprovedPanel({ view, rawUrl }: { view: BibleFileView; rawUrl: string }
         <a className="btn btn-small" href={rawUrl}>open the file</a>
       </div>
       <p className="quiet">{note}</p>
+      {source !== undefined && <p className="quiet mono">{source}</p>}
       {view.content === undefined
         ? <p className="error-line">this file is approved in its log but could not be read off disk now</p>
         : raw
@@ -316,8 +330,19 @@ export function Bible() {
     refetchRows();
     if (bibleKey === undefined || message.key !== bibleKey) return;
     // The one refusal: see this file's header. A gate on screen is a message somebody is reading,
-    // and the attempt they read is the attempt their answer will carry.
-    if (file.data?.state === "gate") { setChanged(true); return; }
+    // and the attempt they read is the attempt their answer will carry. So the file is not
+    // refetched under an open gate — the banner is raised instead.
+    //
+    // **And only when the log actually grew.** The notice's offset is compared with the offset the
+    // view was built from: a lock appearing or disappearing publishes the offset the store already
+    // holds (`runs.ts`'s `#onSetupChange`), which is a run starting or stopping and not a line the
+    // author has not read. Raising the banner on those told the author "this file has written to
+    // its log since you opened the gate" when nothing had been written, which teaches them to
+    // ignore the one banner that matters.
+    if (file.data?.state === "gate") {
+      if (setupNoticeIsNews(message.offset, file.data.run?.offset)) setChanged(true);
+      return;
+    }
     refetchFile();
   });
 
@@ -330,6 +355,13 @@ export function Bible() {
     rows.refetch();
   }
 
+  /** Writes the answers and nothing else, and **rejects when the write failed**.
+   *
+   *  The rejection is the point: `QuestionForm` marks the form clean when this promise resolves,
+   *  so a failed post has to come back as a failure or the form reads saved when the bytes never
+   *  landed — and "Save answers" is then disabled by `!dirty`, leaving "Write it" as the only way
+   *  to re-post, which starts a twenty-minute writer run. The error is recorded here as well,
+   *  because the line under the form is this page's to draw. */
   async function saveAnswers(answers: Record<string, string>): Promise<void> {
     if (bibleKey === undefined) return;
     setBusy("save");
@@ -339,6 +371,7 @@ export function Bible() {
       after();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+      throw err;
     } finally {
       setBusy(null);
     }
@@ -430,7 +463,7 @@ export function Bible() {
 
   const finishable = bibleFinishable(rows.data);
   const gated = (rows.data ?? []).filter((row) => row.mode !== "scaffold");
-  const approved = gated.filter((row) => row.state === "approved" || row.state === "imported" || row.state === "written-by-author");
+  const approved = gated.filter((row) => BIBLE_APPROVED_STATES.includes(row.state));
 
   return (
     <div className="bible">
@@ -493,7 +526,7 @@ export function Bible() {
                   view={view}
                   canAct={canAct}
                   busy={busy === "save" || busy === "write" ? busy : null}
-                  onSave={(answers) => { void saveAnswers(answers); }}
+                  onSave={saveAnswers}
                   onWrite={(answers) => { void writeIt(answers); }}
                   readOnlyNote={readOnly ? readOnlyNote : undefined}
                 />
@@ -505,6 +538,7 @@ export function Bible() {
                 <GatePanel
                   message={view.gateMessage ?? "this gate recorded no message"}
                   attempt={view.run?.gate?.attempt ?? view.attempt ?? 1}
+                  maxAttempts={view.run?.maxAttempts}
                   content={view.content}
                   fileRel={view.file}
                   rawUrl={rawUrl}

@@ -29,6 +29,14 @@ export interface GatePanelProps {
   message: string;
   /** The attempt the gate is open at, which the answer carries back as `expectedAttempt`. */
   attempt: number;
+  /** How many attempts the gate allows before the run fails `rejected <n> times`, from the run
+   *  view's `maxAttempts` — which reads it off the pipeline's own gate step.
+   *
+   *  A prop and not a literal. This panel drew "attempt 1 of 10" with the 10 typed into it, which
+   *  is a number that goes on being drawn after the engine's has changed; the Gate page for an
+   *  episode already took it from the server for the same reason. Absent when the gate declares no
+   *  cap, which the panel says rather than implying an unbounded gate has one. */
+  maxAttempts?: number | undefined;
   /** The file's text, or undefined when the server could not read it. */
   content: string | undefined;
   /** The file's path relative to the show root, as the label above it. */
@@ -55,7 +63,7 @@ export interface GatePanelProps {
 }
 
 export function GatePanel({
-  message, attempt, content, fileRel, rawUrl, canAct, onAnswer,
+  message, attempt, maxAttempts, content, fileRel, rawUrl, canAct, onAnswer,
   busy = null, error = null, moved = null, changed = false, onReload, readOnlyNote,
 }: GatePanelProps) {
   const [notes, setNotes] = useState("");
@@ -78,7 +86,9 @@ export function GatePanel({
     <section className="bible-gate">
       <div className="gate-head">
         <h2>the gate</h2>
-        <div className="gate-meta mono">attempt {attempt} of 10</div>
+        <div className="gate-meta mono">
+          attempt {attempt}{maxAttempts !== undefined ? ` of ${maxAttempts}` : " (no cap)"}
+        </div>
       </div>
 
       {moved !== null && moved !== undefined && (

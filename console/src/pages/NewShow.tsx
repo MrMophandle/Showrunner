@@ -2,6 +2,11 @@ import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { ApiError, bibleHref, post, useSSE, useShows } from "../api.js";
 import { showSlugFrom } from "../projections.js";
+// The one regex the server's middleware, `registerShow` and `loadShows` all apply, from the
+// shared module that imports nothing. Here it is a label and not a fence — the form says "that
+// is not a key" while the key is being typed — and the server validates it again; but a third
+// copy of the grammar in this file was the copy that drifts.
+import { SHOW_KEY } from "../../shared/show-key.js";
 
 /** The New-show page: the seven fields that make a show, and the one POST that makes it.
  *
@@ -34,13 +39,6 @@ import { showSlugFrom } from "../projections.js";
  *  and the other six are `InitOptions`'. */
 type Field = "name" | "slug" | "path" | "nasRoot" | "key" | "importFrom";
 
-/** The grammar the server applies to the registry key, copied here so the form can say "that is
- *  not a key" while it is being typed rather than after the POST.
- *
- *  A copy of `SHOW_KEY` in `console/server/registry.ts`, which the client cannot import (that
- *  module reads the filesystem). The server validates it again — this is a label, not a fence. */
-const SHOW_KEY = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
-
 /** The NAS parent every show's own directory sits under, as `tools/src/init/init.ts`'s
  *  `NAS_PARENT` has it. Shown as a prefill and editable, because the mount is a property of the
  *  machine and a show made on a laptop with no NAS attached still has to be made. */
@@ -61,7 +59,9 @@ export function NewShow() {
   // The channel, for the one reason this page needs it: it opens with its first subscriber, and
   // without one the header's live dot reads "offline" on a page that is perfectly connected (Task
   // 4's report, concern 2). A `hello` also carries the server's own list of shows, which is the
-  // list the taken-key warning below is read against.
+  // list the taken-key warning below is read against — and since a show registered while this
+  // stream is open now produces a second `hello`, the refetch below is reached rather than
+  // theoretical: two tabs on one console keep their taken-key warnings in agreement.
   useSSE((message) => {
     if (message.type === "hello") shows.refetch();
   });
@@ -78,7 +78,10 @@ export function NewShow() {
     setTouched((current) => ({ ...current, [field]: true }));
   }
 
-  const taken = (shows.data ?? []).some((show) => show.key === key);
+  // A key is taken if **either** list holds it: an entry the console could not load is still in
+  // the registry, and `registerShow` refuses it for the same reason it refuses a loaded show's key.
+  const taken = (shows.data?.shows ?? []).some((show) => show.key === key)
+    || (shows.data?.failed ?? []).some((entry) => entry.key === key);
   const keyShaped = key === "" || SHOW_KEY.test(key);
   const ready = values.name.trim() !== "" && values.path.trim() !== "" && key !== "" && keyShaped && !taken;
 

@@ -10,10 +10,13 @@ import { answersDirty } from "../projections.js";
  *  twenty minutes of work.** So the two buttons are not two ways of doing one thing. "Save answers"
  *  writes them and nothing else, which is what makes a tab safe to close (ruling H-06: the Bible
  *  page is the resume, and it needs no new persistence because every answer is on disk the moment
- *  it is saved). "Write it" saves them **first** when the form is dirty and then starts the run, so
- *  the writer cannot be started against answers that are still sitting in a textarea — the terminal
- *  writes every answer the moment it is given (`tools/src/init/interview.ts`'s `record()`), and a
- *  browser that did not would be the one way this surface is worse.
+ *  it is saved). "Write it" posts them **first** and then starts the run — whenever the file asks
+ *  anything at all, and not only when this form is dirty, which is the rule `Bible.tsx` states and
+ *  argues: the write is a merge over what is on disk and costs one request, while the failure it
+ *  rules out is a twenty-minute writer run against answers the author had changed and not saved.
+ *  The terminal writes every answer the moment it is given
+ *  (`tools/src/init/interview.ts`'s `record()`), and a browser that did not would be the one way
+ *  this surface is worse.
  *
  *  **A file with no questions renders no textareas and no "Save answers".** The three `default`
  *  files (`story-craft`, `pipeline-artifacts`, `readme`) are a house template and a gate over it:
@@ -30,8 +33,14 @@ export interface QuestionFormProps {
   canAct: boolean;
   /** Set while one of the two posts is in flight, which is also what disables both buttons. */
   busy: "save" | "write" | null;
-  /** Writes the answers and nothing else. */
-  onSave: (answers: Record<string, string>) => void;
+  /** Writes the answers and nothing else, resolving when they are on disk and **rejecting when the
+   *  write failed**.
+   *
+   *  The promise is what tells this form the bytes landed. It used to be a `void` call and the form
+   *  marked itself clean the moment it was made: a failed post then left a form that read saved,
+   *  with "Save answers" disabled by `!dirty`, so the only remaining way to re-post the answers was
+   *  "Write it" — which starts the writer. */
+  onSave: (answers: Record<string, string>) => Promise<void>;
   /** Saves them when they are dirty, then starts the file's run. */
   onWrite: (answers: Record<string, string>) => void;
   /** One line in place of the buttons on a read-only show. */
@@ -50,9 +59,12 @@ export function QuestionForm({ view, canAct, busy, onSave, onWrite, readOnlyNote
   const dirty = answersDirty(saved, answers);
   const asks = view.questionsList.length > 0;
 
+  /** Posts the answers and marks the form clean **on resolution only**, so a save the server
+   *  refused leaves the form dirty and its button live. The rejection itself is the page's to
+   *  report: `Bible.tsx`'s `saveAnswers` records the server's words in the line under this form
+   *  before it rejects, which is why nothing is done with the error here. */
   function save(): void {
-    onSave(answers);
-    setSaved(answers);
+    void onSave(answers).then(() => { setSaved(answers); }, () => undefined);
   }
 
   return (

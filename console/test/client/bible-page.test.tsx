@@ -1,8 +1,11 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import type { BibleFileView } from "../../shared/types.js";
 import { GatePanel, type GatePanelProps } from "../../src/components/GatePanel.js";
+import { QuestionForm } from "../../src/components/QuestionForm.js";
+import { ApprovedPanel } from "../../src/pages/Bible.js";
 import { GATE_BUTTONS, readOnlyLine, type GateChoiceKey } from "../../src/projections.js";
 
 /** The Bible page's gate panel (Task 6), rendered. This is the half of that page that cannot be
@@ -95,9 +98,18 @@ describe("GatePanel", () => {
       .toHaveAttribute("href", "/api/shows/show/bible/world-overview/file");
   });
 
-  it("displays the attempt it was handed, and never a number of its own", () => {
-    panel({ attempt: 3 });
+  it("displays the attempt and the cap it was handed, and never a number of its own", () => {
+    // Both numbers come from the server now: the cap used to be the literal 10 in this panel, which
+    // is a number that goes on being drawn after the engine's gate has changed. A gate that
+    // declares no cap says so rather than being given one.
+    panel({ attempt: 3, maxAttempts: 10 });
     expect(screen.getByText("attempt 3 of 10")).toBeInTheDocument();
+    cleanup();
+    panel({ attempt: 2, maxAttempts: 4 });
+    expect(screen.getByText("attempt 2 of 4")).toBeInTheDocument();
+    cleanup();
+    panel({ attempt: 1 });
+    expect(screen.getByText("attempt 1 (no cap)")).toBeInTheDocument();
   });
 
   it("disables Approve until the file has loaded, and leaves the other three answers available", () => {
@@ -186,5 +198,104 @@ describe("GatePanel", () => {
     expect(screen.getByText(/this file has written to its log since you opened the gate/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "reload the gate" }));
     expect(onReload).toHaveBeenCalledTimes(1);
+  });
+});
+
+/** The approved panel, which is the Bible page's read-only end: the file as it stands, a chip
+ *  naming which of the three approvals it was, and the sentence that says what that means for the
+ *  author.
+ *
+ *  **The assertion that matters is the imported file's source path.** The sentence for `imported`
+ *  promises the author that the gate "was approved with that path in the log", and until
+ *  `BibleFileView.note` existed the panel had no field to read the path from — so the one state
+ *  whose note carries information the sentence cannot restate was the one state that did not show
+ *  it. For `written-by-author` the note is a constant the sentence already says in better words,
+ *  and showing it would be the same thing twice. */
+describe("ApprovedPanel", () => {
+  const RAW = "/api/shows/show/bible/world-overview/file";
+
+  /** An approved view. `content` is given as a flag rather than as an optional override, because
+   *  `exactOptionalPropertyTypes` makes "absent" and "present and undefined" two different things —
+   *  and "the file is approved in its log and cannot be read off disk now" is the absent one. */
+  function approved(over: Partial<BibleFileView> = {}, readable = true): BibleFileView {
+    return {
+      key: "world-overview", file: "Canon/world-overview.md", mode: "interview",
+      purpose: "The premise and the cast.", state: "approved", questions: 9, answered: 9,
+      questionsList: [], prior: true, ...(readable ? { content: CONTENT } : {}),
+      ...over,
+    };
+  }
+
+  it("names the imported file's source path, from the notes on the approving gate", () => {
+    render(<ApprovedPanel view={approved({ state: "imported", note: "imported from /elsewhere/world.md" })} rawUrl={RAW} />);
+    expect(screen.getByText(/a file you already had was copied over this one/)).toBeInTheDocument();
+    expect(screen.getByText("imported from /elsewhere/world.md")).toBeInTheDocument();
+    expect(screen.getByText("imported")).toBeInTheDocument();
+  });
+
+  it("does not repeat the author's own note, or invent one for a plain approval", () => {
+    // `written-by-author`'s note is the constant the panel's own sentence says at length.
+    render(<ApprovedPanel view={approved({ state: "written-by-author", note: "the author writes this file" })} rawUrl={RAW} />);
+    expect(screen.getByText(/you took this one over/)).toBeInTheDocument();
+    expect(screen.queryByText("the author writes this file")).toBeNull();
+    cleanup();
+    // And a file the writer wrote records no notes at all.
+    render(<ApprovedPanel view={approved()} rawUrl={RAW} />);
+    expect(screen.getByText("approved as the writer wrote it.")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Harbor Lights — the world" })).toBeInTheDocument();
+  });
+
+  it("says so when a file is approved in its log and cannot be read off disk now", () => {
+    render(<ApprovedPanel view={approved({}, false)} rawUrl={RAW} />);
+    expect(screen.getByText(/approved in its log but could not be read off disk/)).toBeInTheDocument();
+  });
+});
+
+/** The question form's two buttons, and the one thing about them that was wrong: "Save answers"
+ *  marked the form clean before the POST had answered.
+ *
+ *  `onSave` is `Bible.tsx`'s `saveAnswers`, which can fail — a 409 for a file that asks nothing, a
+ *  read-only show's 403, a write that did not land. The form read clean afterwards and its button
+ *  was disabled by `!dirty`, so the only remaining way to re-post the answers was "Write it", which
+ *  starts a twenty-minute writer run against the answers that are on disk rather than the ones in
+ *  the textarea. */
+describe("QuestionForm's save", () => {
+  function form(onSave: (answers: Record<string, string>) => Promise<void>) {
+    const view: BibleFileView = {
+      key: "world-overview", file: "Canon/world-overview.md", mode: "interview",
+      purpose: "The premise and the cast.", state: "answering", questions: 1, answered: 0,
+      questionsList: [{ heading: "The premise", question: "What is the show about?", answer: "" }],
+      prior: false,
+    };
+    return render(
+      <QuestionForm view={view} canAct={true} busy={null} onSave={onSave} onWrite={vi.fn()} />,
+    );
+  }
+
+  /** Types into the one textarea, so the form is dirty and "Save answers" is live. */
+  function type(text: string): void {
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: text } });
+  }
+
+  it("leaves the form dirty when the save fails, so the answers can be posted again", async () => {
+    const onSave = vi.fn<(answers: Record<string, string>) => Promise<void>>()
+      .mockRejectedValue(new Error("show is read-only"));
+    form(onSave);
+    type("A week on the water.");
+    const button = screen.getByRole("button", { name: "Save answers" });
+    expect(button).toBeEnabled();
+    fireEvent.click(button);
+    await waitFor(() => { expect(onSave).toHaveBeenCalledTimes(1); });
+    // Still live: the bytes never landed, so the form must not claim they did.
+    expect(screen.getByRole("button", { name: "Save answers" })).toBeEnabled();
+  });
+
+  it("marks the answers saved once the write has landed", async () => {
+    const onSave = vi.fn<(answers: Record<string, string>) => Promise<void>>().mockResolvedValue(undefined);
+    form(onSave);
+    type("A week on the water.");
+    fireEvent.click(screen.getByRole("button", { name: "Save answers" }));
+    await waitFor(() => { expect(screen.getByRole("button", { name: "Save answers" })).toBeDisabled(); });
+    expect(onSave).toHaveBeenCalledWith({ "The premise": "A week on the water." });
   });
 });
