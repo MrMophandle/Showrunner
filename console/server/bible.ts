@@ -13,8 +13,8 @@ import {
   type FinishResult, type GateChoice, type InitIO,
 } from "@showrunner/tools";
 import {
-  approvalOutcome, bibleEntry, bibleFileFor, bibleFileRelative, checkSetupRunId, listSetupRuns,
-  setupLockPath, setupLogPath,
+  approvalNotes, approvalOutcome, bibleEntry, bibleFileFor, bibleFileRelative, checkSetupRunId,
+  listSetupRuns, setupLockPath, setupLogPath,
 } from "../worker/setup.js";
 import { readLockFile } from "../worker/lock.js";
 import type { BibleFileView, BibleRow, BibleState } from "../shared/types.js";
@@ -37,11 +37,28 @@ import type { ShowContext } from "./show.js";
  *  `Production/setup/<key>/answers.md`, as a one-shot write like `premise.md`; the zero-byte run
  *  log a start creates before it spawns; and the file a gate answer *is* (the house template for
  *  "I will write it myself", the copy for an import, and a default file's template before its first
- *  gate). Every event in a run log is written by the detached worker or by the engine's
- *  `answerGate`. **No `git` process runs in the server at all**: the approved file's commit is the
+ *  gate). Those three are the console's **only** writes under `Canon/`, and they are named in every
+ *  list of the server's writes — the root `README.md`, `console/README.md` and
+ *  `console/worker/setup.ts` — because a list that omitted them invited two mistakes: moving the
+ *  writes somewhere else to "restore" a rule they never broke, and believing a read-only show's
+ *  `Canon/` is unreachable for some reason other than the middleware's 403.
+ *
+ *  Every event in a run log is written by the detached worker or by the engine's `answerGate`.
+ *  **No `git` process runs in this server for a run at all**: the approved file's commit is the
  *  setup worker's, taken after its run completes, which is the terminal `init`'s own order (the
  *  ledger's ruling of 2026-10-07; `worker/setup.ts` carries the argument). No agent and no step
  *  runs here either, because the server owns no run.
+ *
+ *  **The two setup-time exceptions, and why they are in the server on purpose.** `finishBible` calls
+ *  `initFinish`, which spawns `git remote`, `gh auth status` and `gh repo create --source --push`;
+ *  `POST /api/shows` calls `initScaffold`, which runs `git init` and the scaffold commit. Both run
+ *  here, in this process. Neither is a run: each is bounded — a handful of processes that finish in
+ *  seconds, against no model and no twenty-minute step — so there is nothing for a console restart
+ *  to orphan. And `gh repo create` is the one action in the whole setup that **cannot be retried
+ *  under one name**: a second attempt answers "name already exists", so it must not be handed to a
+ *  detached process nobody is watching, whose failure would be a line in a log file the author has
+ *  no reason to open. The qualifier "for a run" is the one the two READMEs use, and it is the
+ *  sentence that is true.
  *
  *  **Why the pieces of the interview come from `@showrunner/tools` and are never re-implemented
  *  here.** `resolveImport` is the import fence, `AUTHOR_NOTES` and `IMPORT_NOTES_PREFIX` the two
@@ -149,8 +166,10 @@ function exhausted(events: Event[]): boolean {
 }
 
 /** Where one bible file stands, from its row, its answers, its latest log and that log's lock —
- *  and deliberately **not** from whether the file is on disk, because `init` scaffolds or imports
- *  every bible file before anybody is interviewed.
+ *  and deliberately **not** from whether the file is on disk, because a bible file can be on disk
+ *  before anybody is interviewed about it: `initScaffold` writes the two `scaffold` files with the
+ *  show itself, an `importFrom` copies whatever rows the source show happens to have, and a
+ *  `default` file's house template is written before its first gate opens.
  *
  *  The run's status comes from `deriveRunStatus`, the same six-rule ladder the Board's rows and the
  *  Run page use, so a bible run and an episode run cannot come to disagree about what "running" or
@@ -185,8 +204,16 @@ function bibleStateOf(
   }
 }
 
-/** One row of the Bible view, for one of the fifteen files. */
-async function bibleRow(ctx: ShowContext, entry: BibleFile): Promise<BibleRow> {
+/** One row of the Bible view **and** the latest run it was derived from, for one of the fifteen
+ *  files.
+ *
+ *  Two values rather than one because `bibleFile` needs the run's events as well as the row: it
+ *  reports the notes on the approving `gate_answered`, and reading the log a second time to find
+ *  them would be two reads of one file per request and two chances for them to disagree. `bibleRow`
+ *  below is this function with the events dropped, which is what the fifteen-row rail wants. */
+async function bibleRowWith(
+  ctx: ShowContext, entry: BibleFile,
+): Promise<{ row: BibleRow; latest: Awaited<ReturnType<typeof latestRun>> }> {
   const questions = await questionsFor(entry);
   const answers = await readAnswers(ctx.showRoot, entry, ctx.productionDir);
   const answered = Object.keys(answers).length;
@@ -205,7 +232,12 @@ async function bibleRow(ctx: ShowContext, entry: BibleFile): Promise<BibleRow> {
     row.runId = latest.runId;
     if (latest.state.openGate !== undefined) row.attempt = latest.state.openGate.attempt;
   }
-  return row;
+  return { row, latest };
+}
+
+/** One row of the Bible view, for one of the fifteen files. */
+async function bibleRow(ctx: ShowContext, entry: BibleFile): Promise<BibleRow> {
+  return (await bibleRowWith(ctx, entry)).row;
 }
 
 /** The fifteen rows of the Bible view, in interview order — the order an author can think in,
@@ -235,13 +267,20 @@ export async function bibleFile(ctx: ShowContext, key: string, store: RunStore):
   // rail draws and the view refuses would be a dead link. What a scaffold row cannot do — start a
   // run, answer a gate, hold answers — is refused by the actions, each of which is a POST.
   const entry = bibleFileFor(key);
-  const row = await bibleRow(ctx, entry);
+  const { row, latest } = await bibleRowWith(ctx, entry);
   const questions = await questionsFor(entry);
   const answers = await readAnswers(ctx.showRoot, entry, ctx.productionDir);
+  // The notes on the approving `gate_answered`, read off the events the row was already derived
+  // from — the source path for an import, and the author's own sentence for "I will write it
+  // myself". `approvalNotes` is the setup worker's, beside the `approvalOutcome` the row's state
+  // comes from, so the page's note and the row's state cannot come to disagree about which answer
+  // was given. Absent when there is no approval, or when the approval carried no notes.
+  const note = latest === undefined ? undefined : approvalNotes(latest.events);
   const view: BibleFileView = {
     ...row,
     questionsList: questions.map((q) => ({ heading: q.heading, question: q.question, answer: answers[q.heading] ?? "" })),
     prior: row.answered > 0,
+    ...(note !== undefined ? { note } : {}),
   };
   let content: string | undefined;
   try { content = await readFile(bibleFilePath(ctx, key), "utf8"); } catch { content = undefined; }
@@ -510,12 +549,32 @@ export async function unapprovedBibleFiles(ctx: ShowContext): Promise<string[]> 
  *  bible-check's work-left-to-do list and, when `gh` is not signed in, the exact two commands to
  *  run. The console's rule everywhere else is not to reword what the engine or the tools chose. */
 export async function finishBible(ctx: ShowContext, github: "private" | "public" | "none"): Promise<FinishResult & { said: string[] }> {
-  const said: string[] = [];
-  const io: InitIO = {
-    say: (text: string) => { said.push(text); },
-    ask: async () => { throw new Error("initFinish asks nothing"); },
-    choose: async () => { throw new Error("initFinish asks nothing"); },
-  };
+  const { io, said } = collectingIO();
   const result = await initFinish(ctx.showRoot, { github, engineRoot: ctx.engineRoot }, io, { operator: ctx.operator });
   return { ...result, said };
+}
+
+/** The `InitIO` a route hands a phase of `init` that asks nothing: `say` is collected and returned
+ *  to the browser as the phase's own account of what it did, and a phase that tried to ask a
+ *  question fails loudly rather than hanging on a terminal that is not there.
+ *
+ *  `said` is the phase's own prose and is carried rather than paraphrased: `initFinish`'s holds the
+ *  bible-check's work-left-to-do list and, when `gh` is not signed in, the exact two commands to
+ *  run; `initScaffold`'s says what it wrote. The console's rule everywhere else is not to reword
+ *  what the engine or the tools chose.
+ *
+ *  Exported because the two phases a route can call — `initScaffold` under `POST /api/shows` and
+ *  `initFinish` under `POST …/bible/finish` — both need exactly this, and they had one each with
+ *  different refusal wording. One of them would eventually grow a `say` that was dropped, or an
+ *  `ask` that hung. */
+export function collectingIO(): { io: InitIO; said: string[] } {
+  const said: string[] = [];
+  return {
+    said,
+    io: {
+      say: (text: string) => { said.push(text); },
+      ask: async () => { throw new Error("this phase asks nothing: the browser asks the author"); },
+      choose: async () => { throw new Error("this phase asks nothing: the browser asks the author"); },
+    },
+  };
 }

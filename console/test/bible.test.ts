@@ -4,7 +4,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { mkdir, mkdtemp, readFile, realpath, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { BIBLE_FILES, EventLog, bibleLogDir, deriveRunState } from "@showrunner/engine";
+import { BIBLE_FILES, EventLog, bibleFilePipeline, bibleLogDir, deriveRunState, describePipeline } from "@showrunner/engine";
 import { initScaffold, type InitIO } from "@showrunner/tools";
 import { createApp } from "../server/app.js";
 import type { BibleFileView, BibleRow, SseMessage } from "../shared/types.js";
@@ -85,6 +85,17 @@ async function gitLog(root: string): Promise<string[]> {
 
 const CAST_ANSWER = "Vale — the keeper of the light\nPim — the boy who rows";
 
+/** The rejection cap the engine declares on a bible file's gate, read out of the pipeline itself.
+ *
+ *  Asked of `bibleFilePipeline` rather than written as `10` here, because the point of carrying
+ *  `maxAttempts` on the view at all is that the number is the engine's: a test that asserted its
+ *  own literal would pass against a view that had stopped reading the pipeline. */
+function bibleGateMaxAttempts(): number | undefined {
+  const entry = BIBLE_FILES.find((b) => b.key === "world-overview")!;
+  const pipeline = bibleFilePipeline({ entry, vars: {}, productionDir: "Production" });
+  return describePipeline(pipeline).steps.find((step) => step.id === "gate")?.maxAttempts;
+}
+
 describe("the Bible view", () => {
   it("lists the fifteen files in interview order, every one of them pending on a new show", async () => {
     const { app } = await bibleShow();
@@ -157,6 +168,12 @@ describe("the Bible view", () => {
     expect(v.run?.steps.map((s) => s.id)).toEqual(["write", "gate"]);
     expect(v.run?.steps.map((s) => s.status)).toEqual(["completed", "waiting"]);
     expect(v.run?.offset).toBeGreaterThan(0);
+    // The gate's rejection cap, read off `describePipeline`'s own gate step rather than typed into
+    // the page: `GatePanel` drew "attempt 1 of 10" with the 10 as a literal, which is a number that
+    // silently stops being the one the engine enforces. The view and the worker build the pipeline
+    // from the same factory, so this is the cap the author's next rejection is counted against —
+    // asserted against the engine's declaration and not against a copy of it here.
+    expect(v.run?.maxAttempts).toBe(bibleGateMaxAttempts());
 
     // The store published the growth, keyed by show and by bible key.
     await waitFor(() => seen.some((m) => m.type === "setup"));
@@ -372,7 +389,7 @@ describe("the Bible view", () => {
     expect((await view(app, "technology")).run?.error).toBe("write failed: the writer timed out");
   });
 
-  it("tells the three approved states apart by the notes on the approval", async () => {
+  it("tells the three approved states apart by the notes on the approval, and carries those notes to the page", async () => {
     const { app, root } = await bibleShow();
     await seedSetupRun(root, "world-overview", "20261007T100000Z-aaaa", approvedRun());
     await seedSetupRun(root, "series-arc", "20261007T100000Z-bbbb", approvedRun("imported from /elsewhere/arc.md"));
@@ -381,6 +398,16 @@ describe("the Bible view", () => {
     expect(list.find((r) => r.key === "world-overview")?.state).toBe("approved");
     expect(list.find((r) => r.key === "series-arc")?.state).toBe("imported");
     expect(list.find((r) => r.key === "timeline")?.state).toBe("written-by-author");
+
+    // The notes themselves, not only the state they imply. The approved panel tells the author of
+    // an imported file that its gate "was approved with that path in the log" and had no field to
+    // read the path from, so it could not name the source.
+    expect((await view(app, "series-arc")).note).toBe("imported from /elsewhere/arc.md");
+    expect((await view(app, "timeline")).note).toBe("the author writes this file");
+    // An ordinary approval records no notes, and the field is omitted rather than empty, so a
+    // client can tell "no notes" from "notes nobody read".
+    const plain = await view(app, "world-overview");
+    expect("note" in plain).toBe(false);
   });
 
   it("refuses to finish while a gated file is unapproved, and finishes once every one is approved", async () => {
@@ -446,7 +473,7 @@ describe("creating a show", () => {
     expect(registry.shows["Lantern"]?.root).toBe(made.root);
 
     // And the server holds it now, with no restart: the list, the Board and the Bible all answer.
-    const list = await (await existing.app.request("http://local/api/shows")).json() as { key: string; showName: string }[];
+    const { shows: list } = await (await existing.app.request("http://local/api/shows")).json() as { shows: { key: string; showName: string }[] };
     expect(list.map((s) => s.key).sort()).toEqual(["Lantern", SHOW_KEY_FIXTURE]);
     expect(list.find((s) => s.key === "Lantern")?.showName).toBe("Lantern Hill");
     const board = await existing.app.request("http://local/api/shows/Lantern/episodes");

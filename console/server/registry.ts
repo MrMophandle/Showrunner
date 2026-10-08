@@ -1,6 +1,7 @@
 import path from "node:path";
 import os from "node:os";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, open, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { SHOW_KEY } from "../shared/show-key.js";
 
 /** The show registry: which shows this console holds, where each one's repository is, and whether
  *  the console may write to it.
@@ -34,16 +35,12 @@ export interface Registry {
   shows: Record<string, RegistryEntry>;
 }
 
-/** What a show key may be: a leading letter or digit, then up to 63 more of letter, digit,
- *  underscore or hyphen.
- *
- *  The grammar is narrow because the key is the one string that reaches a URL path segment, a map
- *  lookup and a log line, and it is validated once — in the server's show middleware — for all of
- *  them (spec §4.4's fence). No dot, so a key can never be `.` or `..`; no slash, so it cannot
- *  become two segments; no leading hyphen or underscore, so a key cannot be read as a flag by
- *  anything that passes it on; and a bound of 64 characters, so a key cannot be the whole of a
- *  path length. */
-export const SHOW_KEY = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+/** The show key's grammar, re-exported from `console/shared/show-key.ts` — where it is declared,
+ *  with its reasoning — so that every server importer keeps the one name it already had while the
+ *  New-show form reads the same regex rather than a third copy of it. The shared module imports
+ *  nothing, which is what lets the client bundle it; this module reads the filesystem, which is
+ *  what stopped the client importing it from here. */
+export { SHOW_KEY };
 
 /** Where the registry lives when `--registry` is not given: `~/.showrunner/shows.json`. */
 export function defaultRegistryPath(): string {
@@ -125,7 +122,11 @@ export async function readRegistry(file: string): Promise<Registry> {
  *
  *  Keys are written sorted, so registering a show produces a one-line diff rather than reordering
  *  the file, and `readOnly` is omitted for a writable show so the file reads as "these two are
- *  read-only" instead of as a column of booleans. */
+ *  read-only" instead of as a column of booleans.
+ *
+ *  **The rename makes the write safe for readers and says nothing about two writers.** A lost
+ *  update between two read-modify-write pairs is a different failure and is `registerShow`'s
+ *  exclusive lock to prevent; this function is called under that lock and takes none of its own. */
 export async function writeRegistry(file: string, reg: Registry): Promise<void> {
   const shows: Record<string, RegistryEntry> = {};
   for (const key of Object.keys(reg.shows).sort()) {
@@ -146,7 +147,61 @@ export async function writeRegistry(file: string, reg: Registry): Promise<void> 
   }
 }
 
-/** Adds one show to the registry on disk: read, refuse, write.
+/** How long `registerShow` waits for another writer's lock before refusing, and how often it
+ *  looks. The window being contended is one `readFile` plus a handful of synchronous checks, so a
+ *  second writer that is going to finish has finished inside a second; a lock still there after
+ *  that is a crashed process's, and the refusal says so rather than waiting forever on it. */
+const LOCK_WAIT_MS = 1_000;
+const LOCK_RETRY_MS = 25;
+
+/** Runs `body` while holding an exclusive `<file>.lock`, and removes the lock afterwards whatever
+ *  `body` did.
+ *
+ *  **Why the registry needs this and `writeRegistry`'s rename does not provide it.** The rename
+ *  makes a write safe for *readers*: a reader arriving mid-write sees the old file whole or the new
+ *  one whole. It says nothing about two **writers**. `registerShow` is a read-modify-write, and the
+ *  registry is explicitly a machine-wide file — two browser tabs on one console, or two consoles
+ *  sharing `~/.showrunner/shows.json` — so two creations in flight can each read the file before
+ *  the other writes, and the second rename drops the first entry. What that leaves is the worst
+ *  shape available: a show scaffolded on disk, live in the server's two maps, answering its routes,
+ *  and absent from the registry — so it disappears at the next restart with no message, and the
+ *  operator's remedy (create it again) refuses on the path that is already a show.
+ *
+ *  `wx` on a file beside the registry, rather than a promise chain inside this module, because a
+ *  promise chain serialises one process's writers and the file is shared between processes. The
+ *  lock sits beside the registry so it is in a directory the writer has already had to create. */
+async function withRegistryLock<T>(file: string, body: () => Promise<T>): Promise<T> {
+  const lock = `${file}.lock`;
+  await mkdir(path.dirname(file), { recursive: true });
+  const deadline = Date.now() + LOCK_WAIT_MS;
+  for (;;) {
+    try {
+      // Opened and closed at once: the file's *existence* is the lock, and holding the descriptor
+      // open would add a second thing to release.
+      const handle = await open(lock, "wx");
+      await handle.close();
+      break;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+      if (Date.now() >= deadline) {
+        throw new Error(
+          `the registry at ${file} is being written by another process: ${lock} has been held for more than `
+          + `${LOCK_WAIT_MS}ms. If no console is starting a show, remove that file and try again.`,
+        );
+      }
+      await new Promise((r) => setTimeout(r, LOCK_RETRY_MS));
+    }
+  }
+  try {
+    return await body();
+  } finally {
+    await rm(lock, { force: true });
+  }
+}
+
+/** Adds one show to the registry on disk: read, refuse, write — **under an exclusive lock**, so
+ *  that two shows created at the same moment are two entries and not one (`withRegistryLock`
+ *  carries the argument).
  *
  *  Three refusals, each because the mistake would otherwise be discovered as two Board columns
  *  over one repository:
@@ -169,14 +224,18 @@ export async function registerShow(file: string, key: string, entry: RegistryEnt
   }
   const checked = checkEntry(entry, key);
   const root = path.resolve(checked.root);
-  const reg = await readRegistry(file);
-  const existing = reg.shows[key];
-  if (existing !== undefined) throw new Error(`${key} is already registered, at ${path.resolve(existing.root)}`);
-  for (const [otherKey, other] of Object.entries(reg.shows)) {
-    if (path.resolve(other.root) === root) throw new Error(`${root} is already registered as ${otherKey}`);
-  }
-  reg.shows[key] = { root, ...(checked.readOnly === true ? { readOnly: true } : {}) };
-  await writeRegistry(file, reg);
+  // The grammar and the entry are checked before the lock is taken: both are decided from the
+  // arguments alone, and a refusal that needs no file should not make a second writer wait.
+  await withRegistryLock(file, async () => {
+    const reg = await readRegistry(file);
+    const existing = reg.shows[key];
+    if (existing !== undefined) throw new Error(`${key} is already registered, at ${path.resolve(existing.root)}`);
+    for (const [otherKey, other] of Object.entries(reg.shows)) {
+      if (path.resolve(other.root) === root) throw new Error(`${root} is already registered as ${otherKey}`);
+    }
+    reg.shows[key] = { root, ...(checked.readOnly === true ? { readOnly: true } : {}) };
+    await writeRegistry(file, reg);
+  });
 }
 
 /** The registry `--show <root>` means: one writable show, keyed by the root's own directory name.

@@ -462,6 +462,13 @@ export class RunStore {
       productionDir: this.#ctx.productionDir,
     });
     const lock = await readLockFile(setupLockPath(this.#ctx.showRoot, key, runId, this.#ctx.productionDir));
+    const described = describePipeline(pipeline).steps;
+    // The gate's own rejection cap, carried so the page stops holding it as a literal. It is read
+    // off the description rather than from a constant here because this view and the setup worker
+    // build the pipeline from the same factory with the same entry, so the number reported is the
+    // number the author's next rejection will actually be counted against. Absent for a gate that
+    // declares no cap, which `describePipeline` reports by omitting the field.
+    const maxAttempts = described.find((step) => step.id === "gate")?.maxAttempts;
     const view: SetupRunView = {
       runId,
       // The cast is safe and narrowing: `deriveRunStatus` returns one of six values and
@@ -469,22 +476,16 @@ export class RunStore {
       // from an episode's `archive.json` marker, which `idleEpisodeRow` reads and this ladder
       // never produces. A bible file has no archive marker and never will.
       status: deriveRunStatus(state, lock, events.length) as SetupRunView["status"],
-      steps: projectSteps(describePipeline(pipeline).steps, events).map((row) => ({
+      steps: projectSteps(described, events).map((row) => ({
         id: row.id, status: row.status, ...(row.startedAt !== undefined ? { startedAt: row.startedAt } : {}),
       })),
       offset,
+      ...(maxAttempts !== undefined ? { maxAttempts } : {}),
     };
     if (state.openGate !== undefined) view.gate = { attempt: state.openGate.attempt, message: state.openGate.message };
     const failed = failedOf(events, state);
     if (failed !== undefined) view.error = `${failed.stepId} failed: ${failed.error}`;
     return view;
-  }
-
-  /** The id of a bible file's latest run, or `undefined` when it has never been interviewed.
-   *  Lexical order is creation order, because `mintRunId` stamps the time into the id. */
-  async latestSetupRunId(key: string): Promise<string | undefined> {
-    const runs = await listSetupRuns(this.#ctx.showRoot, key, this.#ctx.productionDir);
-    return runs[runs.length - 1];
   }
 
   /** Stops every watcher and the poll, and drops every subscriber. The runs the store was
@@ -498,9 +499,13 @@ export class RunStore {
     this.#subscribers.clear();
   }
 
+  /** The cache key of one episode run, with both ids validated first. `checkSetupRunId` is the
+   *  console's one run-id refusal and is called here rather than re-worded: the message is wire
+   *  protocol (`bibleRefusal` matches `/^invalid run id /` to answer 400), so a second spelling of
+   *  it becomes a 500. */
   #key(episodeId: string, runId: string): string {
     parseEpisodeId(episodeId);
-    if (!RUN_ID.test(runId)) throw new Error(`invalid run id ${JSON.stringify(runId)}: expected [A-Za-z0-9_-]+`);
+    checkSetupRunId(runId);
     return `${episodeId}/${runId}`;
   }
 
@@ -583,7 +588,12 @@ export class RunStore {
   }
 
   /** Reads whatever has been appended to one log since the store last read it, and says how many
-   *  events arrived. Three cases, all of them `EventLog.readFrom`'s:
+   *  events arrived. **One implementation for both ladders** — an episode's runs and a bible
+   *  file's — taking the cache key and the log it belongs to, because the cases below are the only
+   *  hard part and maintaining them twice meant maintaining four freeze-and-report messages. The
+   *  two wrappers under it compose their own key and address.
+   *
+   *  Three cases, all of them `EventLog.readFrom`'s:
    *
    *  - the writer appended whole lines: they are parsed and appended to the cache, and the
    *    offset advances past the last newline;
@@ -603,64 +613,8 @@ export class RunStore {
    *  `EpisodeRow.logError` can say which run stopped being readable and where. The strictness is
    *  kept deliberately: a malformed line is skipped by nobody, because an event the store
    *  silently dropped would be a projection that is wrong rather than frozen. */
-  async #tailOnce(episodeId: string, runId: string): Promise<number> {
-    const key = this.#key(episodeId, runId);
-    const cached = this.#logs.get(key) ?? { events: [], offset: 0 };
-    const log = new EventLog(this.#logPath(episodeId, runId));
-    let next: { events: Event[]; offset: number };
-    try {
-      next = await log.readFrom(cached.offset);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      this.#logs.set(key, {
-        events: cached.events, offset: cached.offset,
-        lastError: `this run's log could not be read past byte ${cached.offset}: ${message}`,
-      });
-      return 0;
-    }
-    if (next.offset < cached.offset) {
-      let fresh: { events: Event[]; offset: number };
-      try {
-        fresh = await log.readFrom(0);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        this.#logs.set(key, { events: [], offset: 0, lastError: `this run's log could not be read past byte 0: ${message}` });
-        return 0;
-      }
-      this.#logs.set(key, { events: fresh.events, offset: fresh.offset });
-      return fresh.events.length;
-    }
-    if (next.events.length === 0) {
-      this.#logs.set(key, { events: cached.events, offset: next.offset });
-      return 0;
-    }
-    this.#logs.set(key, { events: [...cached.events, ...next.events], offset: next.offset });
-    return next.events.length;
-  }
-
-  /** Tails one log and, if anything arrived, says so on the channel. The message carries the new
-   *  offset and nothing else: a client that holds a view asks for the events between its offset
-   *  and this one, so one notification costs one small message however many events landed. */
-  #tailAndPublish(episodeId: string, runId: string): Promise<void> {
-    const key = this.#key(episodeId, runId);
-    const previous = this.#tails.get(key) ?? Promise.resolve();
-    const next = previous.then(async () => {
-      const added = await this.#tailOnce(episodeId, runId);
-      if (added > 0) this.#publish({ type: "run", show: this.#ctx.key, episodeId, runId, offset: this.#logs.get(key)?.offset ?? 0 });
-    }).catch(() => undefined);
-    this.#tails.set(key, next);
-    return next;
-  }
-
-  /** Reads whatever has been appended to one bible run's log since the store last read it, by the
-   *  same three-case rule `#tailOnce` applies to an episode's (whole lines, a partial line, or a
-   *  file shorter than the offset), and with the same freeze-and-report on a malformed line. The
-   *  cache, the offsets and the error handling are one implementation; only the log's address and
-   *  the key differ. */
-  async #tailOnceSetup(key: string, runId: string): Promise<number> {
-    const cacheKey = this.#setupKey(key, runId);
+  async #tailOnceAt(cacheKey: string, log: EventLog): Promise<number> {
     const cached = this.#logs.get(cacheKey) ?? { events: [], offset: 0 };
-    const log = new EventLog(this.#setupLogPath(key, runId));
     let next: { events: Event[]; offset: number };
     try {
       next = await log.readFrom(cached.offset);
@@ -690,6 +644,35 @@ export class RunStore {
     }
     this.#logs.set(cacheKey, { events: [...cached.events, ...next.events], offset: next.offset });
     return next.events.length;
+  }
+
+  /** One episode run's tail: `#tailOnceAt` at that run's cache key and log path. */
+  #tailOnce(episodeId: string, runId: string): Promise<number> {
+    return this.#tailOnceAt(this.#key(episodeId, runId), new EventLog(this.#logPath(episodeId, runId)));
+  }
+
+  /** Tails one log and, if anything arrived, says so on the channel. The message carries the new
+   *  offset and nothing else: a client that holds a view asks for the events between its offset
+   *  and this one, so one notification costs one small message however many events landed. */
+  #tailAndPublish(episodeId: string, runId: string): Promise<void> {
+    const key = this.#key(episodeId, runId);
+    const previous = this.#tails.get(key) ?? Promise.resolve();
+    const next = previous.then(async () => {
+      const added = await this.#tailOnce(episodeId, runId);
+      if (added > 0) this.#publish({ type: "run", show: this.#ctx.key, episodeId, runId, offset: this.#logs.get(key)?.offset ?? 0 });
+    }).catch(() => undefined);
+    this.#tails.set(key, next);
+    return next;
+  }
+
+  /** One bible run's tail: `#tailOnceAt` at that run's cache key and log path.
+   *
+   *  **The three cases, the cache, the offsets and the freeze-and-report are not reimplemented
+   *  here** — they are `#tailOnceAt`'s, the same code an episode's tail runs. Only the log's
+   *  address and the key differ, which is what these two wrappers are. The doc comment above
+   *  `#tailOnceAt` said that before it was true. */
+  #tailOnceSetup(key: string, runId: string): Promise<number> {
+    return this.#tailOnceAt(this.#setupKey(key, runId), new EventLog(this.#setupLogPath(key, runId)));
   }
 
   /** Tails one bible run's log and, if anything arrived, says so on the channel as
@@ -742,7 +725,7 @@ export class RunStore {
     if (filename.endsWith(".lock")) {
       const runId = filename.slice(0, -".lock".length);
       if (RUN_ID.test(runId)) {
-        this.#publish({ type: "setup", show: this.#ctx.key, key, runId, offset: this.#logs.get(`setup/${key}/${runId}`)?.offset ?? 0 });
+        this.#publish({ type: "setup", show: this.#ctx.key, key, runId, offset: this.#logs.get(this.#setupKey(key, runId))?.offset ?? 0 });
       }
     }
   }
@@ -756,7 +739,7 @@ export class RunStore {
     try { runIds = await listSetupRuns(this.#ctx.showRoot, key, this.#ctx.productionDir); } catch { return; }
     const latest = runIds[runIds.length - 1];
     for (const runId of runIds) {
-      if (runId === latest || this.#logs.has(`setup/${key}/${runId}`)) await this.#tailAndPublishSetup(key, runId);
+      if (runId === latest || this.#logs.has(this.#setupKey(key, runId))) await this.#tailAndPublishSetup(key, runId);
     }
   }
 

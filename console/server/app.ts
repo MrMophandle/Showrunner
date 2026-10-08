@@ -4,19 +4,20 @@ import { Hono } from "hono";
 import type { Context, MiddlewareHandler } from "hono";
 import { stream as streamText, streamSSE } from "hono/streaming";
 import {
-  ENGINE_VERSION, EventLog, RUN_ID, STAGES, answerGate, deriveRunState, describePipeline, episodePipeline,
+  ENGINE_VERSION, EventLog, STAGES, answerGate, deriveRunState, describePipeline, episodePipeline,
   latestRunId, listEpisodeIds, mintRunId, parseEpisodeId, resetSteps, resumeRun, withdrawApproval,
   type Pipeline, type PipelineDescription, type QueryFn, type RunState,
 } from "@showrunner/engine";
-import { ImportRefused, initScaffold, type GateChoice, type InitIO } from "@showrunner/tools";
-import type { EpisodeRow, EventBatch, ShowInfo, SseMessage } from "../shared/types.js";
+import { ImportRefused, initScaffold, type GateChoice } from "@showrunner/tools";
+import type { EpisodeRow, EventBatch, FailedShow, ShowInfo, ShowsList, SseMessage } from "../shared/types.js";
 import { serveArtifact, serveRunLog } from "./artifacts.js";
 import {
-  answerBibleGate, bibleFile, bibleFilePath, bibleRows, finishBible, saveAnswers, startBibleRun,
-  unapprovedBibleFiles, type BibleDeps,
+  answerBibleGate, bibleFile, bibleFilePath, bibleRows, collectingIO, finishBible, saveAnswers,
+  startBibleRun, unapprovedBibleFiles, type BibleDeps,
 } from "./bible.js";
 import { gateView } from "./gates.js";
 import { SHOW_KEY, readRegistry, registerShow } from "./registry.js";
+import { checkSetupRunId } from "../worker/setup.js";
 import { RunStore } from "./runs.js";
 import { defaultOperator, loadShowContext, type ShowContext } from "./show.js";
 import { assemble, ask } from "./what-happened.js";
@@ -58,10 +59,15 @@ function checkEpisodeId(raw: string): { ok: true } | { ok: false; error: string 
 }
 
 /** A validated run id, or the message to answer 400 with. The alphabet is the engine's, so the
- *  console and the writer of the log agree on what a run id is. */
+ *  console and the writer of the log agree on what a run id is.
+ *
+ *  The refusal is `checkSetupRunId`'s and not a copy of it, the same way `checkEpisodeId` above is
+ *  `parseEpisodeId`'s: the message is load-bearing wire protocol — `bibleRefusal` matches
+ *  `/^invalid run id /` to turn a thrown refusal into a 400 rather than a 500 — so the episode
+ *  routes and the bible routes must refuse a bad run id in exactly the same words. The result shape
+ *  is what the routes here want; the thrower is what the store and the worker want. */
 function checkRunId(raw: string): { ok: true } | { ok: false; error: string } {
-  if (RUN_ID.test(raw)) return { ok: true };
-  return { ok: false, error: `invalid run id ${JSON.stringify(raw)}: expected [A-Za-z0-9_-]+` };
+  try { checkSetupRunId(raw); return { ok: true }; } catch (err) { return { ok: false, error: (err as Error).message }; }
 }
 
 /** What a route needs the request body to be: an object, or nothing it can use. A body that is
@@ -192,6 +198,15 @@ export interface AppDeps {
   /** How the store for a newly registered show is built, so a test can give it the same short
    *  poll its other stores have. */
   makeStore?: (ctx: ShowContext) => RunStore;
+  /** The registry entries this console holds but could not load, as `loadShows` reported them.
+   *
+   *  Carried so `GET /api/shows` and the channel's `hello` can answer for them. They are not shows:
+   *  there is no context and no store, so every route under their key still answers 404. What they
+   *  are is the answer to "why does this console list two shows when the registry names three",
+   *  which the browser had no way of asking — the reason went to stderr once, at startup, and an
+   *  operator who starts the console detached with its output in a log file and then looks at the
+   *  Shows page saw a console with a show silently missing. */
+  failedShows?: FailedShow[];
 }
 
 /** A refusal a bible route answers, or `undefined` for a failure that is not the operator's and
@@ -226,21 +241,6 @@ function bibleRefusal(err: unknown): { status: 400 | 404 | 409; error: string } 
   // `answerGate`'s own refusals: "gate ... is open at attempt 2, not 1", "no gate is open on ...".
   if (/\bgate\b/.test(m) && /\battempt\b|no gate is open/.test(m)) return { status: 409, error: m };
   return undefined;
-}
-
-/** The `InitIO` a route hands a phase of `init` that asks nothing: `say` is collected and returned
- *  to the browser as the phase's own account of what it did, and a phase that tried to ask a
- *  question would fail loudly rather than hang on a terminal that is not there. */
-function collectingIO(): { io: InitIO; said: string[] } {
-  const said: string[] = [];
-  return {
-    said,
-    io: {
-      say: (text: string) => { said.push(text); },
-      ask: async () => { throw new Error("this phase asks nothing: the browser asks the author"); },
-      choose: async () => { throw new Error("this phase asks nothing: the browser asks the author"); },
-    },
-  };
 }
 
 /** A path with every symlink in it resolved, or the path itself when it does not exist yet — which
@@ -282,9 +282,23 @@ export function createApp(
    *  case `server/bible.ts` resolves this console's own compiled `dist/worker/setup.js`. */
   const bibleDeps: BibleDeps = deps.setupWorkerCommand !== undefined ? { setupWorkerCommand: deps.setupWorkerCommand } : {};
 
-  /** Every show this console holds. The client's first request: the Shows page is drawn from it,
-   *  and a client cannot build any other url until it knows a key. */
-  app.get("/api/shows", (c) => c.json([...shows.values()].map(showInfo)));
+  /** The registry entries that would not load, as every answer that carries the show list reports
+   *  them. One expression rather than two, so the route and the `hello` cannot drift. */
+  const failedShows = (): FailedShow[] => deps.failedShows ?? [];
+
+  /** Every show this console holds, **and every registry entry it could not load**. The client's
+   *  first request: the Shows page is drawn from it, and a client cannot build any other url until
+   *  it knows a key.
+   *
+   *  An object and not the bare array this used to answer, because the failed entries have to reach
+   *  the browser and they are not `ShowInfo`s — a show whose `showrunner.json` could not be read has
+   *  no `showName`, so it cannot be a row of the same list without the server inventing one
+   *  (`shared/types.ts`'s `FailedShow` carries the argument). The Shows page draws them as
+   *  "<key> — could not be loaded: <error>" with no link, since their own routes answer 404. */
+  app.get("/api/shows", (c) => {
+    const body: ShowsList = { shows: [...shows.values()].map(showInfo), failed: failedShows() };
+    return c.json(body);
+  });
 
   /** Creates a show and registers it, in one request: the scaffold `init` writes, then the
    *  registry entry, then the context and the store this server holds it by.
@@ -385,6 +399,12 @@ export function createApp(
     shows.set(key, ctx);
     stores.set(key, store);
     await store.watch();
+    // Every stream that is already open is told to look at `stores` again, which is where it
+    // subscribes to the new store and sends a fresh `hello`. Without this the browser session that
+    // *created* the show — the one that navigates straight into its Bible page on the same
+    // `EventSource` — would learn of it only on its next fifteen-second ping, and that is the one
+    // path where silence reads as broken rather than as refused.
+    for (const nudge of streamWakes) nudge();
     return c.json({ key, root, commits, said });
   });
 
@@ -418,9 +438,15 @@ export function createApp(
   app.use("/api/shows/:show", resolveShow);
   app.use("/api/shows/:show/*", resolveShow);
 
-  /** What a client needs once per show, at startup: which show this is, whether it may be
-   *  written to, who it is talking to, and the stage vocabulary the Board's columns are drawn
-   *  from. */
+  /** What a client needs once per show, at startup: which show this is, whether it may be written
+   *  to, who it is talking to, and the directories its paths are built from.
+   *
+   *  `stages` and `showSlug` are on the answer and no file under `console/src` reads either — they
+   *  are the server's statement of the show's own vocabulary and identity (ruling H-12; `stages`
+   *  pre-dates Plan H in `ShowInfo`), and they stay because dropping a field a client may be
+   *  holding is a change the client has to make first. The claim that the Board's columns are drawn
+   *  from `stages` is the thing removed: the columns are the client's own, and a comment naming a
+   *  consumer that does not exist is how a field survives being dead. */
   app.get("/api/shows/:show", (c) => c.json(showInfo(c.get("ctx"))));
 
   /** The Board: one row per episode of the show, in id order.
@@ -531,52 +557,106 @@ export function createApp(
     return c.json(batch);
   });
 
-  /** The one channel. A `hello` first, so a client knows the stream is open and who answered;
-   *  then one message per change the store saw, each of them a notice rather than a payload —
-   *  the client fetches what it is missing. The subscription is dropped when the client goes
-   *  away, which is the only cleanup this route owns. */
-  app.get("/api/events", (c) => streamSSE(c, async (stream) => {
+  /** The `hello` every stream opens with, and sends again whenever the set of shows grows.
+   *
+   *  One builder rather than a literal inside the handler, because it is written more than once now
+   *  and a second copy would be the one that forgot `failed`. */
+  const helloMessage = (): SseMessage => {
     const first = [...shows.values()][0];
-    const hello: SseMessage = {
+    return {
       type: "hello",
       // Every context carries the same operator — one `--operator` is passed to every show, and
       // the default is one function — so the first show's is the console's. A console holding no
       // shows yet still has an operator to name, which is the state the New-show surface runs in.
       operator: first?.operator ?? defaultOperator(),
       shows: [...shows.values()].map((s) => ({ key: s.key, showName: s.show.showName, readOnly: s.readOnly })),
+      failed: failedShows(),
     };
-    await stream.writeSSE({ data: JSON.stringify(hello) });
+  };
 
+  /** Every open stream's "look again" callback. `POST /api/shows` calls each of them after it has
+   *  put the new show in the two maps, so a stream parked on its fifteen-second ping learns of the
+   *  show at once instead of up to fifteen seconds later. The decision is still the stream's own —
+   *  these only say when to take it. Each stream removes its callback in its `finally`. */
+  const streamWakes = new Set<() => void>();
+
+  /** The one channel. A `hello` first, so a client knows the stream is open and who answered;
+   *  then one message per change the store saw, each of them a notice rather than a payload —
+   *  the client fetches what it is missing. The subscriptions are dropped when the client goes
+   *  away, which is the only cleanup this route owns.
+   *
+   *  **The subscriptions are taken again on every pass of the loop, not once at open.** A show
+   *  registered through `POST /api/shows` is in `stores` from the moment that route answers — the
+   *  maps are closed over, which is the whole reason the registry is a file — but a stream that had
+   *  subscribed once held nothing to the new store, and no `hello` followed. That broke exactly the
+   *  path Plan H exists for: the New-show form navigates client-side, so the same `EventSource`
+   *  survives into the new show's Bible page, and `RunningPanel` tells the author "this page keeps
+   *  up with it on its own" while nothing arrives for the whole twenty-minute writer run. The
+   *  author's move then is to reload on a hunch or to start the file again, at $2.25 a run. The new
+   *  show's Board was dead on that stream for the same reason.
+   *
+   *  So: a `Set` of the keys this stream has subscribed to, compared against `stores` on every wake
+   *  and every ping, and a fresh `hello` whenever it grows — which is also what makes
+   *  `Shows.tsx`'s and `NewShow.tsx`'s doc comments true, since both refetch their list on a
+   *  `hello`. Shrinking is not handled because nothing removes a show: no route unregisters one, and
+   *  a registry entry deleted by hand takes effect at the next start. */
+  app.get("/api/events", (c) => streamSSE(c, async (stream) => {
     const queue: SseMessage[] = [];
     let wake: (() => void) | undefined;
     let open = true;
-    // One subscription per show, drained into one queue: the channel is one stream across every
-    // registered show, and each message says which show it is about.
-    const unsubscribes = [...stores.values()].map((s) => s.subscribe((m) => { queue.push(m); wake?.(); }));
+    let showsChanged = false;
+
+    /** Subscribes to every store this stream has not subscribed to yet, and says whether the set
+     *  grew. Every subscription it takes — at open and later — goes into `unsubscribes`, which the
+     *  `finally` drains, so the cleanup owns the whole lifetime of the stream from one place. */
+    const subscribed = new Set<string>();
+    const unsubscribes: (() => void)[] = [];
+    const catchUp = (): boolean => {
+      let grew = false;
+      for (const [key, store] of stores) {
+        if (subscribed.has(key)) continue;
+        subscribed.add(key);
+        // One subscription per show, drained into one queue: the channel is one stream across every
+        // registered show, and each message says which show it is about.
+        unsubscribes.push(store.subscribe((m) => { queue.push(m); wake?.(); }));
+        grew = true;
+      }
+      return grew;
+    };
+
+    const nudge = (): void => { showsChanged = true; wake?.(); };
+    streamWakes.add(nudge);
+    catchUp();
+    await stream.writeSSE({ data: JSON.stringify(helloMessage()) });
     stream.onAbort(() => { open = false; wake?.(); });
 
     try {
       while (open && !stream.aborted) {
+        showsChanged = false;
+        if (catchUp()) await stream.writeSSE({ data: JSON.stringify(helloMessage()) });
         while (queue.length > 0) {
           const message = queue.shift();
           if (message !== undefined) await stream.writeSSE({ data: JSON.stringify(message) });
         }
         if (!open || stream.aborted) break;
         let timer: NodeJS.Timeout | undefined;
-        // The queue is re-checked inside the executor: a message published between the drain
-        // above and the assignment of `wake` would otherwise wait for the ping.
+        // The queue and the shows flag are re-checked inside the executor: a message published, or
+        // a show registered, between the work above and the assignment of `wake` would otherwise
+        // wait for the ping.
         const ticked = await new Promise<boolean>((resolve) => {
           wake = () => { resolve(false); };
-          if (queue.length > 0 || !open) { resolve(false); return; }
+          if (queue.length > 0 || showsChanged || !open) { resolve(false); return; }
           timer = setTimeout(() => { resolve(true); }, PING_MS);
         });
         wake = undefined;
         if (timer !== undefined) clearTimeout(timer);
         // A comment line: it keeps an idle connection open through anything that would close it,
-        // and it is the client's evidence that the server is still there.
+        // and it is the client's evidence that the server is still there. The loop's next pass
+        // checks `stores` again, so an idle stream picks up a new show on its own.
         if (ticked && open && !stream.aborted) await stream.write(": ping\n\n");
       }
     } finally {
+      streamWakes.delete(nudge);
       for (const unsubscribe of unsubscribes) unsubscribe();
     }
   }));

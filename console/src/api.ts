@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
-import type { EpisodeRow, ShowInfo, SseMessage } from "../shared/types.js";
+import type { EpisodeRow, FailedShow, ShowInfo, SseMessage } from "../shared/types.js";
 
 /** The client's one way of talking to the console's server: a fetch hook, a POST, one SSE channel
  *  shared by every page, and the context the app's chrome (the show's name and the Board's rows)
@@ -304,6 +304,10 @@ function setLive(value: boolean): void {
  *  A `hello` with one malformed entry in its `shows` list is dropped **whole** rather than filtered
  *  down to the readable entries, because a list with a hole in it would have the Shows page draw a
  *  console that is missing a show, which is worse than a Shows page that fetches the list itself.
+ *  Its `failed` list — the registry entries the console holds and could not load — is validated the
+ *  same way and by the same rule, and is a list of its own for exactly that reason: an entry whose
+ *  `showrunner.json` would not read has no `showName`, so it could not satisfy the three fields
+ *  above without the server inventing one.
  *
  *  Exported for `test/client/api-paths.test.ts`: the refusals above are the part of this module
  *  that fails silently, and a notice wrongly dropped looks exactly like a console whose channel is
@@ -321,7 +325,8 @@ export function parseMessage(raw: string): SseMessage | undefined {
   if (type === "hello") {
     const operator = parsed["operator"];
     const shows = parsed["shows"];
-    if (typeof operator !== "string" || !Array.isArray(shows)) return undefined;
+    const failedRaw = parsed["failed"];
+    if (typeof operator !== "string" || !Array.isArray(shows) || !Array.isArray(failedRaw)) return undefined;
     const list: { key: string; showName: string; readOnly: boolean }[] = [];
     for (const entry of shows) {
       if (!isRecord(entry)) return undefined;
@@ -331,7 +336,21 @@ export function parseMessage(raw: string): SseMessage | undefined {
       if (typeof key !== "string" || typeof showName !== "string" || typeof readOnly !== "boolean") return undefined;
       list.push({ key, showName, readOnly });
     }
-    return { type: "hello", operator, shows: list };
+    // The registry entries the console holds and could not load, validated by their own three
+    // fields. They are a separate list and not rows of the one above precisely so this loop exists:
+    // a show whose `showrunner.json` would not read has no `showName`, so folding it into `shows`
+    // would mean either a synthesised name or relaxing the whole-drop rule the paragraph above
+    // defends.
+    const failed: FailedShow[] = [];
+    for (const entry of failedRaw) {
+      if (!isRecord(entry)) return undefined;
+      const key = entry["key"];
+      const root = entry["root"];
+      const error = entry["error"];
+      if (typeof key !== "string" || typeof root !== "string" || typeof error !== "string") return undefined;
+      failed.push({ key, root, error });
+    }
+    return { type: "hello", operator, shows: list, failed };
   }
   if (type === "run") {
     const episodeId = parsed["episodeId"];

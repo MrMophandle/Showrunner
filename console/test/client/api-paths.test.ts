@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import type { GateView, SseMessage } from "../../shared/types.js";
 import { parseMessage, showHref, showPath } from "../../src/api.js";
 import { appWith, appWithShows, makeShow, seedRun, writeIn } from "../helpers.js";
+import { SHOW_KEY as CLIENT_SHOW_KEY } from "../../shared/show-key.js";
+import { SHOW_KEY as SERVER_SHOW_KEY } from "../../server/registry.js";
 
 /** The client's addresses, and the notices it reads off the one channel.
  *
@@ -165,6 +167,23 @@ describe("showPath and showHref", () => {
   });
 });
 
+describe("the show key's grammar", () => {
+  it("is one regex for the form's label and the server's fence", () => {
+    // `NewShow.tsx` warns "that is not a key" while a key is being typed, which is a label and not
+    // a fence — the fence is the show middleware's, and `registerShow` and `loadShows` apply it
+    // again. It had its own third copy of the pattern, which is the copy that drifts: a form that
+    // accepts a key the server refuses, or warns about one it would have taken.
+    expect(CLIENT_SHOW_KEY).toBe(SERVER_SHOW_KEY);
+    expect(CLIENT_SHOW_KEY.source).toBe("^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$");
+    // The three refusals the grammar exists for, asked of the one regex both halves read.
+    expect(CLIENT_SHOW_KEY.test("HarborLight")).toBe(true);
+    expect(CLIENT_SHOW_KEY.test("a.b")).toBe(false);
+    expect(CLIENT_SHOW_KEY.test("a/b")).toBe(false);
+    expect(CLIENT_SHOW_KEY.test("-leading")).toBe(false);
+    expect(CLIENT_SHOW_KEY.test("")).toBe(false);
+  });
+});
+
 describe("parseMessage, the notices the client keeps and the ones it drops", () => {
   const line = (m: unknown) => JSON.stringify(m);
 
@@ -192,18 +211,34 @@ describe("parseMessage, the notices the client keeps and the ones it drops", () 
     const hello = parseMessage(line({
       type: "hello", operator: "console:test",
       shows: [{ key: "live", showName: "Harbor Light", readOnly: false }, { key: "archive", showName: "Harbor Light", readOnly: true }],
+      failed: [],
     }));
     expect(hello).toEqual({
       type: "hello", operator: "console:test",
       shows: [{ key: "live", showName: "Harbor Light", readOnly: false }, { key: "archive", showName: "Harbor Light", readOnly: true }],
+      failed: [],
     } satisfies SseMessage);
-    expect(parseMessage(line({ type: "hello", operator: "console:test", shows: [] })))
-      .toEqual({ type: "hello", operator: "console:test", shows: [] });
+    expect(parseMessage(line({ type: "hello", operator: "console:test", shows: [], failed: [] })))
+      .toEqual({ type: "hello", operator: "console:test", shows: [], failed: [] });
     // Whole and not filtered: a list with a hole in it would have the Shows page draw a console
     // that is missing a show.
-    expect(parseMessage(line({ type: "hello", operator: "console:test", shows: [{ key: "live", showName: "Harbor Light" }] }))).toBeUndefined();
-    expect(parseMessage(line({ type: "hello", operator: "console:test", shows: "live" }))).toBeUndefined();
-    expect(parseMessage(line({ type: "hello", shows: [] }))).toBeUndefined();
+    expect(parseMessage(line({ type: "hello", operator: "console:test", shows: [{ key: "live", showName: "Harbor Light" }], failed: [] }))).toBeUndefined();
+    expect(parseMessage(line({ type: "hello", operator: "console:test", shows: "live", failed: [] }))).toBeUndefined();
+    expect(parseMessage(line({ type: "hello", shows: [], failed: [] }))).toBeUndefined();
+    // `failed` is required and is validated by the same rule: a show the console could not load is
+    // the one entry the page most needs, so a malformed one drops the hello rather than being
+    // quietly left out of it.
+    expect(parseMessage(line({ type: "hello", operator: "console:test", shows: [] }))).toBeUndefined();
+    expect(parseMessage(line({
+      type: "hello", operator: "console:test", shows: [],
+      failed: [{ key: "gone", root: "/tmp/gone", error: "showrunner.json could not be read" }],
+    }))).toEqual({
+      type: "hello", operator: "console:test", shows: [],
+      failed: [{ key: "gone", root: "/tmp/gone", error: "showrunner.json could not be read" }],
+    } satisfies SseMessage);
+    expect(parseMessage(line({
+      type: "hello", operator: "console:test", shows: [], failed: [{ key: "gone", root: "/tmp/gone" }],
+    }))).toBeUndefined();
   });
 
   it("drops a line that is not json, not an object, or a type it does not know", () => {

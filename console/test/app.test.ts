@@ -5,8 +5,8 @@ import path from "node:path";
 import { RUN_ID } from "@showrunner/engine";
 import { createApp } from "../server/app.js";
 import type { RunStore } from "../server/runs.js";
-import type { EventBatch, EpisodeRow, RunView, ShowInfo, SseMessage } from "../shared/types.js";
-import { appWith, appWithShows, makeShow, seedRun, waitFor, writeIn, writeLock } from "./helpers.js";
+import type { EventBatch, EpisodeRow, RunView, ShowsList, SseMessage } from "../shared/types.js";
+import { appWith, appWithShows, makeShow, seedRun, sseMessages, waitFor, writeIn, writeLock } from "./helpers.js";
 
 describe("the read routes", () => {
   it("GET /api/shows/:show names the show, its key and whether it may be written to", async () => {
@@ -113,6 +113,7 @@ describe("the read routes", () => {
     expect(JSON.parse(chunk.slice(chunk.indexOf("{"), chunk.lastIndexOf("}") + 1))).toEqual({
       type: "hello", operator: "console:test",
       shows: [{ key: "show", showName: "Harbor Light", readOnly: false }],
+      failed: [],
     });
     await reader.cancel();
     store.close();
@@ -142,7 +143,8 @@ describe("the shows", () => {
     const { app, stores } = await twoShows();
     const res = await app.request("/api/shows");
     expect(res.status).toBe(200);
-    const rows = await res.json() as ShowInfo[];
+    const body = await res.json() as ShowsList;
+    const rows = body.shows;
     // Key order, not registration order: `writeRegistry` sorts the file's keys, so the list a
     // client draws is stable across a registration rather than reordering itself.
     expect(rows.map((r) => [r.key, r.readOnly])).toEqual([["archive", true], ["show", false]]);
@@ -150,6 +152,9 @@ describe("the shows", () => {
     // a client drawn from one show cannot disagree about what a show is.
     expect(rows[0]).toMatchObject({ showName: "Harbor Light", showSlug: "HarborLight", operator: "console:test", engineVersion: expect.any(String) });
     expect(rows[0]?.stages.length).toBeGreaterThan(0);
+    // Two shows, nothing refused: the list carries the second field whether or not anything is in
+    // it, so a client never has to tell "no failures" from "an older server".
+    expect(body.failed).toEqual([]);
     closeAll(stores);
   });
 
@@ -244,6 +249,7 @@ describe("the shows", () => {
         { key: "archive", showName: "Harbor Light", readOnly: true },
         { key: "show", showName: "Harbor Light", readOnly: false },
       ],
+      failed: [],
     });
     await reader.cancel();
     closeAll(stores);
@@ -277,13 +283,99 @@ describe("the shows", () => {
     closeAll(stores);
   });
 
-  it("a show whose config will not load is reported by key and left out, so its routes 404", async () => {
+  it("refuses a malformed run id in one wording, on an episode route and a bible route alike", async () => {
+    // The message is load-bearing wire protocol: `bibleRefusal` matches `/^invalid run id /` to
+    // turn a thrown refusal into a 400, so a reworded second copy of this sentence becomes a 500
+    // on one of the two route families. It had been written three times — here, in the store's
+    // cache key, and in the worker's fence — and all three now call the one thrower.
+    const { app, store } = await appWith(await makeShow());
+    const episode = await app.request("/api/shows/show/episodes/s02e01/runs/..%2Foops");
+    expect(episode.status).toBe(400);
+    const bible = await app.request(new Request("http://local/api/shows/show/bible/world-overview/runs/..%2Foops/gate", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ choice: "approve", expectedAttempt: 1 }),
+    }));
+    expect(bible.status).toBe(400);
+    const wording = 'invalid run id "../oops": expected [A-Za-z0-9_-]+';
+    expect((await episode.json() as { error: string }).error).toBe(wording);
+    expect((await bible.json() as { error: string }).error).toBe(wording);
+    store.close();
+  });
+
+  it("carries a show registered while a stream is open to that stream — a second hello, then its notices", async () => {
+    // **The one live defect of the whole branch** (I-1). The channel took its subscriptions once,
+    // at open, and wrote `hello` once. `POST /api/shows` then put the new show in the two maps,
+    // which the *request* path picked up immediately — but an already-open stream held no
+    // subscription to the new store and was never told. That is exactly Plan H's headline path: the
+    // New-show form navigates client-side, so the same `EventSource` survives into the new show's
+    // Bible page, where `RunningPanel` promises the author "this page keeps up with it on its own"
+    // and nothing arrived for the whole twenty-minute writer run. Its Board was dead for the same
+    // reason.
+    const existing = await appWithShows([{ root: await makeShow(), key: "show" }]);
+    const parent = await mkdtemp(path.join(tmpdir(), "new-show-sse-"));
+    const target = path.join(parent, "Lantern");
+
+    const stream = sseMessages((await existing.app.request("/api/events")).body!);
+    expect(await stream.next()).toEqual({
+      type: "hello", operator: "console:test",
+      shows: [{ key: "show", showName: "Harbor Light", readOnly: false }],
+      failed: [],
+    });
+
+    const created = await existing.app.request(new Request("http://local/api/shows", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Lantern Hill", path: target, github: "none", nasRoot: path.join(parent, "nas") }),
+    }));
+    expect(created.status).toBe(200);
+
+    // A second `hello`, on the stream that was open before the show existed, carrying both keys.
+    // This is also what makes `Shows.tsx`'s and `NewShow.tsx`'s doc comments true: both refetch
+    // their list on a `hello`, and neither had ever received a second one.
+    const second = await stream.next();
+    expect(second.type).toBe("hello");
+    expect(second.type === "hello" ? second.shows.map((show) => show.key).sort() : []).toEqual(["Lantern", "show"]);
+
+    // And the new show's own notices reach the same stream, which is the half that matters: the
+    // `hello` tells a Shows page to refetch, while this is what a Bible page and a Board tail.
+    await seedRun(path.join(parent, "Lantern"), "s02e01", "r1", [
+      { kind: "run_started", payload: { pipeline: "episode", episodeId: "s02e01" } },
+    ]);
+    await existing.stores.get("Lantern")!.get("s02e01", "r1");
+    expect(await stream.next()).toEqual({
+      type: "run", show: "Lantern", episodeId: "s02e01", runId: "r1", offset: expect.any(Number),
+    });
+
+    await stream.cancel();
+    closeAll(existing.stores);
+  });
+
+  it("a show whose config will not load is reported by key and left out, so its routes 404 — and the browser is told", async () => {
     const good = await makeShow();
     const nothing = await mkdtemp(path.join(tmpdir(), "console-noconfig-"));
     const { app, shows, stores } = await appWithShows([{ root: good, key: "show" }, { root: nothing, key: "gone" }]);
     expect([...shows.keys()]).toEqual(["show"]);
     expect((await app.request("/api/shows/gone/episodes")).status).toBe(404);
-    expect((await (await app.request("/api/shows")).json() as ShowInfo[]).map((r) => r.key)).toEqual(["show"]);
+
+    // The list carries the loadable show in `shows` and the refused entry in `failed`, with the
+    // loader's own reason. Before this the entry was reported once on stderr and nowhere else, so
+    // the Shows page drew a console with one fewer show and no explanation — and a machine where
+    // every entry failed read exactly like a fresh machine with no shows on it (I-4).
+    const body = await (await app.request("/api/shows")).json() as ShowsList;
+    expect(body.shows.map((r) => r.key)).toEqual(["show"]);
+    expect(body.failed).toHaveLength(1);
+    expect(body.failed[0]).toMatchObject({ key: "gone", root: nothing });
+    expect(body.failed[0]?.error).toContain("showrunner.json");
+
+    // And the channel says the same thing, so a Shows page that is already open learns of it on
+    // the next connection rather than only from its own fetch.
+    const res = await app.request("/api/events");
+    const reader = res.body!.getReader();
+    const chunk = new TextDecoder().decode((await reader.read()).value);
+    const hello = JSON.parse(chunk.slice(chunk.indexOf("{"), chunk.lastIndexOf("}") + 1)) as { shows: unknown[]; failed: { key: string; error: string }[] };
+    expect(hello.shows).toHaveLength(1);
+    expect(hello.failed.map((f) => f.key)).toEqual(["gone"]);
+    expect(hello.failed[0]?.error).toContain("showrunner.json");
+    await reader.cancel();
     closeAll(stores);
   });
 });

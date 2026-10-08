@@ -8,6 +8,7 @@ import { createApp, type ShowVars } from "../server/app.js";
 import { readRegistry, writeRegistry, type RegistryEntry } from "../server/registry.js";
 import { loadShows, type ShowContext } from "../server/show.js";
 import { RunStore } from "../server/runs.js";
+import type { SseMessage } from "../shared/types.js";
 
 /** Not a test file: the fixtures Tasks 4 and 5 both build their tests on. One invented show on
  *  disk ("Harbor Light" — the engine repository names no real show), one way to write a run log
@@ -138,7 +139,7 @@ export async function appWithShows(
   const registryFile = await makeRegistry(entries);
   const pollMs = opts.pollMs ?? 2000;
   const workerCommand = [process.execPath, FAKE_WORKER];
-  const shows = await loadShows(await readRegistry(registryFile), {
+  const { shows, skipped } = await loadShows(await readRegistry(registryFile), {
     engineRoot: ENGINE_ROOT, operator: "console:test",
     workerCommand,
     // A show that would not load is the subject of its own tests; here it would be a silent skip,
@@ -153,6 +154,9 @@ export async function appWithShows(
   // on this machine and leave it there. A show created through the route is built with the same
   // fake workers and the same short poll as the fixtures above.
   const app = createApp(shows, stores, {
+    // The skipped entries reach the app as they do in `main.ts`, so a test that registers an
+    // unloadable root asserts the same `/api/shows` and `hello` bodies the operator sees.
+    failedShows: skipped.map((entry) => ({ key: entry.key, root: entry.root, error: entry.reason })),
     ...(opts.query !== undefined ? { query: opts.query } : {}),
     newShow: { registryFile, engineRoot: ENGINE_ROOT, operator: "console:test", workerCommand, concurrency: 1 },
     setupWorkerCommand: [process.execPath, FAKE_SETUP_WORKER],
@@ -187,4 +191,51 @@ export async function waitFor(condition: () => boolean | Promise<boolean>, timeo
     if (Date.now() > deadline) throw new Error(`waitFor: condition did not hold within ${timeoutMs}ms`);
     await new Promise((r) => setTimeout(r, everyMs));
   }
+}
+
+/** Reads one SSE stream's messages, one at a time, in the order the server wrote them.
+ *
+ *  The three tests that read a `hello` decode the first chunk and slice between the outermost
+ *  braces, which is enough for one message and wrong for two: a stream that writes a second
+ *  `hello` and then a notice may flush them in one chunk, and `: ping` comment lines carry no
+ *  `data:` at all. This reads frames (`\n\n`-separated), keeps whatever is left of a partial one,
+ *  skips the comments, and parses each `data:` line — so a test can say "the next message" and mean
+ *  it.
+ *
+ *  `next()` waits for the stream, so a test asserting a message that never comes fails on the
+ *  suite's twenty-second timeout rather than returning something wrong. `cancel()` is the one piece
+ *  of cleanup a reader owns and must be called, or the handler's loop stays parked on its ping. */
+export function sseMessages(body: ReadableStream<Uint8Array>): {
+  next: () => Promise<SseMessage>;
+  cancel: () => Promise<void>;
+} {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  const pending: SseMessage[] = [];
+  let buffer = "";
+  const drain = (): void => {
+    for (;;) {
+      const at = buffer.indexOf("\n\n");
+      if (at === -1) return;
+      const frame = buffer.slice(0, at);
+      buffer = buffer.slice(at + 2);
+      for (const line of frame.split("\n")) {
+        if (!line.startsWith("data: ")) continue;
+        pending.push(JSON.parse(line.slice("data: ".length)) as SseMessage);
+      }
+    }
+  };
+  return {
+    next: async () => {
+      for (;;) {
+        drain();
+        const message = pending.shift();
+        if (message !== undefined) return message;
+        const { value, done } = await reader.read();
+        if (done) throw new Error("the stream closed before the next message arrived");
+        buffer += decoder.decode(value, { stream: true });
+      }
+    },
+    cancel: async () => { await reader.cancel(); },
+  };
 }

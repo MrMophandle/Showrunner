@@ -1,6 +1,6 @@
 import path from "node:path";
 import os from "node:os";
-import { appendFile, mkdir, readdir } from "node:fs/promises";
+import { appendFile, mkdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import {
   BIBLE_FILES, EventLog, RUN_ID, SETUP_ID, bibleFilePipeline, bibleLogDir, createAgentExecutor,
@@ -10,7 +10,7 @@ import {
 } from "@showrunner/engine";
 import {
   AUTHOR_NOTES, CAST_HEADING, CAST_KEY, IMPORT_NOTES_PREFIX, afterFileApproved, buildVars,
-  castSectionOf, interviewPromptsDir, parseCast, readAnswers, type InterviewResult,
+  castSectionOf, interviewPromptsDir, parseCast, readAnswers, runLogsIn, type InterviewResult,
 } from "@showrunner/tools";
 import { killOnSignal, lockFileFor, startHeartbeat, takeLock, type HeartbeatDeps } from "./lock.js";
 import type { WorkerOutcome } from "./main.js";
@@ -45,8 +45,11 @@ import type { WorkerOutcome } from "./main.js";
  *  produce the same repository: the commit carries the log's last line, so no approved file leaves a
  *  modified `.jsonl` behind. It also leaves the server with nothing to commit, which is the
  *  direction spec §4.2 points — the server's writes are `answers.md`, the registry, a new show's
- *  scaffold, and the zero-byte log it creates before spawning. (Plan H's Task 5 text had the server
- *  make this commit in `answerBibleGate`; the ledger's ruling of 2026-10-07 moved it here.) */
+ *  scaffold, the zero-byte log it creates before spawning, **and the bible file a gate answer *is***
+ *  (a `default` file's house template before its first gate, the template for "I will write it
+ *  myself", and the copy for an import — `server/bible.ts` writes those three and nothing else
+ *  under `Canon/`). (Plan H's Task 5 text had the server make this commit in `answerBibleGate`;
+ *  the ledger's ruling of 2026-10-07 moved it here.) */
 
 /** Which bible file to write, and as whom. `key` is one of the fifteen `BIBLE_FILES` keys and
  *  `runId` names the log this segment appends to; both are validated before either reaches a path.
@@ -107,7 +110,15 @@ export function bibleEntry(key: string): BibleFile {
 
 /** A run id, validated against the engine's own alphabet, or the refusal the console words it
  *  with. Exported alongside `bibleEntry` so the two fences a setup path is built from are applied
- *  from one place. */
+ *  from one place.
+ *
+ *  **This is the console's one run-id refusal, for an episode's run ids as well as a bible file's**
+ *  — the alphabet is the same `RUN_ID` in both cases, and the message is load-bearing wire
+ *  protocol: `bibleRefusal` in `server/app.ts` matches `/^invalid run id /` to turn a thrown
+ *  refusal into a 400, so a reworded second copy of this sentence becomes a 500. `RunStore`'s cache
+ *  key and the route's result-shaped `checkRunId` both call this rather than building the string
+ *  again. The name keeps `Setup` because this is the module the setup path's fences live in; the
+ *  check itself is not setup-specific and never was. */
 export function checkSetupRunId(runId: string): void {
   if (!RUN_ID.test(runId)) throw new Error(`invalid run id ${JSON.stringify(runId)}: expected [A-Za-z0-9_-]+`);
 }
@@ -144,6 +155,22 @@ export function bibleFileRelative(entry: BibleFile, canonDir?: string): string {
   return entry.file.replace(/^Canon\//, `${canonDir ?? "Canon"}/`);
 }
 
+/** The `gate_answered` that approved this run, or `undefined` when the run holds no approval at
+ *  all. Read backwards, so a file rejected twice and then approved reports the approval and not
+ *  one of the rejections.
+ *
+ *  One scan with two readers above it: `approvalOutcome` maps its notes to the file's state, and
+ *  `approvalNotes` hands the notes themselves to the page. Written once because "which event
+ *  approved this file" is one question, and two walks of the same array would be two answers to it
+ *  the first time either one grew a condition. */
+function lastApproval(events: Event[]): Event | undefined {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i];
+    if (e?.kind === "gate_answered" && e.payload["approved"] === true) return e;
+  }
+  return undefined;
+}
+
 /** How an approved bible file came to be approved, read from the notes on the approving
  *  `gate_answered` — `undefined` when the run holds no approval at all.
  *
@@ -152,19 +179,28 @@ export function bibleFileRelative(entry: BibleFile, canonDir?: string): string {
  *  took the file over. Both readers need the same mapping and get it here: this worker words the
  *  commit's subject from it (`canon: <file> — <outcome>`, as the terminal does), and the server's
  *  Bible row reports it as the file's state. Two copies of this test would be a file that read
- *  `imported` in the browser and `approved` in its own git history.
- *
- *  Read backwards, so a file rejected twice and then approved reports the approval. */
+ *  `imported` in the browser and `approved` in its own git history. */
 export function approvalOutcome(events: Event[]): InterviewResult["outcome"] | undefined {
-  for (let i = events.length - 1; i >= 0; i--) {
-    const e = events[i];
-    if (e?.kind !== "gate_answered" || e.payload["approved"] !== true) continue;
-    const notes = String(e.payload["notes"] ?? "");
-    if (notes === AUTHOR_NOTES) return "written-by-author";
-    if (notes.startsWith(IMPORT_NOTES_PREFIX)) return "imported";
-    return "approved";
-  }
-  return undefined;
+  const approval = lastApproval(events);
+  if (approval === undefined) return undefined;
+  const notes = String(approval.payload["notes"] ?? "");
+  if (notes === AUTHOR_NOTES) return "written-by-author";
+  if (notes.startsWith(IMPORT_NOTES_PREFIX)) return "imported";
+  return "approved";
+}
+
+/** The notes on the approving `gate_answered` themselves, or `undefined` when the run holds no
+ *  approval or the approval carried none.
+ *
+ *  Exported for the Bible page's approved panel, which says of an imported file that its gate "was
+ *  approved with that path in the log" and had no field to read the path from. `approvalOutcome`
+ *  answers *which* of the three approvals it was; this answers *what the author's answer said*,
+ *  which for an import is the one thing the panel's own sentence cannot restate. An empty string is
+ *  reported as `undefined`, so a caller can tell "no notes" from "notes nobody read". */
+export function approvalNotes(events: Event[]): string | undefined {
+  const notes = lastApproval(events)?.payload["notes"];
+  if (typeof notes !== "string" || notes === "") return undefined;
+  return notes;
 }
 
 /** The cast an approved `world-overview` yields, for `afterFileApproved` to turn into character
@@ -199,17 +235,23 @@ async function castForApproval(showRoot: string, entry: BibleFile, show: ShowCon
  *
  *  Exported because three callers need the same list and the same filter: this worker's prior
  *  logs, the server's "is the latest run finished" refusal, and the store's tail of a directory it
- *  has just started watching. */
+ *  has just started watching.
+ *
+ *  **The listing itself is `@showrunner/tools`', not a copy of it.** `runLogsIn` is the function the
+ *  terminal interview finds a file's prior logs with, including the rule that excludes
+ *  `<runId>.troubleshooting.jsonl` (its would-be stem carries a dot, which `RUN_ID` refuses). This
+ *  wrapper is the address and the shape: it composes the directory from the show root and the key,
+ *  and returns the ids rather than the paths, which is what all three callers want. The `catch` is
+ *  this function's own contract and not the tools': a directory that cannot be read for any reason
+ *  is a file with no runs here, because every caller is asking "what has this file run" about a
+ *  show whose setup directory may not exist yet. */
 export async function listSetupRuns(showRoot: string, key: string, productionDir = "Production"): Promise<string[]> {
-  let names: string[];
-  try { names = await readdir(bibleLogDir(showRoot, key, productionDir)); } catch { return []; }
-  return names
-    .filter((n) => n.endsWith(".jsonl"))
-    .map((n) => n.slice(0, -".jsonl".length))
-    // `<runId>.troubleshooting.jsonl` also ends in .jsonl and is not a run log; its would-be run
-    // id carries a dot, which RUN_ID refuses.
-    .filter((id) => RUN_ID.test(id))
-    .sort();
+  try {
+    const logs = await runLogsIn(bibleLogDir(showRoot, key, productionDir));
+    return logs.map((p) => path.basename(p, ".jsonl"));
+  } catch {
+    return [];
+  }
 }
 
 /** One segment of one bible file's interview: lock, build, `run()` once, release. Returns rather

@@ -143,7 +143,33 @@ export async function loadShowContext(opts: ShowContextOptions): Promise<ShowCon
   };
 }
 
-/** One `ShowContext` per registered show, in registry order, keyed by the registry's key.
+/** One registry entry that would not load: the key it was registered under, the root it pointed
+ *  at, and the loader's own message.
+ *
+ *  Carried rather than only logged because an operator who edits a `showrunner.json`, restarts the
+ *  console detached with its output in a log file and then looks at the **browser** was told
+ *  nothing at all: the Shows page drew a console with one fewer show, and on a machine where every
+ *  entry failed it drew "no shows are registered yet", which is indistinguishable from a fresh
+ *  machine. That is the same confusion `readRegistry` cites to make a malformed registry fatal,
+ *  one entry at a time. */
+export interface SkippedShow {
+  key: string;
+  root: string;
+  /** The loader's own words, never paraphrased — the message names the file and the reason, and it
+   *  is what the operator has to act on. */
+  reason: string;
+}
+
+/** Every `ShowContext` the registry yielded, keyed by the registry's key, **and** every entry it
+ *  did not. Two fields rather than a bare map, because a skipped entry is a fact the console has
+ *  to answer for and not only a line it printed once at startup. */
+export interface LoadShowsResult {
+  shows: Map<string, ShowContext>;
+  skipped: SkippedShow[];
+}
+
+/** One `ShowContext` per registered show, in registry order, keyed by the registry's key, beside
+ *  the entries that would not load.
  *
  *  **A show whose repository will not load is reported by key and skipped, not fatal** (ruling
  *  H-14). A `showrunner.json` that is absent, unparseable or refused by the loader — an
@@ -155,13 +181,20 @@ export async function loadShowContext(opts: ShowContextOptions): Promise<ShowCon
  *  far as a URL is concerned it is a show that does not exist, which is the honest answer, rather
  *  than a show whose Board is an error row.
  *
+ *  **Skipped is not silent, and that is the half this used to get wrong.** The reason goes to
+ *  `report` as it always did — one line on stderr, which is the operator's at startup — *and* comes
+ *  back in `skipped`, which `createApp` answers to the browser as a row saying
+ *  "<key> — could not be loaded: <reason>" with no link. The routes still 404; the list says the
+ *  entry exists and why it is not usable.
+ *
  *  **A key the grammar rejects is refused and not skipped**, because that is the registry file
  *  being wrong rather than a repository being wrong, and `readRegistry` has already refused the
  *  same thing for the same reason — this check is the second line of defence for a registry built
  *  in memory (`singleShowRegistry`, or Task 5's New-show surface) and never read from a file. */
-export async function loadShows(reg: Registry, opts: LoadShowsOptions): Promise<Map<string, ShowContext>> {
+export async function loadShows(reg: Registry, opts: LoadShowsOptions): Promise<LoadShowsResult> {
   const report = opts.report ?? ((line: string) => { process.stderr.write(`${line}\n`); });
   const shows = new Map<string, ShowContext>();
+  const skipped: SkippedShow[] = [];
   for (const [key, entry] of Object.entries(reg.shows)) {
     if (!SHOW_KEY.test(key)) {
       throw new Error(`${JSON.stringify(key)} is not a show key: expected [A-Za-z0-9][A-Za-z0-9_-]{0,63}`);
@@ -177,8 +210,10 @@ export async function loadShows(reg: Registry, opts: LoadShowsOptions): Promise<
         ...(opts.concurrency !== undefined ? { concurrency: opts.concurrency } : {}),
       }));
     } catch (err) {
-      report(`console: show ${key} (${entry.root}) was not loaded — ${err instanceof Error ? err.message : String(err)}`);
+      const reason = err instanceof Error ? err.message : String(err);
+      skipped.push({ key, root: entry.root, reason });
+      report(`console: show ${key} (${entry.root}) was not loaded — ${reason}`);
     }
   }
-  return shows;
+  return { shows, skipped };
 }

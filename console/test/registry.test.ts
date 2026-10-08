@@ -147,6 +147,40 @@ describe("registerShow", () => {
     expect(await readRegistry(file)).toEqual({ shows: {} });
   });
 
+  it("keeps both entries when two shows are registered at once", async () => {
+    const dir = await registryDir();
+    const file = path.join(dir, "shows.json");
+    // Two creations in flight. Without the exclusive lock each read the file before the other
+    // wrote and the second rename dropped the first entry, which leaves the worst shape available:
+    // a show scaffolded on disk, live in the server's two maps, answering its routes, and absent
+    // from the registry — so it disappears at the next restart with no message, and creating it
+    // again refuses on a path that is already a show. The window is narrow inside one process and
+    // real across two consoles sharing `~/.showrunner/shows.json`, which is what the registry is a
+    // machine-wide file for.
+    await Promise.all([
+      registerShow(file, "live", { root: "/shows/live" }),
+      registerShow(file, "retired", { root: "/shows/retired", readOnly: true }),
+    ]);
+    const reg = await readRegistry(file);
+    expect(Object.keys(reg.shows)).toEqual(["live", "retired"]);
+    expect(reg.shows["retired"]?.readOnly).toBe(true);
+    // The lock is released whichever way the write went, so the next registration is not refused.
+    await registerShow(file, "third", { root: "/shows/third" });
+    expect(Object.keys((await readRegistry(file)).shows)).toEqual(["live", "retired", "third"]);
+  });
+
+  it("refuses with the lock's own path when another writer's lock is still there", async () => {
+    const dir = await registryDir();
+    const file = path.join(dir, "shows.json");
+    // A lock left behind by a process that died mid-write. Waiting on it forever would hang the
+    // route, so the refusal names the file and says what to do about it.
+    await writeFile(`${file}.lock`, "", "utf8");
+    await expect(registerShow(file, "live", { root: "/shows/live" })).rejects.toThrow(`${file}.lock`);
+    await rm(`${file}.lock`, { force: true });
+    await registerShow(file, "live", { root: "/shows/live" });
+    expect(Object.keys((await readRegistry(file)).shows)).toEqual(["live"]);
+  });
+
   it("refuses a duplicate key, naming where that key already points", async () => {
     const dir = await registryDir();
     const file = path.join(dir, "shows.json");
@@ -215,8 +249,9 @@ describe("loadShows", () => {
   it("builds one context per entry, carrying the key and the readOnly flag", async () => {
     const live = await makeShow();
     const retired = await makeShow();
-    const shows = await loadShows({ shows: { live: { root: live }, retired: { root: retired, readOnly: true } } }, opts);
+    const { shows, skipped } = await loadShows({ shows: { live: { root: live }, retired: { root: retired, readOnly: true } } }, opts);
     expect([...shows.keys()]).toEqual(["live", "retired"]);
+    expect(skipped).toEqual([]);
     expect(shows.get("live")).toMatchObject({ key: "live", readOnly: false, showRoot: live });
     expect(shows.get("retired")).toMatchObject({ key: "retired", readOnly: true, showRoot: retired });
     // Every context is loaded with the same operator and worker command, so a second show needs no
@@ -226,7 +261,7 @@ describe("loadShows", () => {
     await rm(retired, { recursive: true, force: true });
   });
 
-  it("reports a root that will not load by key and skips it, leaving the good shows reachable", async () => {
+  it("reports a root that will not load by key, returns it as skipped, and leaves the good shows reachable", async () => {
     const live = await makeShow();
     const empty = await mkdtemp(path.join(tmpdir(), "console-noconfig-"));
     const badKey = await makeShow();
@@ -239,7 +274,7 @@ describe("loadShows", () => {
       audio: { guestRefsDir: "Production/guest-refs" },
     }));
     const reported: string[] = [];
-    const shows = await loadShows(
+    const { shows, skipped } = await loadShows(
       { shows: { live: { root: live }, nothing: { root: empty }, guests: { root: badKey } } },
       { ...opts, report: (line) => reported.push(line) },
     );
@@ -248,6 +283,13 @@ describe("loadShows", () => {
     expect(reported.join("\n")).toContain("nothing");
     expect(reported.join("\n")).toContain("guests");
     expect(reported.join("\n")).toContain("audio.guestRefsDir");
+    // Returned as well as reported: the stderr line is the operator's at startup, and `skipped` is
+    // what reaches the browser, so an entry the console refused is a row on the Shows page rather
+    // than a show that silently is not there.
+    expect(skipped.map((entry) => entry.key)).toEqual(["nothing", "guests"]);
+    expect(skipped.map((entry) => entry.root)).toEqual([empty, badKey]);
+    expect(skipped[0]?.reason).toContain("showrunner.json");
+    expect(skipped[1]?.reason).toContain("audio.guestRefsDir");
     for (const dir of [live, empty, badKey]) await rm(dir, { recursive: true, force: true });
   });
 
@@ -257,7 +299,7 @@ describe("loadShows", () => {
     await rm(live, { recursive: true, force: true });
   });
 
-  it("returns an empty map for an empty registry", async () => {
-    expect(await loadShows({ shows: {} }, opts)).toEqual(new Map());
+  it("returns an empty map and nothing skipped for an empty registry", async () => {
+    expect(await loadShows({ shows: {} }, opts)).toEqual({ shows: new Map(), skipped: [] });
   });
 });

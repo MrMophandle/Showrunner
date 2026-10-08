@@ -124,8 +124,11 @@ async function main(): Promise<void> {
 
   // One context per registered show, and one store per context. A show whose repository will not
   // load is reported on stderr by `loadShows` and left out of the map, so one unfinished edit in
-  // one show does not take every other show's Board off the air (ruling H-14).
-  const shows = await loadShows(registry, {
+  // one show does not take every other show's Board off the air (ruling H-14). `skipped` carries
+  // those entries on to `createApp`, which answers them to the browser: the stderr line is the
+  // operator's at startup, and an operator who starts this detached with its output in a log file
+  // reads the Shows page instead.
+  const { shows, skipped } = await loadShows(registry, {
     engineRoot, concurrency,
     ...(operator !== undefined ? { operator } : {}),
     ...(worker !== undefined ? { workerCommand: [process.execPath, path.resolve(worker)] } : {}),
@@ -137,6 +140,7 @@ async function main(): Promise<void> {
   // empty console is exactly the one the New-show surface is for. In `--show` single mode there is
   // no registry file to append to, so the route refuses rather than inventing one.
   const app = createApp(shows, stores, {
+    failedShows: skipped.map((entry) => ({ key: entry.key, root: entry.root, error: entry.reason })),
     ...(setupWorker !== undefined ? { setupWorkerCommand: [process.execPath, path.resolve(setupWorker)] } : {}),
     ...(registryFile === undefined ? {} : {
       newShow: {
@@ -177,6 +181,13 @@ async function main(): Promise<void> {
     // type or click and the name alone cannot be told apart when two shows share a name.
     for (const ctx of shows.values()) {
       process.stdout.write(`console:   ${ctx.key} — ${ctx.show.showName}${ctx.readOnly ? " (read-only)" : ""} → ${address}/shows/${ctx.key}\n`);
+    }
+    // And one line per entry that would not load, in the same block and the same shape. The reason
+    // went to stderr as `loadShows` found it, which on a console started detached is a different
+    // file from this one and several lines earlier; an operator reading the list of shows has to
+    // see that the list is short and why.
+    for (const entry of skipped) {
+      process.stdout.write(`console:   ${entry.key} — could not be loaded: ${entry.reason}\n`);
     }
     if (note !== undefined) process.stdout.write(`${note}\n`);
   });
