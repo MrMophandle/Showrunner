@@ -820,9 +820,14 @@ A run restarts by replaying its log; there is no separate state file to reconcil
 - **Any step whose status is not terminal is re-executed.** The re-execution is logged as a new
   `step_started` following the orphaned one, so the interruption stays visible in the history
   rather than being erased.
-- **A loop resumes its iteration counter.** The `loop_iteration` events logged since the loop's
-  most recent `step_started` are counted, and the loop continues from that count plus one. The
-  cap therefore counts the crashed attempt's work rather than starting over.
+- **A loop resumes its iteration counter, unless its last attempt ended.** The `loop_iteration`
+  events logged since the loop's most recent `step_started` are counted, and the loop continues
+  from that count plus one, so the cap counts a **crashed** attempt's work rather than starting
+  over. A `step_failed` or `step_reset` for the loop after that `step_started` ended the attempt
+  instead — the cap was exhausted, or a gate rejection or `resetSteps` invalidated the work — and
+  the next pass starts at iteration one with the sentinel shortcut discarded. Otherwise Resume on
+  a loop that failed at its cap could never run it: the count would already be the cap, and the
+  step would fail again with the same sentence in the same millisecond.
 - **A completed fix agent is not re-run.** When the log shows a `step_completed` for a gate's
   `onReject` agent after the gate's last answer, the gate reopens at the next attempt without
   running the agent again.

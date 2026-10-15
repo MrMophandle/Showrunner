@@ -119,6 +119,76 @@ describe("loops", () => {
     const dead = events.filter((e) => e.kind === "loop_iteration" && e.payload["toolCalls"] === 0);
     expect(dead).toHaveLength(2);
   });
+  it("re-runs a loop that exhausted its cap when the run is resumed, with a fresh count", async () => {
+    // Measured on the s02e01 run of 2026-10-15: Ryan pressed Resume on a loop that had failed with
+    // "exhausted 3 iterations", and the worker appended run_resumed, step_started and step_failed
+    // in the same millisecond with no agent_query at all — the count was already the cap, so the
+    // loop below never ran once. A step_failed after the last step_started ended that attempt, so
+    // the resumed pass is a new attempt and starts at iteration one.
+    const root = await mkdtemp(path.join(tmpdir(), "show-"));
+    const logPath = EventLog.logPath(root, "s02e01", "r1");
+    await writeCrashLog(logPath, [
+      { runId: "r1", kind: "run_started", payload: { pipeline: "p", episodeId: "s02e01" } },
+      { runId: "r1", stepId: "draft-loop", kind: "step_started", payload: { kind: "loop", body: "draft", until: "DRAFT_COMPLETE", max: 3 } },
+      { runId: "r1", stepId: "draft-loop", kind: "loop_iteration", payload: { iteration: 1, max: 3, sentinel: false, toolCalls: 48 } },
+      { runId: "r1", stepId: "draft-loop", kind: "loop_iteration", payload: { iteration: 2, max: 3, sentinel: false, toolCalls: 0 } },
+      { runId: "r1", stepId: "draft-loop", kind: "loop_iteration", payload: { iteration: 3, max: 3, sentinel: false, toolCalls: 0 } },
+      { runId: "r1", stepId: "draft-loop", kind: "step_failed", payload: { error: "exhausted 3 iterations without sentinel DRAFT_COMPLETE" } },
+      { runId: "r1", kind: "run_resumed", payload: { by: "operator" } },
+    ]);
+    const texts = ["scene one", "all done DRAFT_COMPLETE"];
+    const bodyCalls: number[] = [];
+    const executors: Executors = {
+      script: async () => ({ ok: true }),
+      agent: async (_s, ctx) => {
+        const n = bodyCalls.length;
+        bodyCalls.push(Number(ctx.results["draft:iteration"]));
+        return { ok: true, text: texts[n] ?? "", toolCalls: 1 };
+      },
+    };
+    const loop: LoopStep = { kind: "loop", id: "draft-loop", body, until: "DRAFT_COMPLETE", maxIterations: 3 };
+    const r = await run({ pipeline: { name: "p", steps: [loop] }, ctx: { runId: "r1", episodeId: "s02e01", showRoot: root }, log: new EventLog(logPath), executors });
+    expect(r).toEqual({ status: "completed" });
+    // The fresh attempt's own numbering, and the whole cap available to it again.
+    expect(bodyCalls).toEqual([1, 2]);
+    const events = await new EventLog(logPath).read();
+    expect(events.filter((e) => e.kind === "loop_iteration" && e.ts > at(5)).map((e) => e.payload["iteration"])).toEqual([1, 2]);
+    expect(events.filter((e) => e.kind === "step_completed" && e.stepId === "draft-loop")).toHaveLength(1);
+  });
+
+  it("re-runs a loop the gate's rejection reset, sentinel and all, rather than completing it again", async () => {
+    // The other half of the same rule, and the one with teeth: this loop had *finished* — its last
+    // iteration recorded the sentinel and step_completed was written — and then a withdrawal reset
+    // it. The count has to go, or the loop resumes at the cap; and the sentinel shortcut has to go
+    // with it, or the loop completes again without re-running a body whose work was just
+    // invalidated, which is the whole point of the reset.
+    const root = await mkdtemp(path.join(tmpdir(), "show-"));
+    const logPath = EventLog.logPath(root, "s02e01", "r1");
+    await writeCrashLog(logPath, [
+      { runId: "r1", kind: "run_started", payload: { pipeline: "p", episodeId: "s02e01" } },
+      { runId: "r1", stepId: "draft-loop", kind: "step_started", payload: { kind: "loop", body: "draft", until: "DRAFT_COMPLETE", max: 3 } },
+      { runId: "r1", stepId: "draft-loop", kind: "agent_result", payload: { ok: true, toolCalls: 2, text: "the old draft DRAFT_COMPLETE" } },
+      { runId: "r1", stepId: "draft-loop", kind: "loop_iteration", payload: { iteration: 1, max: 3, sentinel: true, toolCalls: 2 } },
+      { runId: "r1", stepId: "draft-loop", kind: "step_completed", payload: { result: "the old draft DRAFT_COMPLETE", iterations: 1 } },
+      { runId: "r1", stepId: "draft-loop", kind: "step_reset", payload: { by: "withdraw:outline-gate" } },
+    ]);
+    let bodyCalls = 0;
+    const executors: Executors = {
+      script: async () => ({ ok: true }),
+      agent: async () => { bodyCalls++; return { ok: true, text: "the new draft DRAFT_COMPLETE", toolCalls: 1 }; },
+    };
+    const loop: LoopStep = { kind: "loop", id: "draft-loop", body, until: "DRAFT_COMPLETE", maxIterations: 3 };
+    const r = await run({ pipeline: { name: "p", steps: [loop] }, ctx: { runId: "r1", episodeId: "s02e01", showRoot: root }, log: new EventLog(logPath), executors });
+    expect(r).toEqual({ status: "completed" });
+    expect(bodyCalls).toBe(1);
+    const completions = (await new EventLog(logPath).read()).filter((e) => e.kind === "step_completed" && e.stepId === "draft-loop");
+    // Two completions in the log — the reset one and this one — and the new one carries the new
+    // draft, not the text the reset threw away, and no resumedAfterSentinel shortcut.
+    expect(completions).toHaveLength(2);
+    expect(completions.at(-1)!.payload["result"]).toBe("the new draft DRAFT_COMPLETE");
+    expect(completions.at(-1)!.payload).not.toHaveProperty("resumedAfterSentinel");
+  });
+
   it("resumes a loop whose last iteration recorded the sentinel by completing it without running the body", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "show-"));
     const logPath = EventLog.logPath(root, "s02e01", "r1");

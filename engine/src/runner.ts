@@ -584,10 +584,23 @@ async function runGateStep(
 async function runLoopStep(
   step: LoopStep, ctx: RunContext, emit: Emit, executors: Executors, events: Event[],
 ): Promise<StepOutcome> {
-  // Resume the counter. The iterations that count are the ones logged under this step since its
-  // most recent step_started: those belong to the attempt that crashed, and the cap counts them,
-  // so the cap is per run rather than per process. This is counted before the new step_started
-  // is emitted, since that write would otherwise become "the most recent" and reset the count.
+  // Resume the counter, and the rule has two halves.
+  //
+  // **A crashed attempt keeps its count.** The iterations logged under this step since its most
+  // recent step_started belong to the attempt that crashed, and the cap counts them, so the cap is
+  // per run rather than per process: a loop that drafted twice of three before the machine died
+  // resumes at iteration three. This is counted before the new step_started is emitted, since that
+  // write would otherwise become "the most recent" and reset the count.
+  //
+  // **A finished attempt does not.** A step_failed or a step_reset for this step *after* that
+  // step_started ended the attempt — the loop exhausted its cap and failed, or a gate rejection or
+  // resetSteps invalidated it — and the next pass is a new attempt that starts at iteration one.
+  // Without this, Resume on a loop that failed at its cap could never run: `done` would already be
+  // the cap, the loop below would not execute once, and the step would fail again in the same
+  // millisecond with the same sentence (measured on the s02e01 run of 2026-10-15, where Resume
+  // appended run_resumed, step_started and step_failed with no agent_query between them). The
+  // sentinel shortcut below is discarded with the count, or a loop reset after its sentinel had
+  // fired would complete again without re-running a body whose work was just invalidated.
   let lastStart = -1;
   for (let i = 0; i < events.length; i++) {
     const e = events[i];
@@ -599,6 +612,7 @@ async function runLoopStep(
   for (let i = lastStart + 1; i < events.length; i++) {
     const e = events[i];
     if (!e || e.stepId !== step.id) continue;
+    if (e.kind === "step_failed" || e.kind === "step_reset") { done = 0; lastIteration = undefined; lastText = ""; continue; }
     if (e.kind === "loop_iteration") { done++; lastIteration = e; }
     if (e.kind === "agent_result" && typeof e.payload["text"] === "string") lastText = e.payload["text"];
   }
