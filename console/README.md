@@ -25,8 +25,8 @@ page that can be "the Board" without saying whose.
 | The shows | `/` | One card per registered show: the key, the name, whether it is writable or read-only, its episodes and production directory names, and a link to its Board. A "new show" link points at `/shows/new`. |
 | New show | `/shows/new` | The seven fields that make a show, and the one `POST /api/shows` that makes it. The slug, the NAS root and the registry key follow the name until one of them is edited; the grammar the server applies to the key is applied here too, so "that is not a key" is said while it is being typed rather than after the POST. On success it navigates to the new show's Bible view. Absent on a console started with `--show`, which holds one show and writes no registry. |
 | The Bible view | `/shows/:show/bible`, `/shows/:show/bible/:key` | The show's fifteen bible files as a rail, one file's panel beside it, and the Finish panel once every gated file is approved. **This is the interview, in the browser:** each file's questions are a form whose answers land on disk the moment they are saved, each file's writing runs in a detached setup worker, and each gate takes the four answers the terminal offers — approve, reject with notes, "I will write this one myself", "import this file". Two routes and one component, so the rail stays mounted across a navigation between files. A read-only show renders every panel's content and none of its buttons. |
-| The Board | `/shows/:show` | One row per episode: the id, the title taken from the episode's outline heading, the stage chip with the reasons underneath it, the open gate's step id and attempt, the run's status, the time since the run's last event, and the row's one action. A New-episode form posts a new episode's `premise.md`. A read-only show draws no launch, no continue and no form, and one line saying why. |
-| The Run view | `/shows/:show/episodes/:id/runs/:run` | Three altitudes at once: the stage, the step in flight with its elapsed time and progress bar, and the time since the last event; then the step rail, every step of the pipeline in order with its status; then the event feed, the last 2,000 events. The action bar carries the recovery moves, and carries none on a read-only show. |
+| The Board | `/shows/:show` | One row per episode: the id, the title taken from the episode's outline heading, the stage chip with the reasons underneath it (and, for a run asleep until a usage limit resets, the engine's own sentence for the wait), the open gate's step id and attempt, the run's status, the time since the run's last event, and the row's one action. A New-episode form posts a new episode's `premise.md`. A read-only show draws no launch, no continue and no form, and one line saying why. |
+| The Run view | `/shows/:show/episodes/:id/runs/:run` | Three altitudes at once: the stage, the step in flight with its elapsed time, its progress bar and — when it is asleep waiting out a usage limit — the engine's sentence saying so, and the time since the last event; then the step rail, every step of the pipeline in order with its status; then the event feed, the last 2,000 events. The action bar carries the recovery moves, and carries none on a read-only show. |
 | The Gate view | `/shows/:show/episodes/:id/runs/:run/gate` | The gate's rendered message as markdown, `attempt N of M`, the notes from previous rejections, the verdict board of what the reviewers found, one pane per artifact the gate is about, and the Approve and Reject buttons — one line instead of the buttons on a read-only show. |
 | What happened | `/shows/:show/episodes/:id/runs/:run/what-happened` | Everything a troubleshooter would be handed — the pipeline, the run, the collapsed events, every prompt the run read with its hash then and now, and every file the run wrote — plus a question box that asks a read-only agent about that run (absent on a read-only show: asking appends to the run's troubleshooting log, which is a write). |
 
@@ -319,6 +319,45 @@ confirmation and in the notice. The step rail offers "withdraw approval" **only 
 approved gate**, which is the one case that spends no approval the operator cannot see; withdrawing
 an earlier gate is still available through the route, deliberately.
 
+### A run asleep until a usage limit resets — no move while its worker lives
+
+**A run whose worker is asleep waiting out a Claude plan usage limit needs nothing from the operator,
+and is not a fifth move.** The engine's agent executor owns the wait and logs `step_waiting` before
+it sleeps (the root `README.md`'s **Agent steps → The usage limit**), so the console appends nothing,
+spawns nothing, and offers no button for it: the same worker re-runs the limited step itself once the
+window resets. **The sentence stops being drawn the moment that retry starts**, which is the second
+`agent_query` the step writes — the query that follows a wait can run for minutes, and a row still
+saying "waiting for the usage limit to reset" through it would report a sleep as the reason a busy
+step is quiet.
+
+**The Board's row says what the run is waiting for, and the status chip beside it is the evidence a
+worker still holds the run.** The reason under the stage chip is the engine's own sentence, carrying
+the reset time and the weekly figure, while the status chip still reads `running · pid <pid> ·
+beat 0m 03s ago` — the console prints every age in two units, so the heartbeat's reads `<m>m <ss>s`
+and never a bare `<n>s` — because the lock's heartbeat keeps beating through the sleep. That pair is
+what separates a wait from a hang: the heartbeat is why the run reads `running` and the sentence is
+why it is not moving. **The clock beside the chip does not turn amber for a wait**, either: a run
+that has been silent for fourteen minutes is normally coloured, and a run asleep on a limit is
+exempted, because its silence is the thing the sentence above it explains.
+
+**A run killed or rebooted *inside* the wait reads as crashed, and Continue is the move.** The
+sleeping worker never reaches the `finally` that removes its lock, so the lock file outlives it with
+a dead pid; `readLockFile` reports `alive: false` from its pid probe, and `deriveRunStatus` falls
+past the live-lock rule to the in-flight rule — where `step_waiting` has left the step `running` —
+and answers crashed. **Continue before the window has reset re-pays the limited attempt and then
+sleeps again.** The runner treats a step with no terminal event as not done, so the whole agent step
+re-runs from the top, and the new worker resumes no session (the executor's session map lives in one
+process), so the limited attempt's work is paid for twice — 447 s and 48 tool calls in the measured
+case. The re-run then meets the same limit, writes a second `step_waiting` and sleeps again, which
+is self-healing but not free: the cheaper move is to continue after the reset time the first
+sentence named.
+
+**A run that *failed* on a usage limit is an ordinary failure, and Resume above is the move — after
+the reset.** Nothing about it is special to the console. The step's error names the window, the reset
+time, the weekly figure and the config key that set the auto-retry ceiling, so the step rail already
+carries the whole reason, and Resume reopens that step and everything the failure swept. Resuming
+before the reset time the error names spends a worker on the same query into the same limit.
+
 ## The artifact route's fence
 
 `GET /api/shows/:show/episodes/:id/files/<show-relative path>` serves the episode's own files — the outline a
@@ -358,13 +397,14 @@ no sound. What is left is the string in the tab, which an operator can see acros
 window behind something else.
 
 The title is set once at the top of the app rather than per page, so a Run view open on one episode
-still says that a different episode has started waiting. It takes four forms, read in the order of
+still says that a different episode has started waiting. It takes five forms, read in the order of
 what the person at the tab can do about them:
 
 | Form | When |
 |---|---|
 | `⏸ <id> NEEDS YOU — <show> · <key>` | An episode is parked at a gate. This wins everything: it is the only form that is a question addressed to the reader. |
 | `⚠ <id> FAILED — <show> · <key>` / `⚠ <id> CRASHED — <show> · <key>` | A run has stopped and will not restart itself. Second, because it is a job waiting on the operator rather than a question. |
+| `⏳ <id> WAITING · resets <time> — <show> · <key>` | A run is asleep inside its worker until a Claude plan usage limit resets, and will re-run its own step when it does (`step_waiting`, Plan I). Third: under `⚠` because a wait is a job the console is already doing while a failure is one only the operator can finish, and over the working form because a tab reading `● s02e01 DRAFT_SCRIPT · 94m` for a run that is asleep until the evening sends its reader looking for a step that is not hung. **The form cannot be keyed on a status** — the worker holds the run's lock and beats it while it sleeps, so such a run reads `running`; the row says it is waiting by carrying `waitingNote`, and `<time>` is the reset rendered in the browser's own zone (`resetLabel`), dropped entirely for a timestamp the browser cannot parse. |
 | `● <id> <stage> · <N>m — <show> · <key>` | A run is working, where `N` is the whole minutes since that run's last event. |
 | `<show> · <key> console` | Nothing wants attention. |
 | `console` | The page is not inside a show — the shows list, or the New-show page. |

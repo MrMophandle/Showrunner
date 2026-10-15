@@ -1,4 +1,5 @@
 import path from "node:path";
+import { DEFAULT_AUTO_RETRY_WEEKLY_UTILIZATION_MAX } from "@showrunner/engine";
 
 /** The three facts about a show that nothing can be derived from and nobody can be interviewed
  *  about: what it is called, the one-word name its files are named with, and where its finished
@@ -32,7 +33,8 @@ export interface ShowIdentity {
  *     for any of these is worse than an empty one: a wrong playlist, another show's genre tags, or
  *     another show's prompt scaffolding on every image.
  *  3. **A house default**: the model tiers, the directory names, the filename patterns, the audio
- *     numbers, the frame size and the loudness targets. These are the engine's and the scripts'
+ *     numbers, the frame size, the loudness targets and the weekly auto-retry ceiling
+ *     (`agents.autoRetryWeeklyUtilizationMax`). These are the engine's and the scripts'
  *     own operating points rather than anything about a particular show, and an author who wants
  *     different ones edits `showrunner.json`, which is one file and is read by everything.
  *
@@ -70,6 +72,13 @@ export function buildShowConfig(id: ShowIdentity, cast: string[]): Record<string
       writer: "claude-fable-5",
     },
     airMap: {},
+    agents: {
+      // A house default, not a show's choice: the percentage of the weekly plan quota below which
+      // the engine waits out a five-hour usage limit and retries the step itself instead of asking
+      // the operator to resume. Written explicitly rather than left to the loader's default so a
+      // new show's config shows the author the dial exists.
+      autoRetryWeeklyUtilizationMax: DEFAULT_AUTO_RETRY_WEEKLY_UTILIZATION_MAX,
+    },
     output: {
       nasMount: path.dirname(id.nasRoot),
       nasRoot: id.nasRoot,

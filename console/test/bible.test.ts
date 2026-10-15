@@ -389,6 +389,24 @@ describe("the Bible view", () => {
     expect((await view(app, "technology")).run?.error).toBe("write failed: the writer timed out");
   });
 
+  it("carries the writer's own reason for a wait to the page, so an hour of silence explains itself", async () => {
+    // Plan I: a bible file's `write` step is an agent step with a twenty-minute timeout, so it can
+    // hit a Claude plan usage limit like any other. `SetupRunView.steps` whitelists the fields it
+    // carries, and the sentence is one of them — the "the writer is working" panel promises "up to
+    // twenty minutes for one file", and a wait that outlasts that promise without saying why is
+    // what makes an author start the file again and pay for it twice.
+    const { app, root } = await bibleShow();
+    const reason = "waiting for the usage limit to reset at 7:50pm America/New_York (weekly quota 41%)";
+    await seedSetupRun(root, "timeline", "20261007T100000Z-dddd", [
+      { kind: "run_started", payload: {} },
+      { kind: "step_started", stepId: "write", payload: { kind: "agent" } },
+      { kind: "step_waiting", stepId: "write", payload: { reason, window: "five_hour", resetsAt: "2026-10-07T23:50:00.000Z", weeklyUtilization: 41, ceiling: 65 } },
+    ]);
+    const v = await view(app, "timeline");
+    const write = v.run?.steps.find((s) => s.id === "write");
+    expect(write).toMatchObject({ id: "write", status: "waiting", note: reason });
+  });
+
   it("tells the three approved states apart by the notes on the approval, and carries those notes to the page", async () => {
     const { app, root } = await bibleShow();
     await seedSetupRun(root, "world-overview", "20261007T100000Z-aaaa", approvedRun());

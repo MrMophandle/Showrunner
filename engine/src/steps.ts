@@ -6,7 +6,7 @@ export type StepId = string;
 export type EventKind =
   | "run_started" | "run_finished" | "run_resumed"
   | "step_started" | "step_completed" | "step_failed" | "step_skipped" | "step_cached" | "step_reset"
-  | "step_progress" | "script_line"
+  | "step_progress" | "step_waiting" | "script_line"
   | "agent_query" | "agent_tool_call" | "agent_result"
   | "loop_iteration"
   | "gate_opened" | "gate_answered"
@@ -176,11 +176,42 @@ export interface Pipeline {
  *  summary a later step may read as `{{results.<id>}}`. */
 export type ScriptOutcome = { ok: true; result?: string } | { ok: false; error: string };
 
+/** Why a query ended in something the SDK itself named, rather than in a result the executor could
+ *  read: a plan usage limit, or one of the other twelve `SDKAssistantMessageError` kinds. It rides
+ *  on the failure outcome and is logged on `agent_result`, because the operator's next move differs
+ *  by kind — a five-hour limit under the weekly ceiling is waited out and retried by the executor
+ *  itself, a seven-day one needs the operator's Resume after the reset, and a `billing_error` needs
+ *  an account change before any run can proceed.
+ *
+ *  `kind` is `"rate_limit"` for a usage limit, and otherwise the SDK's own error kind verbatim, so
+ *  a kind the SDK adds after this was written still reaches the log by name. `waited` says whether
+ *  the executor slept before the attempt this limit describes — the log's record that the wait
+ *  happened and that no second wait is owed. It is true only after a real sleep: a retry taken at
+ *  once because the reset instant had already passed records `waited: false` (ruling I-22).
+ *
+ *  **The second arm carries `waited` too, optionally.** A retry that came back refused for another
+ *  SDK kind — the credit ran out while the step slept — is logged as that kind, and `waited` rides
+ *  along so the record of the five hours survives on `agent_result.limit` and not only in the
+ *  step_waiting event. It is absent when no retry was taken at all, which is every first-attempt
+ *  refusal.
+ *
+ *  `weeklySource` says which of the two sources the weekly figure came from — `"event"` for a
+ *  seven-day `rate_limit_event` in the stream, `"usage"` for the SDK's experimental usage call —
+ *  because the two are not equally reliable: the event is part of the stream the query already
+ *  delivered, while the usage call is a control request that can go unanswered. An operator reading
+ *  What-happened can tell a decision made on the stream's own number from one made on a figure
+ *  fetched separately. It is absent exactly when `weeklyUtilization` is. */
+export type AgentLimit =
+  | { kind: "rate_limit"; window: string; resetsAt?: string; weeklyUtilization?: number; weeklySource?: "event" | "usage"; waited: boolean }
+  | { kind: string; waited?: boolean };
+
 export type AgentOutcome =
   | { ok: true; text: string; verdict?: unknown; toolCalls: number }
   /** toolCalls on a failure is the count made before the failure — the number that tells a
-   *  loop iteration that failed after real work apart from one that did nothing (spec §6.7). */
-  | { ok: false; error: string; toolCalls?: number };
+   *  loop iteration that failed after real work apart from one that did nothing (spec §6.7).
+   *  `limit` is set when the SDK named the cause (a usage limit, or another error kind); the
+   *  three callers in runner.ts still fail the step on `error` alone and ignore it. */
+  | { ok: false; error: string; toolCalls?: number; limit?: AgentLimit };
 
 /** The two step kinds that do real work are injected, so the runner is testable with fakes.
  *
@@ -195,8 +226,8 @@ export type AgentOutcome =
  *
  *  An executor may throw only when the event log itself is unwritable. The script executor never
  *  throws (every rejected emit becomes `{ ok: false, error: "log write failed: …" }`); the agent
- *  executor guards the `agent_tool_call` emit the same way but its `agent_query` and `agent_result`
- *  emits are unguarded and reject out of the executor. A throw leaves the step `running` with no
+ *  executor guards the `agent_tool_call` emit the same way but its `agent_query`, `step_waiting` and
+ *  `agent_result` emits are unguarded and reject out of the executor. A throw leaves the step `running` with no
  *  terminal event; §6.9's replay re-executes it on the next run. */
 export interface Executors {
   /** Obligations: one `script_line` per line of stdout or stderr that is not a progress line, in

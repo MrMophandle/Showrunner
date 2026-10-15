@@ -3,12 +3,15 @@ import type { BibleRow, BibleState, EpisodeRow, RunView, ShowInfo, StepRow } fro
 /** The client's projections: every judgment the four surfaces make about the data the server
  *  hands them, as functions of their arguments and a clock the caller passes in.
  *
- *  They live outside the components for one reason. There is no DOM in this repository's test
- *  suite (`vitest.config.ts`: `environment: "node"`, and no jsdom is installed), so anything
- *  asserted through a rendered component could not be asserted at all — and these are the
- *  judgments worth asserting: a stall label that turns amber at the wrong minute, a tab title
- *  that misses an episode waiting on the showrunner, or a rejection note composed in an order
- *  that depends on which shot was clicked first are all failures nobody would notice by looking.
+ *  They live outside the components for one reason: they are the judgments worth asserting, and a
+ *  judgment inside a component is asserted only by rendering one. A stall label that turns amber
+ *  at the wrong minute, a tab title that misses an episode waiting on the showrunner, or a
+ *  rejection note composed in an order that depends on which shot was clicked first are all
+ *  failures nobody would notice by looking. (This file's header used to say the suite had no DOM
+ *  at all; since Plan H's ruling H-10 a test may opt into jsdom with a per-file pragma — see
+ *  `vitest.config.ts` and `test/client/ProgressBar.test.tsx`. The argument for keeping these
+ *  functions out here is unchanged and is the one above: a pure function is the cheaper and more
+ *  exact place to assert a judgment, not the only possible one.)
  *
  *  Every one of them takes `now` rather than reading the clock, so a test states the moment it is
  *  asking about. The default is `Date.now()`, which is what a component passes. */
@@ -69,6 +72,30 @@ export function stalled(lastEventAt: string | undefined, now: Date | number = Da
   return ms !== undefined && ms >= thresholdMs;
 }
 
+/** Whether a Board row's "since the last event" clock reads amber: the run has been silent past
+ *  the stall threshold **and** it is a run that could be moving — `running` or `crashed`. An idle
+ *  or completed run is quiet because it has finished, and a run parked at a gate is quiet because
+ *  it is waiting for the person reading the Board.
+ *
+ *  **A run asleep until a usage limit resets is exempt** (Plan I). It is silent for hours by
+ *  design, the engine's own sentence under its stage chip says why, and amber means "this may be
+ *  stuck" — the same reasoning `silentRender` applies to a render that reports no frames. The
+ *  exemption is keyed on the row's `waitingNote`, as every other judgment about a limit wait is,
+ *  because the run itself reads `running`: a worker is holding it and beating its lock.
+ *
+ *  A function rather than a condition written inline in the page, so the Board's own markup
+ *  carries no judgment. **What it shares with `stallState` is the rule, not the code**: both
+ *  exempt a limit wait from the amber, and each keys that exemption on the shape it is handed —
+ *  this one on `EpisodeRow.waitingNote`, the row-level summary the server derives through
+ *  `waitingOf`, and `stallState` on the `note` of the `RunView`'s own step rows. They are not one
+ *  predicate because they are not one question: a Board row is one line about a whole run, and
+ *  `stallState` also has a render's silence and "no events yet" to answer for and no run status to
+ *  read. The two comments name each other so the next reader of either finds the other. */
+export function quietRow(row: Pick<EpisodeRow, "status" | "lastEventAt" | "waitingNote">, now: Date | number = Date.now(), thresholdMs = STALL_MS): boolean {
+  if (waitingNote(row) !== undefined) return false;
+  return stalled(row.lastEventAt, now, thresholdMs) && (row.status === "running" || row.status === "crashed");
+}
+
 /** A stage string as the operator reads it, and the kind that colours it. The underscores become
  *  spaces because the stage is a label here and not an identifier. */
 export function stageLabel(stage: string): { kind: StageKind; text: string } {
@@ -125,7 +152,16 @@ export function stallState(
   if (silentRender(view)) return { text: "render running (silent)", amber: false };
   const ms = since(view.lastEventAt, now);
   if (ms === undefined) return { text: "no events yet", amber: false };
-  return { text: `${duration(ms)} since the last event`, amber: ms >= thresholdMs };
+  // A step asleep until a usage limit resets is the other legitimately quiet case (Plan I), and
+  // the wait can run for five hours. The age is still printed — "4h 55m since the last event" is
+  // true, and it is what the operator wants to know — but it is not amber, because the step
+  // altitude below carries the engine's sentence saying what the silence is. The row's `note` is
+  // the discriminator: a gate's waiting row carries none, and a gate is a stall worth colouring.
+  // This is the same rule `quietRow` applies to a Board row, keyed there on the row's
+  // `waitingNote` because that is the shape the Board is handed; the rule is shared, the predicate
+  // is not.
+  const sleepingOnLimit = view.steps.some((s) => s.note !== undefined && s.note !== "");
+  return { text: `${duration(ms)} since the last event`, amber: !sleepingOnLimit && ms >= thresholdMs };
 }
 
 /** The rejection note a flagged contact sheet composes: one line per flagged shot, `<shot id>:
@@ -176,15 +212,57 @@ export function composeNotesWithFlags(
   return { notes: rest === "" ? block : `${block}\n\n${rest}`, block };
 }
 
+/** The sentence a Board row carries for a run that is asleep waiting out a Claude plan usage
+ *  limit, or undefined for every other row — the engine's own words, never the console's
+ *  (`EpisodeRow.waitingNote`, from the waiting step's `step_waiting` reason).
+ *
+ *  A function rather than a field read inline, for the reason every judgment in this file is one:
+ *  the Board's row draws it, `titleFor` keys its `⏳` form on the same condition, and the two must
+ *  not come to disagree about which rows are waiting on a limit. The empty string is treated as no
+ *  note, so a reason the engine wrote blank draws nothing rather than an empty line under a chip. */
+export function waitingNote(row: Pick<EpisodeRow, "waitingNote">): string | undefined {
+  const note = row.waitingNote;
+  return note === undefined || note.trim() === "" ? undefined : note;
+}
+
+/** When a usage limit resets, as the person at the tab reads a clock: `7:50 PM` on an en-US
+ *  machine, `19:50` on a 24-hour one — the ISO the engine recorded, rendered in **the browser's**
+ *  zone and locale.
+ *
+ *  The browser's and not the reset's: the operator is looking at the machine in front of them, and
+ *  a time in the SDK's zone would be a number they have to convert before they know whether to
+ *  wait. The engine's failure sentences keep the zone they were given, so the two are not in
+ *  competition — the log says `7:50pm America/New_York` and the tab says what that is here.
+ *
+ *  Undefined for an absent or unparseable timestamp, which is why the title's form drops the
+ *  `· resets <time>` clause rather than printing `Invalid Date` in a tab. */
+export function resetLabel(iso: string | undefined): string | undefined {
+  if (iso === undefined || iso === "") return undefined;
+  const at = Date.parse(iso);
+  if (!Number.isFinite(at)) return undefined;
+  return new Date(at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+
 /** The document title: the console's entire alerting story, since the spec rules out web
  *  notifications on a LAN (http is not a secure context) and the console makes no sound.
  *
- *  Four forms, read in order of what the person at the tab can do about them. An episode waiting
+ *  Five forms, read in order of what the person at the tab can do about them. An episode waiting
  *  on the showrunner wins everything, because only that one is a question addressed to them. A
  *  **failed or crashed** run comes next — `⚠ <id> FAILED` or `⚠ <id> CRASHED` — because it is a
  *  run that has stopped and will not restart itself, and a tab that reported it as idle let an
- *  episode sit broken for as long as nobody opened the Board. A run that is working is third,
- *  with the whole minutes since it last moved. Everything else is idle.
+ *  episode sit broken for as long as nobody opened the Board. A run **asleep until a usage limit
+ *  resets** is third — `⏳ <id> WAITING · resets 7:50 PM` — and the two neighbours are what place
+ *  it: it ranks under `⚠` because a wait is a job the console is already doing and a failure is
+ *  one only the operator can finish, and over the working form because a tab reading
+ *  `● s02e01 DRAFT_SCRIPT · 94m` for a run that is asleep until the evening sends its reader
+ *  looking for a hung step (Plan I, the display ruling). A run that is working is fourth, with the
+ *  whole minutes since it last moved. Everything else is idle.
+ *
+ *  **The `⏳` form cannot be keyed on a status**, and that is the one subtlety here. The wait
+ *  happens inside the worker with the run's lock heartbeat going (spec §4.2), so such a run reads
+ *  `running` — a process really is holding it — and the row says it is waiting by carrying
+ *  `waitingNote`. The check is therefore the note's presence, which is also why it must sit above
+ *  the `running` form rather than inside it.
  *
  *  Each form names the first row in Board order that matches, so a show with two waiting episodes
  *  names the earlier one and the title does not flicker between them.
@@ -219,6 +297,11 @@ export function titleFor(show: TitleShow, rows: EpisodeRow[] | null, now: Date |
   if (waiting !== undefined) return `⏸ ${waiting.id} NEEDS YOU — ${label}`;
   const broken = rows.find((r) => r.status === "failed" || r.status === "crashed");
   if (broken !== undefined) return `⚠ ${broken.id} ${broken.status === "failed" ? "FAILED" : "CRASHED"} — ${label}`;
+  const limited = rows.find((r) => waitingNote(r) !== undefined);
+  if (limited !== undefined) {
+    const resets = resetLabel(limited.waitingUntil);
+    return `⏳ ${limited.id} WAITING${resets === undefined ? "" : ` · resets ${resets}`} — ${label}`;
+  }
   const running = rows.find((r) => r.status === "running");
   if (running !== undefined) {
     const minutes = Math.floor((since(running.lastEventAt, now) ?? 0) / 60_000);

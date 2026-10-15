@@ -93,6 +93,11 @@ function RunningPanel({ run, now }: { run: SetupRunView | undefined; now: number
                 <span className="rail-timing">started {step.startedAt.slice(11, 19)} · {elapsed(step.startedAt, now)}</span>
               )}
             </div>
+            {/* The writer asleep until a Claude plan usage limit resets (Plan I). This panel's
+                whole job is to keep an author from reloading the page or starting the file again,
+                and "up to twenty minutes" is the promise it makes; a wait that outlasts that
+                promise has to say so in the engine's own words. */}
+            {step.note !== undefined && step.note !== "" && <div className="rail-note">{step.note}</div>}
           </li>
         ))}
       </ul>

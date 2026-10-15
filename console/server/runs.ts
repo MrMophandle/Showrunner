@@ -168,6 +168,31 @@ function projectSteps(descriptions: StepDescription[], events: Event[]): StepRow
         row.status = "running";
         row.startedAt = e.ts;
         delete row.endedAt; delete row.error; delete row.result; delete row.toolCalls; delete row.progress; delete row.flag;
+        delete row.note; delete row.waitingUntil;
+        break;
+      case "step_waiting":
+        // Plan I: the agent executor hit a Claude plan usage limit and the worker is sleeping
+        // until the reset, its lock's heartbeat running. The step is waiting on something that is
+        // not a person, which is why the reason is carried as well as the status — "waiting" alone
+        // reads as a gate. `startedAt` is left where it was, so the Run page and the rail keep
+        // counting the time this step has cost, and no `endedAt` is set: the step has not ended,
+        // it is asleep inside one executor call and will be re-run from here.
+        row.status = "waiting";
+        row.note = String(e.payload["reason"] ?? "");
+        if (typeof e.payload["resetsAt"] === "string") row.waitingUntil = e.payload["resetsAt"];
+        break;
+      case "agent_query":
+        // The retry after a usage-limit wait: the sleep is over and the executor is querying
+        // again, for as long as the step's own timeout allows — 447 s in the measured case. The
+        // wait ends here, not at the step's terminal event, or the Board row, the Run altitude,
+        // every rail row, the Bible panel and the tab title would all go on asserting a sleep
+        // through a query that is doing work (and the tab would print a reset time in the past).
+        //
+        // The first attempt's agent_query precedes step_waiting, so the note's presence is what
+        // makes this the retry. It is also why the case is guarded rather than unconditional: a
+        // gate's fix agent writes agent_query against a row whose status is `waiting` for an
+        // entirely different reason, and that row carries no note.
+        if (row.note !== undefined) { row.status = "running"; delete row.note; delete row.waitingUntil; }
         break;
       case "step_completed":
       case "step_cached": {
@@ -176,12 +201,18 @@ function projectSteps(descriptions: StepDescription[], events: Event[]): StepRow
         if ("result" in e.payload) row.result = e.payload["result"];
         const toolCalls = e.payload["toolCalls"];
         if (typeof toolCalls === "number") row.toolCalls = toolCalls;
+        // The wait is over, whichever way it ended: the executor re-runs the step after its sleep
+        // and that attempt lands here or on `step_failed`. A row left carrying "waiting for the
+        // usage limit to reset at 7:50pm" beside a green status would be the console asserting
+        // something that stopped being true when this event was written.
+        delete row.note; delete row.waitingUntil;
         break;
       }
       case "step_failed":
         row.status = "failed";
         row.endedAt = e.ts;
         row.error = String(e.payload["error"] ?? "");
+        delete row.note; delete row.waitingUntil;
         break;
       case "step_skipped":
         // The same event kind for two different outcomes: a step its own `when` turned off was
@@ -192,6 +223,7 @@ function projectSteps(descriptions: StepDescription[], events: Event[]): StepRow
       case "step_reset":
         row.status = "pending";
         delete row.endedAt; delete row.error; delete row.result; delete row.toolCalls; delete row.progress; delete row.flag;
+        delete row.note; delete row.waitingUntil;
         break;
       case "gate_opened":
         row.status = "waiting";
@@ -210,8 +242,14 @@ function projectSteps(descriptions: StepDescription[], events: Event[]): StepRow
   // Progress and the loop flag are computed for every running step rather than only for the
   // run's `position`: `position` is the last step to have started, and Plan E's Task 9 lets two
   // steps run at once, at which point the earlier of them would silently lose its progress bar.
+  //
+  // A step asleep on a usage limit counts as running here (`note` is set, which only
+  // `step_waiting` does — a gate's waiting row has none). The measured case is a revise loop that
+  // hit the limit on iteration 1 of 3, and a step that lost its "1/12 scenes" and its
+  // `did-nothing` flag for the hours of the wait would be hiding what the run had got through
+  // before it stopped — the one thing the operator wants to know before deciding to wait it out.
   for (const row of rows.values()) {
-    if (row.status !== "running") continue;
+    if (row.status !== "running" && row.note === undefined) continue;
     const stepEvents = sinceLastStart(events, row.id);
     const progress = progressOf(stepEvents);
     if (progress !== undefined) row.progress = progress;
@@ -231,7 +269,11 @@ function projectSteps(descriptions: StepDescription[], events: Event[]): StepRow
  *     gate has no lock at all: the worker released it and exited, which is the normal resting
  *     state of an episode awaiting the showrunner and not a crash.
  *  3. A live lock — "running". A process is holding this run right now, and that is the only
- *     thing that means a run is running.
+ *     thing that means a run is running. **A worker sleeping out a usage limit is one of these**
+ *     (Plan I): it holds the lock and beats it every five seconds while the reset comes, so the
+ *     run is running and the step that is asleep says so itself through its `note` — this ladder
+ *     is deliberately not given a seventh state for it, because there is no move to offer and a
+ *     run that would come back from the wait on its own must not read as one that has stopped.
  *  4. An empty log and no lock — "none". A run that was launched and has not written yet: the
  *     worker takes the lock and appends `run_started` within milliseconds of being spawned, and
  *     for that moment there is nothing on disk to read. Reporting it as a crash would make every
@@ -305,6 +347,20 @@ function failedOf(events: Event[], state: RunState): { stepId: string; error: st
     return { stepId: e.stepId, error: String(e.payload["error"] ?? "") };
   }
   return undefined;
+}
+
+/** The step that is asleep waiting out a Claude plan usage limit, if one is — the Board's row
+ *  needs the sentence and the reset time, and the row has no steps on it.
+ *
+ *  **Read off the projected rows and not off the events**, because the rows already answer the
+ *  only hard question: `projectSteps` clears `note` when the retry's `agent_query` starts and on
+ *  every terminal event for the step, so a row whose status is `waiting` *and* which carries a note
+ *  is a wait that is still being slept. A gate's
+ *  waiting row carries no note and is passed over, which is what keeps one status serving both
+ *  waits (`StepRow`'s doc comment). The twin of `failedOf`, which answers the same shape of
+ *  question — "is this still the run's current problem?" — from the engine's state. */
+function waitingOf(steps: StepRow[]): StepRow | undefined {
+  return steps.find((s) => s.status === "waiting" && s.note !== undefined && s.note !== "");
 }
 
 /** Every run log of **one** show, tailed by byte offset, projected into the views the console
@@ -414,6 +470,14 @@ export class RunStore {
     // several paragraphs of rendered prose, and twenty of them is the Board's whole payload.
     if (view.openGate) row.openGate = { stepId: view.openGate.stepId, attempt: view.openGate.attempt, openedAt: view.openGate.openedAt };
     if (view.failed) row.failed = view.failed;
+    // A run asleep until a usage limit resets reads `running`, because a worker is holding it and
+    // beating its lock — so the sentence is the only thing that tells the Board and the tab title
+    // that the minutes passing are a wait and not work (Plan I).
+    const waiting = waitingOf(view.steps);
+    if (waiting?.note !== undefined) {
+      row.waitingNote = waiting.note;
+      if (waiting.waitingUntil !== undefined) row.waitingUntil = waiting.waitingUntil;
+    }
     if (view.lastEventAt !== undefined) row.lastEventAt = view.lastEventAt;
     if (view.worker) row.worker = view.worker;
     // A row whose log could not be read to its end is a row that has stopped moving: everything
@@ -477,7 +541,12 @@ export class RunStore {
       // never produces. A bible file has no archive marker and never will.
       status: deriveRunStatus(state, lock, events.length) as SetupRunView["status"],
       steps: projectSteps(described, events).map((row) => ({
-        id: row.id, status: row.status, ...(row.startedAt !== undefined ? { startedAt: row.startedAt } : {}),
+        id: row.id, status: row.status,
+        ...(row.startedAt !== undefined ? { startedAt: row.startedAt } : {}),
+        // The `write` step is an agent step with a twenty-minute timeout, so it is as able to hit
+        // a usage limit as an episode's outline step is. Carried here because the author watching
+        // "the writer is working" is the reader with the least context for an unexplained hour.
+        ...(row.note !== undefined ? { note: row.note } : {}),
       })),
       offset,
       ...(maxAttempts !== undefined ? { maxAttempts } : {}),

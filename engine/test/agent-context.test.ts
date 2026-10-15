@@ -3,6 +3,7 @@ import path from "node:path";
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { createAgentExecutor, type AgentMessage, type AgentQueryOptions, type QueryFn } from "../src/agent-step.js";
+import { deriveRunState } from "../src/state.js";
 import { EventLog } from "../src/events.js";
 import { run } from "../src/runner.js";
 import type { AgentStep, EventKind, GateStep, LoopStep, Pipeline, RunContext } from "../src/steps.js";
@@ -103,5 +104,66 @@ describe("the executor inside a run", () => {
     expect(q?.stepId).toBe("fix");
     expect(f.calls[0]!.allowedTools).toEqual(["Edit"]);
     expect(events.some((e) => e.kind === "gate_opened" && e.payload["attempt"] === 2)).toBe(true);
+  });
+});
+
+describe("a loop body that hits a usage limit", () => {
+  it("waits out a five-hour limit under the ceiling and the iteration still counts once", async () => {
+    // Ryan's ruling of 2026-10-15 on what a loop does with a waited iteration: it is not counted
+    // twice. The executor's retry returns one outcome for the iteration, so the loop sees one
+    // agent_result per iteration exactly as it does today — the only new event is the step_waiting
+    // the executor logged before it slept, and it is logged against the loop's own step id.
+    const root = await mkdtemp(path.join(tmpdir(), "agent-limit-"));
+    await mkdir(path.join(root, "prompts"));
+    await writeFile(path.join(root, "prompts", "revise.md"), "Revise pass {{results.body:iteration}}.");
+
+    const RESET_ISO = "2026-10-14T23:50:00.000Z";
+    const SDK_TEXT = "You've hit your session limit · resets 7:50pm (America/New_York)";
+    let call = 0;
+    const query: QueryFn = async function* () {
+      const n = call++;
+      yield { type: "system", subtype: "init", session_id: "sess-W" };
+      if (n === 0) {
+        // The limited attempt: the SDK's refused turn, the rejected window, the wrapper's usage
+        // message, and the `subtype: "success"` result the SDK really sends with it.
+        yield { type: "assistant", error: "rate_limit", message: { content: [{ type: "text", text: SDK_TEXT }] } };
+        yield { type: "rate_limit_event", rateLimit: { status: "rejected", window: "five_hour", resetsAt: RESET_ISO, utilization: 100 } };
+        yield { type: "usage", usage: { available: true, sevenDay: { utilization: 41, resetsAt: "2026-10-19T04:00:00.000Z" } } };
+        yield { type: "result", subtype: "success", result: SDK_TEXT, session_id: "sess-W", num_turns: 1, duration_ms: 1, total_cost_usd: 0 } as AgentMessage;
+        return;
+      }
+      yield { type: "assistant", message: { content: [{ type: "tool_use", id: "t1", name: "Write", input: {} }] } };
+      yield { type: "result", subtype: "success", result: "REVISIONS_COMPLETE", session_id: "sess-W", num_turns: 2, duration_ms: 2, total_cost_usd: 0 } as AgentMessage;
+    };
+
+    const slept: string[] = [];
+    const executors = {
+      script: async () => ({ ok: true as const }),
+      // The clock is injected for the same reason the executor's own cases inject one: the wake
+      // instant (the reset plus its minute of grace) has to be ahead of "now" for the rule to
+      // sleep, and the wall clock has been past 2026-10-14 since the day after the measured run.
+      agent: createAgentExecutor({ query, now: () => new Date("2026-10-14T23:00:00.000Z"), sleepUntil: async (iso: string) => { slept.push(iso); } }),
+    };
+    const body: AgentStep = { kind: "agent", id: "body", promptFile: "revise.md", model: "m", allowedTools: ["Read", "Write"], context: "shared" };
+    const loop: LoopStep = { kind: "loop", id: "revise", body, until: "REVISIONS_COMPLETE", maxIterations: 3 };
+    const log = new EventLog(EventLog.logPath(root, "s02e01", "r1"));
+    const r = await run({ pipeline: { name: "p", steps: [loop] }, executors, log, ctx: { runId: "r1", episodeId: "s02e01", showRoot: root } });
+
+    expect(r).toEqual({ status: "completed" });
+    expect(slept).toEqual(["2026-10-14T23:51:00.000Z"]);
+    const events = await log.read();
+    // One counted iteration, and it is the sentinel one: before this plan the same stream failed
+    // the loop with "exhausted 3 iterations without sentinel REVISIONS_COMPLETE".
+    expect(events.filter((e) => e.kind === "loop_iteration").map((e) => [e.payload["iteration"], e.payload["sentinel"]])).toEqual([[1, true]]);
+    const waiting = events.filter((e) => e.kind === "step_waiting");
+    expect(waiting).toHaveLength(1);
+    expect(waiting[0]!.stepId).toBe("revise");
+    expect(waiting[0]!.payload["reason"]).toBe("waiting for the usage limit to reset at 7:50pm America/New_York (weekly quota 41%)");
+    // The wait is logged before the iteration it belongs to, so What-happened reads in order.
+    const kinds = events.map((e) => e.kind);
+    expect(kinds.indexOf("step_waiting")).toBeLessThan(kinds.indexOf("loop_iteration"));
+    // The step was running throughout and is completed at the end: a step_waiting must never read
+    // as a terminal event.
+    expect(deriveRunState(events).steps["revise"]).toBe("completed");
   });
 });

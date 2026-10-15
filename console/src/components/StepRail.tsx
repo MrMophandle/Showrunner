@@ -170,6 +170,13 @@ export function StepRail({ view, events, now, onWithdraw, withdrawing = null }: 
                   </button>
                 )}
               </div>
+              {/* Why a step is waiting on something that is not a person: asleep until a Claude
+                  plan usage limit resets (Plan I). Drawn on the row and not only on the "step in
+                  flight" altitude above the rail, because `position` is the *last* step to have
+                  started and a worker runs up to seven agent steps at once — the limit is as
+                  likely to hit one of the other six, whose row would otherwise read `waiting` with
+                  no reason given anywhere. */}
+              {row.note !== undefined && row.note !== "" && <div className="rail-note">{row.note}</div>}
               {row.error !== undefined && row.error !== "" && <div className="rail-error">{firstLine(row.error)}</div>}
               {row.error === undefined && resultLine(row.result) !== "" && <div className="rail-result">{resultLine(row.result)}</div>}
               {row.progress !== undefined && <ProgressBar progress={row.progress} />}

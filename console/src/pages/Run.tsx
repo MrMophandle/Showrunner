@@ -215,6 +215,16 @@ export function Run() {
               <>
                 <div className="altitude-step"><span className="mono">{current.id}</span> <span className="quiet">{current.kind}</span></div>
                 <div className="altitude-sub mono">{elapsed(current.startedAt, now)} in this step</div>
+                {/* Why this step has been in flight for ninety minutes without writing anything:
+                    it is asleep until a Claude plan usage limit resets, and the worker will re-run
+                    it on its own (Plan I). The engine's sentence verbatim — "waiting for the usage
+                    limit to reset at 7:50pm America/New_York (weekly quota 41%)" — because the
+                    elapsed time above is the whole of what this altitude otherwise says, and an
+                    agent step silently counting past its timeout is the reading that costs the
+                    operator an afternoon of looking for a hang. */}
+                {current.note !== undefined && current.note !== "" && (
+                  <div className="altitude-sub altitude-waiting">{current.note}</div>
+                )}
               </>
             )}
         </div>

@@ -63,6 +63,31 @@ export function deriveRunState(events: Event[]): RunState {
       case "step_started":
         if (id) { s.steps[id] = "running"; s.position = { stepId: id, startedAt: e.ts }; }
         break;
+      case "step_waiting":
+        // The agent executor sleeping out a plan usage limit before it resumes the same query. The
+        // step is **still in flight**: it must read as neither completed nor failed, or the runner
+        // would skip a step that is about to finish and the console would draw a run as done while
+        // a worker is still sleeping on it. `default: break` below would already leave the step
+        // "running" from its step_started, and the case is written out anyway — it makes the
+        // in-flight rule a rule rather than an accident of the switch, and a log whose step_started
+        // was lost to a crash between the two writes still reports the step running.
+        //
+        // **The position is not touched at all, and that is a ruling** (the whole-branch review of
+        // 2026-10-15, ruling I-21). `position` means "the last step to have *started*" in the two
+        // places that document it (`console/server/runs.ts`'s projection comment and
+        // `console/src/components/StepRail.tsx`'s note), and a wait is not a start. Under the
+        // console's production default of `--concurrency 7` a plan limit is account-wide, so all
+        // seven in-flight agent steps hit it and each emits its own step_waiting: moving the
+        // position would churn seven times and land on whichever executor emitted last, naming one
+        // wait at random and leaving six unnamed at the altitude. The step rail prints the reason
+        // on every waiting row, so all seven are named on the same page either way.
+        //
+        // The cost, paid knowingly: a log that lost its step_started to a crash between the two
+        // writes has no position at all, so the Run view's step altitude reads "nothing in flight"
+        // for it. That log still reports the step `running` here, so the console still answers
+        // "crashed" for the run, and both the rail and the Board still draw the row.
+        if (id) s.steps[id] = "running";
+        break;
       case "step_progress":
         if (id && s.position?.stepId === id) {
           const p = e.payload;

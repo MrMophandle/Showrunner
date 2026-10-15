@@ -122,6 +122,24 @@ describe("StepRail", () => {
     expect(screen.getByRole("progressbar").querySelector(".progress-fill")).toHaveStyle({ width: "42.5%" });
   });
 
+  it("draws the engine's reason beside a step that is waiting out a usage limit", () => {
+    // Plan I. A `waiting` status alone reads as a gate, and the rail is where a step that is not
+    // the run's `position` says why it has stopped — the worker runs up to seven agent steps at
+    // once, so the limited one is usually not the step the altitudes above the rail are drawing.
+    // A render and not a projection assertion because there is no projection: the row carries the
+    // engine's sentence verbatim, and the only thing that can be wrong is whether it is drawn.
+    const reason = "waiting for the usage limit to reset at 7:50pm America/New_York (weekly quota 41%)";
+    const row: StepRow = {
+      id: "script-revise", kind: "loop", status: "waiting",
+      startedAt: "2026-10-07T12:00:00.000Z", note: reason, waitingUntil: "2026-10-07T23:50:00.000Z",
+    };
+    render(<StepRail view={viewWith(row)} events={[]} now={Date.parse("2026-10-07T12:00:40.000Z")} />);
+    expect(screen.getByText(reason)).toBeInTheDocument();
+    expect(screen.getByText("waiting")).toBeInTheDocument();
+    // The step keeps counting: a wait is time the episode is spending, and the rail says how much.
+    expect(screen.getByText("0m 40s")).toBeInTheDocument();
+  });
+
   it("draws no bar for a step the log has said nothing about", () => {
     render(<StepRail
       view={viewWith({ id: "render-shots", kind: "script", status: "pending" })}

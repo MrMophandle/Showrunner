@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { EpisodeRow } from "../../shared/types.js";
-import type { TitleShow } from "../../src/projections.js";
+import { resetLabel, type TitleShow } from "../../src/projections.js";
 import { titleFor } from "../../src/useDocTitle.js";
 
 /** The document title is the whole alerting story on the home network: the spec rules out web
@@ -18,6 +18,14 @@ import { titleFor } from "../../src/useDocTitle.js";
 /** The show every assertion below is about: the invented one `test/helpers.ts` uses, under the key
  *  an operator would have registered it with. */
 const SHOW: TitleShow = { showName: "Harbor Light", key: "HarborLight", readOnly: false };
+
+/** A usage limit, as Plan I's engine records it on `step_waiting` and the Board's row carries it:
+ *  the operator sentence verbatim, and the reset's own ISO. The time in the sentence is the SDK's
+ *  zone and the time in the title is the browser's, which is why the assertions below render the
+ *  second one through `resetLabel` rather than quoting a clock face — a literal would pass only on
+ *  a machine in one time zone. */
+const REASON = "waiting for the usage limit to reset at 7:50pm America/New_York (weekly quota 41%)";
+const RESETS = "2026-10-02T23:50:00.000Z";
 
 function row(over: Partial<EpisodeRow> = {}): EpisodeRow {
   return {
@@ -106,6 +114,43 @@ describe("titleFor, the document title's pure part", () => {
     // The first match in Board order, so a show with two broken episodes names the earlier one and
     // the title does not flicker between them.
     expect(titleFor(SHOW, [row({ id: "s02e05", status: "failed" }), broken])).toBe("⚠ s02e05 FAILED — Harbor Light · HarborLight");
+  });
+
+  it("says a run is waiting out a usage limit, and when the limit resets", () => {
+    // Plan I's form. The run's status is "running" — a worker is holding it and beating its lock
+    // while it sleeps (spec §4.2) — so the form is keyed on the row's `waitingNote` and nothing
+    // else could key it: a tab reading "● s02e01 DRAFT_SCRIPT · 94m" for a run that is asleep
+    // until the evening sends its reader looking for a step that is not hung.
+    const rows = [row({ id: "s02e01", status: "running", stage: "DRAFT_SCRIPT", lastEventAt: "2026-10-02T10:00:00Z", waitingNote: REASON, waitingUntil: RESETS })];
+    expect(titleFor(SHOW, rows)).toBe(`⏳ s02e01 WAITING · resets ${resetLabel(RESETS) ?? ""} — Harbor Light · HarborLight`);
+    // The clause is dropped rather than printed as "Invalid Date" when the log recorded a reset
+    // the browser cannot parse, or none.
+    expect(titleFor(SHOW, [row({ id: "s02e01", status: "running", waitingNote: REASON })]))
+      .toBe("⏳ s02e01 WAITING — Harbor Light · HarborLight");
+    expect(titleFor(SHOW, [row({ id: "s02e01", status: "running", waitingNote: REASON, waitingUntil: "whenever" })]))
+      .toBe("⏳ s02e01 WAITING — Harbor Light · HarborLight");
+  });
+
+  it("ranks the usage-limit wait under a gate and a failure and over a run that is working", () => {
+    // The ladder is ordered by what the person at the tab can do. A gate is a question addressed
+    // to them; a failed or crashed run is a job only they can finish; a usage-limit wait is a job
+    // the console is already doing and will finish on its own, so it is news rather than a
+    // summons — and it still outranks the working form, because minutes spent asleep are not
+    // progress.
+    const limited = row({ id: "s02e01", status: "running", stage: "DRAFT_SCRIPT", waitingNote: REASON, waitingUntil: RESETS });
+    const asking = row({ id: "s02e04", status: "waiting", stage: "DRAFT_IMAGES" });
+    const broken = row({ id: "s02e07", status: "crashed", stage: "DRAFT_ASSEMBLY" });
+    const working = row({ id: "s02e02", status: "running", stage: "DRAFT_AUDIO", lastEventAt: "2026-10-02T10:00:00Z" });
+    expect(titleFor(SHOW, [limited, asking])).toBe("⏸ s02e04 NEEDS YOU — Harbor Light · HarborLight");
+    expect(titleFor(SHOW, [limited, broken])).toBe("⚠ s02e07 CRASHED — Harbor Light · HarborLight");
+    // The working row is first in Board order and still loses, which is the assertion that proves
+    // the check is not folded into the running form.
+    expect(titleFor(SHOW, [working, limited], new Date("2026-10-02T10:14:59Z")))
+      .toBe(`⏳ s02e01 WAITING · resets ${resetLabel(RESETS) ?? ""} — Harbor Light · HarborLight`);
+    // And a read-only show is idle through this form too: nothing here can be done about a wait
+    // in a show this console may not write to.
+    expect(titleFor({ showName: "Harbor Light", key: "HarborLight-archive", readOnly: true }, [limited]))
+      .toBe("Harbor Light · HarborLight-archive console");
   });
 
   it("is idle for a board of finished and never-run episodes, and for one it could not read", () => {
