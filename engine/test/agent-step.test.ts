@@ -547,3 +547,112 @@ describe("createAgentExecutor: where the weekly figure comes from", () => {
     expect("weeklySource" in (rec.events.at(-1)!.payload["limit"] as Record<string, unknown>)).toBe(false);
   });
 });
+
+describe("createAgentExecutor: the edges of the usage-limit rule", () => {
+  it("a weekly quota exactly at the ceiling is not below it: the sentence reads 'at', and one point under it retries", async () => {
+    // The rule is "strictly below the ceiling", so 65 against the default 65 is a manual resume —
+    // and "above the 65% ceiling" would be false of a quota that is exactly 65. The two sides of
+    // the boundary are pinned together, because the sentence and the branch are one decision.
+    const at = fake(limitedStream("five_hour", weeklyAt(65)));
+    const atSleeper = sleeper();
+    const rAt = await createAgentExecutor({ query: at.query, promptsDir, sleepUntil: atSleeper.sleepUntil })(step(), ctx(), recorder().emit);
+    expect(rAt.ok ? "" : rAt.error).toBe("Manual resume needed: the writer's session hit its 5-hour limit (resets 7:50pm America/New_York) and the weekly quota is at 65%, at the 65% auto-retry ceiling (agents.autoRetryWeeklyUtilizationMax).");
+    expect(atSleeper.slept).toEqual([]);
+    expect(at.calls).toHaveLength(1);
+
+    const under = fake([limitedStream("five_hour", weeklyAt(64)), [init, text("REVISIONS_COMPLETE"), success({ result: "REVISIONS_COMPLETE" })]]);
+    const underSleeper = sleeper();
+    const rUnder = await createAgentExecutor({ query: under.query, promptsDir, sleepUntil: underSleeper.sleepUntil })(step(), ctx(), recorder().emit);
+    expect(rUnder.ok).toBe(true);
+    expect(underSleeper.slept).toEqual([RESET_PLUS_A_MINUTE]);
+  });
+
+  it("a five-hour limit under the ceiling with no reset time cannot be waited out, and says which half is missing", async () => {
+    // The one combination that reaches the fourth five-hour sentence: the window is right, the
+    // weekly quota is well under the ceiling, and the SDK gave nothing to sleep until.
+    const f = fake(limitedStream("five_hour", weeklyAt(41), "You've hit your session limit.", null));
+    const s = sleeper();
+    const rec = recorder();
+    const r = await createAgentExecutor({ query: f.query, promptsDir, sleepUntil: s.sleepUntil })(step(), ctx(), rec.emit);
+    expect(r.ok ? "" : r.error).toBe("Manual resume needed: the writer's session hit its 5-hour limit and the SDK named no reset time to wait for; press Resume once the window has reset.");
+    expect(s.slept).toEqual([]);
+    expect(f.calls).toHaveLength(1);
+    expect(rec.events.some((e) => e.kind === "step_waiting")).toBe(false);
+    expect(rec.events.at(-1)!.payload["limit"]).toEqual({ kind: "rate_limit", window: "five_hour", weeklyUtilization: 41, weeklySource: "usage", waited: false });
+
+    // The same sentence when the SDK's *prose* names a time: "resets 7:50pm" is not something a
+    // timer can be set to, so the step still refuses to wait rather than parsing a sentence into a
+    // schedule. The prose time is not quoted here, because quoting it beside "named no reset time"
+    // would read as a contradiction.
+    const prose = fake(limitedStream("five_hour", weeklyAt(41), SDK_FIVE_HOUR_TEXT, null));
+    const proseSleeper = sleeper();
+    const r2 = await createAgentExecutor({ query: prose.query, promptsDir, sleepUntil: proseSleeper.sleepUntil })(step(), ctx(), recorder().emit);
+    expect(r2.ok ? "" : r2.error).toBe("Manual resume needed: the writer's session hit its 5-hour limit and the SDK named no reset time to wait for; press Resume once the window has reset.");
+    expect(proseSleeper.slept).toEqual([]);
+  });
+
+  it("a rate_limit error with no rate_limit_event anywhere names no window: 'hit its usage limit'", async () => {
+    // The SDK said the turn ended on a usage limit and never said which window. The sentence must
+    // not invent one, and must not read "hit its unknown limit" either.
+    const f = fake([init, limitedTurn("rate_limit", "You've hit your session limit."), success({ result: "You've hit your session limit." })]);
+    const s = sleeper();
+    const rec = recorder();
+    const r = await createAgentExecutor({ query: f.query, promptsDir, sleepUntil: s.sleepUntil })(step(), ctx(), rec.emit);
+    expect(r.ok ? "" : r.error).toContain("hit its usage limit");
+    expect(r.ok ? "" : r.error).toBe("Manual resume needed: the writer's session hit its usage limit; press Resume after the reset.");
+    expect(s.slept).toEqual([]);
+    // The log still records the limit, with the window named as unknown rather than guessed.
+    expect(rec.events.at(-1)!.payload["limit"]).toEqual({ kind: "rate_limit", window: "unknown", waited: false });
+  });
+
+  it("a retry that is refused for a different reason reports that reason, not the limit", async () => {
+    // Plausible between the wait and the retry: the account is suspended, the credit runs out, the
+    // credentials expire. The step reports what actually refused it; the wait is still in the log
+    // as its own event, which is where the record of it lives once the limit is no longer the
+    // failure.
+    const f = fake([limitedStream("five_hour", weeklyAt(41)), [init, limitedTurn("billing_error", "Your credit balance is too low to run this request."), success({ result: "" })]]);
+    const s = sleeper();
+    const rec = recorder();
+    const r = await createAgentExecutor({ query: f.query, promptsDir, sleepUntil: s.sleepUntil })(step(), ctx(), rec.emit);
+    expect(r.ok ? "" : r.error).toBe("the model's reply was refused (billing_error): Your credit balance is too low to run this request.");
+    expect(rec.events.at(-1)!.payload["limit"]).toEqual({ kind: "billing_error" });
+    expect(f.calls).toHaveLength(2);
+    expect(s.slept).toEqual([RESET_PLUS_A_MINUTE]);
+    expect(rec.events.filter((e) => e.kind === "step_waiting")).toHaveLength(1);
+  });
+
+  it("the tool count is the step's total across both attempts, and the indices run straight through", async () => {
+    // One agent_result per step, so its toolCalls is the whole step's work — the two the refused
+    // attempt did before the limit, plus the three the retry did. The agent_tool_call index is the
+    // same counter, so the log has no repeated index and no gap.
+    const f = fake([
+      [init, toolUse("Read", { file_path: "a.md" }, "t1"), toolUse("Grep", { pattern: "x" }, "t2"), limitedTurn("rate_limit", SDK_FIVE_HOUR_TEXT), rejectedLimit("five_hour"), usageIs(weeklyAt(41)), success({ result: SDK_FIVE_HOUR_TEXT })],
+      [init, toolUse("Edit", { file_path: "a.md" }, "t3"), toolUse("Write", { file_path: "b.md" }, "t4"), toolUse("Read", { file_path: "b.md" }, "t5"), success({ result: "REVISIONS_COMPLETE" })],
+    ]);
+    const rec = recorder();
+    const r = await createAgentExecutor({ query: f.query, promptsDir, sleepUntil: sleeper().sleepUntil })(step(), ctx(), rec.emit);
+    expect(r).toEqual({ ok: true, text: "REVISIONS_COMPLETE", toolCalls: 5 });
+    const calls = rec.events.filter((e) => e.kind === "agent_tool_call");
+    expect(calls.map((e) => e.payload["index"])).toEqual([1, 2, 3, 4, 5]);
+    expect(calls.map((e) => e.payload["tool"])).toEqual(["Read", "Grep", "Edit", "Write", "Read"]);
+    expect(rec.events.at(-1)!.payload["toolCalls"]).toBe(5);
+  });
+
+  it("the production sleeper is a real timer, measured against the clock it is given", async () => {
+    // The one path that runs in production: no `sleepUntil` is injected, so the executor builds its
+    // own from `setTimeout` and `now`. The reset is two minutes ahead of the wall clock and the
+    // injected clock reads five milliseconds before the instant the executor sleeps until (the
+    // reset plus the one-minute grace), so the real timer fires almost at once. If `now` were
+    // ignored, the same sleeper would wait two minutes against the wall clock and this test would
+    // fail on its own timeout — which is what makes it a test of the default path rather than of
+    // nothing.
+    const reset = new Date(Date.now() + 120_000).toISOString();
+    const f = fake([limitedStream("five_hour", weeklyAt(41), SDK_FIVE_HOUR_TEXT, reset), [init, text("REVISIONS_COMPLETE"), success({ result: "REVISIONS_COMPLETE" })]]);
+    const now = () => new Date(Date.parse(reset) + 60_000 - 5);
+    const started = Date.now();
+    const r = await createAgentExecutor({ query: f.query, promptsDir, now })(step(), ctx(), recorder().emit);
+    expect(r).toEqual({ ok: true, text: "REVISIONS_COMPLETE", toolCalls: 0 });
+    expect(f.calls).toHaveLength(2);
+    expect(Date.now() - started).toBeLessThan(2_000);
+  });
+});
