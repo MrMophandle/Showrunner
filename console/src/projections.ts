@@ -83,8 +83,14 @@ export function stalled(lastEventAt: string | undefined, now: Date | number = Da
  *  exemption is keyed on the row's `waitingNote`, as every other judgment about a limit wait is,
  *  because the run itself reads `running`: a worker is holding it and beating its lock.
  *
- *  A function rather than a condition written inline in the page, so the Board and `stallState`
- *  cannot come to disagree about which silence is expected. */
+ *  A function rather than a condition written inline in the page, so the Board's own markup
+ *  carries no judgment. **What it shares with `stallState` is the rule, not the code**: both
+ *  exempt a limit wait from the amber, and each keys that exemption on the shape it is handed —
+ *  this one on `EpisodeRow.waitingNote`, the row-level summary the server derives through
+ *  `waitingOf`, and `stallState` on the `note` of the `RunView`'s own step rows. They are not one
+ *  predicate because they are not one question: a Board row is one line about a whole run, and
+ *  `stallState` also has a render's silence and "no events yet" to answer for and no run status to
+ *  read. The two comments name each other so the next reader of either finds the other. */
 export function quietRow(row: Pick<EpisodeRow, "status" | "lastEventAt" | "waitingNote">, now: Date | number = Date.now(), thresholdMs = STALL_MS): boolean {
   if (waitingNote(row) !== undefined) return false;
   return stalled(row.lastEventAt, now, thresholdMs) && (row.status === "running" || row.status === "crashed");
@@ -151,6 +157,9 @@ export function stallState(
   // true, and it is what the operator wants to know — but it is not amber, because the step
   // altitude below carries the engine's sentence saying what the silence is. The row's `note` is
   // the discriminator: a gate's waiting row carries none, and a gate is a stall worth colouring.
+  // This is the same rule `quietRow` applies to a Board row, keyed there on the row's
+  // `waitingNote` because that is the shape the Board is handed; the rule is shared, the predicate
+  // is not.
   const sleepingOnLimit = view.steps.some((s) => s.note !== undefined && s.note !== "");
   return { text: `${duration(ms)} since the last event`, amber: !sleepingOnLimit && ms >= thresholdMs };
 }
