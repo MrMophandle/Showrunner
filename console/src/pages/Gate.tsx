@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import type { GateArtifact, GateView } from "../../shared/types.js";
 import { ApiError, post, showHref, showPath, useApi, useConsole, useSSE, useShowKey, useTextApi, type DirEntry } from "../api.js";
-import { composeNotesWithFlags, readOnlyLine } from "../projections.js";
+import { composeNotesWithFlags, gateSummaryLine, readOnlyLine } from "../projections.js";
 import { AudioSeek } from "../components/AudioSeek.js";
 import { AutoTextarea } from "../components/AutoTextarea.js";
 import { ContactSheet } from "../components/ContactSheet.js";
@@ -20,6 +20,17 @@ import { Verdicts } from "../components/Verdicts.js";
  *  for: a rejection that landed while this tab was open, after which an "approve" would be
  *  approving prose nobody read. So an SSE notice for this run raises a banner and changes nothing
  *  else, and a stale answer is refused by the engine and reported here as what it is.
+ *
+ *  **The order of the page is a ruling** (2026-10-15, at the s02e01 script gate): the artifact
+ *  panes first, then the reviewers' verdict board, then the notes of previous rejections, then the
+ *  answer — and **the gate's message last, behind one expander**. The page used to open on the
+ *  message, which for a script gate is a sentence naming the file and then seven reviewers'
+ *  verdicts as raw JSON, with the script itself below the fold. The decision is about the artifact,
+ *  so the artifact is what the page opens on; the message is one click away, and its summary line
+ *  carries its first sentence so the collapsed state still says what the gate is about.
+ *
+ *  The three banners stay above all of it, because every one of them is about *which attempt* is
+ *  being answered, which is the one thing on this page that must not be scrolled past.
  *
  *  How long is between opening and answering: a gate is read on a couch, and the answer may be
  *  twenty minutes later.
@@ -181,6 +192,9 @@ export function Gate() {
 
   const view = gate.data;
   const imagesArtifact = view.artifacts.find((a) => a.kind === "images");
+  // What the collapsed message says about itself: its first line, which every gate template makes
+  // the sentence naming what is ready and where ("Script drafted: Episodes/s02e01/script.md").
+  const messageSummary = gateSummaryLine(view.message);
 
   return (
     <div className="gate">
@@ -197,7 +211,7 @@ export function Gate() {
       {moved !== null && (
         <div className="banner banner-amber">
           <strong>{moved}</strong>
-          <span> Your answer was refused, not applied. The message below is attempt {view.attempt}.</span>
+          <span> Your answer was refused, not applied. What this page is showing you is attempt {view.attempt}.</span>
         </div>
       )}
       {changed && moved === null && (
@@ -207,26 +221,6 @@ export function Gate() {
         </div>
       )}
       {gone !== null && <div className="banner banner-amber"><strong>{gone}</strong></div>}
-
-      <section className="gate-message">
-        <Markdown text={view.message} className="pane pane-tall" />
-      </section>
-
-      {view.rejections.length > 0 && (
-        <section className="gate-rejections">
-          <h2>what you have already said about this one</h2>
-          <ol className="rejection-list">
-            {view.rejections.map((note, i) => (
-              <li key={i}><span className="quiet mono">attempt {i + 1}</span><div className="rejection-note">{note}</div></li>
-            ))}
-          </ol>
-        </section>
-      )}
-
-      <section className="gate-verdicts">
-        <h2>what the reviewers found</h2>
-        <Verdicts verdicts={view.verdicts} onQuote={quote} />
-      </section>
 
       <section className="gate-artifacts">
         <h2>what the gate is about</h2>
@@ -266,6 +260,22 @@ export function Gate() {
           </div>
         ))}
       </section>
+
+      <section className="gate-verdicts">
+        <h2>what the reviewers found</h2>
+        <Verdicts verdicts={view.verdicts} onQuote={quote} />
+      </section>
+
+      {view.rejections.length > 0 && (
+        <section className="gate-rejections">
+          <h2>what you have already said about this one</h2>
+          <ol className="rejection-list">
+            {view.rejections.map((note, i) => (
+              <li key={i}><span className="quiet mono">attempt {i + 1}</span><div className="rejection-note">{note}</div></li>
+            ))}
+          </ol>
+        </section>
+      )}
 
       <section className="gate-answer">
         <h2>your answer</h2>
@@ -309,6 +319,29 @@ export function Gate() {
         </div>
         {error !== null && <p className="error-line">{error}</p>}
       </section>
+
+      {/* The gate's message, last and collapsed: the ruling of 2026-10-15, made at the s02e01
+          script gate, where this page opened on seven reviewers' verdicts as raw JSON and the
+          script was below the fold. The artifact is what the decision is about; the message is the
+          log-like text that says which artifact and what the reviewers made of it, and it is one
+          click away rather than in the way.
+
+          A native `details` and no state of this page's: the reader's own toggle is the browser's
+          to remember, and React patches `open` only when the rendered value changes — which it
+          does not do on an SSE notice, the one thing that re-renders this page (the file header's
+          "a notice, never a refetch"). **Open only for a gate with no artifact at all**, so a gate
+          whose step id the artifact table does not know still shows its message without a click.
+
+          The summary carries the message's first line (`gateSummaryLine`), because a collapsed
+          expander that said only "the gate's message" would hide the one sentence naming what is
+          ready. The scrolling container inside it is what keeps a message with four-hundred-column
+          verdict JSON from scrolling the whole page sideways. */}
+      <details className="gate-message" open={view.artifacts.length === 0}>
+        <summary>the gate's message{messageSummary === "" ? "" : ` — ${messageSummary}`}</summary>
+        <div className="gate-message-scroll">
+          <Markdown text={view.message} className="pane pane-tall" />
+        </div>
+      </details>
     </div>
   );
 }

@@ -468,6 +468,30 @@ select { min-height: var(--tap); }
 
 .pane-tall { max-height: 32rem; }
 
+/* The gate's message, collapsed behind one expander and last on the page (Ryan's ruling,
+   2026-10-15). Quiet, because a thing folded away should not look like a thing being pointed at.
+
+   The summary is one line and stays one line: a gate message written as a single unbroken
+   paragraph has a first line as long as itself, and `gateSummaryLine` caps it at 140 characters
+   while this clips whatever still does not fit the window. A summary that wrapped to three lines
+   would be the wall of text again, in miniature.
+
+   `.gate-message-scroll` is the horizontal scroller the brief asks for: the reviewers' verdict
+   JSON is four hundred columns wide, and the page itself must never scroll sideways. The pane
+   inside it keeps its own vertical cap and scrollbar (`.pane`, `.pane-tall`). */
+.gate-message { margin: 1rem 0; border: 1px solid var(--border); border-radius: var(--radius); padding: 0.4rem 0.7rem; }
+.gate-message > summary {
+  cursor: pointer;
+  min-height: var(--tap);
+  display: flex;
+  align-items: center;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.gate-message-scroll { overflow-x: auto; padding-top: 0.4rem; }
+
 .rejection-list { margin: 0; padding-left: 1.2rem; }
 .rejection-note { white-space: pre-wrap; padding: 0.2rem 0 0.6rem; }
 

@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { EpisodeRow, RunView, StepRow } from "../../shared/types.js";
 import {
-  STALL_MS, composeNotesWithFlags, composeShotRejection, elapsed, firstLine, iterationLabel,
-  positionStep, progressLabel, quietRow, readOnlyLine, resetLabel, runSituation, safeHref,
-  showLabel, showReadFailure, stageLabel, stallState, stalled, titleFor, waitingNote,
+  STALL_MS, composeNotesWithFlags, composeShotRejection, elapsed, firstLine, gateSummaryLine,
+  iterationLabel, positionStep, progressLabel, quietRow, readOnlyLine, resetLabel, runSituation,
+  safeHref, showLabel, showReadFailure, stageLabel, stallState, stalled, titleFor, waitingNote,
 } from "../../src/projections.js";
 
 /** The client's pure helpers. Every one of them is a function of its arguments and a clock the
@@ -505,6 +505,53 @@ describe("progressLabel", () => {
 
   it("reads a rate per minute when the step is slower than one unit a second", () => {
     expect(progressLabel({ done: 2, total: 9, unit: "shots", ratePerSec: 0.004 })).toBe("2/9 shots · 0.2/min");
+  });
+});
+
+describe("gateSummaryLine", () => {
+  it("takes the sentence a gate template opens with, not the verdicts under it", () => {
+    // The real shape of a script gate's message (`tools/templates/prompts/script-gate.gate.md`):
+    // one sentence naming the file, then the reviewers' results, which is the half the expander
+    // folds away.
+    const message = [
+      "Script drafted: Episodes/s02e01/script.md",
+      'Panel verdict (review-gate all-pass): {"pass":true,"issues":[]}',
+      "Approve to commit. Reject with notes for a targeted revision.",
+    ].join("\n");
+    expect(gateSummaryLine(message)).toBe("Script drafted: Episodes/s02e01/script.md");
+  });
+
+  it("skips blank lines rather than summarising a message as nothing", () => {
+    expect(gateSummaryLine("\n   \n\nOutline ready: Episodes/s02e01/outline.md\n")).toBe("Outline ready: Episodes/s02e01/outline.md");
+  });
+
+  it("strips a markdown heading's markers, which a summary would otherwise print", () => {
+    // The bible gate's message is written this way. A summary reading "## what to check" would be
+    // the one place in the console that showed markdown source to the person reading it.
+    expect(gateSummaryLine("## what to check\n\nRead it against the answers before approving.")).toBe("what to check");
+  });
+
+  it("strips a blockquote marker, a bullet and bold markers", () => {
+    expect(gateSummaryLine("> ## quoted heading")).toBe("quoted heading");
+    expect(gateSummaryLine("- Audio ready for s02e01")).toBe("Audio ready for s02e01");
+    expect(gateSummaryLine("**Images ready** for s02e01")).toBe("Images ready for s02e01");
+  });
+
+  it("collapses runs of whitespace, so a tabbed line stays one line", () => {
+    expect(gateSummaryLine("Canon updates proposed\tfor   s02e01.")).toBe("Canon updates proposed for s02e01.");
+  });
+
+  it("caps a message that has no line breaks at all, which is the case that would widen the page", () => {
+    const wall = `Script drafted: ${"verdict ".repeat(60)}`;
+    const summary = gateSummaryLine(wall);
+    expect(summary.length).toBeLessThanOrEqual(140);
+    expect(summary.endsWith("…")).toBe(true);
+    expect(summary.startsWith("Script drafted: verdict")).toBe(true);
+  });
+
+  it("answers the empty string for a message with nothing in it, so the caller draws the bare label", () => {
+    expect(gateSummaryLine("")).toBe("");
+    expect(gateSummaryLine("   \n \t \n")).toBe("");
   });
 });
 

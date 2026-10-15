@@ -113,6 +113,49 @@ export function firstLine(text: string | undefined): string {
   return line === undefined ? "" : line.trim();
 }
 
+/** How long a gate's summary line may be before it is cut, with the ellipsis counted in. Long
+ *  enough for the longest first line any gate template produces ("Images ready for s02e01 — view
+ *  Production/s02e01/images/" is 56 characters), short enough that a message written as one
+ *  unbroken paragraph cannot widen the page the expander was collapsed to protect. */
+const GATE_SUMMARY_LIMIT = 140;
+
+/** The first line of a gate's message, as the collapsed expander's summary says it.
+ *
+ *  **Why the first line is enough.** Every gate template in the show scaffold opens with one
+ *  sentence naming what is ready and where it is — "Script drafted: Episodes/s02e01/script.md",
+ *  "Outline ready: …", "Images ready for s02e01 — view …"
+ *  (`tools/templates/prompts/*.gate.md`) — and everything after it is the reviewers' raw verdicts.
+ *  So the first line is the half of the message that says what the gate is about, and the rest is
+ *  the half Ryan asked to be folded away: the ruling of 2026-10-15, at the s02e01 script gate,
+ *  where the page opened on seven reviewers' JSON and the script was below it.
+ *
+ *  **A pure function and not a slice in the page, because three things can go wrong with it and
+ *  none of them is visible by looking at a rendered expander.** A message whose first line is
+ *  blank would leave the summary reading "the gate's message — " with nothing after the dash. A
+ *  message written as markdown whose first line is a heading would put "## what to check" on the
+ *  screen, markers and all. And a message with no line breaks at all has a "first line" that is
+ *  the whole wall of text, which would widen the page the collapse exists to protect.
+ *
+ *  It is therefore not `firstLine`, which trims one line and nothing else and is right for the
+ *  step errors it serves. This one skips blank lines, strips the leading blockquote, heading and
+ *  bullet markers, drops bold markers, collapses runs of whitespace, and caps the result at
+ *  `GATE_SUMMARY_LIMIT`. The empty string is the honest answer for a message with nothing in it,
+ *  and the caller renders the bare label rather than a dangling dash. */
+export function gateSummaryLine(message: string): string {
+  for (const raw of message.split("\n")) {
+    const line = raw
+      .replace(/^[\s>]+/, "")
+      .replace(/^#{1,6}\s*/, "")
+      .replace(/^[-*+]\s+/, "")
+      .replace(/\*\*/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (line === "") continue;
+    return line.length > GATE_SUMMARY_LIMIT ? `${line.slice(0, GATE_SUMMARY_LIMIT - 1).trimEnd()}…` : line;
+  }
+  return "";
+}
+
 /** A step's progress as one line: the count, the unit, the rate when the log supports one, and
  *  the ETA when the rate is positive.
  *
