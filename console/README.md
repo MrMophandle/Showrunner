@@ -319,20 +319,38 @@ confirmation and in the notice. The step rail offers "withdraw approval" **only 
 approved gate**, which is the one case that spends no approval the operator cannot see; withdrawing
 an earlier gate is still available through the route, deliberately.
 
-### A run asleep until a usage limit resets — the one state with no move
+### A run asleep until a usage limit resets — no move while its worker lives
 
 **A run whose worker is asleep waiting out a Claude plan usage limit needs nothing from the operator,
 and is not a fifth move.** The engine's agent executor owns the wait and logs `step_waiting` before
 it sleeps (the root `README.md`'s **Agent steps → The usage limit**), so the console appends nothing,
 spawns nothing, and offers no button for it: the same worker re-runs the limited step itself once the
-window resets.
+window resets. **The sentence stops being drawn the moment that retry starts**, which is the second
+`agent_query` the step writes — the query that follows a wait can run for minutes, and a row still
+saying "waiting for the usage limit to reset" through it would report a sleep as the reason a busy
+step is quiet.
 
 **The Board's row says what the run is waiting for, and the status chip beside it is the evidence a
 worker still holds the run.** The reason under the stage chip is the engine's own sentence, carrying
 the reset time and the weekly figure, while the status chip still reads `running · pid <pid> ·
-beat <n>s ago` because the lock's heartbeat keeps beating through the sleep. That pair is what
-separates a wait from a hang: the heartbeat is why the run reads `running` and the sentence is why it
-is not moving.
+beat 0m 03s ago` — the console prints every age in two units, so the heartbeat's reads `<m>m <ss>s`
+and never a bare `<n>s` — because the lock's heartbeat keeps beating through the sleep. That pair is
+what separates a wait from a hang: the heartbeat is why the run reads `running` and the sentence is
+why it is not moving. **The clock beside the chip does not turn amber for a wait**, either: a run
+that has been silent for fourteen minutes is normally coloured, and a run asleep on a limit is
+exempted, because its silence is the thing the sentence above it explains.
+
+**A run killed or rebooted *inside* the wait reads as crashed, and Continue is the move.** The
+sleeping worker never reaches the `finally` that removes its lock, so the lock file outlives it with
+a dead pid; `readLockFile` reports `alive: false` from its pid probe, and `deriveRunStatus` falls
+past the live-lock rule to the in-flight rule — where `step_waiting` has left the step `running` —
+and answers crashed. **Continue before the window has reset re-pays the limited attempt and then
+sleeps again.** The runner treats a step with no terminal event as not done, so the whole agent step
+re-runs from the top, and the new worker resumes no session (the executor's session map lives in one
+process), so the limited attempt's work is paid for twice — 447 s and 48 tool calls in the measured
+case. The re-run then meets the same limit, writes a second `step_waiting` and sleeps again, which
+is self-healing but not free: the cheaper move is to continue after the reset time the first
+sentence named.
 
 **A run that *failed* on a usage limit is an ordinary failure, and Resume above is the move — after
 the reset.** Nothing about it is special to the console. The step's error names the window, the reset

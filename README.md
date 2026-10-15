@@ -326,11 +326,12 @@ coincides with a limit is still `timeout after <n>ms`.
 
 | What happened | What the step does |
 |---|---|
-| The `five_hour` window, the weekly quota **known and strictly below** `agents.autoRetryWeeklyUtilizationMax` (default 65), and a reset time given | Logs `step_waiting` with the reason, sleeps **until one minute past the reset**, then resumes the same session and runs the same query again — once. The step returns that attempt's outcome, so a loop counts one iteration, not two, and `agent_result` carries `limit.waited: true` |
-| The same, but the limit trips again after the wait | Fails: `Manual resume needed: the writer's session hit its 5-hour limit again after waiting once (resets <time>); press Resume after the reset.` One wait is all the executor takes |
-| The `five_hour` window with the weekly quota **at or above** the ceiling | Fails: `Manual resume needed: the writer's session hit its 5-hour limit (resets <time>) and the weekly quota is at 78%, above the 65% auto-retry ceiling (agents.autoRetryWeeklyUtilizationMax).` |
-| The `five_hour` window with the weekly quota unknown | Fails: `… and the weekly utilization is unknown.` The engine declines to wait on a figure it does not have |
-| A seven-day window (`seven_day`, `seven_day_opus`, `seven_day_sonnet`), `overage`, or no window named | Fails: `Manual resume needed: the writer's session hit its 7-day limit (resets <time>); press Resume after the reset.` The ceiling governs the five-hour window only |
+| The `five_hour` window, the weekly quota **known and strictly below** `agents.autoRetryWeeklyUtilizationMax` (default 65), and a reset time given | Logs `step_waiting` with the reason, sleeps **until one minute past the reset**, then resumes the same session and runs the same query again — once. The step returns that attempt's outcome, so a loop counts one iteration, not two, and `agent_result` carries `limit.waited: true`. A reset the clock has **already passed**, or one that will not parse as an instant, is resumed at once instead: the `step_waiting` is still written and its reason says which of the two it was, and `limit.waited` is `false`, because no wait was spent |
+| The same, but the limit trips again after the wait | Fails: `Manual resume needed: the writer's session hit its 5-hour limit again after waiting once (resets <time>); press Resume after the reset.` One wait is all the executor takes. After a retry that spent no wait, `again on the retry` replaces `again after waiting once`, because no hours were spent to claim |
+| The `five_hour` window with the weekly quota **at or above** the ceiling | Fails: `Manual resume needed: the writer's session hit its 5-hour limit (resets <time>) and the weekly quota is at 78%, above the 65% auto-retry ceiling (agents.autoRetryWeeklyUtilizationMax).` A quota **exactly equal** to the ceiling reads `at the 65% auto-retry ceiling` instead of `above`, because the rule retries strictly below it |
+| The `five_hour` window, the weekly quota known and below the ceiling, but **no reset time given** | Fails: `Manual resume needed: the writer's session hit its 5-hour limit and the SDK named no reset time to wait for; press Resume once the window has reset.` There is nothing to sleep until |
+| The `five_hour` window with the weekly quota unknown | Fails: `Manual resume needed: the writer's session hit its 5-hour limit (resets <time>) and the weekly utilization is unknown.` The engine declines to wait on a figure it does not have |
+| A seven-day window — any of the four the SDK declares (`seven_day`, `seven_day_opus`, `seven_day_sonnet`, `seven_day_overage_included`) — or `overage`, or no window named | Fails: `Manual resume needed: the writer's session hit its 7-day limit (resets <time>); press Resume after the reset.` The ceiling governs the five-hour window only. Two substitutions in the same sentence: `overage` is named as the SDK names it (`hit its overage limit`), and a window the SDK did not name at all reads `hit its usage limit` rather than "unknown" |
 | Any of the twelve other SDK error kinds — `billing_error`, `authentication_failed`, `account_on_hold`, `verification_required`, `oauth_org_not_allowed`, `cloud_credential_error`, `overloaded`, `server_error`, `invalid_request`, `model_not_found`, `max_output_tokens`, `unknown` | Fails: `the model's reply was refused (<kind>): <the SDK's text>`. No wait, no retry: none of them is cured by time |
 
 **The reset is printed in the zone the SDK's own sentence names**, when it names one (`7:50pm
@@ -536,7 +537,7 @@ and the script pass of one run do not duplicate each other.
 What the executor does about a limit is **Agent steps → The usage limit** above; the three paragraphs
 below are what the *operator* does about each result.
 
-- **Waited and retried — nothing to do, and nothing to press.** The log carries `step_waiting` with
+- **A limit the executor waited out and retried asks nothing of the operator.** The log carries `step_waiting` with
   the executor's own sentence (`waiting for the usage limit to reset at 7:50pm America/New_York
   (weekly quota 41%)`), the step stays `running` because a worker is still asleep on it, and the
   step ends with an ordinary `step_completed` when the retry succeeds. A loop counts one iteration
@@ -544,19 +545,19 @@ below are what the *operator* does about each result.
   wait was spent on that step. Neither recovery move above has anything to do with such a run, and
   the run's lock keeps beating throughout, which is what tells an operator that a quiet run is
   waiting rather than hung.
-- **Manual resume needed — `resumeRun`, after the reset time the sentence names.** The step fails
+- **A limit that needs a manual resume is cleared with `resumeRun`, after the reset time the
+  sentence names.** The step fails
   with one sentence carrying the numbers: the window, the reset time, the weekly figure when the SDK
   answered with one, and the ceiling key `agents.autoRetryWeeklyUtilizationMax`. The outcome table
-  under **Agent steps → The usage limit** above prints four of its five shapes verbatim; the fifth is
-  a five-hour limit the SDK named no reset time for, which cannot be waited out either and reads
-  `Manual resume needed: the writer's session hit its 5-hour limit and the SDK named no reset time to
-  wait for; press Resume once the window has reset.` Resume reopens the failed step and everything the
+  under **Agent steps → The usage limit** above carries a row for each shape, with the sentence that
+  shape produces. Resume reopens the failed step and everything the
   failure swept, and every completed step keeps its status, so no agent step the limit never reached
   is paid for twice. **Resuming before the reset buys nothing** — the next worker runs the same query
   into the same limit — and the engine never re-reads the quota to check, so the reset time in the
   sentence is the operator's own clock to watch.
-- **Refused for another SDK error kind — `resumeRun`, but not until the cause is dealt with off this
-  machine.** The step fails with `the model's reply was refused (<kind>): <the SDK's text>`, and none
+- **A reply refused for another SDK error kind is cleared with `resumeRun` too, but not until the
+  cause is dealt with off this machine.** The step fails with `the model's reply was refused
+  (<kind>): <the SDK's text>`, and none
   of the twelve kinds is cured by time. `billing_error`, `authentication_failed`, `account_on_hold`,
   `verification_required`, `oauth_org_not_allowed` and `cloud_credential_error` want the account or
   the credentials seen to first. `overloaded` and `server_error` want a few minutes. `invalid_request`,
