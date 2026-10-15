@@ -243,7 +243,7 @@ export function Run() {
         </div>
       </div>
 
-      <SituationLine situation={situation} {...(primary === undefined ? {} : { action: primary })} />
+      <SituationLine situation={situation} status={run.status} {...(primary === undefined ? {} : { action: primary })} />
 
       {confirmContinue && (
         <div className="action-confirm">

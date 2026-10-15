@@ -206,12 +206,23 @@ h3 { font-size: 0.95rem; margin: 1.25rem 0 0.4rem; font-weight: 600; color: var(
   margin: 0.6rem 0;
 }
 
+/* The box, for a situation that names a move — and its border is `currentColor`, so the colour
+   below is what draws it: an amber box for an open gate, a red one for a failed or crashed run. */
 .situation-needs {
   padding: 0.6rem 0.8rem;
-  border: 1px solid var(--needs);
+  border: 1px solid currentColor;
   border-radius: var(--radius);
-  color: var(--needs);
 }
+
+/* The colour the Run view's stage box used to carry (`chip-<status>`, retired 2026-10-15). Four
+   rules for seven statuses, because the vocabulary collapses waiting, failed and crashed into the
+   one subject "Needs you." and the colour is the only thing left that tells an open gate from a
+   crash at a glance (the review of `b912b3b`, finding 2). The values are the chips' own, so a line
+   and the Board chip beside it cannot come to disagree about how bad a run is. */
+.situation-needs-you { color: var(--needs); }
+.situation-failed { color: var(--danger); }
+.situation-working { color: var(--draft); }
+.situation-done { color: var(--approved); }
 
 .situation-sentence { white-space: normal; }
 

@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
+import type { RunStatus } from "../../shared/types.js";
 import { SituationLine, type SituationAction } from "../../src/components/SituationLine.js";
 import { runSituation } from "../../src/projections.js";
 
@@ -24,13 +25,14 @@ import { runSituation } from "../../src/projections.js";
  *  explained in `test/client/ProgressBar.test.tsx`'s header. */
 afterEach(cleanup);
 
-/** The line as the Run page mounts it: the projection's answer, and the move the page is willing to
- *  offer. `exactOptionalPropertyTypes` refuses an explicit `undefined` for `action`, so the absent
- *  case omits the prop rather than passing nothing to it. */
-function mount(situation: ReturnType<typeof runSituation>, action?: SituationAction) {
+/** The line as the Run page mounts it: the projection's answer, the run's status — which decides
+ *  the colour and nothing else — and the move the page is willing to offer.
+ *  `exactOptionalPropertyTypes` refuses an explicit `undefined` for `action`, so the absent case
+ *  omits the prop rather than passing nothing to it. */
+function mount(situation: ReturnType<typeof runSituation>, status: RunStatus, action?: SituationAction) {
   return render(
     <MemoryRouter>
-      <SituationLine situation={situation} {...(action === undefined ? {} : { action })} />
+      <SituationLine situation={situation} status={status} {...(action === undefined ? {} : { action })} />
     </MemoryRouter>,
   );
 }
@@ -44,7 +46,7 @@ const GATE = runSituation({
 
 describe("SituationLine", () => {
   it("draws the subject in bold, the sentence, and the one move a gate needs", () => {
-    mount(GATE, { label: "open gate · script-gate", href: "/shows/harbor/episodes/s02e01/runs/r1/gate" });
+    mount(GATE, "waiting", { label: "open gate · script-gate", href: "/shows/harbor/episodes/s02e01/runs/r1/gate" });
 
     // The subject is the half read from across the room, so it is asserted as a `strong` and not
     // only as text on the page.
@@ -65,7 +67,7 @@ describe("SituationLine", () => {
       steps: [{ id: "draft", kind: "loop", status: "running", iteration: { n: 3, max: 15 } }],
     }, Date.parse("2026-10-15T14:12:05.000Z"));
 
-    mount(working);
+    mount(working, "running");
 
     expect(screen.getByText("A worker is on it.")).toBeInTheDocument();
     expect(screen.getByText("draft for 12m 05s (iteration 3 of 15)")).toBeInTheDocument();
@@ -79,7 +81,7 @@ describe("SituationLine", () => {
   it("presses the one move it is given, once", () => {
     const onClick = vi.fn();
     const crashed = runSituation({ status: "crashed" });
-    mount(crashed, { label: "continue", onClick });
+    mount(crashed, "crashed", { label: "continue", onClick });
 
     fireEvent.click(screen.getByRole("button", { name: "continue" }));
     expect(onClick).toHaveBeenCalledTimes(1);
@@ -90,7 +92,7 @@ describe("SituationLine", () => {
     // page passes no action — and the sentence that says the run has failed is unchanged, because
     // what has happened to a run does not depend on who is allowed to touch it (ruling H-03).
     const failed = runSituation({ status: "failed", failed: { stepId: "tts-generate", error: "429" } });
-    mount(failed);
+    mount(failed, "failed");
 
     expect(screen.getByText("Needs you.")).toBeInTheDocument();
     expect(screen.getByText("Failed at tts-generate: 429. Resume runs it again from there.")).toBeInTheDocument();
@@ -101,7 +103,53 @@ describe("SituationLine", () => {
     // The carve-out ruling H-03 makes for the two links that are GETs. The Run page withholds
     // Resume and Continue on a read-only show and offers the gate, so the one surface that says a
     // gate is waiting is also the one that can reach it.
-    mount(GATE, { label: "open gate · script-gate", href: "/shows/retired/episodes/s02e01/runs/r1/gate" });
+    mount(GATE, "waiting", { label: "open gate · script-gate", href: "/shows/retired/episodes/s02e01/runs/r1/gate" });
     expect(screen.getByRole("link", { name: "open gate · script-gate" })).toBeInTheDocument();
+  });
+
+  it("draws an open gate amber and a failure red, which is the colour the stage box used to carry", () => {
+    // The Run view's stage altitude carried a `chip chip-<status>` with five distinct colours until
+    // 2026-10-15; the vocabulary now says "Needs you." for an open gate, a failure and a crash
+    // alike, so the colour is the only thing left that tells them apart at a glance (the review of
+    // `b912b3b`, finding 2). The classes are asserted rather than the computed colours, because
+    // jsdom loads no stylesheet — what is testable here is that the line asks for the right one.
+    const { container: gate } = mount(GATE, "waiting", { label: "open gate · script-gate", href: "/g" });
+    const gateLine = gate.querySelector("p.situation");
+    expect(gateLine).toHaveClass("situation-needs-you");
+    // A situation that names a move is also boxed, and the box takes its colour from the class
+    // above through `currentColor`.
+    expect(gateLine).toHaveClass("situation-needs");
+    expect(gateLine).not.toHaveClass("situation-failed");
+
+    cleanup();
+
+    const failed = runSituation({ status: "failed", failed: { stepId: "tts-generate", error: "429" } });
+    const { container: broken } = mount(failed, "failed", { label: "resume", onClick: () => {} });
+    const failedLine = broken.querySelector("p.situation");
+    expect(failedLine).toHaveClass("situation-failed");
+    expect(failedLine).toHaveClass("situation-needs");
+    expect(failedLine).not.toHaveClass("situation-needs-you");
+
+    cleanup();
+
+    // A crashed run is the same red: one colour for "this run has stopped", whichever way it did.
+    const { container: dead } = mount(runSituation({ status: "crashed" }), "crashed");
+    expect(dead.querySelector("p.situation")).toHaveClass("situation-failed");
+  });
+
+  it("draws a working run blue, a finished one green, and a fresh one in neither", () => {
+    const { container: running } = mount(runSituation({ status: "running" }), "running");
+    expect(running.querySelector("p.situation")).toHaveClass("situation-working");
+    cleanup();
+
+    const { container: done } = mount(runSituation({ status: "completed" }), "completed");
+    expect(done.querySelector("p.situation")).toHaveClass("situation-done");
+    cleanup();
+
+    // An episode that has never run asks for no colour at all. The Board draws no line for it;
+    // the Run view draws this one, in the body's own colour.
+    const { container: fresh } = mount(runSituation({ status: "none" }), "none");
+    const line = fresh.querySelector("p.situation");
+    expect(line?.className).toBe("situation");
   });
 });

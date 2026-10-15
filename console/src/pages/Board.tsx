@@ -196,7 +196,12 @@ export function Board() {
                 {row.openGate !== undefined && (
                   <span className="chip chip-gate mono">{row.openGate.stepId} · attempt {row.openGate.attempt}</span>
                 )}
-                <SituationLine situation={situation} />
+                {/* No line for an episode that has never run: its chip already reads "no runs",
+                    the brief's vocabulary gives that row no sentence, and a bold "Not started."
+                    under the chip would be the same claim twice on every row of a fresh show (the
+                    review of `b912b3b`, finding 1). The Run view keeps its own "Not started.",
+                    because it has no chip to say it. */}
+                {row.status !== "none" && <SituationLine situation={situation} status={row.status} />}
                 {reasons.length > 0 && (
                   <ul className="row-needs">
                     {reasons.map((line, i) => <li key={i}>{line}</li>)}
