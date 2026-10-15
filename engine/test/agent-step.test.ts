@@ -322,6 +322,17 @@ describe("the reserved episode id has no season", () => {
  *  and it is the only source of the reset's time zone. */
 const RESET_ISO = "2026-10-14T23:50:00.000Z";
 const RESET_PLUS_A_MINUTE = "2026-10-14T23:51:00.000Z";
+/** The clock the cases that wait inject: fifty minutes before `RESET_ISO`, so the wake instant (the
+ *  reset plus the minute of grace, ruling I-03) is still ahead of "now" and the rule sleeps.
+ *  Without it these cases read the wall clock, which has been past 2026-10-14 since the day after
+ *  the measured run — and a wake instant already passed is retried at once, with no sleep (ruling
+ *  I-22). Injecting the clock is what keeps these cases about the wait. */
+const BEFORE_RESET = new Date("2026-10-14T23:00:00.000Z");
+const beforeReset = () => BEFORE_RESET;
+/** An hour past `RESET_ISO`, and so past its minute of grace too: the clock the already-passed
+ *  cases inject. */
+const AFTER_RESET = new Date("2026-10-15T00:50:00.000Z");
+const afterReset = () => AFTER_RESET;
 const SDK_FIVE_HOUR_TEXT = "You've hit your session limit · resets 7:50pm (America/New_York)";
 const SDK_SEVEN_DAY_TEXT = "You've hit your weekly limit · resets Mon 9:00am (America/New_York)";
 
@@ -334,8 +345,8 @@ const limitedTurn = (kind: string, sdkText: string): AgentMessage =>
 const usageIs = (usage: AgentUsage): AgentMessage => ({ type: "usage", usage });
 /** A seven-day window reporting in, as the SDK sends it mid-stream: `allowed`, with the week's
  *  utilization on it. This is the weekly figure's first source — it is already in the stream. */
-const sevenDayReport = (utilization: number, status: AgentRateLimit["status"] = "allowed"): AgentMessage =>
-  ({ type: "rate_limit_event", rateLimit: { status, window: "seven_day", utilization, resetsAt: "2026-10-19T04:00:00.000Z" } });
+const sevenDayReport = (utilization: number, status: AgentRateLimit["status"] = "allowed", window = "seven_day"): AgentMessage =>
+  ({ type: "rate_limit_event", rateLimit: { status, window, utilization, resetsAt: "2026-10-19T04:00:00.000Z" } });
 const weeklyAt = (utilization: number): AgentUsage => ({ available: true, sevenDay: { utilization, resetsAt: "2026-10-19T04:00:00.000Z" } });
 
 /** A five-hour limit's stream: the SDK's refused turn, the rejected window event, the wrapper's one
@@ -360,7 +371,7 @@ describe("createAgentExecutor: a plan usage limit", () => {
     const f = fake([limitedStream("five_hour", weeklyAt(41)), [init, text("REVISIONS_COMPLETE"), success({ result: "REVISIONS_COMPLETE" })]]);
     const s = sleeper();
     const rec = recorder();
-    const ex = createAgentExecutor({ query: f.query, promptsDir, sleepUntil: s.sleepUntil });
+    const ex = createAgentExecutor({ query: f.query, promptsDir, now: beforeReset, sleepUntil: s.sleepUntil });
     const r = await ex(step(), ctx(), rec.emit);
 
     expect(r).toEqual({ ok: true, text: "REVISIONS_COMPLETE", toolCalls: 0 });
@@ -398,8 +409,8 @@ describe("createAgentExecutor: a plan usage limit", () => {
     expect(rec.events.at(-1)!.payload["limit"]).toEqual({ kind: "rate_limit", window: "five_hour", resetsAt: RESET_ISO, weeklyUtilization: 78, weeklySource: "usage", waited: false });
   });
 
-  it("(c) never waits out a seven-day window, whichever of the three it is", async () => {
-    for (const window of ["seven_day", "seven_day_opus", "seven_day_sonnet"]) {
+  it("(c) never waits out a seven-day window, whichever of the four it is", async () => {
+    for (const window of ["seven_day", "seven_day_opus", "seven_day_sonnet", "seven_day_overage_included"]) {
       const f = fake(limitedStream(window, weeklyAt(12), SDK_SEVEN_DAY_TEXT));
       const s = sleeper();
       const r = await createAgentExecutor({ query: f.query, promptsDir, sleepUntil: s.sleepUntil })(step(), ctx(), recorder().emit);
@@ -424,7 +435,7 @@ describe("createAgentExecutor: a plan usage limit", () => {
     const f = fake([limitedStream("five_hour", weeklyAt(41)), limitedStream("five_hour", weeklyAt(41))]);
     const s = sleeper();
     const rec = recorder();
-    const r = await createAgentExecutor({ query: f.query, promptsDir, sleepUntil: s.sleepUntil })(step(), ctx(), rec.emit);
+    const r = await createAgentExecutor({ query: f.query, promptsDir, now: beforeReset, sleepUntil: s.sleepUntil })(step(), ctx(), rec.emit);
     expect(r.ok ? "" : r.error).toBe("Manual resume needed: the writer's session hit its 5-hour limit again after waiting once (resets 7:50pm America/New_York); press Resume after the reset.");
     expect(f.calls).toHaveLength(2);
     expect(s.slept).toEqual([RESET_PLUS_A_MINUTE]);
@@ -508,7 +519,7 @@ describe("createAgentExecutor: where the weekly figure comes from", () => {
     ]);
     const s = sleeper();
     const rec = recorder();
-    const r = await createAgentExecutor({ query: f.query, promptsDir, sleepUntil: s.sleepUntil })(step(), ctx(), rec.emit);
+    const r = await createAgentExecutor({ query: f.query, promptsDir, now: beforeReset, sleepUntil: s.sleepUntil })(step(), ctx(), rec.emit);
     expect(r.ok).toBe(true);
     expect(s.slept).toEqual([RESET_PLUS_A_MINUTE]);
     expect(rec.events.at(-1)!.payload["limit"]).toEqual({ kind: "rate_limit", window: "five_hour", resetsAt: RESET_ISO, weeklyUtilization: 41, weeklySource: "event", waited: true });
@@ -537,6 +548,38 @@ describe("createAgentExecutor: where the weekly figure comes from", () => {
     expect(rec.events.at(-1)!.payload["limit"]).toEqual({ kind: "rate_limit", window: "five_hour", resetsAt: RESET_ISO, weeklyUtilization: 90, weeklySource: "event", waited: false });
   });
 
+  it("a per-model seven-day event is not the weekly figure: the usage call answers instead", async () => {
+    // The two sources have to answer one question. A `seven_day_opus` event at 90% reports a
+    // per-model window, not the account-wide quota Ryan's rule reads, so the figure is the usage
+    // call's 10% and the step waits. Read the other way, the event's 90 would block a wait the
+    // account was owed and send the operator a manual-resume sentence for nothing.
+    const f = fake([
+      [init, sevenDayReport(90, "allowed", "seven_day_opus"), limitedTurn("rate_limit", SDK_FIVE_HOUR_TEXT), rejectedLimit("five_hour"), usageIs(weeklyAt(10)), success({ result: SDK_FIVE_HOUR_TEXT })],
+      [init, text("REVISIONS_COMPLETE"), success({ result: "REVISIONS_COMPLETE" })],
+    ]);
+    const s = sleeper();
+    const rec = recorder();
+    const r = await createAgentExecutor({ query: f.query, promptsDir, now: beforeReset, sleepUntil: s.sleepUntil })(step(), ctx(), rec.emit);
+    expect(r.ok).toBe(true);
+    expect(s.slept).toEqual([RESET_PLUS_A_MINUTE]);
+    expect(rec.events.at(-1)!.payload["limit"]).toEqual({ kind: "rate_limit", window: "five_hour", resetsAt: RESET_ISO, weeklyUtilization: 10, weeklySource: "usage", waited: true });
+    expect(rec.events.find((e) => e.kind === "step_waiting")!.payload["weeklyUtilization"]).toBe(10);
+  });
+
+  it("a per-model seven-day event with nothing behind it leaves the weekly figure unknown", async () => {
+    // The mirror case: no usage call answers, so the question is unanswered rather than answered
+    // with a per-model number, and the rule refuses to wait. `seven_day_overage_included` is the
+    // fourth kind the SDK declares and the one `isSevenDay`'s prefix match quietly covers, which
+    // is why the figure needs a test of its own.
+    const f = fake([init, sevenDayReport(5, "allowed", "seven_day_overage_included"), limitedTurn("rate_limit", SDK_FIVE_HOUR_TEXT), rejectedLimit("five_hour"), usageIs({ available: false }), success({ result: SDK_FIVE_HOUR_TEXT })]);
+    const s = sleeper();
+    const rec = recorder();
+    const r = await createAgentExecutor({ query: f.query, promptsDir, now: beforeReset, sleepUntil: s.sleepUntil })(step(), ctx(), rec.emit);
+    expect(r.ok ? "" : r.error).toBe("Manual resume needed: the writer's session hit its 5-hour limit (resets 7:50pm America/New_York) and the weekly utilization is unknown.");
+    expect(s.slept).toEqual([]);
+    expect("weeklySource" in (rec.events.at(-1)!.payload["limit"] as Record<string, unknown>)).toBe(false);
+  });
+
   it("a seven-day event with no figure is not a figure", async () => {
     // An event that names the window but carries no utilization leaves the question to the usage
     // call rather than answering it with nothing.
@@ -555,14 +598,14 @@ describe("createAgentExecutor: the edges of the usage-limit rule", () => {
     // the boundary are pinned together, because the sentence and the branch are one decision.
     const at = fake(limitedStream("five_hour", weeklyAt(65)));
     const atSleeper = sleeper();
-    const rAt = await createAgentExecutor({ query: at.query, promptsDir, sleepUntil: atSleeper.sleepUntil })(step(), ctx(), recorder().emit);
+    const rAt = await createAgentExecutor({ query: at.query, promptsDir, now: beforeReset, sleepUntil: atSleeper.sleepUntil })(step(), ctx(), recorder().emit);
     expect(rAt.ok ? "" : rAt.error).toBe("Manual resume needed: the writer's session hit its 5-hour limit (resets 7:50pm America/New_York) and the weekly quota is at 65%, at the 65% auto-retry ceiling (agents.autoRetryWeeklyUtilizationMax).");
     expect(atSleeper.slept).toEqual([]);
     expect(at.calls).toHaveLength(1);
 
     const under = fake([limitedStream("five_hour", weeklyAt(64)), [init, text("REVISIONS_COMPLETE"), success({ result: "REVISIONS_COMPLETE" })]]);
     const underSleeper = sleeper();
-    const rUnder = await createAgentExecutor({ query: under.query, promptsDir, sleepUntil: underSleeper.sleepUntil })(step(), ctx(), recorder().emit);
+    const rUnder = await createAgentExecutor({ query: under.query, promptsDir, now: beforeReset, sleepUntil: underSleeper.sleepUntil })(step(), ctx(), recorder().emit);
     expect(rUnder.ok).toBe(true);
     expect(underSleeper.slept).toEqual([RESET_PLUS_A_MINUTE]);
   });
@@ -613,9 +656,11 @@ describe("createAgentExecutor: the edges of the usage-limit rule", () => {
     const f = fake([limitedStream("five_hour", weeklyAt(41)), [init, limitedTurn("billing_error", "Your credit balance is too low to run this request."), success({ result: "" })]]);
     const s = sleeper();
     const rec = recorder();
-    const r = await createAgentExecutor({ query: f.query, promptsDir, sleepUntil: s.sleepUntil })(step(), ctx(), rec.emit);
+    const r = await createAgentExecutor({ query: f.query, promptsDir, now: beforeReset, sleepUntil: s.sleepUntil })(step(), ctx(), rec.emit);
     expect(r.ok ? "" : r.error).toBe("the model's reply was refused (billing_error): Your credit balance is too low to run this request.");
-    expect(rec.events.at(-1)!.payload["limit"]).toEqual({ kind: "billing_error" });
+    // `waited: true` rides along on the limit: five hours were spent on this step before the
+    // credit ran out, and a reader of agent_result alone would otherwise see no trace of them.
+    expect(rec.events.at(-1)!.payload["limit"]).toEqual({ kind: "billing_error", waited: true });
     expect(f.calls).toHaveLength(2);
     expect(s.slept).toEqual([RESET_PLUS_A_MINUTE]);
     expect(rec.events.filter((e) => e.kind === "step_waiting")).toHaveLength(1);
@@ -630,7 +675,7 @@ describe("createAgentExecutor: the edges of the usage-limit rule", () => {
       [init, toolUse("Edit", { file_path: "a.md" }, "t3"), toolUse("Write", { file_path: "b.md" }, "t4"), toolUse("Read", { file_path: "b.md" }, "t5"), success({ result: "REVISIONS_COMPLETE" })],
     ]);
     const rec = recorder();
-    const r = await createAgentExecutor({ query: f.query, promptsDir, sleepUntil: sleeper().sleepUntil })(step(), ctx(), rec.emit);
+    const r = await createAgentExecutor({ query: f.query, promptsDir, now: beforeReset, sleepUntil: sleeper().sleepUntil })(step(), ctx(), rec.emit);
     expect(r).toEqual({ ok: true, text: "REVISIONS_COMPLETE", toolCalls: 5 });
     const calls = rec.events.filter((e) => e.kind === "agent_tool_call");
     expect(calls.map((e) => e.payload["index"])).toEqual([1, 2, 3, 4, 5]);
@@ -640,19 +685,87 @@ describe("createAgentExecutor: the edges of the usage-limit rule", () => {
 
   it("the production sleeper is a real timer, measured against the clock it is given", async () => {
     // The one path that runs in production: no `sleepUntil` is injected, so the executor builds its
-    // own from `setTimeout` and `now`. The reset is two minutes ahead of the wall clock and the
-    // injected clock reads five milliseconds before the instant the executor sleeps until (the
+    // own from `setTimeout` and `now`. The clock is read twice — once by the call site's guard,
+    // which must see the wake instant still ahead of it, and once by the sleeper — so it is given
+    // two readings, which is what a real clock does across a sleep. The first is a second before
+    // the reset; the second is five milliseconds before the instant the executor sleeps until (the
     // reset plus the one-minute grace), so the real timer fires almost at once. If `now` were
     // ignored, the same sleeper would wait two minutes against the wall clock and this test would
     // fail on its own timeout — which is what makes it a test of the default path rather than of
     // nothing.
     const reset = new Date(Date.now() + 120_000).toISOString();
     const f = fake([limitedStream("five_hour", weeklyAt(41), SDK_FIVE_HOUR_TEXT, reset), [init, text("REVISIONS_COMPLETE"), success({ result: "REVISIONS_COMPLETE" })]]);
-    const now = () => new Date(Date.parse(reset) + 60_000 - 5);
+    const readings = [new Date(Date.parse(reset) - 1_000), new Date(Date.parse(reset) + 60_000 - 5)];
+    const now = () => readings.shift() ?? new Date(Date.parse(reset) + 60_000 - 5);
     const started = Date.now();
     const r = await createAgentExecutor({ query: f.query, promptsDir, now })(step(), ctx(), recorder().emit);
     expect(r).toEqual({ ok: true, text: "REVISIONS_COMPLETE", toolCalls: 0 });
     expect(f.calls).toHaveLength(2);
+    // Both readings were consumed: the guard took one and the sleeper took the other.
+    expect(readings).toHaveLength(0);
     expect(Date.now() - started).toBeLessThan(2_000);
+  });
+
+  it("a wake instant the clock has already passed is retried at once, and the log says no wait was taken", async () => {
+    // Ruling I-22. A reset time already past satisfies "the SDK named a reset", so the rule fires —
+    // but there is nothing to sleep until, and a sleeper handed an instant in the past returns in
+    // zero. The step_waiting is still written, because it is the log's only record that the rule
+    // fired at all; its reason and `waited: false` are what say that no time was spent.
+    const f = fake([limitedStream("five_hour", weeklyAt(41)), [init, text("REVISIONS_COMPLETE"), success({ result: "REVISIONS_COMPLETE" })]]);
+    const s = sleeper();
+    const rec = recorder();
+    const r = await createAgentExecutor({ query: f.query, promptsDir, now: afterReset, sleepUntil: s.sleepUntil })(step(), ctx(), rec.emit);
+    expect(r).toEqual({ ok: true, text: "REVISIONS_COMPLETE", toolCalls: 0 });
+    expect(s.slept).toEqual([]);
+    expect(f.calls).toHaveLength(2);
+    const waiting = rec.events.filter((e) => e.kind === "step_waiting");
+    expect(waiting).toHaveLength(1);
+    expect(waiting[0]!.payload["reason"]).toBe("the usage limit's reset at 7:50pm America/New_York had already passed; resuming at once (weekly quota 41%)");
+    expect(rec.events.at(-1)!.payload["limit"]).toEqual({ kind: "rate_limit", window: "five_hour", resetsAt: RESET_ISO, weeklyUtilization: 41, weeklySource: "usage", waited: false });
+  });
+
+  it("a reset one second past still takes the minute of grace, so clock skew cannot spend the retry", async () => {
+    // The guard is on the **wake** instant — the reset plus WAIT_GRACE_MS — and not on the reset
+    // itself, because ruling I-03 exists for exactly this second: the window's clock and this
+    // machine's are not the same clock, and a query resumed the moment the window turns over is
+    // rejected again. A reset that passed a second ago is the case the grace was bought for.
+    const f = fake([limitedStream("five_hour", weeklyAt(41)), [init, text("REVISIONS_COMPLETE"), success({ result: "REVISIONS_COMPLETE" })]]);
+    const s = sleeper();
+    const rec = recorder();
+    const r = await createAgentExecutor({ query: f.query, promptsDir, now: () => new Date(Date.parse(RESET_ISO) + 1_000), sleepUntil: s.sleepUntil })(step(), ctx(), rec.emit);
+    expect(r.ok).toBe(true);
+    expect(s.slept).toEqual([RESET_PLUS_A_MINUTE]);
+    expect(rec.events.find((e) => e.kind === "step_waiting")!.payload["reason"]).toBe("waiting for the usage limit to reset at 7:50pm America/New_York (weekly quota 41%)");
+    expect(rec.events.at(-1)!.payload["limit"]).toMatchObject({ waited: true });
+  });
+
+  it("a limit that trips again on a retry that spent no wait does not claim one", async () => {
+    // The sentence is the whole point of the ruling: "again after waiting once" would be a claim
+    // about hours nobody spent, so the no-wait arm reads "again on the retry" instead.
+    const f = fake([limitedStream("five_hour", weeklyAt(41)), limitedStream("five_hour", weeklyAt(41))]);
+    const s = sleeper();
+    const rec = recorder();
+    const r = await createAgentExecutor({ query: f.query, promptsDir, now: afterReset, sleepUntil: s.sleepUntil })(step(), ctx(), rec.emit);
+    expect(r.ok ? "" : r.error).toBe("Manual resume needed: the writer's session hit its 5-hour limit again on the retry (resets 7:50pm America/New_York); press Resume after the reset.");
+    expect(s.slept).toEqual([]);
+    expect(f.calls).toHaveLength(2);
+    expect(rec.events.at(-1)!.payload["limit"]).toEqual({ kind: "rate_limit", window: "five_hour", resetsAt: RESET_ISO, weeklyUtilization: 41, weeklySource: "usage", waited: false });
+  });
+
+  it("a reset time that will not parse is retried at once rather than thrown out of the executor", async () => {
+    // Reachable from a hand-built message today, and from any future mapper change — an SDK that
+    // switched `resetsAt` to milliseconds, say. The arithmetic that builds the wake instant throws
+    // a RangeError on an unparseable reset, and `Executors` (`engine/src/steps.ts`) says an
+    // executor may throw only when the event log is unwritable: one reader checks, at the call
+    // site, and the step comes back as an outcome. The reason names the raw value, so the log says
+    // what arrived rather than hiding it.
+    const f = fake([limitedStream("five_hour", weeklyAt(41), SDK_FIVE_HOUR_TEXT, "not a date"), [init, text("REVISIONS_COMPLETE"), success({ result: "REVISIONS_COMPLETE" })]]);
+    const s = sleeper();
+    const rec = recorder();
+    const r = await createAgentExecutor({ query: f.query, promptsDir, now: beforeReset, sleepUntil: s.sleepUntil })(step(), ctx(), rec.emit);
+    expect(r).toEqual({ ok: true, text: "REVISIONS_COMPLETE", toolCalls: 0 });
+    expect(s.slept).toEqual([]);
+    expect(rec.events.find((e) => e.kind === "step_waiting")!.payload["reason"]).toBe("the usage limit's reset time not a date could not be read as an instant; resuming at once (weekly quota 41%)");
+    expect(rec.events.at(-1)!.payload["limit"]).toMatchObject({ resetsAt: "not a date", waited: false });
   });
 });

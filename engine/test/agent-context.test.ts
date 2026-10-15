@@ -139,7 +139,10 @@ describe("a loop body that hits a usage limit", () => {
     const slept: string[] = [];
     const executors = {
       script: async () => ({ ok: true as const }),
-      agent: createAgentExecutor({ query, sleepUntil: async (iso: string) => { slept.push(iso); } }),
+      // The clock is injected for the same reason the executor's own cases inject one: the wake
+      // instant (the reset plus its minute of grace) has to be ahead of "now" for the rule to
+      // sleep, and the wall clock has been past 2026-10-14 since the day after the measured run.
+      agent: createAgentExecutor({ query, now: () => new Date("2026-10-14T23:00:00.000Z"), sleepUntil: async (iso: string) => { slept.push(iso); } }),
     };
     const body: AgentStep = { kind: "agent", id: "body", promptFile: "revise.md", model: "m", allowedTools: ["Read", "Write"], context: "shared" };
     const loop: LoopStep = { kind: "loop", id: "revise", body, until: "REVISIONS_COMPLETE", maxIterations: 3 };

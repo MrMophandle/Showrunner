@@ -92,7 +92,9 @@ export async function usageMessage(q: UsageCapableQuery, timeoutMs = USAGE_CALL_
  *  either one alone maps to `{ available: false }`, so a response that disagrees with itself is
  *  read the cautious way. The per-model weekly windows (`seven_day_opus`, `seven_day_sonnet`,
  *  `seven_day_oauth_apps`, `model_scoped`) are deliberately not mapped: the rule reads one weekly
- *  figure, and a per-model window is not it. Nulls are preserved rather than dropped, because the
+ *  figure, and a per-model window is not it. This source and the other one agree about that by
+ *  construction — the executor's `isAccountWeeklyWindow` (`agent-step.ts`) is the same rule applied
+ *  to the stream's `rate_limit_event` windows, and it is where the reasoning is written out. Nulls are preserved rather than dropped, because the
  *  executor's rule turns on "is this a number", and a window the endpoint answered with no figure
  *  must not read as one. */
 export function toUsage(res: SDKControlGetUsageResponse): AgentUsage {

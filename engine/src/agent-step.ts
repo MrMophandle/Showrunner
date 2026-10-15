@@ -281,13 +281,19 @@ const UNNAMED_WINDOW = "unknown";
  *  again — a whole second wait for the sake of a minute. */
 const WAIT_GRACE_MS = 60_000;
 
-/** The default sleeper: a real timer, to the millisecond the reset's ISO names. Production uses it
- *  for waits of up to five hours, which is well inside `setTimeout`'s 24.8-day ceiling. An instant
- *  already past, or an unparseable one, sleeps for zero rather than forever. */
+/** The default sleeper: a real timer, to the millisecond the wake instant's ISO names. Production
+ *  uses it for waits of up to five hours, which is well inside `setTimeout`'s 24.8-day ceiling.
+ *
+ *  **One reader checks the instant, and it is not this one.** The executor's call site is where an
+ *  unreadable or already-past wake instant is caught, because the arithmetic that builds it there
+ *  (`Date.parse(resetsAt) + WAIT_GRACE_MS`) is what would throw a `RangeError` on an unparseable
+ *  reset — and a throw out of the executor is reserved for an unwritable event log (`steps.ts`'s
+ *  `Executors` contract). So by the time an ISO reaches this function it has parsed and was still
+ *  ahead of `now()`; `Math.max(0, …)` is the clamp for the milliseconds that pass between that
+ *  check and this timer, not a second guard against the same fault. */
 function sleepWithRealTimer(iso: string, now: () => Date): Promise<void> {
   const until = Date.parse(iso);
-  const ms = Number.isFinite(until) ? Math.max(0, until - now().getTime()) : 0;
-  return new Promise<void>((resolve) => { setTimeout(resolve, ms); });
+  return new Promise<void>((resolve) => { setTimeout(resolve, Math.max(0, until - now().getTime())); });
 }
 
 /** What the SDK named as the reason this attempt ended, or undefined when it named nothing.
@@ -340,13 +346,33 @@ function weeklyUtilization(usage: AgentUsage | undefined): number | undefined {
   return typeof u === "number" && Number.isFinite(u) ? u : undefined;
 }
 
-/** The operator's name for a plan window: `5-hour`, `7-day` for all three seven-day kinds, the
- *  SDK's own name for anything else (`overage`), and `usage` when the SDK named no window at all —
- *  so the sentence reads "hit its usage limit" rather than "hit its unknown limit". */
+/** Whether a window is a weekly one **for classification**: any of the four names the SDK declares
+ *  that begin `seven_day` (`seven_day`, `seven_day_opus`, `seven_day_sonnet`,
+ *  `seven_day_overage_included`). All four are weekly limits the engine never waits out on its own
+ *  authority, and all four read "7-day" in the operator's sentence. This is deliberately **not** the
+ *  test for the weekly *figure* — see `isAccountWeeklyWindow`. */
 function isSevenDay(window: string | undefined): boolean {
   return window !== undefined && window.startsWith("seven_day");
 }
 
+/** Whether a window is the **account-wide** weekly window, whose utilization is "the weekly figure"
+ *  Ryan's rule reads against the ceiling.
+ *
+ *  Only `seven_day` is. The per-model kinds (`seven_day_opus`, `seven_day_sonnet`,
+ *  `seven_day_overage_included`) are weekly limits for classification and are not this number,
+ *  because the two answer different questions: a `seven_day_opus` event at 90% would block a wait
+ *  the account-wide window at 20% allows, and a `seven_day_sonnet` event at 5% would authorize a
+ *  five-hour wait while the account-wide window sits at 95% — the retry then spends the one wait and
+ *  fails anyway. Which way it erred would depend on which per-model window the SDK happened to
+ *  report. This is the same choice `toUsage` makes about the usage call's per-model rows
+ *  (`sdk-query.ts`), so the rule's two sources answer one question. */
+function isAccountWeeklyWindow(window: string | undefined): boolean {
+  return window === "seven_day";
+}
+
+/** The operator's name for a plan window: `5-hour`, `7-day` for all four seven-day kinds, the
+ *  SDK's own name for anything else (`overage`), and `usage` when the SDK named no window at all —
+ *  so the sentence reads "hit its usage limit" rather than "hit its unknown limit". */
 function windowLabel(window: string | undefined): string {
   if (window === FIVE_HOUR) return "5-hour";
   if (isSevenDay(window)) return "7-day";
@@ -366,9 +392,14 @@ function resetsClause(time: string | undefined): string {
  *  The SDK's text is the only source of a zone — the event carries epoch seconds and nothing else —
  *  and the measured sentence was `You've hit your session limit · resets 7:50pm
  *  (America/New_York)`, which this renders as `7:50pm America/New_York`. The captured time may
- *  carry a weekday (`Mon 9:00am`) for a seven-day window. Exported so the console's and the
- *  engine's tests can pin the one rendering both halves of a run display. */
-export function renderResetTime(sdkText: string | undefined, resetsAtIso: string | undefined): string | undefined {
+ *  carry a weekday (`Mon 9:00am`) for a seven-day window.
+ *
+ *  **Module-private on purpose.** One rendering in one place is what keeps the engine's failure
+ *  sentences and the `step_waiting` reason from drifting apart, and nothing outside this module has
+ *  any business with it: the console renders the same reset in the **browser's** zone through its
+ *  own `resetLabel` (Plan I's display ruling), deliberately a different answer, and the tests pin
+ *  this one through the sentences that carry it. */
+function renderResetTime(sdkText: string | undefined, resetsAtIso: string | undefined): string | undefined {
   const named = sdkText?.match(/resets\s+(.+?)\s*\(([A-Za-z_]+(?:\/[A-Za-z0-9_+-]+)+)\)/);
   if (named) return `${named[1]} ${named[2]}`;
   return resetsAtIso;
@@ -393,7 +424,7 @@ function refusedSentence(kind: string, text: string): string {
  *  three seven-day kinds, `overage`, or none named — is never auto-retried at all, so its sentence
  *  only has to say when to come back. */
 function manualResumeSentence(o: { window: string | undefined; time: string | undefined; weekly: number | undefined; ceiling: number }): string {
-  const opening = `Manual resume needed: the writer's session hit its ${windowLabel(o.window)} limit`;
+  const opening = limitOpening(o.window);
   if (o.window !== FIVE_HOUR) return `${opening}${resetsClause(o.time)}; press Resume after the reset.`;
   if (o.weekly === undefined) return `${opening}${resetsClause(o.time)} and the weekly utilization is unknown.`;
   // Reachable only when the SDK named no reset time: a five-hour limit under the ceiling *with* a
@@ -403,11 +434,38 @@ function manualResumeSentence(o: { window: string | undefined; time: string | un
   return `${opening}${resetsClause(o.time)} and the weekly quota is at ${o.weekly}%, ${relation} (agents.autoRetryWeeklyUtilizationMax).`;
 }
 
+/** The opening that every usage-limit sentence shares. Written once because six sentence shapes
+ *  hang off it — four from `manualResumeSentence` and `limitedAgainSentence`'s two arms — and the
+ *  same literal in two builders is a literal that gets reworded in one of them. */
+function limitOpening(window: string | undefined): string {
+  return `Manual resume needed: the writer's session hit its ${windowLabel(window)} limit`;
+}
+
 /** The step's error when the limit tripped again on the retry. One wait is all the executor takes
  *  (Ryan's ruling of 2026-10-15: a second limit after one wait is the operator's), and the sentence
- *  says that a wait was already spent so the operator does not read it as the first refusal. */
-function limitedAgainSentence(window: string | undefined, time: string | undefined): string {
-  return `Manual resume needed: the writer's session hit its ${windowLabel(window)} limit again after waiting once${resetsClause(time)}; press Resume after the reset.`;
+ *  says that a wait was already spent so the operator does not read it as the first refusal.
+ *
+ *  `waited` is false for the one retry that spends no wait — a wake instant the clock had already
+ *  passed is retried at once (ruling I-22) — and the sentence then says "again on the retry",
+ *  because "again after waiting once" would be a claim about hours that nobody spent. */
+function limitedAgainSentence(window: string | undefined, time: string | undefined, waited: boolean): string {
+  return `${limitOpening(window)} ${waited ? "again after waiting once" : "again on the retry"}${resetsClause(time)}; press Resume after the reset.`;
+}
+
+/** `step_waiting`'s `reason`: the log's record of why the step stopped, and the sentence the console
+ *  prints under the Board's stage chip and on every waiting rail row.
+ *
+ *  Three shapes, because the rule can fire on a reset instant that is not in the future. `sleeping`
+ *  is the ordinary case and the only one that claims a wait. A reset the SDK sent in a form that
+ *  will not parse names the raw value, so the log says what arrived rather than hiding it. A wake
+ *  instant the clock has already passed says so — the step is retried at once, and a reason reading
+ *  "waiting for the usage limit to reset at …" beside a sleep of zero seconds would be the log
+ *  recording a wait that never happened. */
+function waitingReason(o: { time: string | undefined; resetsAt: string; weekly: number; sleeping: boolean; readable: boolean }): string {
+  const quota = ` (weekly quota ${o.weekly}%)`;
+  if (o.sleeping) return `waiting for the usage limit to reset at ${o.time ?? o.resetsAt}${quota}`;
+  if (!o.readable) return `the usage limit's reset time ${o.resetsAt} could not be read as an instant; resuming at once${quota}`;
+  return `the usage limit's reset at ${o.time ?? o.resetsAt} had already passed; resuming at once${quota}`;
 }
 
 export function createAgentExecutor(opts: AgentExecutorOptions): Executors["agent"] {
@@ -531,13 +589,15 @@ export function createAgentExecutor(opts: AgentExecutorOptions): Executors["agen
           try {
             if (m.session_id && !sessionId) sessionId = m.session_id;
             // One stream reports several windows, each as its own event. The last of any status is
-            // kept, the last *rejected* one is kept separately as the limit that was hit, and a
-            // seven-day event's utilization is the weekly figure the rule prefers — it is on the
-            // stream already, where the usage call has to be asked for and can go unanswered.
+            // kept, the last *rejected* one is kept separately as the limit that was hit, and the
+            // **account-wide** seven-day event's utilization is the weekly figure the rule prefers
+            // — it is on the stream already, where the usage call has to be asked for and can go
+            // unanswered. A per-model seven-day event is not that figure (`isAccountWeeklyWindow`),
+            // which is what keeps this source and the usage call answering one question.
             if (m.rateLimit !== undefined) {
               rateLimit = m.rateLimit;
               if (m.rateLimit.status === "rejected") rejected = m.rateLimit;
-              if (isSevenDay(m.rateLimit.window) && typeof m.rateLimit.utilization === "number" && Number.isFinite(m.rateLimit.utilization)) {
+              if (isAccountWeeklyWindow(m.rateLimit.window) && typeof m.rateLimit.utilization === "number" && Number.isFinite(m.rateLimit.utilization)) {
                 weeklyFromEvent = m.rateLimit.utilization;
               }
             }
@@ -635,23 +695,37 @@ export function createAgentExecutor(opts: AgentExecutorOptions): Executors["agen
         // and resume the same query once. The reason is written into the log because the log is the
         // record (spec §6.5) and the console draws the wait from it rather than from a string of
         // its own.
-        const reason = `waiting for the usage limit to reset at ${time ?? resetsAt} (weekly quota ${weekly.value}%)`;
+        //
+        // **One minute past the reset, not the reset** (ruling I-03): the two clocks are not the
+        // same clock, and a query resumed on the second the window turns over is rejected again for
+        // the sake of a minute. That wake instant is also the one thing checked before any sleeper
+        // is called, and this is the only place that checks it (ruling I-22). A reset the SDK sent
+        // in a form that will not parse, or a wake instant the clock has already passed, is retried
+        // **at once**: `step_waiting` is still written, because it is the log's only record that
+        // the rule fired at all, and its reason says no wait was taken rather than claiming a sleep
+        // of zero seconds. `waited` then carries the same truth onto `agent_result`.
+        const resetMs = Date.parse(resetsAt);
+        const wakeMs = resetMs + WAIT_GRACE_MS;
+        const readable = Number.isFinite(resetMs);
+        const sleeping = readable && wakeMs > now().getTime();
+        const reason = waitingReason({ time, resetsAt, weekly: weekly.value, sleeping, readable });
         await emit("step_waiting", { reason, window, resetsAt, weeklyUtilization: weekly.value, ceiling });
-        // One minute past the reset, not the reset: the two clocks are not the same clock, and a
-        // query resumed on the second the window turns over is rejected again for the sake of a
-        // minute.
-        await sleepUntil(new Date(Date.parse(resetsAt) + WAIT_GRACE_MS).toISOString());
+        if (sleeping) await sleepUntil(new Date(wakeMs).toISOString());
         const retry = await attempt({ ...options, abortController: new AbortController(), ...(sessionId !== undefined ? { resume: sessionId } : {}) });
         last = retry;
         const retryLimit = classifyLimit(retry);
         if (retryLimit === undefined) {
           // The retry ran. Its outcome is the step's — success or any ordinary failure — and the
-          // limit stays on the log with `waited: true`, which is the record that this step spent a
-          // wait and is owed no second one.
+          // limit stays on the log with `waited`, which is the record of whether this step spent a
+          // wait; either way it is owed no second one.
           outcome = retry.base;
-          limit = { kind: "rate_limit", window, resetsAt, weeklyUtilization: weekly.value, weeklySource: weekly.source, waited: true };
+          limit = { kind: "rate_limit", window, resetsAt, weeklyUtilization: weekly.value, weeklySource: weekly.source, waited: sleeping };
         } else if (retryLimit.kind !== "rate_limit") {
-          limit = retryLimit;
+          // The retry was refused for something else entirely — the credit ran out, the account was
+          // suspended. The step reports that reason, and `waited` rides along so the log still says
+          // a wait was spent on this step: `step_waiting` is in the log too, but a reader looking at
+          // `agent_result.limit` alone would otherwise see no trace of the five hours.
+          limit = { kind: retryLimit.kind, waited: sleeping };
           outcome = { ok: false, error: refusedSentence(retryLimit.kind, retry.sdkError?.text ?? ""), toolCalls, limit };
         } else {
           const again = {
@@ -660,11 +734,11 @@ export function createAgentExecutor(opts: AgentExecutorOptions): Executors["agen
             weekly: weeklyFigure(retry) ?? weekly,
           };
           limit = {
-            kind: "rate_limit", waited: true, window: again.window,
+            kind: "rate_limit", waited: sleeping, window: again.window,
             ...(again.resetsAt !== undefined ? { resetsAt: again.resetsAt } : {}),
             weeklyUtilization: again.weekly.value, weeklySource: again.weekly.source,
           };
-          outcome = { ok: false, error: limitedAgainSentence(again.window, renderResetTime(retry.sdkError?.text, again.resetsAt)), toolCalls, limit };
+          outcome = { ok: false, error: limitedAgainSentence(again.window, renderResetTime(retry.sdkError?.text, again.resetsAt), sleeping), toolCalls, limit };
         }
       } else {
         outcome = { ok: false, error: manualResumeSentence({ window, time, weekly: weekly?.value, ceiling }), toolCalls, limit };

@@ -184,9 +184,16 @@ export type ScriptOutcome = { ok: true; result?: string } | { ok: false; error: 
  *  an account change before any run can proceed.
  *
  *  `kind` is `"rate_limit"` for a usage limit, and otherwise the SDK's own error kind verbatim, so
- *  a kind the SDK adds after this was written still reaches the log by name. `waited` is true only
- *  on the outcome of a retry the executor ran after sleeping out a reset, which is the log's record
- *  that the wait happened and that no second wait is owed.
+ *  a kind the SDK adds after this was written still reaches the log by name. `waited` says whether
+ *  the executor slept before the attempt this limit describes — the log's record that the wait
+ *  happened and that no second wait is owed. It is true only after a real sleep: a retry taken at
+ *  once because the reset instant had already passed records `waited: false` (ruling I-22).
+ *
+ *  **The second arm carries `waited` too, optionally.** A retry that came back refused for another
+ *  SDK kind — the credit ran out while the step slept — is logged as that kind, and `waited` rides
+ *  along so the record of the five hours survives on `agent_result.limit` and not only in the
+ *  step_waiting event. It is absent when no retry was taken at all, which is every first-attempt
+ *  refusal.
  *
  *  `weeklySource` says which of the two sources the weekly figure came from — `"event"` for a
  *  seven-day `rate_limit_event` in the stream, `"usage"` for the SDK's experimental usage call —
@@ -196,7 +203,7 @@ export type ScriptOutcome = { ok: true; result?: string } | { ok: false; error: 
  *  fetched separately. It is absent exactly when `weeklyUtilization` is. */
 export type AgentLimit =
   | { kind: "rate_limit"; window: string; resetsAt?: string; weeklyUtilization?: number; weeklySource?: "event" | "usage"; waited: boolean }
-  | { kind: string };
+  | { kind: string; waited?: boolean };
 
 export type AgentOutcome =
   | { ok: true; text: string; verdict?: unknown; toolCalls: number }
