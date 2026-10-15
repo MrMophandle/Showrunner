@@ -339,6 +339,15 @@ America/New_York`), because the `rate_limit_event` carries epoch seconds and not
 such sentence the ISO string is printed, and with no reset at all the clause is dropped rather than
 printed with a hole in it.
 
+**A reset time more than six hours ahead is refused as not credible**, because a five-hour window
+cannot reset later than five hours after it was hit and the sixth hour covers the clock skew the
+minute of grace exists for — so such a reset takes the same path as one already past: no sleep, a
+`step_waiting` whose reason names the raw value and how many hours ahead it was, `limit.waited:
+false`, and the retry at once. The case it is written for is an SDK that starts sending `resetsAt`
+in milliseconds, which maps to a date in the year 58,000; a wait on that would hold the step and
+the run's lock for as long as the number said while `setTimeout`'s 24.8-day ceiling fired the timer
+at once.
+
 **The wait happens in the worker, inside the executor** (design §4.2: the server owns no run state).
 It is outside the step's `timeoutMs` and `idleTimeoutMs`, which bound a query and not a sleep, so a
 five-hour wait cannot trip a fifteen-minute idle deadline; the run's lock heartbeat keeps the run

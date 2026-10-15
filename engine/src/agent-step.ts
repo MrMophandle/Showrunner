@@ -281,6 +281,20 @@ const UNNAMED_WINDOW = "unknown";
  *  again — a whole second wait for the sake of a minute. */
 const WAIT_GRACE_MS = 60_000;
 
+/** The longest wait the executor will take on a reset time the SDK sent, and the reason it has a
+ *  ceiling at all: **a five-hour window cannot reset later than five hours after it was hit.** An
+ *  hour on top covers the clock skew `WAIT_GRACE_MS` exists for and the grace itself, so a wake
+ *  instant further ahead than this is not a reset time the engine can believe — most plausibly a
+ *  unit change, an SDK that sends milliseconds where it sent epoch seconds mapping to a date in the
+ *  year 58,000.
+ *
+ *  Refusing it is what keeps the log honest. A wait of that length would claim the step and the
+ *  run's lock for as long as the number said, and `setTimeout`'s 24.8-day ceiling would fire the
+ *  timer at once in any case — so the step would record `waited: true` for a sleep that took no
+ *  time, which is the one thing ruling I-22 exists to prevent. An incredible reset takes the same
+ *  path as one already past: no sleep, and the retry runs at once. */
+const MAX_WAIT_MS = 6 * 60 * 60 * 1000;
+
 /** The default sleeper: a real timer, to the millisecond the wake instant's ISO names. Production
  *  uses it for waits of up to five hours, which is well inside `setTimeout`'s 24.8-day ceiling.
  *
@@ -455,16 +469,20 @@ function limitedAgainSentence(window: string | undefined, time: string | undefin
 /** `step_waiting`'s `reason`: the log's record of why the step stopped, and the sentence the console
  *  prints under the Board's stage chip and on every waiting rail row.
  *
- *  Three shapes, because the rule can fire on a reset instant that is not in the future. `sleeping`
- *  is the ordinary case and the only one that claims a wait. A reset the SDK sent in a form that
- *  will not parse names the raw value, so the log says what arrived rather than hiding it. A wake
- *  instant the clock has already passed says so — the step is retried at once, and a reason reading
- *  "waiting for the usage limit to reset at …" beside a sleep of zero seconds would be the log
- *  recording a wait that never happened. */
-function waitingReason(o: { time: string | undefined; resetsAt: string; weekly: number; sleeping: boolean; readable: boolean }): string {
+ *  Four shapes, because the rule can fire on a reset instant that is not a thing to sleep until.
+ *  `sleeping` is the ordinary case and the only one that claims a wait; the other three say the
+ *  retry ran at once, because a reason reading "waiting for the usage limit to reset at …" beside a
+ *  sleep of zero seconds would be the log recording a wait that never happened.
+ *
+ *  The three refusals name the **raw** `resetsAt` rather than the time rendered out of the SDK's
+ *  prose, deliberately: the prose time is the part that looks credible ("7:50pm
+ *  America/New_York"), and what the operator needs to see is the value the engine actually
+ *  refused. The incredible case names how far ahead it was, because the number is the evidence. */
+function waitingReason(o: { time: string | undefined; resetsAt: string; weekly: number; sleeping: boolean; readable: boolean; credible: boolean; aheadMs: number }): string {
   const quota = ` (weekly quota ${o.weekly}%)`;
   if (o.sleeping) return `waiting for the usage limit to reset at ${o.time ?? o.resetsAt}${quota}`;
   if (!o.readable) return `the usage limit's reset time ${o.resetsAt} could not be read as an instant; resuming at once${quota}`;
+  if (!o.credible) return `the usage limit's reset time ${o.resetsAt} is ${Math.round(o.aheadMs / 3_600_000)} hours ahead, further than a 5-hour window can reset; resuming at once${quota}`;
   return `the usage limit's reset at ${o.time ?? o.resetsAt} had already passed; resuming at once${quota}`;
 }
 
@@ -699,16 +717,20 @@ export function createAgentExecutor(opts: AgentExecutorOptions): Executors["agen
         // **One minute past the reset, not the reset** (ruling I-03): the two clocks are not the
         // same clock, and a query resumed on the second the window turns over is rejected again for
         // the sake of a minute. That wake instant is also the one thing checked before any sleeper
-        // is called, and this is the only place that checks it (ruling I-22). A reset the SDK sent
-        // in a form that will not parse, or a wake instant the clock has already passed, is retried
-        // **at once**: `step_waiting` is still written, because it is the log's only record that
-        // the rule fired at all, and its reason says no wait was taken rather than claiming a sleep
-        // of zero seconds. `waited` then carries the same truth onto `agent_result`.
+        // is called, and this is the only place that checks it (ruling I-22). Three things make a
+        // reset no reset: one the SDK sent in a form that will not parse, one the clock has already
+        // passed, and one further ahead than MAX_WAIT_MS — a five-hour window cannot reset in forty
+        // years. All three are retried **at once**: `step_waiting` is still written, because it is
+        // the log's only record that the rule fired at all, and its reason says which of the three
+        // it was rather than claiming a sleep of zero seconds. `waited` then carries the same truth
+        // onto `agent_result`.
         const resetMs = Date.parse(resetsAt);
         const wakeMs = resetMs + WAIT_GRACE_MS;
         const readable = Number.isFinite(resetMs);
-        const sleeping = readable && wakeMs > now().getTime();
-        const reason = waitingReason({ time, resetsAt, weekly: weekly.value, sleeping, readable });
+        const aheadMs = wakeMs - now().getTime();
+        const credible = readable && aheadMs <= MAX_WAIT_MS;
+        const sleeping = credible && aheadMs > 0;
+        const reason = waitingReason({ time, resetsAt, weekly: weekly.value, sleeping, readable, credible, aheadMs });
         await emit("step_waiting", { reason, window, resetsAt, weeklyUtilization: weekly.value, ceiling });
         if (sleeping) await sleepUntil(new Date(wakeMs).toISOString());
         const retry = await attempt({ ...options, abortController: new AbortController(), ...(sessionId !== undefined ? { resume: sessionId } : {}) });

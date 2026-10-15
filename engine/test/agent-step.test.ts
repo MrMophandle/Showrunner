@@ -752,6 +752,40 @@ describe("createAgentExecutor: the edges of the usage-limit rule", () => {
     expect(rec.events.at(-1)!.payload["limit"]).toEqual({ kind: "rate_limit", window: "five_hour", resetsAt: RESET_ISO, weeklyUtilization: 41, weeklySource: "usage", waited: false });
   });
 
+  it("a reset time forty years ahead is refused as not credible, and the retry runs at once", async () => {
+    // The bound, ruled 2026-10-15: a five-hour window cannot reset later than five hours after it
+    // was hit, so a wake instant past MAX_WAIT_MS is not a reset time — most plausibly an SDK that
+    // started sending milliseconds where it sent epoch seconds, which maps to the year 58,000.
+    // Sleeping on it would hold the step and the run's lock for as long as the number said while
+    // `setTimeout`'s 24.8-day ceiling fired at once, so the step would log `waited: true` for a
+    // sleep that took no time. The reason names the raw value and how far ahead it was, because
+    // the SDK's prose time ("7:50pm America/New_York") is the part that looks credible.
+    const FORTY_YEARS_ON = "2066-10-14T23:00:00.000Z";
+    const f = fake([limitedStream("five_hour", weeklyAt(41), SDK_FIVE_HOUR_TEXT, FORTY_YEARS_ON), [init, text("REVISIONS_COMPLETE"), success({ result: "REVISIONS_COMPLETE" })]]);
+    const s = sleeper();
+    const rec = recorder();
+    const r = await createAgentExecutor({ query: f.query, promptsDir, now: beforeReset, sleepUntil: s.sleepUntil })(step(), ctx(), rec.emit);
+    expect(r).toEqual({ ok: true, text: "REVISIONS_COMPLETE", toolCalls: 0 });
+    expect(s.slept).toEqual([]);
+    expect(f.calls).toHaveLength(2);
+    expect(rec.events.find((e) => e.kind === "step_waiting")!.payload["reason"]).toBe("the usage limit's reset time 2066-10-14T23:00:00.000Z is 350640 hours ahead, further than a 5-hour window can reset; resuming at once (weekly quota 41%)");
+    expect(rec.events.at(-1)!.payload["limit"]).toEqual({ kind: "rate_limit", window: "five_hour", resetsAt: FORTY_YEARS_ON, weeklyUtilization: 41, weeklySource: "usage", waited: false });
+  });
+
+  it("a wait of exactly six hours is still taken: the ceiling is the limit of belief, not of patience", async () => {
+    // MAX_WAIT_MS is six hours — five for the window and one for the skew the grace exists for —
+    // and the boundary is inclusive, so the longest credible reset is still slept out rather than
+    // refused. A five-hour window hit just before its reset is the case that needs this.
+    const SIX_HOURS_ON = new Date(BEFORE_RESET.getTime() + 6 * 60 * 60 * 1000 - 60_000).toISOString();
+    const f = fake([limitedStream("five_hour", weeklyAt(41), "You've hit your session limit.", SIX_HOURS_ON), [init, text("REVISIONS_COMPLETE"), success({ result: "REVISIONS_COMPLETE" })]]);
+    const s = sleeper();
+    const rec = recorder();
+    const r = await createAgentExecutor({ query: f.query, promptsDir, now: beforeReset, sleepUntil: s.sleepUntil })(step(), ctx(), rec.emit);
+    expect(r.ok).toBe(true);
+    expect(s.slept).toEqual([new Date(BEFORE_RESET.getTime() + 6 * 60 * 60 * 1000).toISOString()]);
+    expect(rec.events.at(-1)!.payload["limit"]).toMatchObject({ waited: true });
+  });
+
   it("a reset time that will not parse is retried at once rather than thrown out of the executor", async () => {
     // Reachable from a hand-built message today, and from any future mapper change — an SDK that
     // switched `resetsAt` to milliseconds, say. The arithmetic that builds the wake instant throws
