@@ -319,6 +319,27 @@ confirmation and in the notice. The step rail offers "withdraw approval" **only 
 approved gate**, which is the one case that spends no approval the operator cannot see; withdrawing
 an earlier gate is still available through the route, deliberately.
 
+### A run asleep until a usage limit resets — the one state with no move
+
+**A run whose worker is asleep waiting out a Claude plan usage limit needs nothing from the operator,
+and is not a fifth move.** The engine's agent executor owns the wait and logs `step_waiting` before
+it sleeps (the root `README.md`'s **Agent steps → The usage limit**), so the console appends nothing,
+spawns nothing, and offers no button for it: the same worker re-runs the limited step itself once the
+window resets.
+
+**The Board's row says what the run is waiting for, and the status chip beside it is the evidence a
+worker still holds the run.** The reason under the stage chip is the engine's own sentence, carrying
+the reset time and the weekly figure, while the status chip still reads `running · pid <pid> ·
+beat <n>s ago` because the lock's heartbeat keeps beating through the sleep. That pair is what
+separates a wait from a hang: the heartbeat is why the run reads `running` and the sentence is why it
+is not moving.
+
+**A run that *failed* on a usage limit is an ordinary failure, and Resume above is the move — after
+the reset.** Nothing about it is special to the console. The step's error names the window, the reset
+time, the weekly figure and the config key that set the auto-retry ceiling, so the step rail already
+carries the whole reason, and Resume reopens that step and everything the failure swept. Resuming
+before the reset time the error names spends a worker on the same query into the same limit.
+
 ## The artifact route's fence
 
 `GET /api/shows/:show/episodes/:id/files/<show-relative path>` serves the episode's own files — the outline a

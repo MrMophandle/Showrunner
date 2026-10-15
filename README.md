@@ -94,8 +94,8 @@ root. Both ids are validated before they become that path. Every event carries `
 optional `stepId`, a `kind`, and a `payload`; the engine stamps `ts` itself, so a caller cannot
 backdate an entry.
 
-There are exactly eighteen kinds. The engine core writes fifteen of them; the three `agent_*`
-kinds are the agent executor's obligation.
+There are exactly nineteen kinds. The engine core writes fifteen of them; the three `agent_*` kinds
+and `step_waiting` are the agent executor's obligation.
 
 | Kind | `stepId` | Payload the engine writes |
 |---|---|---|
@@ -531,6 +531,42 @@ and the script pass of one run do not duplicate each other.
   everything downstream of them return to pending, and a finished run is reopened first. A script
   step whose inputs and outputs are unchanged is still served from cache. On a run with an open
   gate the gate stays open with its original message — answer it or reset, not both at once.
+
+**A plan usage limit reaches the operator as one of three outcomes, and only one of them is a move.**
+What the executor does about a limit is **Agent steps → The usage limit** above; the three paragraphs
+below are what the *operator* does about each result.
+
+- **Waited and retried — nothing to do, and nothing to press.** The log carries `step_waiting` with
+  the executor's own sentence (`waiting for the usage limit to reset at 7:50pm America/New_York
+  (weekly quota 41%)`), the step stays `running` because a worker is still asleep on it, and the
+  step ends with an ordinary `step_completed` when the retry succeeds. A loop counts one iteration
+  rather than two, and `agent_result` carries `limit.waited: true`, which is the log's record that a
+  wait was spent on that step. Neither recovery move above has anything to do with such a run, and
+  the run's lock keeps beating throughout, which is what tells an operator that a quiet run is
+  waiting rather than hung.
+- **Manual resume needed — `resumeRun`, after the reset time the sentence names.** The step fails
+  with one sentence carrying the numbers: the window, the reset time, the weekly figure when the SDK
+  answered with one, and the ceiling key `agents.autoRetryWeeklyUtilizationMax`. The outcome table
+  under **Agent steps → The usage limit** above prints four of its five shapes verbatim; the fifth is
+  a five-hour limit the SDK named no reset time for, which cannot be waited out either and reads
+  `Manual resume needed: the writer's session hit its 5-hour limit and the SDK named no reset time to
+  wait for; press Resume once the window has reset.` Resume reopens the failed step and everything the
+  failure swept, and every completed step keeps its status, so no agent step the limit never reached
+  is paid for twice. **Resuming before the reset buys nothing** — the next worker runs the same query
+  into the same limit — and the engine never re-reads the quota to check, so the reset time in the
+  sentence is the operator's own clock to watch.
+- **Refused for another SDK error kind — `resumeRun`, but not until the cause is dealt with off this
+  machine.** The step fails with `the model's reply was refused (<kind>): <the SDK's text>`, and none
+  of the twelve kinds is cured by time. `billing_error`, `authentication_failed`, `account_on_hold`,
+  `verification_required`, `oauth_org_not_allowed` and `cloud_credential_error` want the account or
+  the credentials seen to first. `overloaded` and `server_error` want a few minutes. `invalid_request`,
+  `model_not_found`, `max_output_tokens` and `unknown` want the step's own declaration changed — the
+  prompt file, the schema, or the model alias in `showrunner.json` — after which Resume re-runs the
+  failed step against the edited declaration.
+
+**`resetSteps` is the wrong move for a limit of any kind**, because a limit changes none of the
+step's inputs: re-running from a step upstream of the limited one pays for every agent step between
+the two a second time and buys no new answer.
 
 **A prompt that writes `{{season}}` fails for a production id the show's `airMap` does not place.**
 An aired id (`s02e01`) carries its season; a production id (`ep98`) has one only if `airMap` gives
