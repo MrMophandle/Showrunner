@@ -181,6 +181,19 @@ function projectSteps(descriptions: StepDescription[], events: Event[]): StepRow
         row.note = String(e.payload["reason"] ?? "");
         if (typeof e.payload["resetsAt"] === "string") row.waitingUntil = e.payload["resetsAt"];
         break;
+      case "agent_query":
+        // The retry after a usage-limit wait: the sleep is over and the executor is querying
+        // again, for as long as the step's own timeout allows — 447 s in the measured case. The
+        // wait ends here, not at the step's terminal event, or the Board row, the Run altitude,
+        // every rail row, the Bible panel and the tab title would all go on asserting a sleep
+        // through a query that is doing work (and the tab would print a reset time in the past).
+        //
+        // The first attempt's agent_query precedes step_waiting, so the note's presence is what
+        // makes this the retry. It is also why the case is guarded rather than unconditional: a
+        // gate's fix agent writes agent_query against a row whose status is `waiting` for an
+        // entirely different reason, and that row carries no note.
+        if (row.note !== undefined) { row.status = "running"; delete row.note; delete row.waitingUntil; }
+        break;
       case "step_completed":
       case "step_cached": {
         row.status = "completed";
@@ -340,8 +353,9 @@ function failedOf(events: Event[], state: RunState): { stepId: string; error: st
  *  needs the sentence and the reset time, and the row has no steps on it.
  *
  *  **Read off the projected rows and not off the events**, because the rows already answer the
- *  only hard question: `projectSteps` clears `note` on every terminal event for a step, so a row
- *  whose status is `waiting` *and* which carries a note is a wait that is still running. A gate's
+ *  only hard question: `projectSteps` clears `note` when the retry's `agent_query` starts and on
+ *  every terminal event for the step, so a row whose status is `waiting` *and* which carries a note
+ *  is a wait that is still being slept. A gate's
  *  waiting row carries no note and is passed over, which is what keeps one status serving both
  *  waits (`StepRow`'s doc comment). The twin of `failedOf`, which answers the same shape of
  *  question — "is this still the run's current problem?" — from the engine's state. */

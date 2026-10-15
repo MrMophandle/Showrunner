@@ -186,10 +186,12 @@ export interface StepRow {
    *  America/New_York (weekly quota 41%)". Drawn by the Run view's in-flight line and, through
    *  `EpisodeRow.waitingNote`, under the Board's stage chip.
    *
-   *  **Cleared the moment the step ends.** The executor re-runs the step after the sleep and that
-   *  attempt ends with an ordinary `step_completed` or `step_failed`; a completed row still saying
-   *  it is waiting for a reset would be the rail stating, in the operator's own words, something
-   *  that stopped being true an hour ago. */
+   *  **Cleared when the retry begins, and again when the step ends.** The sleep ends at the
+   *  retry's `agent_query` — the executor then runs a full query, minutes of it — and the row goes
+   *  back to `running` there, because a row still saying "waiting for the usage limit to reset at
+   *  7:50pm" while that query is working would be the console reporting a sleep as the reason a
+   *  busy step is quiet. The step's own `step_completed` or `step_failed` clears it too, for the
+   *  same reason one step further on. */
   note?: string;
   /** When the limit that `note` names resets, as the ISO the engine recorded (`step_waiting`'s
    *  `resetsAt` — the reset itself, not the minute of grace the worker sleeps past it). Carried as

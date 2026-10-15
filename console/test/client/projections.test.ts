@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import type { EpisodeRow, RunView, StepRow } from "../../shared/types.js";
 import {
   STALL_MS, composeNotesWithFlags, composeShotRejection, elapsed, firstLine, progressLabel,
-  readOnlyLine, resetLabel, safeHref, showLabel, showReadFailure, stageLabel, stallState, stalled,
-  titleFor, waitingNote,
+  quietRow, readOnlyLine, resetLabel, safeHref, showLabel, showReadFailure, stageLabel, stallState,
+  stalled, titleFor, waitingNote,
 } from "../../src/projections.js";
 
 /** The client's pure helpers. Every one of them is a function of its arguments and a clock the
@@ -247,6 +247,35 @@ describe("resetLabel", () => {
   });
 });
 
+describe("quietRow", () => {
+  const at = "2026-10-02T10:00:00Z";
+  const plus = (minutes: number) => new Date(Date.parse(at) + minutes * 60_000);
+  const SLEEPING = "waiting for the usage limit to reset at 7:50pm America/New_York (weekly quota 41%)";
+
+  it("turns amber for a run that could be moving and has been silent past the threshold", () => {
+    expect(quietRow(row({ status: "running", lastEventAt: at }), plus(15))).toBe(true);
+    expect(quietRow(row({ status: "running", lastEventAt: at }), plus(13))).toBe(false);
+    expect(quietRow(row({ status: "crashed", lastEventAt: at }), plus(15))).toBe(true);
+  });
+
+  it("colours nothing on a run that is not moving anyway", () => {
+    // A completed run is quiet because it has finished, and a run parked at a gate is quiet
+    // because it is waiting for the person reading the Board. Neither is a symptom.
+    expect(quietRow(row({ status: "completed", lastEventAt: at }), plus(99))).toBe(false);
+    expect(quietRow(row({ status: "waiting", lastEventAt: at }), plus(99))).toBe(false);
+    expect(quietRow(row({ status: "none" }), plus(99))).toBe(false);
+  });
+
+  it("exempts a run asleep until a usage limit resets, however long the wait runs", () => {
+    // Five hours of silence with a live worker holding the run: the sentence under the stage chip
+    // says what the quiet is, and amber would read as "this may be stuck" (Plan I).
+    const sleeping = row({ status: "running", lastEventAt: at, waitingNote: SLEEPING, waitingUntil: "2026-10-02T23:50:00.000Z" });
+    expect(quietRow(sleeping, plus(295))).toBe(false);
+    // A note the engine wrote blank is no note, here as everywhere else the note is read.
+    expect(quietRow(row({ status: "running", lastEventAt: at, waitingNote: "  " }), plus(295))).toBe(true);
+  });
+});
+
 describe("stallState", () => {
   const at = "2026-10-02T10:00:00Z";
   const plus = (minutes: number) => new Date(Date.parse(at) + minutes * 60_000);
@@ -277,6 +306,17 @@ describe("stallState", () => {
       steps: [step({ id: "render", kind: "script", status: "running", progress: { done: 3, total: 9, unit: "frames" } })],
     });
     expect(stallState(rendering, plus(40)).amber).toBe(true);
+  });
+
+  it("excuses a step asleep until a usage limit resets, and still says how long it has been", () => {
+    const sleeping = view({
+      lastEventAt: at,
+      position: { stepId: "draft", startedAt: at },
+      steps: [step({ id: "draft", kind: "loop", status: "waiting", note: "waiting for the usage limit to reset at 7:50pm America/New_York (weekly quota 41%)" })],
+    });
+    // The age is the number the operator wants and it is true, so it is printed; the colour that
+    // means "this may be stuck" is withheld, exactly as it is for a silent render above.
+    expect(stallState(sleeping, plus(295))).toEqual({ text: "4h 55m since the last event", amber: false });
   });
 
   it("says a run with no events has none rather than an age", () => {

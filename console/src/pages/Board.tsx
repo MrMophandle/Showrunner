@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import type { EpisodeRow } from "../../shared/types.js";
 import { post, showHref, showPath, useConsole, useNow, useShowKey } from "../api.js";
-import { elapsed, firstLine, readOnlyLine, showLabel, showReadFailure, stageLabel, stalled, waitingNote } from "../projections.js";
+import { elapsed, firstLine, quietRow, readOnlyLine, showLabel, showReadFailure, stageLabel, waitingNote } from "../projections.js";
 import { NewEpisode } from "../components/NewEpisode.js";
 
 /** The Board: one row per episode, and the one question it answers is which of them wants the
@@ -160,7 +160,9 @@ export function Board() {
           // worker is holding the wait — so the sentence goes under the stage chip, beside the
           // other reasons a row is not moving, rather than replacing the chip (Plan I).
           const waiting = waitingNote(row);
-          const quiet = stalled(row.lastEventAt, now) && (row.status === "running" || row.status === "crashed");
+          // Amber for a run that has gone quiet and could be moving — but never for a run asleep
+          // on a usage limit, whose silence is the thing the sentence above explains (`quietRow`).
+          const quiet = quietRow(row, now);
           const runHref = row.runId === undefined ? null : showHref(showKey, `/episodes/${row.id}/runs/${row.runId}`);
           return (
             <li className={`row row-${row.status}`} key={row.id}>

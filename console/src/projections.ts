@@ -72,6 +72,24 @@ export function stalled(lastEventAt: string | undefined, now: Date | number = Da
   return ms !== undefined && ms >= thresholdMs;
 }
 
+/** Whether a Board row's "since the last event" clock reads amber: the run has been silent past
+ *  the stall threshold **and** it is a run that could be moving — `running` or `crashed`. An idle
+ *  or completed run is quiet because it has finished, and a run parked at a gate is quiet because
+ *  it is waiting for the person reading the Board.
+ *
+ *  **A run asleep until a usage limit resets is exempt** (Plan I). It is silent for hours by
+ *  design, the engine's own sentence under its stage chip says why, and amber means "this may be
+ *  stuck" — the same reasoning `silentRender` applies to a render that reports no frames. The
+ *  exemption is keyed on the row's `waitingNote`, as every other judgment about a limit wait is,
+ *  because the run itself reads `running`: a worker is holding it and beating its lock.
+ *
+ *  A function rather than a condition written inline in the page, so the Board and `stallState`
+ *  cannot come to disagree about which silence is expected. */
+export function quietRow(row: Pick<EpisodeRow, "status" | "lastEventAt" | "waitingNote">, now: Date | number = Date.now(), thresholdMs = STALL_MS): boolean {
+  if (waitingNote(row) !== undefined) return false;
+  return stalled(row.lastEventAt, now, thresholdMs) && (row.status === "running" || row.status === "crashed");
+}
+
 /** A stage string as the operator reads it, and the kind that colours it. The underscores become
  *  spaces because the stage is a label here and not an identifier. */
 export function stageLabel(stage: string): { kind: StageKind; text: string } {
@@ -128,7 +146,13 @@ export function stallState(
   if (silentRender(view)) return { text: "render running (silent)", amber: false };
   const ms = since(view.lastEventAt, now);
   if (ms === undefined) return { text: "no events yet", amber: false };
-  return { text: `${duration(ms)} since the last event`, amber: ms >= thresholdMs };
+  // A step asleep until a usage limit resets is the other legitimately quiet case (Plan I), and
+  // the wait can run for five hours. The age is still printed — "4h 55m since the last event" is
+  // true, and it is what the operator wants to know — but it is not amber, because the step
+  // altitude below carries the engine's sentence saying what the silence is. The row's `note` is
+  // the discriminator: a gate's waiting row carries none, and a gate is a stall worth colouring.
+  const sleepingOnLimit = view.steps.some((s) => s.note !== undefined && s.note !== "");
+  return { text: `${duration(ms)} since the last event`, amber: !sleepingOnLimit && ms >= thresholdMs };
 }
 
 /** The rejection note a flagged contact sheet composes: one line per flagged shot, `<shot id>:
