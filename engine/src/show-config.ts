@@ -6,6 +6,14 @@ export class ShowConfigError extends Error { override readonly name = "ShowConfi
 
 export const SHOW_CONFIG_FILE = "showrunner.json";
 
+/** The default ceiling for `agents.autoRetryWeeklyUtilizationMax`, Ryan's ruling of 2026-10-15: a
+ *  five-hour plan limit is waited out and retried on the engine's own authority only while the
+ *  seven-day quota is below this percentage. It is a named constant because two readers must agree
+ *  about it — `loadShowConfig` materialises it onto a config that names no `agents` group, and
+ *  `engine/src/agent-step.ts` falls back to it for a `ShowConfig` built by hand — and because the
+ *  number appears verbatim in the sentence the operator reads when a step refuses to retry. */
+export const DEFAULT_AUTO_RETRY_WEEKLY_UTILIZATION_MAX = 65;
+
 /** The show repository's root config. The engine reads promptsDir, models and airMap; the Python
  *  scripts read the rest through scripts/lib/showconfig.py against the same file. Paths are
  *  relative to the show root unless absolute. */
@@ -20,6 +28,11 @@ export interface ShowConfig {
   /** Production id → [season, episode], for ids that aired under a production name. Plan F's
    *  rename to sXXeYY empties it. */
   airMap: Record<string, [number, number]>;
+  /** What the engine's agent executor is allowed to decide on its own. `loadShowConfig`
+   *  materialises the group with its default, so a config loaded through this file always answers
+   *  the question; the field stays optional because a `ShowConfig` built by hand (every literal in
+   *  the engine's own tests) never passed through the loader. */
+  agents?: { autoRetryWeeklyUtilizationMax: number };
   output: { nasMount?: string; nasRoot: string; finalFilename?: string; mixFilename?: string; videoFilename?: string };
   audio?: Record<string, unknown>;
   visual?: Record<string, unknown>;
@@ -31,7 +44,7 @@ export interface ShowConfig {
  *  exists. `requiredBy: "both"` is one of the eight keys both loaders refuse to run without;
  *  `"engine"` and `"scripts"` name a reader that fails by name when the key is absent and no default
  *  applies; `"none"` is a key with a default on every reader. **No row is `"engine"` today** — the
- *  sixty rows are eight `both`, forty-three `scripts` and nine `none` — and the member is kept
+ *  sixty-one rows are eight `both`, forty-three `scripts` and ten `none` — and the member is kept
  *  rather than dropped because the asymmetry is an accident of which reader grew first: the engine
  *  reads its own keys through optional accessors with fallbacks, and the first engine key that
  *  refuses a run by name belongs in this class rather than in a widened `"both"`. `readBy` names the readers in prose
@@ -113,6 +126,7 @@ export const SHOW_CONFIG_KEYS: readonly ShowConfigKey[] = [
   { path: "publish.standingCopy.weekly", requiredBy: "scripts", readBy: "scripts/publish-kit.py:95" },
   { path: "publish.standingCopy.aiDisclosure", requiredBy: "scripts", readBy: "scripts/publish-kit.py:96" },
   { path: "publish.guide", requiredBy: "scripts", default: "Canon/publishing-guide.md", readBy: "engine/src/pipelines/episode.ts:72 (defaulted); scripts/publish-kit.py:97 (no default)" },
+  { path: "agents.autoRetryWeeklyUtilizationMax", requiredBy: "none", default: DEFAULT_AUTO_RETRY_WEEKLY_UTILIZATION_MAX, readBy: "engine/src/agent-step.ts (the usage-limit rule: a five-hour plan limit whose seven-day utilization is strictly below this ceiling is waited out in the worker and retried once; at or above it the step fails and asks the operator to resume). No script reads it, and the loader materialises the default, so a config that names neither the group nor the key still answers the question" },
 ];
 
 function isRecord(v: unknown): v is Record<string, unknown> { return typeof v === "object" && v !== null && !Array.isArray(v); }
@@ -184,6 +198,27 @@ export function checkGuestRefsDir(audio: Record<string, unknown> | undefined): v
   }
 }
 
+/** The weekly auto-retry ceiling a config declares, or the house default when it declares none.
+ *  Refused by name — with the dotted key in the message, as every other refusal in this loader —
+ *  unless it is an integer from 0 to 100 inclusive.
+ *
+ *  Exported for the same reason `checkGuestRefsDir` is: the number decides whether the engine waits
+ *  five hours and retries a step on its own authority, and a caller holding a `ShowConfig` the
+ *  loader never built (the engine's own test literals, and any future console-side reader) must get
+ *  the same answer and the same refusal rather than a second interpretation of the key.
+ *
+ *  A non-integer is refused rather than rounded, and the string `"65"` rather than coerced, because
+ *  the only thing worse than a config that is refused by name is one that silently reads as a
+ *  ceiling nobody chose: at 0 the engine never retries, and at 100 it always does. */
+export function autoRetryWeeklyUtilizationMax(agents: Record<string, unknown> | undefined): number {
+  const configured = agents?.["autoRetryWeeklyUtilizationMax"];
+  if (configured === undefined) return DEFAULT_AUTO_RETRY_WEEKLY_UTILIZATION_MAX;
+  if (typeof configured !== "number" || !Number.isInteger(configured) || configured < 0 || configured > 100) {
+    throw new ShowConfigError(`${SHOW_CONFIG_FILE}: agents.autoRetryWeeklyUtilizationMax must be an integer from 0 to 100 (the seven-day utilization percentage below which a five-hour limit is waited out and retried) — got ${JSON.stringify(configured)}`);
+  }
+  return configured;
+}
+
 export async function loadShowConfig(showRoot: string): Promise<ShowConfig> {
   const file = path.join(showRoot, SHOW_CONFIG_FILE);
   let raw: string;
@@ -226,6 +261,11 @@ export async function loadShowConfig(showRoot: string): Promise<ShowConfig> {
   // stating. The loop below assigns the value this line read instead of reading the key twice.
   const audio = optRec(parsed, "audio");
   checkGuestRefsDir(audio);
+  // Read and validated before `cfg` exists, for the reason `audio.guestRefsDir` is: a config this
+  // loader returned is a config every reader may trust. The group is materialised with its default
+  // rather than left absent, so `cfg.agents.autoRetryWeeklyUtilizationMax` answers the question for
+  // a config that names neither the group nor the key.
+  const agents = { autoRetryWeeklyUtilizationMax: autoRetryWeeklyUtilizationMax(optRec(parsed, "agents")) };
   const cfg: ShowConfig = {
     showName: str(parsed, "showName", ""),
     showSlug: str(parsed, "showSlug", ""),
@@ -237,6 +277,7 @@ export async function loadShowConfig(showRoot: string): Promise<ShowConfig> {
       ...(small !== undefined ? { small } : {}),
     },
     airMap,
+    agents,
     output: {
       nasRoot: str(output, "nasRoot", "output."),
       ...(nasMount !== undefined ? { nasMount } : {}),

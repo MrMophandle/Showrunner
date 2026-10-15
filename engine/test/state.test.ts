@@ -28,6 +28,26 @@ describe("deriveRunState", () => {
     expect(s.finished).toBe(false);
   });
 
+  it("keeps a step in flight through a step_waiting, with the start time it already had", () => {
+    // The agent executor sleeping out a plan usage limit. The step must read as neither completed
+    // nor failed — a worker is still on it — and it must keep the startedAt from its step_started,
+    // so "how long has this step been going" counts the wait rather than restarting at it.
+    const s = deriveRunState([
+      ev("step_started", "revise", { kind: "loop" }, "t1"),
+      ev("step_progress", "revise", { done: 1, total: 3, unit: "passes" }, "t2"),
+      ev("step_waiting", "revise", { reason: "waiting for the usage limit to reset at 7:50pm America/New_York (weekly quota 41%)", window: "five_hour", ceiling: 65 }, "t3"),
+    ]);
+    expect(s.steps).toEqual({ revise: "running" });
+    expect(s.position).toEqual({ stepId: "revise", startedAt: "t1", progress: { done: 1, total: 3, unit: "passes" } });
+    expect(s.finished).toBe(false);
+
+    // And a log whose step_started was lost to a crash between the two writes still reports the
+    // step running rather than pending.
+    const orphan = deriveRunState([ev("step_waiting", "revise", { reason: "waiting for the usage limit to reset at 7:50pm America/New_York (weekly quota 41%)" }, "t3")]);
+    expect(orphan.steps).toEqual({ revise: "running" });
+    expect(orphan.position).toEqual({ stepId: "revise", startedAt: "t3" });
+  });
+
   it("distinguishes failed from skipped and marks the run finished", () => {
     const s = deriveRunState([
       ev("step_started", "a", {}, "t1"),

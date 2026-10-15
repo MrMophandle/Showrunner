@@ -3,7 +3,8 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { createAgentExecutor, createGateMessageRenderer, type AgentMessage, type AgentQueryOptions, type QueryFn } from "../src/agent-step.js";
+import { createAgentExecutor, createGateMessageRenderer, type AgentMessage, type AgentQueryOptions, type AgentUsage, type QueryFn } from "../src/agent-step.js";
+import type { ShowConfig } from "../src/show-config.js";
 import type { AgentStep, EventKind, RunContext } from "../src/steps.js";
 
 const promptsDir = path.resolve(import.meta.dirname, "fixtures/prompts");
@@ -16,12 +17,17 @@ function recorder() {
   const emit = async (kind: EventKind, payload: Record<string, unknown>) => { events.push({ kind, payload }); };
   return { events, emit };
 }
-function fake(messages: AgentMessage[], opts: { throwAfter?: boolean; throwBefore?: Error } = {}) {
+/** The fake query seam. One stream of messages is yielded by every call, as it always was; a list
+ *  of streams gives each call its own, and the last one repeats — which is what a retry after a
+ *  usage limit needs, the second attempt being a different conversation from the one that was
+ *  refused. */
+function fake(messages: AgentMessage[] | AgentMessage[][], opts: { throwAfter?: boolean; throwBefore?: Error } = {}) {
+  const streams: AgentMessage[][] = Array.isArray(messages[0]) ? (messages as AgentMessage[][]) : [messages as AgentMessage[]];
   const calls: Array<{ prompt: string; options: AgentQueryOptions }> = [];
   const query: QueryFn = async function* (args) {
     calls.push(args);
     if (opts.throwBefore) throw opts.throwBefore;
-    for (const m of messages) yield m;
+    for (const m of streams[Math.min(calls.length - 1, streams.length - 1)] ?? []) yield m;
     if (opts.throwAfter) throw new Error("process exited with code 1");
   };
   return { calls, query };
@@ -308,5 +314,181 @@ describe("the reserved episode id has no season", () => {
     const r = await createAgentExecutor({ query: f.query, promptsDir: dir, show })(step({ promptFile: "plain.md" }), { ...ctx(), episodeId: "setups" }, recorder().emit);
     expect(r).toMatchObject({ ok: false, error: expect.stringContaining("invalid episode id") });
     expect(f.calls.length).toBe(0);
+  });
+});
+
+/** The usage limit, as the s02e01 run of 2026-10-14 produced it. The reset is the one that run
+ *  reported; `SDK_FIVE_HOUR_TEXT` is the sentence the SDK put in the assistant message verbatim,
+ *  and it is the only source of the reset's time zone. */
+const RESET_ISO = "2026-10-14T23:50:00.000Z";
+const RESET_PLUS_A_MINUTE = "2026-10-14T23:51:00.000Z";
+const SDK_FIVE_HOUR_TEXT = "You've hit your session limit · resets 7:50pm (America/New_York)";
+const SDK_SEVEN_DAY_TEXT = "You've hit your weekly limit · resets Mon 9:00am (America/New_York)";
+
+/** `null` rather than `undefined` for "the SDK named no reset time": an explicit `undefined` would
+ *  take the default parameter, which is the reset, and the test would prove the opposite. */
+const rejectedLimit = (window: string, resetsAt: string | null = RESET_ISO): AgentMessage =>
+  ({ type: "rate_limit_event", rateLimit: { status: "rejected", window, utilization: 100, ...(resetsAt !== null ? { resetsAt } : {}) } });
+const limitedTurn = (kind: string, sdkText: string): AgentMessage =>
+  ({ type: "assistant", error: kind, message: { content: [{ type: "text", text: sdkText }] } });
+const usageIs = (usage: AgentUsage): AgentMessage => ({ type: "usage", usage });
+const weeklyAt = (utilization: number): AgentUsage => ({ available: true, sevenDay: { utilization, resetsAt: "2026-10-19T04:00:00.000Z" } });
+
+/** A five-hour limit's stream: the SDK's refused turn, the rejected window event, the wrapper's one
+ *  synthetic usage message, and the `subtype: "success"` result the SDK really does send — the
+ *  measured run's `agent_result` was `ok: true, subtype: "success"` with the limit sentence as its
+ *  text, which is why the classification has to outrank the subtype. */
+const limitedStream = (window: string, usage: AgentUsage, sdkText = SDK_FIVE_HOUR_TEXT, resetsAt: string | null = RESET_ISO): AgentMessage[] =>
+  [init, limitedTurn("rate_limit", sdkText), rejectedLimit(window, resetsAt), usageIs(usage), success({ result: sdkText })];
+
+function sleeper() {
+  const slept: string[] = [];
+  return { slept, sleepUntil: async (iso: string) => { slept.push(iso); } };
+}
+
+const show = (over: Partial<ShowConfig> = {}): ShowConfig => ({
+  showName: "Harbor Lights", showSlug: "HarborLights", promptsDir: "p",
+  models: { medium: "m-id", large: "l", writer: "w" }, airMap: {}, output: { nasRoot: "/n" }, ...over,
+});
+
+describe("createAgentExecutor: a plan usage limit", () => {
+  it("(a) waits out a five-hour limit under the ceiling, resumes the same session once, and succeeds", async () => {
+    const f = fake([limitedStream("five_hour", weeklyAt(41)), [init, text("REVISIONS_COMPLETE"), success({ result: "REVISIONS_COMPLETE" })]]);
+    const s = sleeper();
+    const rec = recorder();
+    const ex = createAgentExecutor({ query: f.query, promptsDir, sleepUntil: s.sleepUntil });
+    const r = await ex(step(), ctx(), rec.emit);
+
+    expect(r).toEqual({ ok: true, text: "REVISIONS_COMPLETE", toolCalls: 0 });
+    // One minute past the reset, not the reset itself: the window's clock and this machine's are
+    // not the same clock.
+    expect(s.slept).toEqual([RESET_PLUS_A_MINUTE]);
+    // The retry is the same conversation continued, so it resumes the session the refused attempt
+    // opened — whatever the step's context policy says about a *later* query of the step.
+    expect(f.calls).toHaveLength(2);
+    expect("resume" in f.calls[0]!.options).toBe(false);
+    expect(f.calls[1]!.options.resume).toBe("sess-1");
+
+    const waiting = rec.events.filter((e) => e.kind === "step_waiting");
+    expect(waiting).toHaveLength(1);
+    expect(waiting[0]!.payload["reason"]).toBe("waiting for the usage limit to reset at 7:50pm America/New_York (weekly quota 41%)");
+    expect(waiting[0]!.payload).toMatchObject({ window: "five_hour", resetsAt: RESET_ISO, weeklyUtilization: 41, ceiling: 65 });
+    // The wait is logged before the retry is issued, so a crash during the wait leaves the reason
+    // in the log (spec §6.5) rather than only in the worker's memory.
+    expect(rec.events.map((e) => e.kind)).toEqual(["agent_query", "step_waiting", "agent_query", "agent_result"]);
+    const result = rec.events.at(-1)!;
+    expect(result.payload["ok"]).toBe(true);
+    expect(result.payload["limit"]).toEqual({ kind: "rate_limit", window: "five_hour", resetsAt: RESET_ISO, weeklyUtilization: 41, waited: true });
+  });
+
+  it("(b) refuses to retry when the weekly quota is at or above the ceiling, and says so with both numbers", async () => {
+    const f = fake(limitedStream("five_hour", weeklyAt(78)));
+    const s = sleeper();
+    const rec = recorder();
+    const r = await createAgentExecutor({ query: f.query, promptsDir, sleepUntil: s.sleepUntil })(step(), ctx(), rec.emit);
+
+    expect(r.ok).toBe(false);
+    expect(r.ok ? "" : r.error).toBe("Manual resume needed: the writer's session hit its 5-hour limit (resets 7:50pm America/New_York) and the weekly quota is at 78%, above the 65% auto-retry ceiling (agents.autoRetryWeeklyUtilizationMax).");
+    expect(s.slept).toEqual([]);
+    expect(f.calls).toHaveLength(1);
+    expect(rec.events.at(-1)!.payload["limit"]).toEqual({ kind: "rate_limit", window: "five_hour", resetsAt: RESET_ISO, weeklyUtilization: 78, waited: false });
+  });
+
+  it("(c) never waits out a seven-day window, whichever of the three it is", async () => {
+    for (const window of ["seven_day", "seven_day_opus", "seven_day_sonnet"]) {
+      const f = fake(limitedStream(window, weeklyAt(12), SDK_SEVEN_DAY_TEXT));
+      const s = sleeper();
+      const r = await createAgentExecutor({ query: f.query, promptsDir, sleepUntil: s.sleepUntil })(step(), ctx(), recorder().emit);
+      // The weekly figure is well under the ceiling and is beside the point: the ceiling governs
+      // the five-hour window only, and a seven-day limit is nothing the engine can wait out.
+      expect(r.ok, window).toBe(false);
+      expect(r.ok ? "" : r.error, window).toBe("Manual resume needed: the writer's session hit its 7-day limit (resets Mon 9:00am America/New_York); press Resume after the reset.");
+      expect(s.slept, window).toEqual([]);
+      expect(f.calls, window).toHaveLength(1);
+    }
+  });
+
+  it("(d) refuses to retry when the weekly utilization is unknown", async () => {
+    const f = fake(limitedStream("five_hour", { available: false }));
+    const s = sleeper();
+    const r = await createAgentExecutor({ query: f.query, promptsDir, sleepUntil: s.sleepUntil })(step(), ctx(), recorder().emit);
+    expect(r.ok ? "" : r.error).toBe("Manual resume needed: the writer's session hit its 5-hour limit (resets 7:50pm America/New_York) and the weekly utilization is unknown.");
+    expect(s.slept).toEqual([]);
+  });
+
+  it("(e) takes one wait and no more: a limit that trips again after it fails the step", async () => {
+    const f = fake([limitedStream("five_hour", weeklyAt(41)), limitedStream("five_hour", weeklyAt(41))]);
+    const s = sleeper();
+    const rec = recorder();
+    const r = await createAgentExecutor({ query: f.query, promptsDir, sleepUntil: s.sleepUntil })(step(), ctx(), rec.emit);
+    expect(r.ok ? "" : r.error).toBe("Manual resume needed: the writer's session hit its 5-hour limit again after waiting once (resets 7:50pm America/New_York); press Resume after the reset.");
+    expect(f.calls).toHaveLength(2);
+    expect(s.slept).toEqual([RESET_PLUS_A_MINUTE]);
+    expect(rec.events.at(-1)!.payload["limit"]).toEqual({ kind: "rate_limit", window: "five_hour", resetsAt: RESET_ISO, weeklyUtilization: 41, waited: true });
+  });
+
+  it("(f) fails a reply refused for any other SDK error kind, naming the kind and the SDK's text", async () => {
+    const f = fake([init, limitedTurn("billing_error", "Your credit balance is too low to run this request."), success({ result: "" })]);
+    const s = sleeper();
+    const rec = recorder();
+    const r = await createAgentExecutor({ query: f.query, promptsDir, sleepUntil: s.sleepUntil })(step(), ctx(), rec.emit);
+    expect(r.ok ? "" : r.error).toBe("the model's reply was refused (billing_error): Your credit balance is too low to run this request.");
+    // None of the twelve other kinds is cured by time, so no wait and no retry.
+    expect(s.slept).toEqual([]);
+    expect(f.calls).toHaveLength(1);
+    expect(rec.events.at(-1)!.payload["limit"]).toEqual({ kind: "billing_error" });
+  });
+
+  it("reads the ceiling from the show config, and names that number in the sentence", async () => {
+    // The same 41% that is waited out under the default 65 is a manual resume under a ceiling of
+    // 40, and the sentence quotes the configured number rather than the default.
+    const f = fake(limitedStream("five_hour", weeklyAt(41)));
+    const s = sleeper();
+    const ex = createAgentExecutor({ query: f.query, promptsDir, sleepUntil: s.sleepUntil, show: show({ agents: { autoRetryWeeklyUtilizationMax: 40 } }) });
+    const r = await ex(step(), ctx(), recorder().emit);
+    expect(r.ok ? "" : r.error).toBe("Manual resume needed: the writer's session hit its 5-hour limit (resets 7:50pm America/New_York) and the weekly quota is at 41%, above the 40% auto-retry ceiling (agents.autoRetryWeeklyUtilizationMax).");
+    expect(s.slept).toEqual([]);
+  });
+
+  it("renders the reset as ISO when the SDK's text names no zone, and drops the clause when there is no reset at all", async () => {
+    const noZone = fake(limitedStream("five_hour", weeklyAt(90), "You've hit your session limit."));
+    const r1 = await createAgentExecutor({ query: noZone.query, promptsDir, sleepUntil: sleeper().sleepUntil })(step(), ctx(), recorder().emit);
+    expect(r1.ok ? "" : r1.error).toBe(`Manual resume needed: the writer's session hit its 5-hour limit (resets ${RESET_ISO}) and the weekly quota is at 90%, above the 65% auto-retry ceiling (agents.autoRetryWeeklyUtilizationMax).`);
+
+    // A seven-day limit the SDK gave no reset time for: the clause is dropped rather than printed
+    // with a hole in it, and the move is still named.
+    const noReset = fake(limitedStream("seven_day", weeklyAt(90), "You've hit your weekly limit.", null));
+    const r2 = await createAgentExecutor({ query: noReset.query, promptsDir, sleepUntil: sleeper().sleepUntil })(step(), ctx(), recorder().emit);
+    expect(r2.ok ? "" : r2.error).toBe("Manual resume needed: the writer's session hit its 7-day limit; press Resume after the reset.");
+  });
+
+  it("a rejected window with no error kind beside it is still a usage limit", async () => {
+    // The measured stream carried both signals. Either one alone is enough to know the query was
+    // refused, so a rejection with no assistant error still fails rather than reporting the
+    // SDK's `subtype: "success"` as a success that did no work.
+    const f = fake([init, rejectedLimit("five_hour"), usageIs(weeklyAt(99)), success({ result: "nothing was written" })]);
+    const s = sleeper();
+    const r = await createAgentExecutor({ query: f.query, promptsDir, sleepUntil: s.sleepUntil })(step(), ctx(), recorder().emit);
+    expect(r.ok).toBe(false);
+    // No SDK sentence means no zone to render, so the reset falls back to the ISO.
+    expect(r.ok ? "" : r.error).toContain(`(resets ${RESET_ISO})`);
+  });
+
+  it("a deadline still outranks a limit: a timeout is a timeout", async () => {
+    // The engine's own clocks are its own fault and keep their wording, so a limit that arrives in
+    // the same stream as a timeout does not rename the failure.
+    const slow: QueryFn = async function* () {
+      yield init;
+      yield limitedTurn("rate_limit", SDK_FIVE_HOUR_TEXT);
+      yield rejectedLimit("five_hour");
+      await new Promise((r) => setTimeout(r, 60));
+      yield success();
+    };
+    const s = sleeper();
+    const rec = recorder();
+    const r = await createAgentExecutor({ query: slow, promptsDir, sleepUntil: s.sleepUntil })(step({ timeoutMs: 20 }), ctx(), rec.emit);
+    expect(r.ok ? "" : r.error).toBe("timeout after 20ms");
+    expect(s.slept).toEqual([]);
+    expect("limit" in rec.events.at(-1)!.payload).toBe(false);
   });
 });

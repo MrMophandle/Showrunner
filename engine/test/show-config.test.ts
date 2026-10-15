@@ -3,7 +3,7 @@ import path from "node:path";
 import { mkdtemp, writeFile, readFile, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { loadShowConfig, seasonOf, resolveShowPath, formatFilename, mixFilename, ShowConfigError, SHOW_CONFIG_FILE, SHOW_CONFIG_KEYS } from "../src/show-config.js";
+import { loadShowConfig, seasonOf, resolveShowPath, formatFilename, mixFilename, ShowConfigError, DEFAULT_AUTO_RETRY_WEEKLY_UTILIZATION_MAX, SHOW_CONFIG_FILE, SHOW_CONFIG_KEYS } from "../src/show-config.js";
 
 const good = {
   showName: "Harbor Lights", showSlug: "HarborLights", promptsDir: "prompts",
@@ -47,6 +47,30 @@ describe("loadShowConfig", () => {
     await expect(loadShowConfig(await root({ ...good, airMap: { "ep1": [1, 1] } }))).rejects.toThrow(/airMap\.ep1\b/);
     await expect(loadShowConfig(await root({ ...good, airMap: { "s01e01": [1, 1] } }))).rejects.toThrow(/airMap\.s01e01\b/);
     await expect(loadShowConfig(await root({ ...good, airMap: { "s01e01": [1, 1] } }))).rejects.toThrow(/production id/);
+  });
+
+  it("defaults agents.autoRetryWeeklyUtilizationMax to 65, loads a configured integer, and refuses anything else by name", async () => {
+    // The ceiling decides whether the engine waits five hours and retries a step on its own
+    // authority (Ryan's ruling of 2026-10-15), so the loader materialises the group rather than
+    // leaving it absent: a config that names neither the group nor the key still answers the
+    // question, and every reader gets the same answer without repeating the default.
+    expect((await loadShowConfig(await root(good))).agents?.autoRetryWeeklyUtilizationMax).toBe(DEFAULT_AUTO_RETRY_WEEKLY_UTILIZATION_MAX);
+    expect(DEFAULT_AUTO_RETRY_WEEKLY_UTILIZATION_MAX).toBe(65);
+    expect((await loadShowConfig(await root({ ...good, agents: {} }))).agents?.autoRetryWeeklyUtilizationMax).toBe(65);
+    expect((await loadShowConfig(await root({ ...good, agents: { autoRetryWeeklyUtilizationMax: 40 } }))).agents?.autoRetryWeeklyUtilizationMax).toBe(40);
+    // 0 and 100 are the ends of the range and are legal: 0 never auto-retries, 100 always does.
+    expect((await loadShowConfig(await root({ ...good, agents: { autoRetryWeeklyUtilizationMax: 0 } }))).agents?.autoRetryWeeklyUtilizationMax).toBe(0);
+    expect((await loadShowConfig(await root({ ...good, agents: { autoRetryWeeklyUtilizationMax: 100 } }))).agents?.autoRetryWeeklyUtilizationMax).toBe(100);
+
+    // Refused rather than coerced or rounded: a ceiling nobody chose is worse than a config
+    // refused by name, and the name is in the message so the operator is pointed at the line.
+    for (const bad of [101, -1, "65", 65.5, true, null]) {
+      const dir = await root({ ...good, agents: { autoRetryWeeklyUtilizationMax: bad } });
+      await expect(loadShowConfig(dir), JSON.stringify(bad)).rejects.toThrow(ShowConfigError);
+      await expect(loadShowConfig(dir), JSON.stringify(bad)).rejects.toThrow(/agents\.autoRetryWeeklyUtilizationMax/);
+    }
+    // A group that is not an object at all is refused by the group's name.
+    await expect(loadShowConfig(await root({ ...good, agents: 65 }))).rejects.toThrow(/agents/);
   });
 
   it("refuses a bad audio.guestRefsDir at load, and loads one that is absent or carries {episodeId}", async () => {

@@ -63,6 +63,23 @@ export function deriveRunState(events: Event[]): RunState {
       case "step_started":
         if (id) { s.steps[id] = "running"; s.position = { stepId: id, startedAt: e.ts }; }
         break;
+      case "step_waiting":
+        // The agent executor sleeping out a plan usage limit before it resumes the same query. The
+        // step is **still in flight**: it must read as neither completed nor failed, or the runner
+        // would skip a step that is about to finish and the console would draw a run as done while
+        // a worker is still sleeping on it. `default: break` below would already leave the step
+        // "running" from its step_started, and the case is written out anyway — it makes the
+        // in-flight rule a rule rather than an accident of the switch, and a log whose step_started
+        // was lost to a crash between the two writes still reports the step running.
+        //
+        // The position is left alone when it is already this step's, so the step keeps the
+        // startedAt it has had since step_started (how long the step has been going, wait
+        // included) and any step_progress it has reported.
+        if (id) {
+          s.steps[id] = "running";
+          if (s.position?.stepId !== id) s.position = { stepId: id, startedAt: e.ts };
+        }
+        break;
       case "step_progress":
         if (id && s.position?.stepId === id) {
           const p = e.payload;

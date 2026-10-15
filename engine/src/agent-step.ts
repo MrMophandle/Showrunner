@@ -1,13 +1,38 @@
 import path from "node:path";
-import type { AgentOutcome, AgentStep, Emit, Executors, GateMessageRenderer, JsonSchema, RunContext } from "./steps.js";
+import type { AgentLimit, AgentOutcome, AgentStep, Emit, Executors, GateMessageRenderer, JsonSchema, RunContext } from "./steps.js";
 import { isReservedEpisodeId } from "./ids.js";
 import { loadPrompt, renderPrompt, type RenderExtra } from "./prompt-template.js";
-import { resolveShowPath, seasonOf, ShowConfigError, type ShowConfig } from "./show-config.js";
+import { DEFAULT_AUTO_RETRY_WEEKLY_UTILIZATION_MAX, resolveShowPath, seasonOf, ShowConfigError, type ShowConfig } from "./show-config.js";
 
 export type AgentContentBlock =
   | { type: "text"; text: string }
   | { type: "tool_use"; id: string; name: string; input: unknown }
   | { type: string };
+
+/** One `rate_limit_event` from the SDK, as the executor reads it: the window that was hit, how much
+ *  of it is used, and when it resets. `window` is the SDK's `rateLimitType` verbatim (`five_hour`,
+ *  `seven_day`, `seven_day_opus`, `seven_day_sonnet`, `seven_day_overage_included`, `overage`) so a
+ *  window the SDK adds later still reaches the operator by name; `resetsAt` is an ISO string, the
+ *  SDK's epoch seconds having been converted in sdk-query.ts. Every field but `status` is optional
+ *  because the SDK declares them so: an `allowed` event often carries nothing else. */
+export interface AgentRateLimit {
+  status: "allowed" | "allowed_warning" | "rejected";
+  window?: string;
+  resetsAt?: string;
+  utilization?: number;
+}
+
+/** The plan's utilization windows as a percentage, from the SDK's experimental usage call — the one
+ *  source of the **weekly** figure Ryan's auto-retry rule reads, which no `rate_limit_event` for the
+ *  five-hour window carries. `available: false` means the question could not be answered at all (an
+ *  API-key, Bedrock or Vertex session, where plan limits do not apply; or a call that was missing,
+ *  threw, or did not answer in time), and the executor then refuses to auto-retry rather than
+ *  guessing. A window's `utilization` and `resetsAt` are nullable because the SDK types them so. */
+export interface AgentUsage {
+  available: boolean;
+  fiveHour?: { utilization: number | null; resetsAt: string | null };
+  sevenDay?: { utilization: number | null; resetsAt: string | null };
+}
 
 /** The subset of the SDK's message stream the executor reads. sdk-query.ts maps the SDK's own
  *  types onto this shape; tests build these by hand. */
@@ -23,6 +48,16 @@ export interface AgentMessage {
   duration_ms?: number;
   total_cost_usd?: number;
   permission_denials?: Array<{ tool_name?: string }>;
+  /** `SDKAssistantMessage.error`, verbatim: the kind that ended the turn (`rate_limit` and the
+   *  twelve others). Read off an assistant message, whose text blocks carry the SDK's own sentence
+   *  about it, which is where the reset time's zone is named. */
+  error?: string;
+  /** From a `rate_limit_event` message. The executor keeps the last one of a stream: the windows
+   *  report `allowed`, then `allowed_warning`, then `rejected` as one fills up. */
+  rateLimit?: AgentRateLimit;
+  /** The one synthetic message sdk-query.ts yields after a rejected limit, carrying the plan's
+   *  utilization windows. Nothing in the SDK's own stream sets it. */
+  usage?: AgentUsage;
 }
 
 /** Exactly the SDK options the executor sets. Field names match the SDK's Options so the adapter
@@ -54,9 +89,19 @@ export interface AgentExecutorOptions {
   promptsDir?: string;
   /** Model alias → model id. A model not in the map is passed to the SDK unchanged. */
   models?: Record<string, string>;
-  /** The show's config; supplies promptsDir and models when the explicit options are absent, and
-   *  the {{season}}/{{show.*}} variables. */
+  /** The show's config; supplies promptsDir and models when the explicit options are absent, the
+   *  {{season}}/{{show.*}} variables, and the weekly auto-retry ceiling
+   *  (`agents.autoRetryWeeklyUtilizationMax`) the usage-limit rule compares against. */
   show?: ShowConfig;
+  /** The clock the default sleeper measures a wait against. Injected by the tests only; production
+   *  passes none and gets `() => new Date()`. It exists because the one thing the usage-limit rule
+   *  does that a test cannot wait for is sleep for five hours. */
+  now?: () => Date;
+  /** Sleeps until the given ISO instant. Injected by the tests only; production passes none and
+   *  gets a real `setTimeout`. The executor calls it once per step at most — after a five-hour
+   *  limit whose weekly quota is under the ceiling — and the wait happens here, in the worker,
+   *  with the run's lock heartbeat still running (spec §4.2: the server owns no run state). */
+  sleepUntil?: (iso: string) => Promise<void>;
 }
 
 /** Thrown by `pump` when the total or the idle clock fires. Its message is the failure string. */
@@ -197,6 +242,135 @@ export function createGateMessageRenderer(opts: AgentExecutorOptions): GateMessa
   };
 }
 
+/** Everything one query of a step produced, so the executor can decide between two attempts with
+ *  the same information after each. `base` is the outcome the stream alone implies — the subtype
+ *  chain, which knows nothing about usage limits — and the limit classification is applied to it
+ *  afterwards, because the measured limit arrived as `subtype: "success"` with the SDK's "you've hit
+ *  your session limit" sentence as its text, and a success that did no work must not be reported as
+ *  one. */
+interface Attempt {
+  base: AgentOutcome;
+  result: AgentMessage | undefined;
+  failure: string | undefined;
+  rateLimit: AgentRateLimit | undefined;
+  usage: AgentUsage | undefined;
+  sdkError: { kind: string; text: string } | undefined;
+}
+
+/** The SDK's name for the five-hour plan window — the only window the engine waits out on its own
+ *  authority. */
+const FIVE_HOUR = "five_hour";
+
+/** The window name used when a limit arrived as an assistant `error: "rate_limit"` with no
+ *  `rate_limit_event` beside it to say which window was hit. It reaches the log as the limit's
+ *  `window` so the record never claims a window the SDK did not name. */
+const UNNAMED_WINDOW = "unknown";
+
+/** How long past a reset the executor waits before resuming. The window's clock and this machine's
+ *  are not the same clock, and a query resumed on the second the window turns over is rejected
+ *  again — a whole second wait for the sake of a minute. */
+const WAIT_GRACE_MS = 60_000;
+
+/** The default sleeper: a real timer, to the millisecond the reset's ISO names. Production uses it
+ *  for waits of up to five hours, which is well inside `setTimeout`'s 24.8-day ceiling. An instant
+ *  already past, or an unparseable one, sleeps for zero rather than forever. */
+function sleepWithRealTimer(iso: string, now: () => Date): Promise<void> {
+  const until = Date.parse(iso);
+  const ms = Number.isFinite(until) ? Math.max(0, until - now().getTime()) : 0;
+  return new Promise<void>((resolve) => { setTimeout(resolve, ms); });
+}
+
+/** What the SDK named as the reason this attempt ended, or undefined when it named nothing.
+ *
+ *  A deadline, a rejected emit or a handler fault outranks it and returns undefined: those are the
+ *  engine's own faults and already have their own wording, and a timeout that happened to coincide
+ *  with a limit is still a timeout. Otherwise an assistant `error` kind wins, and a rejected
+ *  `rate_limit_event` with no error kind beside it is a usage limit too — the engine's one measured
+ *  limit (the s02e01 run of 2026-10-14) carried both, but the rejection alone is enough to know the
+ *  query was refused. */
+function classifyLimit(a: Attempt): AgentLimit | undefined {
+  if (a.failure !== undefined) return undefined;
+  if (a.sdkError !== undefined) return a.sdkError.kind === "rate_limit" ? { kind: "rate_limit", window: a.rateLimit?.window ?? UNNAMED_WINDOW, waited: false } : { kind: a.sdkError.kind };
+  if (a.rateLimit?.status === "rejected") return { kind: "rate_limit", window: a.rateLimit.window ?? UNNAMED_WINDOW, waited: false };
+  return undefined;
+}
+
+/** The seven-day quota as a percentage, or undefined when the question could not be answered: the
+ *  usage call was unavailable, carried no seven-day window, or carried one with no figure. The
+ *  distinction matters because Ryan's rule retries only on a **known** weekly figure below the
+ *  ceiling, and "unknown" is a manual resume, not a zero. */
+function weeklyUtilization(usage: AgentUsage | undefined): number | undefined {
+  if (usage?.available !== true) return undefined;
+  const u = usage.sevenDay?.utilization;
+  return typeof u === "number" && Number.isFinite(u) ? u : undefined;
+}
+
+/** The operator's name for a plan window: `5-hour`, `7-day` for all three seven-day kinds, the
+ *  SDK's own name for anything else (`overage`), and `usage` when the SDK named no window at all —
+ *  so the sentence reads "hit its usage limit" rather than "hit its unknown limit". */
+function windowLabel(window: string | undefined): string {
+  if (window === FIVE_HOUR) return "5-hour";
+  if (window !== undefined && window.startsWith("seven_day")) return "7-day";
+  if (window === undefined || window === UNNAMED_WINDOW) return "usage";
+  return window;
+}
+
+/** `(resets <time>)` as the sentences use it, or the empty string when no reset time is known — the
+ *  clause is dropped rather than printed with a hole in it. */
+function resetsClause(time: string | undefined): string {
+  return time === undefined ? "" : ` (resets ${time})`;
+}
+
+/** The reset time as the operator reads it: **the zone the SDK's own sentence names, when it names
+ *  one**, else the ISO string from the rate-limit event, else undefined.
+ *
+ *  The SDK's text is the only source of a zone — the event carries epoch seconds and nothing else —
+ *  and the measured sentence was `You've hit your session limit · resets 7:50pm
+ *  (America/New_York)`, which this renders as `7:50pm America/New_York`. The captured time may
+ *  carry a weekday (`Mon 9:00am`) for a seven-day window. Exported so the console's and the
+ *  engine's tests can pin the one rendering both halves of a run display. */
+export function renderResetTime(sdkText: string | undefined, resetsAtIso: string | undefined): string | undefined {
+  const named = sdkText?.match(/resets\s+(.+?)\s*\(([A-Za-z_]+(?:\/[A-Za-z0-9_+-]+)+)\)/);
+  if (named) return `${named[1]} ${named[2]}`;
+  return resetsAtIso;
+}
+
+/** The step's error when the reply was refused for one of the twelve SDK error kinds that are not a
+ *  usage limit — `billing_error`, `authentication_failed`, `overloaded` and the rest. No wait and no
+ *  retry: none of them is cured by time (Ryan's ruling of 2026-10-15). */
+function refusedSentence(kind: string, text: string): string {
+  return `the model's reply was refused (${kind}): ${text}`;
+}
+
+/** The step's error when a usage limit will not be waited out: one sentence, with the numbers, that
+ *  names the window, the reset, the weekly figure and the operator's move (Ryan's ruling of
+ *  2026-10-15).
+ *
+ *  Four shapes, because four things can be true. A five-hour limit whose weekly quota is known and
+ *  not below the ceiling names both percentages and the config key that sets the ceiling. A
+ *  five-hour limit whose weekly quota could not be read says so, because the engine declined to
+ *  wait on a figure it does not have. A five-hour limit under the ceiling that the SDK gave no reset
+ *  time for cannot be waited out either, and says which half is missing. Every other window — the
+ *  three seven-day kinds, `overage`, or none named — is never auto-retried at all, so its sentence
+ *  only has to say when to come back. */
+function manualResumeSentence(o: { window: string | undefined; time: string | undefined; weekly: number | undefined; ceiling: number }): string {
+  const opening = `Manual resume needed: the writer's session hit its ${windowLabel(o.window)} limit`;
+  if (o.window !== FIVE_HOUR) return `${opening}${resetsClause(o.time)}; press Resume after the reset.`;
+  if (o.weekly === undefined) return `${opening}${resetsClause(o.time)} and the weekly utilization is unknown.`;
+  // Reachable only when the SDK named no reset time: a five-hour limit under the ceiling *with* a
+  // reset time is the one case the executor waits out, and never arrives here.
+  if (o.weekly < o.ceiling) return `${opening} and the SDK named no reset time to wait for; press Resume once the window has reset.`;
+  const relation = o.weekly > o.ceiling ? `above the ${o.ceiling}% auto-retry ceiling` : `at the ${o.ceiling}% auto-retry ceiling`;
+  return `${opening}${resetsClause(o.time)} and the weekly quota is at ${o.weekly}%, ${relation} (agents.autoRetryWeeklyUtilizationMax).`;
+}
+
+/** The step's error when the limit tripped again on the retry. One wait is all the executor takes
+ *  (Ryan's ruling of 2026-10-15: a second limit after one wait is the operator's), and the sentence
+ *  says that a wait was already spent so the operator does not read it as the first refusal. */
+function limitedAgainSentence(window: string | undefined, time: string | undefined): string {
+  return `Manual resume needed: the writer's session hit its ${windowLabel(window)} limit again after waiting once${resetsClause(time)}; press Resume after the reset.`;
+}
+
 export function createAgentExecutor(opts: AgentExecutorOptions): Executors["agent"] {
   /** context: "shared" — session ids by `${episodeId}/${runId}/${stepId}`, for this executor's
    *  lifetime. The episode id is part of the key because a run id is only unique within an episode:
@@ -257,6 +431,12 @@ export function createAgentExecutor(opts: AgentExecutorOptions): Executors["agen
     // 3: the options.
     const models: Record<string, string | undefined> | undefined = opts.models ?? opts.show?.models;
     const model = models?.[step.model] ?? step.model;
+    // The usage-limit rule's three seams. `ceiling` falls back to the house default for a
+    // ShowConfig built by hand that never passed through loadShowConfig, which materialises the
+    // same number; the clock and the sleeper are real timers unless a test injected its own.
+    const now = opts.now ?? (() => new Date());
+    const sleepUntil = opts.sleepUntil ?? ((iso: string) => sleepWithRealTimer(iso, now));
+    const ceiling = opts.show?.agents?.autoRetryWeeklyUtilizationMax ?? DEFAULT_AUTO_RETRY_WEEKLY_UTILIZATION_MAX;
     const abortController = new AbortController();
     // Both the read and the write of the session map are gated on "shared", so the policy is one
     // predicate rather than two that have to agree: a "fresh" step leaves no entry behind that a
@@ -278,83 +458,176 @@ export function createAgentExecutor(opts: AgentExecutorOptions): Executors["agen
       ...(resume !== undefined ? { resume } : {}),
     };
 
-    // 4: agent_query.
-    await emit("agent_query", {
-      promptFile: step.promptFile, promptHash, promptPath, model, modelAlias: step.model,
-      allowedTools: [...step.allowedTools], context: step.context, schema: Boolean(schema), resumed: Boolean(options.resume),
-      showConfig: Boolean(opts.show),
-    });
-
-    // 5–7: drive the stream under the total and idle deadlines. The executor never relies on the
-    //      iterator honouring the abort: pump races each next() against its own clocks.
+    // 4–9 happen once per attempt. There are two attempts at most: a plan usage limit on the
+    //     five-hour window, with the week's quota under the configured ceiling, is waited out here
+    //     and the same query is resumed once (Ryan's ruling of 2026-10-15). `toolCalls` and
+    //     `sessionId` are shared across the attempts on purpose — the agent_tool_call index stays
+    //     monotone in the log, agent_result reports the step's whole tool count, and the retry
+    //     resumes the session the limited attempt opened.
     let toolCalls = 0;
     let sessionId: string | undefined;
-    let result: AgentMessage | undefined;
-    let failure: string | undefined;
-    try {
-      await pump(opts.query({ prompt, options }), abortController, { ...(step.timeoutMs !== undefined ? { timeoutMs: step.timeoutMs } : {}), ...(step.idleTimeoutMs !== undefined ? { idleTimeoutMs: step.idleTimeoutMs } : {}) }, async (m) => {
-        // Every fault raised in here is classified before it leaves, so the `query failed` branch
-        // below sees only what the iterator itself threw.
-        try {
-          if (m.session_id && !sessionId) sessionId = m.session_id;
-          if (m.type === "assistant" && m.message) {
-            for (const block of m.message.content) {
-              if (block.type === "tool_use" && "name" in block) {
-                toolCalls += 1;
-                try {
-                  await emit("agent_tool_call", { tool: block.name, input: block.input, toolUseId: block.id, index: toolCalls });
-                } catch (err) {
-                  throw new EmitFailure(errorMessage(err));
+
+    const attempt = async (attemptOptions: AgentQueryOptions): Promise<Attempt> => {
+      // 4: agent_query — one per query, so a resumed retry is its own line in the log with
+      //    `resumed: true`, which is the only record that the step queried twice.
+      await emit("agent_query", {
+        promptFile: step.promptFile, promptHash, promptPath, model, modelAlias: step.model,
+        allowedTools: [...step.allowedTools], context: step.context, schema: Boolean(schema), resumed: Boolean(attemptOptions.resume),
+        showConfig: Boolean(opts.show),
+      });
+
+      // 5–7: drive the stream under the total and idle deadlines. The executor never relies on the
+      //      iterator honouring the abort: pump races each next() against its own clocks.
+      let result: AgentMessage | undefined;
+      let failure: string | undefined;
+      let rateLimit: AgentRateLimit | undefined;
+      let usage: AgentUsage | undefined;
+      let sdkError: { kind: string; text: string } | undefined;
+      try {
+        await pump(opts.query({ prompt, options: attemptOptions }), attemptOptions.abortController, { ...(step.timeoutMs !== undefined ? { timeoutMs: step.timeoutMs } : {}), ...(step.idleTimeoutMs !== undefined ? { idleTimeoutMs: step.idleTimeoutMs } : {}) }, async (m) => {
+          // Every fault raised in here is classified before it leaves, so the `query failed` branch
+          // below sees only what the iterator itself threw.
+          try {
+            if (m.session_id && !sessionId) sessionId = m.session_id;
+            // The last rate-limit event of a stream wins: the windows report `allowed`, then
+            // `allowed_warning`, then `rejected` as one fills, and only the last one is the state
+            // the query ended in.
+            if (m.rateLimit !== undefined) rateLimit = m.rateLimit;
+            if (m.usage !== undefined) usage = m.usage;
+            if (m.type === "assistant" && m.message) {
+              // The first error kind wins, with the text of the same message: that message's text
+              // blocks carry the SDK's own sentence about the fault, and a later assistant message
+              // would describe a different one.
+              if (m.error !== undefined && sdkError === undefined) {
+                sdkError = { kind: m.error, text: m.message.content.filter((b): b is { type: "text"; text: string } => b.type === "text" && "text" in b).map((b) => b.text).join("\n") };
+              }
+              for (const block of m.message.content) {
+                if (block.type === "tool_use" && "name" in block) {
+                  toolCalls += 1;
+                  try {
+                    await emit("agent_tool_call", { tool: block.name, input: block.input, toolUseId: block.id, index: toolCalls });
+                  } catch (err) {
+                    throw new EmitFailure(errorMessage(err));
+                  }
                 }
               }
+            } else if (m.type === "result") {
+              result = m;
             }
-          } else if (m.type === "result") {
-            result = m;
+          } catch (err) {
+            if (err instanceof EmitFailure) throw err;
+            throw new HandlerFailure(errorMessage(err));
           }
-        } catch (err) {
-          if (err instanceof EmitFailure) throw err;
-          throw new HandlerFailure(errorMessage(err));
+        });
+      } catch (err) {
+        // The result is deliberately left in place. `r` below is computed from `failure`, so a
+        // failure still wins the outcome; keeping the message means agent_result can still report the
+        // subtype, turns, duration, cost and session id of a result that raced in before the clock
+        // was observed, which is the only record of what the query had spent when it was cut off.
+        if (err instanceof Deadline) { failure = err.message; }
+        else if (err instanceof EmitFailure) { failure = `log write failed: ${err.message}`; }
+        else if (err instanceof HandlerFailure) { failure = `message handling failed: ${err.message}`; }
+        // What is left is the iterator's own throw. A result already stored wins over it: the SDK
+        // throws after yielding an error result, and that result classifies the failure precisely.
+        else if (!result) failure = `query failed: ${errorMessage(err)}`;
+      }
+
+      // 8: the outcome the stream alone implies, before anything the SDK named is considered. A
+      //    deadline, a rejected emit or a handler fault outranks the result that raced in: `r` is a
+      //    result only when nothing has already failed, so the total timeout wins over a result
+      //    that arrived after it. The result message itself is kept, and step 9 still reports its
+      //    metadata.
+      const r = failure !== undefined ? undefined : result;
+      let base: AgentOutcome;
+      if (r === undefined) {
+        base = { ok: false, error: failure ?? "query ended without a result message", toolCalls };
+      } else if (r.subtype === undefined) {
+        base = { ok: false, error: "result message with no subtype", toolCalls };
+      } else if (r.subtype === "success") {
+        if (schema && r.structured_output === undefined) {
+          base = { ok: false, error: "success without structured output", toolCalls };
+        } else {
+          base = {
+            ok: true, text: r.result ?? "", toolCalls,
+            ...(schema ? { verdict: r.structured_output } : {}),
+          };
         }
-      });
-    } catch (err) {
-      // The result is deliberately left in place. `r` below is computed from `failure`, so a
-      // failure still wins the outcome; keeping the message means agent_result can still report the
-      // subtype, turns, duration, cost and session id of a result that raced in before the clock
-      // was observed, which is the only record of what the query had spent when it was cut off.
-      if (err instanceof Deadline) { failure = err.message; }
-      else if (err instanceof EmitFailure) { failure = `log write failed: ${err.message}`; }
-      else if (err instanceof HandlerFailure) { failure = `message handling failed: ${err.message}`; }
-      // What is left is the iterator's own throw. A result already stored wins over it: the SDK
-      // throws after yielding an error result, and that result classifies the failure precisely.
-      else if (!result) failure = `query failed: ${errorMessage(err)}`;
+      } else {
+        const errors = r.errors ?? [];
+        base = { ok: false, error: errors.length ? `${r.subtype}: ${errors.join("; ")}` : r.subtype, toolCalls };
+      }
+      return { base, result, failure, rateLimit, usage, sdkError };
+    };
+
+    const first = await attempt(options);
+    let last = first;
+    let outcome = first.base;
+    // The limit as the log will carry it, which is not the same as the limit the outcome carries: a
+    // step that waited and then succeeded is `ok: true` and still has to record that it waited.
+    let limit: AgentLimit | undefined;
+
+    const firstLimit = classifyLimit(first);
+    if (firstLimit !== undefined && firstLimit.kind !== "rate_limit") {
+      // The other twelve SDK error kinds: no wait, no retry (Ryan's ruling of 2026-10-15).
+      limit = firstLimit;
+      outcome = { ok: false, error: refusedSentence(firstLimit.kind, first.sdkError?.text ?? ""), toolCalls, limit };
+    } else if (firstLimit !== undefined) {
+      const window = first.rateLimit?.window;
+      const resetsAt = first.rateLimit?.resetsAt;
+      const weekly = weeklyUtilization(first.usage);
+      const time = renderResetTime(first.sdkError?.text, resetsAt);
+      limit = {
+        kind: "rate_limit", waited: false,
+        window: window ?? UNNAMED_WINDOW,
+        ...(resetsAt !== undefined ? { resetsAt } : {}),
+        ...(weekly !== undefined ? { weeklyUtilization: weekly } : {}),
+      };
+      if (window === FIVE_HOUR && weekly !== undefined && weekly < ceiling && resetsAt !== undefined) {
+        // The rule: wait here, in the worker, with the run's lock heartbeat running (spec §4.2),
+        // and resume the same query once. The reason is written into the log because the log is the
+        // record (spec §6.5) and the console draws the wait from it rather than from a string of
+        // its own.
+        const reason = `waiting for the usage limit to reset at ${time ?? resetsAt} (weekly quota ${weekly}%)`;
+        await emit("step_waiting", { reason, window, resetsAt, weeklyUtilization: weekly, ceiling });
+        // One minute past the reset, not the reset: the two clocks are not the same clock, and a
+        // query resumed on the second the window turns over is rejected again for the sake of a
+        // minute.
+        await sleepUntil(new Date(Date.parse(resetsAt) + WAIT_GRACE_MS).toISOString());
+        const retry = await attempt({ ...options, abortController: new AbortController(), ...(sessionId !== undefined ? { resume: sessionId } : {}) });
+        last = retry;
+        const retryLimit = classifyLimit(retry);
+        if (retryLimit === undefined) {
+          // The retry ran. Its outcome is the step's — success or any ordinary failure — and the
+          // limit stays on the log with `waited: true`, which is the record that this step spent a
+          // wait and is owed no second one.
+          outcome = retry.base;
+          limit = { kind: "rate_limit", window, resetsAt, weeklyUtilization: weekly, waited: true };
+        } else if (retryLimit.kind !== "rate_limit") {
+          limit = retryLimit;
+          outcome = { ok: false, error: refusedSentence(retryLimit.kind, retry.sdkError?.text ?? ""), toolCalls, limit };
+        } else {
+          const again = {
+            window: retry.rateLimit?.window ?? window,
+            resetsAt: retry.rateLimit?.resetsAt ?? resetsAt,
+            weekly: weeklyUtilization(retry.usage) ?? weekly,
+          };
+          limit = {
+            kind: "rate_limit", waited: true, window: again.window,
+            ...(again.resetsAt !== undefined ? { resetsAt: again.resetsAt } : {}),
+            ...(again.weekly !== undefined ? { weeklyUtilization: again.weekly } : {}),
+          };
+          outcome = { ok: false, error: limitedAgainSentence(again.window, renderResetTime(retry.sdkError?.text, again.resetsAt)), toolCalls, limit };
+        }
+      } else {
+        outcome = { ok: false, error: manualResumeSentence({ window, time, weekly, ceiling }), toolCalls, limit };
+      }
     }
+
     if (step.context === "shared" && sessionId !== undefined) sessions.set(sessionKey, sessionId);
 
-    // 8: the outcome. A deadline, a rejected emit or a handler fault outranks the result that
-    //    raced in: `r` is a result only when nothing has already failed, so the total timeout wins
-    //    over a result that arrived after it. The result message itself is kept, and step 9 still
-    //    reports its metadata.
-    const r = failure !== undefined ? undefined : result;
-    let outcome: AgentOutcome;
-    if (r === undefined) {
-      outcome = { ok: false, error: failure ?? "query ended without a result message", toolCalls };
-    } else if (r.subtype === undefined) {
-      outcome = { ok: false, error: "result message with no subtype", toolCalls };
-    } else if (r.subtype === "success") {
-      if (schema && r.structured_output === undefined) {
-        outcome = { ok: false, error: "success without structured output", toolCalls };
-      } else {
-        outcome = {
-          ok: true, text: r.result ?? "", toolCalls,
-          ...(schema ? { verdict: r.structured_output } : {}),
-        };
-      }
-    } else {
-      const errors = r.errors ?? [];
-      outcome = { ok: false, error: errors.length ? `${r.subtype}: ${errors.join("; ")}` : r.subtype, toolCalls };
-    }
-
-    // 9: agent_result.
+    // 9: agent_result, once for the step however many attempts it made. The metadata is the last
+    //    attempt's, because that is the query whose outcome the step returns.
+    const result = last.result;
     const denials = result?.permission_denials ?? [];
     const deniedTools = [...new Set(denials.map((d) => d.tool_name).filter((n): n is string => typeof n === "string"))];
     await emit("agent_result", {
@@ -365,6 +638,7 @@ export function createAgentExecutor(opts: AgentExecutorOptions): Executors["agen
       ...(result?.total_cost_usd !== undefined ? { costUsd: result.total_cost_usd } : {}),
       ...(sessionId !== undefined ? { sessionId } : {}),
       permissionDenials: denials.length, deniedTools,
+      ...(limit !== undefined ? { limit } : {}),
       ...(outcome.ok && schema ? { verdict: outcome.verdict } : {}),
       ...(outcome.ok && !schema ? { text: outcome.text } : {}),
       ...(!outcome.ok ? { error: outcome.error } : {}),

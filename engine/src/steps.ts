@@ -6,7 +6,7 @@ export type StepId = string;
 export type EventKind =
   | "run_started" | "run_finished" | "run_resumed"
   | "step_started" | "step_completed" | "step_failed" | "step_skipped" | "step_cached" | "step_reset"
-  | "step_progress" | "script_line"
+  | "step_progress" | "step_waiting" | "script_line"
   | "agent_query" | "agent_tool_call" | "agent_result"
   | "loop_iteration"
   | "gate_opened" | "gate_answered"
@@ -176,11 +176,28 @@ export interface Pipeline {
  *  summary a later step may read as `{{results.<id>}}`. */
 export type ScriptOutcome = { ok: true; result?: string } | { ok: false; error: string };
 
+/** Why a query ended in something the SDK itself named, rather than in a result the executor could
+ *  read: a plan usage limit, or one of the other twelve `SDKAssistantMessageError` kinds. It rides
+ *  on the failure outcome and is logged on `agent_result`, because the operator's next move differs
+ *  by kind — a five-hour limit under the weekly ceiling is waited out and retried by the executor
+ *  itself, a seven-day one needs the operator's Resume after the reset, and a `billing_error` needs
+ *  an account change before any run can proceed.
+ *
+ *  `kind` is `"rate_limit"` for a usage limit, and otherwise the SDK's own error kind verbatim, so
+ *  a kind the SDK adds after this was written still reaches the log by name. `waited` is true only
+ *  on the outcome of a retry the executor ran after sleeping out a reset, which is the log's record
+ *  that the wait happened and that no second wait is owed. */
+export type AgentLimit =
+  | { kind: "rate_limit"; window: string; resetsAt?: string; weeklyUtilization?: number; waited: boolean }
+  | { kind: string };
+
 export type AgentOutcome =
   | { ok: true; text: string; verdict?: unknown; toolCalls: number }
   /** toolCalls on a failure is the count made before the failure — the number that tells a
-   *  loop iteration that failed after real work apart from one that did nothing (spec §6.7). */
-  | { ok: false; error: string; toolCalls?: number };
+   *  loop iteration that failed after real work apart from one that did nothing (spec §6.7).
+   *  `limit` is set when the SDK named the cause (a usage limit, or another error kind); the
+   *  three callers in runner.ts still fail the step on `error` alone and ignore it. */
+  | { ok: false; error: string; toolCalls?: number; limit?: AgentLimit };
 
 /** The two step kinds that do real work are injected, so the runner is testable with fakes.
  *
@@ -195,8 +212,8 @@ export type AgentOutcome =
  *
  *  An executor may throw only when the event log itself is unwritable. The script executor never
  *  throws (every rejected emit becomes `{ ok: false, error: "log write failed: …" }`); the agent
- *  executor guards the `agent_tool_call` emit the same way but its `agent_query` and `agent_result`
- *  emits are unguarded and reject out of the executor. A throw leaves the step `running` with no
+ *  executor guards the `agent_tool_call` emit the same way but its `agent_query`, `step_waiting` and
+ *  `agent_result` emits are unguarded and reject out of the executor. A throw leaves the step `running` with no
  *  terminal event; §6.9's replay re-executes it on the next run. */
 export interface Executors {
   /** Obligations: one `script_line` per line of stdout or stderr that is not a progress line, in

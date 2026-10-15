@@ -58,9 +58,10 @@ one and does not find it fails naming its dotted path.
 | `visual` | the reference files, the style constants, the frame size, the casting directories, the populator bans | the image scripts |
 | `video` | `fps`, `crossfadeSeconds`, `compositionId`, and the whole `titleCard` block | `build-timeline.py` copies `fps`, `crossfadeSeconds` and `titleCard` into the timeline the renderer reads. **It does not write `compositionId`**: the composition id is passed on the render command line, because the id selects the composition whose `calculateMetadata` goes on to fetch the timeline and so has to be known first |
 | `publish` | the channel's standing answers — channel name, playlist, tags, category, standing copy, guide | `publish-kit.py` |
+| `agents` | `autoRetryWeeklyUtilizationMax` — the percentage of the weekly plan quota below which the engine waits out a five-hour usage limit and retries the step itself, default 65 | the engine, in the agent executor's usage-limit rule (**Agent steps → The usage limit** below) |
 
-The engine reads three of those groups and no others: `promptsDir`, `models` and `airMap`. The
-scripts read the rest.
+The engine reads four of those groups and no others: `promptsDir`, `models`, `airMap` and
+`agents`. The scripts read the rest.
 
 **A path in the config is relative to the show root unless it is absolute.** The engine resolves
 one with `resolveShowPath` and a script with `sc.path(cfg, …, root=root)`; both test the string for
@@ -108,10 +109,11 @@ kinds are the agent executor's obligation.
 | `step_cached` | yes | `inputHashes`, `outputHashes`, and `result` when the cached completion recorded one |
 | `step_reset` | yes | `by`, and `attempt` when a gate wrote it — written by a gate rejection (`by` is the gate) or by `resetSteps` (`by` is `operator`): the step returns to pending and its result leaves `ctx.results` |
 | `step_progress` | yes | `done`, `total`, `unit`, and an optional `message` |
+| `step_waiting` | yes | `reason`, `window`, `resetsAt`, `ceiling`, and `weeklyUtilization` when the SDK answered with one — written by the agent executor before it sleeps out a plan usage limit. The step **stays `running`**: a worker is still on it |
 | `script_line` | yes | `stream` (`"stdout"` or `"stderr"`) and `line` |
 | `agent_query` | yes | the prompt file, model, allowlist and context policy the query ran with — written by the agent executor |
 | `agent_tool_call` | yes | the tool invoked and its arguments — written by the agent executor |
-| `agent_result` | yes | the verdict JSON if the step has a schema, the final text otherwise — written by the agent executor |
+| `agent_result` | yes | the verdict JSON if the step has a schema, the final text otherwise, plus `limit` when a usage limit or another SDK error kind ended the query — written by the agent executor |
 | `loop_iteration` | yes | `iteration`, `max`, `sentinel`, `toolCalls`, and `error` on a failed iteration |
 | `gate_opened` | yes | `attempt` and the `message` shown verbatim |
 | `gate_answered` | yes | `approved`, `attempt`, `waitedMs`, and `notes` and `by` when given |
@@ -223,13 +225,14 @@ A prompt with a hole in it lies to the model quietly, which is the failure this 
 ### The three events
 
 The executor owes the log exactly these three, and the runner writes `step_started`,
-`step_completed` and `step_failed` around them.
+`step_completed` and `step_failed` around them. A step that waits out a plan usage limit writes one
+more, `step_waiting`, and a second `agent_query` for the retry — see **The usage limit** below.
 
 | Kind | Payload |
 |---|---|
-| `agent_query` | `promptFile`, `promptHash`, `promptPath`, `model`, `modelAlias`, `allowedTools`, `context`, `schema` (whether the step has one), `resumed` (whether this query resumed a session) — one per query |
+| `agent_query` | `promptFile`, `promptHash`, `promptPath`, `model`, `modelAlias`, `allowedTools`, `context`, `schema` (whether the step has one), `resumed` (whether this query resumed a session) — one per query, so a step that waited out a usage limit and retried writes two, the second with `resumed: true` |
 | `agent_tool_call` | `tool`, `input`, `toolUseId`, `index` (1-based, in stream order) — one per tool invocation |
-| `agent_result` | `ok`, `toolCalls`, `permissionDenials`, `deniedTools`, and, when the query produced them, `subtype`, `numTurns`, `durationMs`, `costUsd`, `sessionId`; then `verdict` for a schema step that succeeded, `text` for a schemaless one, and `error` when it failed |
+| `agent_result` | `ok`, `toolCalls`, `permissionDenials`, `deniedTools`, and, when the query produced them, `subtype`, `numTurns`, `durationMs`, `costUsd`, `sessionId`; then `verdict` for a schema step that succeeded, `text` for a schemaless one, `error` when it failed, and `limit` when the SDK named the cause (**The usage limit** below) |
 
 `toolCalls` is the count of **real tool invocations** the agent made, and a loop's per-iteration
 count is reported on `loop_iteration` (design §6.7: an iteration with zero tool calls did nothing).
@@ -248,8 +251,8 @@ copied into the show repository.
 
 **An executor may throw only when the event log itself is unwritable.** The script executor never
 throws: every rejected `emit` becomes `{ ok: false, error: "log write failed: …" }`. The agent
-executor guards the `agent_tool_call` emit the same way, but its `agent_query` and `agent_result`
-emits are unguarded and reject out of the executor. A throw leaves the step `running` with no
+executor guards the `agent_tool_call` emit the same way, but its `agent_query`, `step_waiting` and
+`agent_result` emits are unguarded and reject out of the executor. A throw leaves the step `running` with no
 terminal event, and design §6.9's replay re-executes that step on the next run.
 
 ### The outcome
@@ -293,6 +296,50 @@ arrived before the clock was observed, `agent_result` reports its `subtype`, `nu
 `durationMs`, `costUsd` and `sessionId` alongside `ok: false` and the failure, which is the only
 record of what the query had spent when it was cut off.
 
+### The usage limit
+
+**When the writer's Claude session hits a plan usage limit mid-step, the executor says so in the
+operator's words and either waits out the reset and retries once, or fails with the move spelled
+out.** Before this the limit was invisible: the SDK ends the turn with `subtype: "success"` whose
+text is `You've hit your session limit · resets 7:50pm (America/New_York)`, so a revise loop burned
+its remaining iterations in a few hundred milliseconds each and failed with `exhausted 3 iterations
+without sentinel REVISIONS_COMPLETE` (the s02e01 run of 2026-10-14).
+
+Three SDK signals reach the executor through `engine/src/sdk-query.ts`: an assistant message's
+`error` (`rate_limit`, or one of twelve other kinds), a `rate_limit_event` naming the window, its
+utilization and its reset, and — asked of the query object once, after a rejected limit — the plan's
+own utilization windows, which is the only source of the **weekly** figure. That usage call is
+marked EXPERIMENTAL by the SDK, so it is wrapped: a missing method, a throw, or no answer inside ten
+seconds all mean "the weekly utilization is unknown", and none of them can fail a query.
+
+**The classification outranks the result's subtype** — a `rate_limit` is a failure however the
+result message is labelled — and is itself outranked by the executor's own clocks: a timeout that
+coincides with a limit is still `timeout after <n>ms`.
+
+| What happened | What the step does |
+|---|---|
+| The `five_hour` window, the weekly quota **known and strictly below** `agents.autoRetryWeeklyUtilizationMax` (default 65), and a reset time given | Logs `step_waiting` with the reason, sleeps **until one minute past the reset**, then resumes the same session and runs the same query again — once. The step returns that attempt's outcome, so a loop counts one iteration, not two, and `agent_result` carries `limit.waited: true` |
+| The same, but the limit trips again after the wait | Fails: `Manual resume needed: the writer's session hit its 5-hour limit again after waiting once (resets <time>); press Resume after the reset.` One wait is all the executor takes |
+| The `five_hour` window with the weekly quota **at or above** the ceiling | Fails: `Manual resume needed: the writer's session hit its 5-hour limit (resets <time>) and the weekly quota is at 78%, above the 65% auto-retry ceiling (agents.autoRetryWeeklyUtilizationMax).` |
+| The `five_hour` window with the weekly quota unknown | Fails: `… and the weekly utilization is unknown.` The engine declines to wait on a figure it does not have |
+| A seven-day window (`seven_day`, `seven_day_opus`, `seven_day_sonnet`), `overage`, or no window named | Fails: `Manual resume needed: the writer's session hit its 7-day limit (resets <time>); press Resume after the reset.` The ceiling governs the five-hour window only |
+| Any of the twelve other SDK error kinds — `billing_error`, `authentication_failed`, `account_on_hold`, `verification_required`, `oauth_org_not_allowed`, `cloud_credential_error`, `overloaded`, `server_error`, `invalid_request`, `model_not_found`, `max_output_tokens`, `unknown` | Fails: `the model's reply was refused (<kind>): <the SDK's text>`. No wait, no retry: none of them is cured by time |
+
+**The reset is printed in the zone the SDK's own sentence names**, when it names one (`7:50pm
+America/New_York`), because the `rate_limit_event` carries epoch seconds and nothing else; with no
+such sentence the ISO string is printed, and with no reset at all the clause is dropped rather than
+printed with a hole in it.
+
+**The wait happens in the worker, inside the executor** (design §4.2: the server owns no run state).
+It is outside the step's `timeoutMs` and `idleTimeoutMs`, which bound a query and not a sleep, so a
+five-hour wait cannot trip a fifteen-minute idle deadline; the run's lock heartbeat keeps the run
+`running` on the Board, and `step_waiting` in the log is what the console draws the wait from. The
+clock and the sleeper are injectable (`AgentExecutorOptions.now` and `.sleepUntil`) for the tests
+only — production passes neither and gets real timers.
+
+**A limit during a *script* step is not covered**: the rule lives in the agent executor, and a
+Python step that calls an API of its own fails as it always did.
+
 ### The context policy
 
 `context: "fresh"` starts a new SDK session for every query. `context: "shared"` resumes: within one
@@ -330,8 +377,8 @@ A step's status is derived from the log, never stamped by hand.
 | Status | Meaning | Do its dependents run? |
 |---|---|---|
 | `pending` | No event for it yet | — |
-| `running` | A `step_started` with no terminal event | — |
-| `waiting` | A gate is open on it | — |
+| `running` | A `step_started` with no terminal event — including an agent step sleeping out a plan usage limit, which logs `step_waiting` and stays `running` because a worker is still on it | — |
+| `waiting` | A gate is open on it. **Not** what a step waiting out a usage limit reads as in the engine — that step is `running`; the console draws the wait from `step_waiting` | — |
 | `completed` | `step_completed`, `step_cached`, or an approved `gate_answered` | Yes |
 | `bypassed` | `step_skipped` with the reason `"when: false"` — its own condition turned it off | **Yes** |
 | `skipped` | `step_skipped` for any other reason — a dependency failed or was skipped | No |
