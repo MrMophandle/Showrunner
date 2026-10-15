@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import type { EpisodeRow } from "../../shared/types.js";
 import { post, showHref, showPath, useConsole, useNow, useShowKey } from "../api.js";
-import { elapsed, firstLine, readOnlyLine, showLabel, showReadFailure, stageLabel, stalled } from "../projections.js";
+import { elapsed, firstLine, readOnlyLine, showLabel, showReadFailure, stageLabel, stalled, waitingNote } from "../projections.js";
 import { NewEpisode } from "../components/NewEpisode.js";
 
 /** The Board: one row per episode, and the one question it answers is which of them wants the
@@ -155,6 +155,11 @@ export function Board() {
           const stage = stageLabel(row.stage);
           const chip = statusChip(row, now);
           const reasons = needsLines(row, episodesDir);
+          // A run asleep until a Claude plan usage limit resets. Its status chip still reads
+          // `running · pid 4821 · beat 3s ago`, which is true and is the evidence that a live
+          // worker is holding the wait — so the sentence goes under the stage chip, beside the
+          // other reasons a row is not moving, rather than replacing the chip (Plan I).
+          const waiting = waitingNote(row);
           const quiet = stalled(row.lastEventAt, now) && (row.status === "running" || row.status === "crashed");
           const runHref = row.runId === undefined ? null : showHref(showKey, `/episodes/${row.id}/runs/${row.runId}`);
           return (
@@ -173,6 +178,7 @@ export function Board() {
                 {row.openGate !== undefined && (
                   <span className="chip chip-gate mono">{row.openGate.stepId} · attempt {row.openGate.attempt}</span>
                 )}
+                {waiting !== undefined && <p className="row-limit">{waiting}</p>}
                 {reasons.length > 0 && (
                   <ul className="row-needs">
                     {reasons.map((line, i) => <li key={i}>{line}</li>)}

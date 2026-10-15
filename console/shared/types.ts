@@ -117,6 +117,21 @@ export interface EpisodeRow {
   /** The one line of the episode's `archive.json` marker, shown beside the "archived" chip —
    *  where the finished episode is and what made it. Set only for `status: "archived"`. */
   archiveNote?: string;
+  /** The engine's sentence for a run that is asleep waiting out a Claude plan usage limit, taken
+   *  from the step that is waiting (`StepRow.note`): "waiting for the usage limit to reset at
+   *  7:50pm America/New_York (weekly quota 41%)". The Board prints it under the stage chip and
+   *  `titleFor` keys the `⏳` tab form on its presence.
+   *
+   *  **It is on the row because `status` cannot say this.** The wait happens inside the worker
+   *  with the run's lock heartbeat going (spec §4.2), so the run reads `running` — correctly, a
+   *  process is holding it — and a Board that only had the status would draw a sleeping run as a
+   *  working one and a tab would count the minutes as progress. Absent for every row with no step
+   *  waiting on a limit, which includes a row parked at a gate. */
+  waitingNote?: string;
+  /** When the limit that `waitingNote` names resets, as the ISO the engine recorded. The tab
+   *  title renders it in the browser's zone (`⏳ <id> WAITING · resets 7:50 PM — <show> · <key>`);
+   *  absent when the row is not waiting on a limit. */
+  waitingUntil?: string;
   /** The timestamp of the last event in the latest run's log — the "time since anything moved"
    *  the Board sorts and colours by. */
   lastEventAt?: string;
@@ -145,7 +160,16 @@ export interface EpisodeRow {
  *  "waiting", "bypassed") and `kind` a `Step["kind"]` string ("guard", "script", "agent",
  *  "gate", "loop"); both are plain strings for the same reason `EpisodeRow.stage` is.
  *  `flag` is the one judgment the row carries that the log does not state outright: a loop
- *  iteration that called no tool did nothing, and one that errored failed. */
+ *  iteration that called no tool did nothing, and one that errored failed.
+ *
+ *  **`waiting` is two different waits, and the row says which by carrying a `note`.** A gate is
+ *  open on the step (`gate_opened`), or an agent step is asleep inside the worker until a Claude
+ *  plan usage limit resets (`step_waiting`, Plan I) — and the second one carries the engine's
+ *  reason sentence in `note` with the reset's ISO in `waitingUntil`, while a gate's row carries
+ *  neither. Nothing keys a *move* on either, which is why one status serves both: every gate
+ *  affordance in the console keys on the run's own `openGate` field and not on a step's status
+ *  (`ActionBar.tsx`, `Board.tsx`), so a step sleeping out a limit can never be mistaken for a
+ *  gate awaiting an answer. */
 export interface StepRow {
   id: string;
   kind: string;
@@ -157,6 +181,22 @@ export interface StepRow {
   progress?: { done: number; total: number; unit: string; message?: string; ratePerSec?: number; etaSec?: number };
   toolCalls?: number;
   flag?: "did-nothing" | "failed-iteration";
+  /** The engine's own sentence for why this step is waiting on something that is not a person —
+   *  `step_waiting`'s `reason`, verbatim: "waiting for the usage limit to reset at 7:50pm
+   *  America/New_York (weekly quota 41%)". Drawn by the Run view's in-flight line and, through
+   *  `EpisodeRow.waitingNote`, under the Board's stage chip.
+   *
+   *  **Cleared the moment the step ends.** The executor re-runs the step after the sleep and that
+   *  attempt ends with an ordinary `step_completed` or `step_failed`; a completed row still saying
+   *  it is waiting for a reset would be the rail stating, in the operator's own words, something
+   *  that stopped being true an hour ago. */
+  note?: string;
+  /** When the limit that `note` names resets, as the ISO the engine recorded (`step_waiting`'s
+   *  `resetsAt` — the reset itself, not the minute of grace the worker sleeps past it). Carried as
+   *  a value rather than parsed back out of `note`, because the tab title renders it in the
+   *  browser's own zone and locale (`resetLabel`, `src/projections.ts`) and a time read out of a
+   *  sentence would be a second, lossier copy of a field the event already has. */
+  waitingUntil?: string;
 }
 
 /** One run at the middle altitude: which step is in flight, how far into it, what is open, and
@@ -319,7 +359,11 @@ export interface BibleFileView extends BibleRow {
 export interface SetupRunView {
   runId: string;
   status: "none" | "running" | "waiting" | "failed" | "completed" | "crashed";
-  steps: { id: string; status: string; startedAt?: string }[];
+  /** The file's steps, four fields each. `note` is the engine's reason for a step waiting on
+   *  something that is not the author — in a bible run that is the `write` step asleep until a
+   *  usage limit resets (`step_waiting`), which is the one thing the "the writer is working"
+   *  panel could otherwise show for twenty minutes without explaining. */
+  steps: { id: string; status: string; startedAt?: string; note?: string }[];
   gate?: { attempt: number; message: string };
   error?: string;
   offset: number;

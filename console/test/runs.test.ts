@@ -208,4 +208,59 @@ describe("RunStore", () => {
     expect(row.logError).toBe(after.logError);
     store.close();
   });
+
+  it("projects step_waiting as a waiting step carrying the reason, keeps the run running while the lock is alive, and clears the note when the step finishes", async () => {
+    const { root, store } = await appWith(await makeShow());
+    const t = (s: number) => new Date(Date.UTC(2026, 9, 2, 13, 0, s)).toISOString();
+    // The event Plan I's engine writes before the worker sleeps: the operator sentence, the
+    // window, the reset's own ISO, the weekly figure that cleared the ceiling, and the ceiling.
+    const RESETS = "2026-10-02T23:50:00.000Z";
+    const REASON = "waiting for the usage limit to reset at 7:50pm America/New_York (weekly quota 41%)";
+    // The measured shape (plan, "What was measured"): a revise loop that drafted some of the
+    // episode and then hit the limit on an iteration.
+    const file = await seedRun(root, "s02e01", "r1", [
+      { ts: t(0), kind: "run_started", payload: { pipeline: "episode", episodeId: "s02e01" } },
+      { ts: t(1), stepId: "draft", kind: "step_started", payload: { kind: "loop", body: "draft-body", until: "DRAFT_COMPLETE", max: 15 } },
+      { ts: t(1), stepId: "draft", kind: "loop_iteration", payload: { iteration: 1, max: 15, sentinel: false, toolCalls: 48 } },
+      { ts: t(1), stepId: "draft", kind: "step_progress", payload: { done: 4, total: 12, unit: "scenes" } },
+      { ts: t(2), stepId: "draft", kind: "step_waiting", payload: { reason: REASON, window: "five_hour", resetsAt: RESETS, weeklyUtilization: 41, ceiling: 65 } },
+    ]);
+    await writeLock(root, "s02e01", "r1", process.pid);
+    const v = await store.view("s02e01", "r1");
+    // **The run is running, and that is the point of the lock.** The wait happens inside the
+    // worker with the lock's heartbeat going (spec §4.2), and `step_waiting` opens no gate — so
+    // rule 2 of `deriveRunStatus` does not fire and rule 3 answers "running". A run reported as
+    // "waiting" here would offer the operator a gate move for a gate that does not exist.
+    expect(v.status).toBe("running");
+    expect(v.openGate).toBeUndefined();
+    expect(v.position).toEqual({ stepId: "draft", startedAt: t(1) });
+    const waiting = v.steps.find((s) => s.id === "draft")!;
+    expect(waiting).toMatchObject({ kind: "loop", status: "waiting", note: REASON, waitingUntil: RESETS, startedAt: t(1) });
+    // The step has not ended: it is asleep inside one agent-executor call and will be re-run.
+    expect(waiting).not.toHaveProperty("endedAt");
+    // What the run had got through before it stopped survives the wait — the one thing worth
+    // knowing before deciding whether to sit out a five-hour window.
+    expect(waiting.progress).toMatchObject({ done: 4, total: 12, unit: "scenes" });
+    // The Board's row carries both, which is what the line under the stage chip and the tab
+    // title are drawn from — neither can read a step row.
+    const row = await store.episodeRow("s02e01");
+    expect(row.status).toBe("running");
+    expect(row.waitingNote).toBe(REASON);
+    expect(row.waitingUntil).toBe(RESETS);
+
+    // The executor re-runs the same step after the sleep and that attempt ends ordinarily. The
+    // note goes with it: a completed step still saying "waiting for the usage limit to reset at
+    // 7:50pm" is the rail stating, in the operator's own words, something that stopped being true
+    // an hour ago.
+    await appendFile(file, `${JSON.stringify({ ts: t(3), runId: "r1", stepId: "draft", kind: "step_completed", payload: { result: "drafted", toolCalls: 7 } })}\n`, "utf8");
+    const after = await store.view("s02e01", "r1");
+    const done = after.steps.find((s) => s.id === "draft")!;
+    expect(done).toMatchObject({ status: "completed", endedAt: t(3), toolCalls: 7 });
+    expect(done).not.toHaveProperty("note");
+    expect(done).not.toHaveProperty("waitingUntil");
+    const afterRow = await store.episodeRow("s02e01");
+    expect(afterRow.waitingNote).toBeUndefined();
+    expect(afterRow.waitingUntil).toBeUndefined();
+    store.close();
+  });
 });

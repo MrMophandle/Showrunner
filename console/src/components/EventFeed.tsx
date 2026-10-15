@@ -41,6 +41,11 @@ export function eventSummary(e: WireEvent): string {
     }
     case "step_failed":
       return firstLine(str("error") ?? "");
+    case "step_waiting":
+      // The reason is already an operator sentence with the reset time and the weekly figure in
+      // it; the rest of the payload (window, ceiling) is the engine's arithmetic, and the raw log
+      // is one click away for anyone who wants it.
+      return str("reason") ?? "";
     case "step_skipped":
       return str("reason") ?? "";
     case "step_reset":

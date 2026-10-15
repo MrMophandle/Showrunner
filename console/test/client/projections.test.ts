@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import type { EpisodeRow, RunView, StepRow } from "../../shared/types.js";
 import {
   STALL_MS, composeNotesWithFlags, composeShotRejection, elapsed, firstLine, progressLabel,
-  readOnlyLine, safeHref, showLabel, showReadFailure, stageLabel, stallState, stalled, titleFor,
+  readOnlyLine, resetLabel, safeHref, showLabel, showReadFailure, stageLabel, stallState, stalled,
+  titleFor, waitingNote,
 } from "../../src/projections.js";
 
 /** The client's pure helpers. Every one of them is a function of its arguments and a clock the
@@ -183,7 +184,7 @@ describe("titleFor", () => {
     expect(titleFor(show, rows)).toBe("⏸ s02e01 NEEDS YOU — Harbor Light · HarborLight");
   });
 
-  it("is idle for a read-only show, because none of the other three forms is actionable there", () => {
+  it("is idle for a read-only show, because none of the other four forms is actionable there", () => {
     const archive = { ...show, key: "HarborLight-archive", readOnly: true };
     const rows = [row({ id: "s02e01", status: "waiting", stage: "DRAFT_OUTLINE" })];
     expect(titleFor(archive, rows)).toBe("Harbor Light · HarborLight-archive console");
@@ -211,6 +212,38 @@ describe("titleFor", () => {
     expect(titleFor(show, [])).toBe("Harbor Light · HarborLight console");
     expect(titleFor(show, null)).toBe("Harbor Light · HarborLight console");
     expect(titleFor({ showName: "Another Show", key: "another", readOnly: false }, null)).toBe("Another Show · another console");
+  });
+});
+
+describe("waitingNote", () => {
+  /** The engine's sentence, as `step_waiting` writes it (Plan I). Quoted whole rather than
+   *  paraphrased, because the console's rule for it is "verbatim" and a test that asserted a
+   *  shortened version would not notice the console editing it. */
+  const REASON = "waiting for the usage limit to reset at 7:50pm America/New_York (weekly quota 41%)";
+
+  it("answers the engine's sentence for a run asleep until a usage limit resets", () => {
+    expect(waitingNote(row({ status: "running", waitingNote: REASON }))).toBe(REASON);
+  });
+
+  it("answers nothing for a row with no limit wait, including one parked at a gate", () => {
+    // The gate's row is the case worth stating: its run's status is also "waiting", and the two
+    // waits are told apart by the note and never by the status.
+    expect(waitingNote(row({ status: "waiting", openGate: { stepId: "outline-gate", attempt: 1, openedAt: "2026-10-02T10:00:00Z" } }))).toBeUndefined();
+    expect(waitingNote(row({ status: "running" }))).toBeUndefined();
+    expect(waitingNote(row({ status: "running", waitingNote: "   " }))).toBeUndefined();
+  });
+});
+
+describe("resetLabel", () => {
+  it("renders a reset as a clock time, and says nothing about a time it cannot read", () => {
+    // The zone is the browser's by design, so what is asserted is the shape rather than a
+    // particular machine's answer: a test that pinned "7:50 PM" would pass only in one TZ.
+    expect(resetLabel("2026-10-02T23:50:00.000Z")).toMatch(/^\d{1,2}:\d{2}(\s?[AP]M)?$/);
+    // Absent, empty or unreadable renders nothing at all, which is what keeps `Invalid Date` out
+    // of a tab title.
+    expect(resetLabel(undefined)).toBeUndefined();
+    expect(resetLabel("")).toBeUndefined();
+    expect(resetLabel("not a time")).toBeUndefined();
   });
 });
 
