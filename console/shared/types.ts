@@ -111,6 +111,16 @@ export interface EpisodeRow {
   runId?: string;
   openGate?: { stepId: string; attempt: number; openedAt: string };
   failed?: { stepId: string; error: string };
+  /** The step in flight and when it started — the same `{ stepId, startedAt }` the run's own view
+   *  carries (`RunView.position`), copied onto the row by `episodeRow` (`server/runs.ts`).
+   *
+   *  **It is on the row because the Board's situation line names the step.** `runSituation`
+   *  (`src/projections.ts`) says "A worker is on it. `draft` for 12m 05s" for a running row, and a
+   *  row with no position could only say "a step is in flight" — true of every working episode and
+   *  therefore worth nothing to the person reading the Board. The row carries no step *rows*, so
+   *  the Board's sentence stops there: the loop iteration and the progress clauses belong to the
+   *  Run view, which has them. Absent for a row whose latest run has nothing in flight. */
+  position?: { stepId: string; startedAt: string };
   /** Why the episode is blocked, in the operator's words: whether the premise is missing, and
    *  the exact references and showrunner-made shots that are not on disk. */
   needs: { ideaMissing: boolean; refsMissing: string[]; imagesMissing: string[] };
@@ -181,6 +191,20 @@ export interface StepRow {
   progress?: { done: number; total: number; unit: string; message?: string; ratePerSec?: number; etaSec?: number };
   toolCalls?: number;
   flag?: "did-nothing" | "failed-iteration";
+  /** Which iteration of a loop step is running, and the cap it is counting towards — the last
+   *  `loop_iteration` since this step's last `step_started` (`server/runs.ts`'s `projectSteps`).
+   *
+   *  **It is not the step's `progress`, and the two numbers are usually different.** A loop's
+   *  progress is whatever its pipeline step reports — "2/12 scenes" for the draft loop — while
+   *  this is the engine's own count against `maxIterations`, 15 for that same loop
+   *  (`engine/src/runner.ts`'s loop executor emits `{ iteration, max }`). The situation line says
+   *  both, because "iteration 3 of 15" is how close a loop is to exhausting its cap and "2/12
+   *  scenes" is how much of the work it has done, and a loop on iteration 14 of 15 with two
+   *  scenes written is about to fail (`runSituation`, `src/projections.ts`).
+   *
+   *  Set only for a step the log has started and not ended, and cleared by `step_started` and
+   *  `step_reset` with the rest of a run's in-flight derivations. */
+  iteration?: { n: number; max: number };
   /** The engine's own sentence for why this step is waiting on something that is not a person —
    *  `step_waiting`'s `reason`, verbatim: "waiting for the usage limit to reset at 7:50pm
    *  America/New_York (weekly quota 41%)". Drawn by the Run view's in-flight line and, through

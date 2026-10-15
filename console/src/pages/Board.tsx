@@ -2,8 +2,9 @@ import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import type { EpisodeRow } from "../../shared/types.js";
 import { post, showHref, showPath, useConsole, useNow, useShowKey } from "../api.js";
-import { elapsed, firstLine, quietRow, readOnlyLine, showLabel, showReadFailure, stageLabel, waitingNote } from "../projections.js";
+import { elapsed, firstLine, quietRow, readOnlyLine, runSituation, showLabel, showReadFailure, stageLabel } from "../projections.js";
 import { NewEpisode } from "../components/NewEpisode.js";
+import { SituationLine } from "../components/SituationLine.js";
 
 /** The Board: one row per episode, and the one question it answers is which of them wants the
  *  showrunner.
@@ -31,6 +32,18 @@ import { NewEpisode } from "../components/NewEpisode.js";
  *  launch button. Season 1 was made by console v1, has no run logs and no `premise.md`, and would
  *  otherwise read NEEDS_IDEA · no runs for ten rows.
  *
+ *  **Every row carries the same situation line the Run view does** (`runSituation`,
+ *  `src/projections.ts`): one subject and one sentence saying whether a worker is on that episode or
+ *  it is waiting on the showrunner, and for what (Ryan's ruling, 2026-10-15). The row renders no
+ *  button with it — the row's own action button is unchanged, and two buttons for one move would be
+ *  two things to press — so the line's job here is the sentence: which step, how long, which gate,
+ *  which error.
+ *
+ *  Two chips lost text to it. The status chip read "waiting on you", which the line's subject
+ *  ("Needs you.") now says with the gate and its age beside it; the archived chip carried the
+ *  marker's one line, which is the archived row's whole sentence. Both chips keep their colour,
+ *  which is the thing a chip is better at than a sentence.
+ *
  *  The stage and the gate are drawn side by side rather than one instead of the other, because
  *  they can disagree and both be right: `deriveStage` (`engine/src/stages.ts`) tests the NEEDS_
  *  rules *before* it looks at the open gate, so an episode parked at `image-gate` whose
@@ -50,7 +63,10 @@ function statusChip(row: EpisodeRow, now: number): { text: string; className: st
       };
     }
     case "waiting":
-      return { className: "chip chip-waiting", text: "waiting on you" };
+      // "waiting", not "waiting on you": the situation line under the stage chip opens with
+      // "Needs you." and names the gate and how long it has been open, and a row that said both
+      // would be making one claim twice (Ryan's ruling, 2026-10-15).
+      return { className: "chip chip-waiting", text: "waiting" };
     case "failed":
       return {
         className: "chip chip-failed",
@@ -65,12 +81,10 @@ function statusChip(row: EpisodeRow, now: number): { text: string; className: st
     case "none":
       return { className: "chip chip-none", text: "no runs" };
     case "archived":
-      // The note is the marker's own line — where the finished episode is and what made it —
-      // because "archived" alone would leave the operator asking which archive.
-      return {
-        className: "chip chip-archived",
-        text: row.archiveNote === undefined ? "archived" : `archived · ${row.archiveNote}`,
-      };
+      // The marker's own line — where the finished episode is and what made it — is the archived
+      // row's situation sentence, so the chip is the bare word. It was here because "archived"
+      // alone leaves the operator asking which archive; the line answers that now, once.
+      return { className: "chip chip-archived", text: "archived" };
     default:
       return { className: "chip", text: row.status };
   }
@@ -155,11 +169,13 @@ export function Board() {
           const stage = stageLabel(row.stage);
           const chip = statusChip(row, now);
           const reasons = needsLines(row, episodesDir);
-          // A run asleep until a Claude plan usage limit resets. Its status chip still reads
-          // `running · pid 4821 · beat 3s ago`, which is true and is the evidence that a live
-          // worker is holding the wait — so the sentence goes under the stage chip, beside the
-          // other reasons a row is not moving, rather than replacing the chip (Plan I).
-          const waiting = waitingNote(row);
+          // Who holds this episode and on what, in the Run view's own words. A run asleep until a
+          // Claude plan usage limit resets is folded into this sentence rather than printed under
+          // the chip on a line of its own: its status chip still reads `running · pid 4821 · beat
+          // 3s ago`, which is true and is the evidence that a live worker is holding the wait, and
+          // the situation line's "A worker is on it," carries the engine's reason after it
+          // (Plan I, and `runSituation`'s `sleepingNote`).
+          const situation = runSituation(row, now);
           // Amber for a run that has gone quiet and could be moving — but never for a run asleep
           // on a usage limit, whose silence is the thing the sentence above explains (`quietRow`).
           const quiet = quietRow(row, now);
@@ -180,7 +196,7 @@ export function Board() {
                 {row.openGate !== undefined && (
                   <span className="chip chip-gate mono">{row.openGate.stepId} · attempt {row.openGate.attempt}</span>
                 )}
-                {waiting !== undefined && <p className="row-limit">{waiting}</p>}
+                <SituationLine situation={situation} />
                 {reasons.length > 0 && (
                   <ul className="row-needs">
                     {reasons.map((line, i) => <li key={i}>{line}</li>)}
