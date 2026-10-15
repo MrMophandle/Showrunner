@@ -252,7 +252,17 @@ interface Attempt {
   base: AgentOutcome;
   result: AgentMessage | undefined;
   failure: string | undefined;
+  /** The last `rate_limit_event` of the stream, whatever its status, and the last **rejected** one.
+   *  They are kept apart because one stream reports several windows: a five-hour rejection can be
+   *  followed by an `allowed` seven-day event, and reading "the last event" as the limit would then
+   *  blame the window that was still fine and refuse to wait out the one that was not. */
   rateLimit: AgentRateLimit | undefined;
+  rejected: AgentRateLimit | undefined;
+  /** The seven-day quota as a percentage, read off a seven-day `rate_limit_event` in this stream.
+   *  The **first** source of the weekly figure the auto-retry rule reads, ahead of the usage call:
+   *  it arrives on the stream the query already delivered, with nothing to ask and nothing to time
+   *  out. */
+  weeklyFromEvent: number | undefined;
   usage: AgentUsage | undefined;
   sdkError: { kind: string; text: string } | undefined;
 }
@@ -290,9 +300,34 @@ function sleepWithRealTimer(iso: string, now: () => Date): Promise<void> {
  *  query was refused. */
 function classifyLimit(a: Attempt): AgentLimit | undefined {
   if (a.failure !== undefined) return undefined;
-  if (a.sdkError !== undefined) return a.sdkError.kind === "rate_limit" ? { kind: "rate_limit", window: a.rateLimit?.window ?? UNNAMED_WINDOW, waited: false } : { kind: a.sdkError.kind };
-  if (a.rateLimit?.status === "rejected") return { kind: "rate_limit", window: a.rateLimit.window ?? UNNAMED_WINDOW, waited: false };
+  if (a.sdkError !== undefined) return a.sdkError.kind === "rate_limit" ? { kind: "rate_limit", window: limitedWindow(a) ?? UNNAMED_WINDOW, waited: false } : { kind: a.sdkError.kind };
+  if (a.rejected !== undefined) return { kind: "rate_limit", window: a.rejected.window ?? UNNAMED_WINDOW, waited: false };
   return undefined;
+}
+
+/** The window the limit was hit on, and the reset the operator is waiting for: the rejected event's
+ *  when the stream carried one, else the last event's, which at least names a window for a limit
+ *  that arrived as an assistant `error` with no rejection beside it. */
+function limitedWindow(a: Attempt): string | undefined {
+  return (a.rejected ?? a.rateLimit)?.window;
+}
+function limitedReset(a: Attempt): string | undefined {
+  return (a.rejected ?? a.rateLimit)?.resetsAt;
+}
+
+/** The weekly quota as a percentage and where it came from: **the stream's own seven-day event
+ *  first**, the SDK's experimental usage call second.
+ *
+ *  The order is not a preference, it is a reliability ranking. The event is part of the message
+ *  stream the query already delivered; the usage call is a control request, which `sdk.d.ts` says is
+ *  supported only on a streaming-input session while the engine passes a plain string prompt — so it
+ *  can answer with nothing, and then the rule would refuse to auto-retry a limit it could in fact
+ *  have waited out. Whichever source answered is recorded on the limit, so the log says which
+ *  number the decision was made on. */
+function weeklyFigure(a: Attempt): { value: number; source: "event" | "usage" } | undefined {
+  if (a.weeklyFromEvent !== undefined) return { value: a.weeklyFromEvent, source: "event" };
+  const fromCall = weeklyUtilization(a.usage);
+  return fromCall === undefined ? undefined : { value: fromCall, source: "usage" };
 }
 
 /** The seven-day quota as a percentage, or undefined when the question could not be answered: the
@@ -308,9 +343,13 @@ function weeklyUtilization(usage: AgentUsage | undefined): number | undefined {
 /** The operator's name for a plan window: `5-hour`, `7-day` for all three seven-day kinds, the
  *  SDK's own name for anything else (`overage`), and `usage` when the SDK named no window at all —
  *  so the sentence reads "hit its usage limit" rather than "hit its unknown limit". */
+function isSevenDay(window: string | undefined): boolean {
+  return window !== undefined && window.startsWith("seven_day");
+}
+
 function windowLabel(window: string | undefined): string {
   if (window === FIVE_HOUR) return "5-hour";
-  if (window !== undefined && window.startsWith("seven_day")) return "7-day";
+  if (isSevenDay(window)) return "7-day";
   if (window === undefined || window === UNNAMED_WINDOW) return "usage";
   return window;
 }
@@ -481,6 +520,8 @@ export function createAgentExecutor(opts: AgentExecutorOptions): Executors["agen
       let result: AgentMessage | undefined;
       let failure: string | undefined;
       let rateLimit: AgentRateLimit | undefined;
+      let rejected: AgentRateLimit | undefined;
+      let weeklyFromEvent: number | undefined;
       let usage: AgentUsage | undefined;
       let sdkError: { kind: string; text: string } | undefined;
       try {
@@ -489,10 +530,17 @@ export function createAgentExecutor(opts: AgentExecutorOptions): Executors["agen
           // below sees only what the iterator itself threw.
           try {
             if (m.session_id && !sessionId) sessionId = m.session_id;
-            // The last rate-limit event of a stream wins: the windows report `allowed`, then
-            // `allowed_warning`, then `rejected` as one fills, and only the last one is the state
-            // the query ended in.
-            if (m.rateLimit !== undefined) rateLimit = m.rateLimit;
+            // One stream reports several windows, each as its own event. The last of any status is
+            // kept, the last *rejected* one is kept separately as the limit that was hit, and a
+            // seven-day event's utilization is the weekly figure the rule prefers — it is on the
+            // stream already, where the usage call has to be asked for and can go unanswered.
+            if (m.rateLimit !== undefined) {
+              rateLimit = m.rateLimit;
+              if (m.rateLimit.status === "rejected") rejected = m.rateLimit;
+              if (isSevenDay(m.rateLimit.window) && typeof m.rateLimit.utilization === "number" && Number.isFinite(m.rateLimit.utilization)) {
+                weeklyFromEvent = m.rateLimit.utilization;
+              }
+            }
             if (m.usage !== undefined) usage = m.usage;
             if (m.type === "assistant" && m.message) {
               // The first error kind wins, with the text of the same message: that message's text
@@ -556,7 +604,7 @@ export function createAgentExecutor(opts: AgentExecutorOptions): Executors["agen
         const errors = r.errors ?? [];
         base = { ok: false, error: errors.length ? `${r.subtype}: ${errors.join("; ")}` : r.subtype, toolCalls };
       }
-      return { base, result, failure, rateLimit, usage, sdkError };
+      return { base, result, failure, rateLimit, rejected, weeklyFromEvent, usage, sdkError };
     };
 
     const first = await attempt(options);
@@ -572,23 +620,23 @@ export function createAgentExecutor(opts: AgentExecutorOptions): Executors["agen
       limit = firstLimit;
       outcome = { ok: false, error: refusedSentence(firstLimit.kind, first.sdkError?.text ?? ""), toolCalls, limit };
     } else if (firstLimit !== undefined) {
-      const window = first.rateLimit?.window;
-      const resetsAt = first.rateLimit?.resetsAt;
-      const weekly = weeklyUtilization(first.usage);
+      const window = limitedWindow(first);
+      const resetsAt = limitedReset(first);
+      const weekly = weeklyFigure(first);
       const time = renderResetTime(first.sdkError?.text, resetsAt);
       limit = {
         kind: "rate_limit", waited: false,
         window: window ?? UNNAMED_WINDOW,
         ...(resetsAt !== undefined ? { resetsAt } : {}),
-        ...(weekly !== undefined ? { weeklyUtilization: weekly } : {}),
+        ...(weekly !== undefined ? { weeklyUtilization: weekly.value, weeklySource: weekly.source } : {}),
       };
-      if (window === FIVE_HOUR && weekly !== undefined && weekly < ceiling && resetsAt !== undefined) {
+      if (window === FIVE_HOUR && weekly !== undefined && weekly.value < ceiling && resetsAt !== undefined) {
         // The rule: wait here, in the worker, with the run's lock heartbeat running (spec §4.2),
         // and resume the same query once. The reason is written into the log because the log is the
         // record (spec §6.5) and the console draws the wait from it rather than from a string of
         // its own.
-        const reason = `waiting for the usage limit to reset at ${time ?? resetsAt} (weekly quota ${weekly}%)`;
-        await emit("step_waiting", { reason, window, resetsAt, weeklyUtilization: weekly, ceiling });
+        const reason = `waiting for the usage limit to reset at ${time ?? resetsAt} (weekly quota ${weekly.value}%)`;
+        await emit("step_waiting", { reason, window, resetsAt, weeklyUtilization: weekly.value, ceiling });
         // One minute past the reset, not the reset: the two clocks are not the same clock, and a
         // query resumed on the second the window turns over is rejected again for the sake of a
         // minute.
@@ -601,25 +649,25 @@ export function createAgentExecutor(opts: AgentExecutorOptions): Executors["agen
           // limit stays on the log with `waited: true`, which is the record that this step spent a
           // wait and is owed no second one.
           outcome = retry.base;
-          limit = { kind: "rate_limit", window, resetsAt, weeklyUtilization: weekly, waited: true };
+          limit = { kind: "rate_limit", window, resetsAt, weeklyUtilization: weekly.value, weeklySource: weekly.source, waited: true };
         } else if (retryLimit.kind !== "rate_limit") {
           limit = retryLimit;
           outcome = { ok: false, error: refusedSentence(retryLimit.kind, retry.sdkError?.text ?? ""), toolCalls, limit };
         } else {
           const again = {
-            window: retry.rateLimit?.window ?? window,
-            resetsAt: retry.rateLimit?.resetsAt ?? resetsAt,
-            weekly: weeklyUtilization(retry.usage) ?? weekly,
+            window: limitedWindow(retry) ?? window,
+            resetsAt: limitedReset(retry) ?? resetsAt,
+            weekly: weeklyFigure(retry) ?? weekly,
           };
           limit = {
             kind: "rate_limit", waited: true, window: again.window,
             ...(again.resetsAt !== undefined ? { resetsAt: again.resetsAt } : {}),
-            ...(again.weekly !== undefined ? { weeklyUtilization: again.weekly } : {}),
+            weeklyUtilization: again.weekly.value, weeklySource: again.weekly.source,
           };
           outcome = { ok: false, error: limitedAgainSentence(again.window, renderResetTime(retry.sdkError?.text, again.resetsAt)), toolCalls, limit };
         }
       } else {
-        outcome = { ok: false, error: manualResumeSentence({ window, time, weekly, ceiling }), toolCalls, limit };
+        outcome = { ok: false, error: manualResumeSentence({ window, time, weekly: weekly?.value, ceiling }), toolCalls, limit };
       }
     }
 

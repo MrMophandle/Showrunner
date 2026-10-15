@@ -3,7 +3,7 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { createAgentExecutor, createGateMessageRenderer, type AgentMessage, type AgentQueryOptions, type AgentUsage, type QueryFn } from "../src/agent-step.js";
+import { createAgentExecutor, createGateMessageRenderer, type AgentMessage, type AgentQueryOptions, type AgentRateLimit, type AgentUsage, type QueryFn } from "../src/agent-step.js";
 import type { ShowConfig } from "../src/show-config.js";
 import type { AgentStep, EventKind, RunContext } from "../src/steps.js";
 
@@ -332,6 +332,10 @@ const rejectedLimit = (window: string, resetsAt: string | null = RESET_ISO): Age
 const limitedTurn = (kind: string, sdkText: string): AgentMessage =>
   ({ type: "assistant", error: kind, message: { content: [{ type: "text", text: sdkText }] } });
 const usageIs = (usage: AgentUsage): AgentMessage => ({ type: "usage", usage });
+/** A seven-day window reporting in, as the SDK sends it mid-stream: `allowed`, with the week's
+ *  utilization on it. This is the weekly figure's first source — it is already in the stream. */
+const sevenDayReport = (utilization: number, status: AgentRateLimit["status"] = "allowed"): AgentMessage =>
+  ({ type: "rate_limit_event", rateLimit: { status, window: "seven_day", utilization, resetsAt: "2026-10-19T04:00:00.000Z" } });
 const weeklyAt = (utilization: number): AgentUsage => ({ available: true, sevenDay: { utilization, resetsAt: "2026-10-19T04:00:00.000Z" } });
 
 /** A five-hour limit's stream: the SDK's refused turn, the rejected window event, the wrapper's one
@@ -378,7 +382,7 @@ describe("createAgentExecutor: a plan usage limit", () => {
     expect(rec.events.map((e) => e.kind)).toEqual(["agent_query", "step_waiting", "agent_query", "agent_result"]);
     const result = rec.events.at(-1)!;
     expect(result.payload["ok"]).toBe(true);
-    expect(result.payload["limit"]).toEqual({ kind: "rate_limit", window: "five_hour", resetsAt: RESET_ISO, weeklyUtilization: 41, waited: true });
+    expect(result.payload["limit"]).toEqual({ kind: "rate_limit", window: "five_hour", resetsAt: RESET_ISO, weeklyUtilization: 41, weeklySource: "usage", waited: true });
   });
 
   it("(b) refuses to retry when the weekly quota is at or above the ceiling, and says so with both numbers", async () => {
@@ -391,7 +395,7 @@ describe("createAgentExecutor: a plan usage limit", () => {
     expect(r.ok ? "" : r.error).toBe("Manual resume needed: the writer's session hit its 5-hour limit (resets 7:50pm America/New_York) and the weekly quota is at 78%, above the 65% auto-retry ceiling (agents.autoRetryWeeklyUtilizationMax).");
     expect(s.slept).toEqual([]);
     expect(f.calls).toHaveLength(1);
-    expect(rec.events.at(-1)!.payload["limit"]).toEqual({ kind: "rate_limit", window: "five_hour", resetsAt: RESET_ISO, weeklyUtilization: 78, waited: false });
+    expect(rec.events.at(-1)!.payload["limit"]).toEqual({ kind: "rate_limit", window: "five_hour", resetsAt: RESET_ISO, weeklyUtilization: 78, weeklySource: "usage", waited: false });
   });
 
   it("(c) never waits out a seven-day window, whichever of the three it is", async () => {
@@ -424,7 +428,7 @@ describe("createAgentExecutor: a plan usage limit", () => {
     expect(r.ok ? "" : r.error).toBe("Manual resume needed: the writer's session hit its 5-hour limit again after waiting once (resets 7:50pm America/New_York); press Resume after the reset.");
     expect(f.calls).toHaveLength(2);
     expect(s.slept).toEqual([RESET_PLUS_A_MINUTE]);
-    expect(rec.events.at(-1)!.payload["limit"]).toEqual({ kind: "rate_limit", window: "five_hour", resetsAt: RESET_ISO, weeklyUtilization: 41, waited: true });
+    expect(rec.events.at(-1)!.payload["limit"]).toEqual({ kind: "rate_limit", window: "five_hour", resetsAt: RESET_ISO, weeklyUtilization: 41, weeklySource: "usage", waited: true });
   });
 
   it("(f) fails a reply refused for any other SDK error kind, naming the kind and the SDK's text", async () => {
@@ -490,5 +494,56 @@ describe("createAgentExecutor: a plan usage limit", () => {
     expect(r.ok ? "" : r.error).toBe("timeout after 20ms");
     expect(s.slept).toEqual([]);
     expect("limit" in rec.events.at(-1)!.payload).toBe(false);
+  });
+});
+
+describe("createAgentExecutor: where the weekly figure comes from", () => {
+  it("reads it off the stream's seven-day event, with no usage message at all", async () => {
+    // The usage call is a control request the SDK documents as streaming-input-only, so a real
+    // five-hour limit may well arrive with no usage message behind it. The seven-day event in the
+    // same stream answers the question without asking anything, and the rule applies as normal.
+    const f = fake([
+      [init, sevenDayReport(41), limitedTurn("rate_limit", SDK_FIVE_HOUR_TEXT), rejectedLimit("five_hour"), success({ result: SDK_FIVE_HOUR_TEXT })],
+      [init, text("REVISIONS_COMPLETE"), success({ result: "REVISIONS_COMPLETE" })],
+    ]);
+    const s = sleeper();
+    const rec = recorder();
+    const r = await createAgentExecutor({ query: f.query, promptsDir, sleepUntil: s.sleepUntil })(step(), ctx(), rec.emit);
+    expect(r.ok).toBe(true);
+    expect(s.slept).toEqual([RESET_PLUS_A_MINUTE]);
+    expect(rec.events.at(-1)!.payload["limit"]).toEqual({ kind: "rate_limit", window: "five_hour", resetsAt: RESET_ISO, weeklyUtilization: 41, weeklySource: "event", waited: true });
+  });
+
+  it("falls back to the usage call when no seven-day event was seen", async () => {
+    const f = fake(limitedStream("five_hour", weeklyAt(78)));
+    const rec = recorder();
+    const r = await createAgentExecutor({ query: f.query, promptsDir, sleepUntil: sleeper().sleepUntil })(step(), ctx(), rec.emit);
+    expect(r.ok).toBe(false);
+    expect(rec.events.at(-1)!.payload["limit"]).toMatchObject({ weeklyUtilization: 78, weeklySource: "usage" });
+  });
+
+  it("the event wins when both answer, and the five-hour rejection still names the window", async () => {
+    // The two sources disagree on purpose here: the event says 90% and the usage call says 10%. The
+    // event is the stream's own number and is taken, so the step refuses to retry. The trailing
+    // seven-day event also proves the window is read off the *rejected* event rather than off the
+    // last one — reading the last would blame the week, which was still allowed, and the sentence
+    // would name the wrong window.
+    const f = fake([init, limitedTurn("rate_limit", SDK_FIVE_HOUR_TEXT), rejectedLimit("five_hour"), usageIs(weeklyAt(10)), sevenDayReport(90), success({ result: SDK_FIVE_HOUR_TEXT })]);
+    const s = sleeper();
+    const rec = recorder();
+    const r = await createAgentExecutor({ query: f.query, promptsDir, sleepUntil: s.sleepUntil })(step(), ctx(), rec.emit);
+    expect(r.ok ? "" : r.error).toBe("Manual resume needed: the writer's session hit its 5-hour limit (resets 7:50pm America/New_York) and the weekly quota is at 90%, above the 65% auto-retry ceiling (agents.autoRetryWeeklyUtilizationMax).");
+    expect(s.slept).toEqual([]);
+    expect(rec.events.at(-1)!.payload["limit"]).toEqual({ kind: "rate_limit", window: "five_hour", resetsAt: RESET_ISO, weeklyUtilization: 90, weeklySource: "event", waited: false });
+  });
+
+  it("a seven-day event with no figure is not a figure", async () => {
+    // An event that names the window but carries no utilization leaves the question to the usage
+    // call rather than answering it with nothing.
+    const f = fake([init, { type: "rate_limit_event", rateLimit: { status: "allowed", window: "seven_day" } }, limitedTurn("rate_limit", SDK_FIVE_HOUR_TEXT), rejectedLimit("five_hour"), usageIs({ available: false }), success({ result: SDK_FIVE_HOUR_TEXT })]);
+    const rec = recorder();
+    const r = await createAgentExecutor({ query: f.query, promptsDir, sleepUntil: sleeper().sleepUntil })(step(), ctx(), rec.emit);
+    expect(r.ok ? "" : r.error).toBe("Manual resume needed: the writer's session hit its 5-hour limit (resets 7:50pm America/New_York) and the weekly utilization is unknown.");
+    expect("weeklySource" in (rec.events.at(-1)!.payload["limit"] as Record<string, unknown>)).toBe(false);
   });
 });

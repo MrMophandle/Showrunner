@@ -186,9 +186,16 @@ export type ScriptOutcome = { ok: true; result?: string } | { ok: false; error: 
  *  `kind` is `"rate_limit"` for a usage limit, and otherwise the SDK's own error kind verbatim, so
  *  a kind the SDK adds after this was written still reaches the log by name. `waited` is true only
  *  on the outcome of a retry the executor ran after sleeping out a reset, which is the log's record
- *  that the wait happened and that no second wait is owed. */
+ *  that the wait happened and that no second wait is owed.
+ *
+ *  `weeklySource` says which of the two sources the weekly figure came from — `"event"` for a
+ *  seven-day `rate_limit_event` in the stream, `"usage"` for the SDK's experimental usage call —
+ *  because the two are not equally reliable: the event is part of the stream the query already
+ *  delivered, while the usage call is a control request that can go unanswered. An operator reading
+ *  What-happened can tell a decision made on the stream's own number from one made on a figure
+ *  fetched separately. It is absent exactly when `weeklyUtilization` is. */
 export type AgentLimit =
-  | { kind: "rate_limit"; window: string; resetsAt?: string; weeklyUtilization?: number; waited: boolean }
+  | { kind: "rate_limit"; window: string; resetsAt?: string; weeklyUtilization?: number; weeklySource?: "event" | "usage"; waited: boolean }
   | { kind: string };
 
 export type AgentOutcome =

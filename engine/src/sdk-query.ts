@@ -9,7 +9,14 @@ import type { AgentContentBlock, AgentMessage, AgentQueryOptions, AgentUsage, Qu
  *  usage limit is the one fault the stream alone cannot describe: a `rate_limit_event` names the
  *  window it rejected, but the weekly figure Ryan's auto-retry rule reads lives behind the object's
  *  own usage call. So after the first rejected limit this generator asks that call once and yields
- *  one synthetic `usage` message, which is the only message in the stream the SDK did not send. */
+ *  one synthetic `usage` message, which is the only message in the stream the SDK did not send.
+ *
+ *  **The call has to happen inside this loop, and that is not a style choice.** Measured live on
+ *  2026-10-15 against SDK 0.3.283 with a plain string prompt (`engine/test/agent-live.test.ts`, the
+ *  `usage:` test): called mid-stream it answered in 183 ms with both windows
+ *  (`available: true`); called after the same stream had ended it failed instantly, and the
+ *  wrapper reported `available: false`. The transport closes with the stream, so a limit discovered
+ *  here must be asked about here. */
 export const sdkQuery: QueryFn = async function* ({ prompt, options }: { prompt: string; options: AgentQueryOptions }) {
   const dropVerdictTool = options.outputFormat !== undefined;
   const q = query({ prompt, options: { ...options } });
@@ -151,8 +158,11 @@ export function toAgentMessage(m: SDKMessage, dropVerdictTool = false): AgentMes
  *  **The SDK's `resetsAt` is epoch seconds, not milliseconds**, which its declaration does not say
  *  (`resetsAt?: number`) — it is the one fact in this mapping that cannot be read off `sdk.d.ts`,
  *  and the whole operator sentence hangs on it: read as milliseconds, a reset five hours away would
- *  be printed as a date in 1970. A non-finite value is dropped rather than converted, because
- *  `new Date(NaN).toISOString()` throws and would fail a query over a field nothing requires. */
+ *  be printed as a date in 1970. Confirmed live on 2026-10-15: the stream's five-hour event mapped
+ *  to `2026-10-15T19:50:00.000Z` while the usage call's own `five_hour.resets_at` for the same
+ *  window read `2026-10-15T19:50:00.043757+00:00` — the same instant, from two unrelated encodings.
+ *  A non-finite value is dropped rather than converted, because `new Date(NaN).toISOString()` throws
+ *  and would fail a query over a field nothing requires. */
 function resetsAtIso(resetsAt: number | undefined): string | undefined {
   if (typeof resetsAt !== "number" || !Number.isFinite(resetsAt)) return undefined;
   return new Date(resetsAt * 1000).toISOString();

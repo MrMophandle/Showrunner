@@ -308,9 +308,17 @@ without sentinel REVISIONS_COMPLETE` (the s02e01 run of 2026-10-14).
 Three SDK signals reach the executor through `engine/src/sdk-query.ts`: an assistant message's
 `error` (`rate_limit`, or one of twelve other kinds), a `rate_limit_event` naming the window, its
 utilization and its reset, and — asked of the query object once, after a rejected limit — the plan's
-own utilization windows, which is the only source of the **weekly** figure. That usage call is
-marked EXPERIMENTAL by the SDK, so it is wrapped: a missing method, a throw, or no answer inside ten
-seconds all mean "the weekly utilization is unknown", and none of them can fail a query.
+own utilization windows. That usage call is marked EXPERIMENTAL by the SDK, so it is wrapped: a
+missing method, a throw, or no answer inside ten seconds all mean "the weekly utilization is
+unknown", and none of them can fail a query. It is asked **inside** the message loop, because the
+transport closes with the stream: measured live on 2026-10-15, the same call answered in 183 ms
+mid-stream and failed instantly once the stream had ended.
+
+**The weekly figure has two sources, in that order of preference**: a seven-day `rate_limit_event`
+in the stream, when one arrived with a utilization on it, and otherwise the usage call. The event is
+preferred because it is already in the stream the query delivered, where the call has to be asked
+for; `agent_result.limit.weeklySource` records which one the decision was made on (`"event"` or
+`"usage"`).
 
 **The classification outranks the result's subtype** — a `rate_limit` is a failure however the
 result message is labelled — and is itself outranked by the executor's own clocks: a timeout that
