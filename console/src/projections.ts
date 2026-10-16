@@ -1,4 +1,4 @@
-import type { BibleRow, BibleState, EpisodeRow, RunView, ShowInfo, StepRow } from "../shared/types.js";
+import type { BibleRow, BibleState, EpisodeRow, RunStatus, RunView, ShowInfo, StepRow } from "../shared/types.js";
 
 /** The client's projections: every judgment the four surfaces make about the data the server
  *  hands them, as functions of their arguments and a clock the caller passes in.
@@ -111,6 +111,49 @@ export function firstLine(text: string | undefined): string {
   if (text === undefined) return "";
   const line = text.split("\n")[0];
   return line === undefined ? "" : line.trim();
+}
+
+/** How long a gate's summary line may be before it is cut, with the ellipsis counted in. Long
+ *  enough for the longest first line any gate template produces ("Images ready for s02e01 — view
+ *  Production/s02e01/images/" is 56 characters), short enough that a message written as one
+ *  unbroken paragraph cannot widen the page the expander was collapsed to protect. */
+const GATE_SUMMARY_LIMIT = 140;
+
+/** The first line of a gate's message, as the collapsed expander's summary says it.
+ *
+ *  **Why the first line is enough.** Every gate template in the show scaffold opens with one
+ *  sentence naming what is ready and where it is — "Script drafted: Episodes/s02e01/script.md",
+ *  "Outline ready: …", "Images ready for s02e01 — view …"
+ *  (`tools/templates/prompts/*.gate.md`) — and everything after it is the reviewers' raw verdicts.
+ *  So the first line is the half of the message that says what the gate is about, and the rest is
+ *  the half Ryan asked to be folded away: the ruling of 2026-10-15, at the s02e01 script gate,
+ *  where the page opened on seven reviewers' JSON and the script was below it.
+ *
+ *  **A pure function and not a slice in the page, because three things can go wrong with it and
+ *  none of them is visible by looking at a rendered expander.** A message whose first line is
+ *  blank would leave the summary reading "the gate's message — " with nothing after the dash. A
+ *  message written as markdown whose first line is a heading would put "## what to check" on the
+ *  screen, markers and all. And a message with no line breaks at all has a "first line" that is
+ *  the whole wall of text, which would widen the page the collapse exists to protect.
+ *
+ *  It is therefore not `firstLine`, which trims one line and nothing else and is right for the
+ *  step errors it serves. This one skips blank lines, strips the leading blockquote, heading and
+ *  bullet markers, drops bold markers, collapses runs of whitespace, and caps the result at
+ *  `GATE_SUMMARY_LIMIT`. The empty string is the honest answer for a message with nothing in it,
+ *  and the caller renders the bare label rather than a dangling dash. */
+export function gateSummaryLine(message: string): string {
+  for (const raw of message.split("\n")) {
+    const line = raw
+      .replace(/^[\s>]+/, "")
+      .replace(/^#{1,6}\s*/, "")
+      .replace(/^[-*+]\s+/, "")
+      .replace(/\*\*/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (line === "") continue;
+    return line.length > GATE_SUMMARY_LIMIT ? `${line.slice(0, GATE_SUMMARY_LIMIT - 1).trimEnd()}…` : line;
+  }
+  return "";
 }
 
 /** A step's progress as one line: the count, the unit, the rate when the log supports one, and
@@ -241,6 +284,192 @@ export function resetLabel(iso: string | undefined): string | undefined {
   const at = Date.parse(iso);
   if (!Number.isFinite(at)) return undefined;
   return new Date(at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+
+/** One run as the situation line reads it: the fields `runSituation` judges, and nothing else.
+ *
+ *  **A structural subset rather than `RunView`, because two differently shaped things carry the
+ *  same run.** The Run page holds a whole `RunView` with its step rows; a Board row holds an
+ *  `EpisodeRow`, which carries the run's state without its steps (`server/runs.ts`'s `episodeRow`
+ *  keeps the gate's identity and not its message, for the same reason: twenty rows of prose is the
+ *  Board's whole payload). Both are assignable to this, so each page calls `runSituation` with the
+ *  object it already has — no adapter at either call site, and no second copy of the vocabulary.
+ *  A `Pick<RunView, …>` could not serve: `RunView.openGate` carries a `message` that an
+ *  `EpisodeRow`'s deliberately omits, so a row would not satisfy the `Pick`.
+ *
+ *  The two optional halves are what tells the callers apart. `steps` is the Run view's and gives
+ *  its sentence the in-flight row's loop iteration and progress; `waitingNote` is the Board's
+ *  row-level summary of a Plan I wait, which the server derives from the same step rows
+ *  (`waitingOf`, `server/runs.ts`). A caller that has neither still gets a subject and a sentence. */
+export interface SituationRun {
+  status: RunStatus;
+  position?: { stepId: string; startedAt: string };
+  openGate?: { stepId: string; attempt: number; openedAt: string };
+  failed?: { stepId: string; error: string };
+  /** The engine's sentence for a run asleep until a usage limit resets, as the Board's row carries
+   *  it (`EpisodeRow.waitingNote`). */
+  waitingNote?: string;
+  /** The one line of an archived episode's `archive.json` marker (`EpisodeRow.archiveNote`) —
+   *  where the finished episode is and what made it, which is the whole of what an archived row
+   *  has to say. */
+  archiveNote?: string;
+  /** The run's step rows, which the Run view has and a Board row does not. */
+  steps?: StepRow[];
+}
+
+/** What one surface says about one run: a subject, a sentence, and the name of the one move that
+ *  fits. `action` is a name and not a button, because who may press it is the caller's question
+ *  and not this judgment's (`SituationLine`, `src/components/SituationLine.tsx`). */
+export interface Situation {
+  subject: string;
+  sentence: string;
+  action?: "gate" | "resume" | "continue";
+}
+
+/** The five subjects, which are the whole vocabulary: a reader who has learnt these five has
+ *  learnt every claim the console makes about who holds a run. "A worker is on it," keeps its
+ *  comma because the sentence after it is the engine's own continuation of it — the reason the
+ *  worker is not moving — while the others end their claim and let the sentence start again. */
+const SUBJECT_WORKING = "A worker is on it.";
+const SUBJECT_WORKING_WAIT = "A worker is on it,";
+const SUBJECT_NEEDS_YOU = "Needs you.";
+const SUBJECT_DONE = "Done.";
+const SUBJECT_NOT_STARTED = "Not started.";
+
+/** The time of day out of an ISO timestamp — `14:05:00` out of `2026-10-15T14:05:00.000Z` — and
+ *  the whole string back for anything that is not one.
+ *
+ *  The log's own zone and not the browser's, which is the opposite of what `resetLabel` does, and
+ *  deliberately: a reset time is a *future* moment the operator is deciding whether to wait for,
+ *  so it belongs in the clock they are looking at, while a gate's `openedAt` is a moment they will
+ *  go looking for in the run's log and the event feed, both of which print the log's timestamps.
+ *  This is also the form the gate banner this line replaces used (`Run.tsx`'s `gate-banner`,
+ *  before 2026-10-15), so the string on the screen has not moved. */
+function clockTime(iso: string): string {
+  const t = iso.indexOf("T");
+  return t === -1 ? iso : iso.slice(t + 1, t + 9);
+}
+
+/** The in-flight step's own row, or undefined when nothing is in flight or the caller has no step
+ *  rows (a Board row).
+ *
+ *  `position` names the step that started last and has not ended; the row beside it carries what
+ *  that step is *doing* — its progress, its loop iteration, the engine's sentence for a wait. The
+ *  lookup lives here because two surfaces need the same row: the Run page's step altitude draws
+ *  it and `runSituation` writes the sentence about it, and a page that found the row its own way
+ *  could draw one step underneath a line that named another. */
+export function positionStep(run: Pick<SituationRun, "position" | "steps">): StepRow | undefined {
+  const stepId = run.position?.stepId;
+  if (stepId === undefined) return undefined;
+  return run.steps?.find((s) => s.id === stepId);
+}
+
+/** How far through its attempts a loop step is — "iteration 3 of 15" — or undefined for a row
+ *  that is not a loop or has had no iteration yet.
+ *
+ *  One function because the same words appear twice on the Run page: in the situation line's
+ *  sentence and under the step altitude's elapsed time. It is **not** the step's progress, and the
+ *  two numbers are usually different: the draft loop reports "2/12 scenes" against a cap of
+ *  fifteen iterations (`StepRow.iteration`, `shared/types.ts`). */
+export function iterationLabel(row: Pick<StepRow, "iteration"> | undefined): string | undefined {
+  const it = row?.iteration;
+  return it === undefined ? undefined : `iteration ${it.n} of ${it.max}`;
+}
+
+/** The engine's sentence for a run that is asleep waiting out a Claude plan usage limit, from
+ *  whichever of the two shapes the caller has: the Board's row-level `waitingNote`, or the step row
+ *  the Run view holds.
+ *
+ *  The step-row rule is the server's own (`waitingOf`, `server/runs.ts`): status `waiting` **and** a
+ *  non-empty `note`. A gate's waiting row carries no note, and `projectSteps` clears the note when
+ *  the retry's `agent_query` starts — so a row that is both is a wait that is still being slept,
+ *  and nothing else is. `stallState` reads the looser "any row with a note", which is right for its
+ *  own question (whether to colour a silence) and would be wrong here: this sentence claims a
+ *  worker is asleep right now. */
+function sleepingNote(run: SituationRun): string | undefined {
+  const rowNote = waitingNote(run);
+  if (rowNote !== undefined) return rowNote;
+  const sleeping = run.steps?.find((s) => s.status === "waiting" && s.note !== undefined && s.note.trim() !== "");
+  return sleeping?.note;
+}
+
+/** Whether the system is working or waiting on the showrunner, and what for: one subject and one
+ *  sentence, rendered by the Run view's status slot and by every row of the Board.
+ *
+ *  **It exists because a notice is not a status.** Ryan's ruling of 2026-10-15 followed a Run view
+ *  showing "resumed — a worker is on it" beside an open script gate: the string was true when the
+ *  POST answered and false a second later, because it recorded an action instead of stating the
+ *  run's state. Every answer below is derived from the view the page has just fetched, so it
+ *  changes on the same refetch the altitudes do (`Run.tsx`'s coalesced `refresh`) and there is no
+ *  moment at which it can describe a state the run has left.
+ *
+ *  **One vocabulary, two surfaces.** The subject is one of the five fixed strings above, so twenty
+ *  Board rows and the Run view make the same claim in the same words. `action` names the one move
+ *  that fits, and the caller decides whether it may be offered: the Run page renders the two POSTs
+ *  only on a show it can act on (`canAct`, ruling H-03) and the open gate always, because that one
+ *  is a GET and reading is all a read-only show offers; the Board renders none of them, because its
+ *  row's own action button is unchanged.
+ *
+ *  It re-derives nothing. The elapsed time is `elapsed`, the progress clause is `progressLabel` —
+ *  the same function `ProgressBar` renders, so the line and the bar cannot disagree — the in-flight
+ *  row is `positionStep`, the iteration clause is `iterationLabel`, and a usage-limit wait is read
+ *  the way the server reads it (`sleepingNote`).
+ *
+ *  **The order of the checks is the status, except that a usage-limit wait outranks the working
+ *  sentence.** Such a run reads `running`, because a worker is holding it and beating its lock
+ *  (spec §4.2), so a line that took the status at its word would say "`draft` for 4h 55m" about a
+ *  step that has been asleep since the afternoon — the reading Plan I exists to prevent. */
+export function runSituation(run: SituationRun, now: Date | number = Date.now()): Situation {
+  switch (run.status) {
+    case "waiting": {
+      const gate = run.openGate;
+      if (gate === undefined) return { subject: SUBJECT_NEEDS_YOU, sentence: "This run is waiting for an answer." };
+      return {
+        subject: SUBJECT_NEEDS_YOU,
+        sentence: `${gate.stepId} has been waiting for an answer since ${clockTime(gate.openedAt)} (attempt ${gate.attempt}).`,
+        action: "gate",
+      };
+    }
+    case "failed": {
+      const failed = run.failed;
+      // A failure the run's state no longer calls one has no step to name (`failedOf`,
+      // `server/runs.ts`, answers undefined for a `step_failed` a later resume swept away), and
+      // Resume is still the move: it runs the run again from wherever it stopped.
+      if (failed === undefined) return { subject: SUBJECT_NEEDS_YOU, sentence: "This run failed. Resume runs it again from where it stopped.", action: "resume" };
+      return {
+        subject: SUBJECT_NEEDS_YOU,
+        sentence: `Failed at ${failed.stepId}: ${firstLine(failed.error)}. Resume runs it again from there.`,
+        action: "resume",
+      };
+    }
+    case "crashed":
+      return { subject: SUBJECT_NEEDS_YOU, sentence: "No process is holding this run. Continue puts a worker back on it.", action: "continue" };
+    case "completed":
+      return { subject: SUBJECT_DONE, sentence: "Nothing needs you." };
+    case "archived":
+      // An episode finished outside the engine. The marker's one line is the whole of what the row
+      // has to say — where the finished episode is and what made it — and it is said here rather
+      // than twice, which is why the Board's archived chip is the bare word (`Board.tsx`).
+      return { subject: SUBJECT_DONE, sentence: run.archiveNote ?? "Finished outside the engine." };
+    case "none":
+      return { subject: SUBJECT_NOT_STARTED, sentence: "" };
+    case "running": {
+      const note = sleepingNote(run);
+      if (note !== undefined) return { subject: SUBJECT_WORKING_WAIT, sentence: note };
+      const position = run.position;
+      if (position === undefined) return { subject: SUBJECT_WORKING, sentence: "a step is in flight" };
+      const row = positionStep(run);
+      let sentence = `${position.stepId} for ${elapsed(position.startedAt, now)}`;
+      const iteration = iterationLabel(row);
+      if (iteration !== undefined) sentence += ` (${iteration})`;
+      if (row?.progress !== undefined) sentence += ` · ${progressLabel(row.progress)}`;
+      return { subject: SUBJECT_WORKING, sentence };
+    }
+    default:
+      // Every `RunStatus` is answered above; a status the wire grew that this code has not learnt
+      // says so rather than rendering an empty line.
+      return { subject: SUBJECT_WORKING, sentence: String(run.status) };
+  }
 }
 
 /** The document title: the console's entire alerting story, since the spec rules out web

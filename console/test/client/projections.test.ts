@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { EpisodeRow, RunView, StepRow } from "../../shared/types.js";
 import {
-  STALL_MS, composeNotesWithFlags, composeShotRejection, elapsed, firstLine, progressLabel,
-  quietRow, readOnlyLine, resetLabel, safeHref, showLabel, showReadFailure, stageLabel, stallState,
-  stalled, titleFor, waitingNote,
+  STALL_MS, composeNotesWithFlags, composeShotRejection, elapsed, firstLine, gateSummaryLine,
+  iterationLabel, positionStep, progressLabel, quietRow, readOnlyLine, resetLabel, runSituation,
+  safeHref, showLabel, showReadFailure, stageLabel, stallState, stalled, titleFor, waitingNote,
 } from "../../src/projections.js";
 
 /** The client's pure helpers. Every one of them is a function of its arguments and a clock the
@@ -324,6 +324,164 @@ describe("stallState", () => {
   });
 });
 
+describe("runSituation", () => {
+  const NOTE = "waiting for the usage limit to reset at 7:50pm America/New_York (weekly quota 41%)";
+  const at = "2026-10-15T14:00:00.000Z";
+  const plus = (seconds: number) => new Date(Date.parse(at) + seconds * 1000);
+
+  it("names the step in flight and how long it has been, for a run a worker is holding", () => {
+    const running = view({
+      status: "running",
+      position: { stepId: "draft", startedAt: at },
+      steps: [step({ id: "draft", kind: "loop", status: "running" })],
+    });
+    expect(runSituation(running, plus(725))).toEqual({ subject: "A worker is on it.", sentence: "draft for 12m 05s" });
+  });
+
+  it("adds the loop's iteration and the step's progress, which are two different numbers", () => {
+    // The draft loop reports "2/12 scenes" against a cap of fifteen iterations: how much work is
+    // done and how close the loop is to exhausting its attempts are not the same question, and a
+    // line that printed only the first would hide a loop about to fail.
+    const looping = view({
+      status: "running",
+      position: { stepId: "draft", startedAt: at },
+      steps: [step({
+        id: "draft", kind: "loop", status: "running",
+        iteration: { n: 3, max: 15 },
+        progress: { done: 2, total: 12, unit: "scenes" },
+      })],
+    });
+    expect(runSituation(looping, plus(725))).toEqual({
+      subject: "A worker is on it.",
+      sentence: "draft for 12m 05s (iteration 3 of 15) · 2/12 scenes",
+    });
+  });
+
+  it("says the engine's reason verbatim for a step asleep until a usage limit resets (Plan I)", () => {
+    // The subject keeps its comma: the engine's sentence continues it. And the status is
+    // `running`, correctly — a worker is holding the run and beating its lock — so this case has
+    // to outrank the working sentence or the line would count a five-hour sleep as work.
+    const sleeping = view({
+      status: "running",
+      position: { stepId: "draft", startedAt: at },
+      steps: [step({ id: "draft", kind: "loop", status: "waiting", note: NOTE, waitingUntil: "2026-10-15T23:50:00.000Z" })],
+    });
+    expect(runSituation(sleeping, plus(17_700))).toEqual({ subject: "A worker is on it,", sentence: NOTE });
+  });
+
+  it("reads the same wait off a Board row, which carries the note and no steps", () => {
+    // The Board's shape: `EpisodeRow.waitingNote` is the server's summary of the step row above
+    // (`waitingOf`, `server/runs.ts`), and the row has no steps to look at. One sentence, so the
+    // row says the wait once instead of printing it under the chip as well.
+    const row_ = row({ status: "running", position: { stepId: "draft", startedAt: at }, waitingNote: NOTE });
+    expect(runSituation(row_, plus(17_700))).toEqual({ subject: "A worker is on it,", sentence: NOTE });
+  });
+
+  it("falls back to 'a step is in flight' when the view names no position", () => {
+    expect(runSituation(view({ status: "running" }), plus(60))).toEqual({
+      subject: "A worker is on it.", sentence: "a step is in flight",
+    });
+  });
+
+  it("asks for the showrunner by name for an open gate, with the gate's age and attempt", () => {
+    const waiting = view({
+      status: "waiting",
+      openGate: { stepId: "script-gate", attempt: 2, message: "approve the script", openedAt: "2026-10-15T14:05:00.000Z" },
+    });
+    expect(runSituation(waiting, plus(3_600))).toEqual({
+      subject: "Needs you.",
+      sentence: "script-gate has been waiting for an answer since 14:05:00 (attempt 2).",
+      action: "gate",
+    });
+  });
+
+  it("names the failed step, its first error line and the remedy", () => {
+    const failed = view({
+      status: "failed",
+      failed: { stepId: "tts-generate", error: "tts-generate failed: 429\n  at fetch (node:internal)" },
+    });
+    expect(runSituation(failed, plus(60))).toEqual({
+      subject: "Needs you.",
+      sentence: "Failed at tts-generate: tts-generate failed: 429. Resume runs it again from there.",
+      action: "resume",
+    });
+  });
+
+  it("still offers Resume for a failed run whose view names no step", () => {
+    // `failedOf` (`server/runs.ts`) answers undefined when the run's state no longer calls the
+    // logged failure a failure, and Resume is still the move.
+    expect(runSituation(view({ status: "failed" }), plus(60))).toEqual({
+      subject: "Needs you.",
+      sentence: "This run failed. Resume runs it again from where it stopped.",
+      action: "resume",
+    });
+  });
+
+  it("says no process is holding a crashed run, and what Continue does about it", () => {
+    expect(runSituation(view({ status: "crashed" }), plus(60))).toEqual({
+      subject: "Needs you.",
+      sentence: "No process is holding this run. Continue puts a worker back on it.",
+      action: "continue",
+    });
+  });
+
+  it("says a completed run needs nothing", () => {
+    expect(runSituation(view({ status: "completed" }), plus(60))).toEqual({ subject: "Done.", sentence: "Nothing needs you." });
+  });
+
+  it("says an episode that has never run has not started, and offers no sentence", () => {
+    expect(runSituation(row({ status: "none" }), plus(60))).toEqual({ subject: "Not started.", sentence: "" });
+  });
+
+  it("reads an archived episode as done, in the words of its own marker", () => {
+    // The seventh `RunStatus`, which the Board has ten of: Season 1 was finished outside the
+    // engine and says so in an `archive.json` marker instead of a log it never had.
+    const archived = row({ status: "archived", stage: "APPROVED_FINAL", archiveNote: "final on the NAS, made by console v1" });
+    expect(runSituation(archived, plus(60))).toEqual({ subject: "Done.", sentence: "final on the NAS, made by console v1" });
+  });
+
+  it("reads an archived episode whose marker says nothing as done all the same", () => {
+    expect(runSituation(row({ status: "archived" }), plus(60))).toEqual({ subject: "Done.", sentence: "Finished outside the engine." });
+  });
+
+  it("is the same judgment on a read-only show, because who may act is the caller's question", () => {
+    // Plan H's rule is about what is rendered: the projection carries no `canAct`, so a read-only
+    // show's Board row says exactly what a writable one's does about the same run. The missing
+    // button is asserted where it is withheld (`test/client/situation-line.test.tsx`).
+    const waiting = view({
+      status: "waiting",
+      openGate: { stepId: "script-gate", attempt: 1, message: "approve the script", openedAt: at },
+    });
+    expect(runSituation(waiting, plus(60)).action).toBe("gate");
+  });
+});
+
+describe("positionStep", () => {
+  it("finds the in-flight step's own row", () => {
+    const running = view({
+      position: { stepId: "draft", startedAt: "2026-10-15T14:00:00.000Z" },
+      steps: [step({ id: "outline", status: "completed" }), step({ id: "draft", kind: "loop", status: "running" })],
+    });
+    expect(positionStep(running)?.id).toBe("draft");
+  });
+
+  it("answers nothing for a run with nothing in flight, and for a Board row with no steps", () => {
+    expect(positionStep(view({ steps: [step({ id: "draft" })] }))).toBeUndefined();
+    expect(positionStep({ position: { stepId: "draft", startedAt: "2026-10-15T14:00:00.000Z" } })).toBeUndefined();
+  });
+});
+
+describe("iterationLabel", () => {
+  it("says which iteration of how many a loop is on", () => {
+    expect(iterationLabel(step({ iteration: { n: 3, max: 15 } }))).toBe("iteration 3 of 15");
+  });
+
+  it("says nothing for a step that is not a loop or has had no iteration", () => {
+    expect(iterationLabel(step())).toBeUndefined();
+    expect(iterationLabel(undefined)).toBeUndefined();
+  });
+});
+
 describe("firstLine", () => {
   it("takes the first line of a multi-line error and trims it", () => {
     expect(firstLine("tts-generate failed: 429\n  at fetch (node:internal)\n")).toBe("tts-generate failed: 429");
@@ -347,6 +505,53 @@ describe("progressLabel", () => {
 
   it("reads a rate per minute when the step is slower than one unit a second", () => {
     expect(progressLabel({ done: 2, total: 9, unit: "shots", ratePerSec: 0.004 })).toBe("2/9 shots · 0.2/min");
+  });
+});
+
+describe("gateSummaryLine", () => {
+  it("takes the sentence a gate template opens with, not the verdicts under it", () => {
+    // The real shape of a script gate's message (`tools/templates/prompts/script-gate.gate.md`):
+    // one sentence naming the file, then the reviewers' results, which is the half the expander
+    // folds away.
+    const message = [
+      "Script drafted: Episodes/s02e01/script.md",
+      'Panel verdict (review-gate all-pass): {"pass":true,"issues":[]}',
+      "Approve to commit. Reject with notes for a targeted revision.",
+    ].join("\n");
+    expect(gateSummaryLine(message)).toBe("Script drafted: Episodes/s02e01/script.md");
+  });
+
+  it("skips blank lines rather than summarising a message as nothing", () => {
+    expect(gateSummaryLine("\n   \n\nOutline ready: Episodes/s02e01/outline.md\n")).toBe("Outline ready: Episodes/s02e01/outline.md");
+  });
+
+  it("strips a markdown heading's markers, which a summary would otherwise print", () => {
+    // The bible gate's message is written this way. A summary reading "## what to check" would be
+    // the one place in the console that showed markdown source to the person reading it.
+    expect(gateSummaryLine("## what to check\n\nRead it against the answers before approving.")).toBe("what to check");
+  });
+
+  it("strips a blockquote marker, a bullet and bold markers", () => {
+    expect(gateSummaryLine("> ## quoted heading")).toBe("quoted heading");
+    expect(gateSummaryLine("- Audio ready for s02e01")).toBe("Audio ready for s02e01");
+    expect(gateSummaryLine("**Images ready** for s02e01")).toBe("Images ready for s02e01");
+  });
+
+  it("collapses runs of whitespace, so a tabbed line stays one line", () => {
+    expect(gateSummaryLine("Canon updates proposed\tfor   s02e01.")).toBe("Canon updates proposed for s02e01.");
+  });
+
+  it("caps a message that has no line breaks at all, which is the case that would widen the page", () => {
+    const wall = `Script drafted: ${"verdict ".repeat(60)}`;
+    const summary = gateSummaryLine(wall);
+    expect(summary.length).toBeLessThanOrEqual(140);
+    expect(summary.endsWith("…")).toBe(true);
+    expect(summary.startsWith("Script drafted: verdict")).toBe(true);
+  });
+
+  it("answers the empty string for a message with nothing in it, so the caller draws the bare label", () => {
+    expect(gateSummaryLine("")).toBe("");
+    expect(gateSummaryLine("   \n \t \n")).toBe("");
   });
 });
 

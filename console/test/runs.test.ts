@@ -84,6 +84,10 @@ describe("RunStore", () => {
     expect(draft.progress?.ratePerSec).toBeCloseTo(1 / 20, 3);          // 1 scene over the 20 s between the last two progress events
     expect(draft.progress?.etaSec).toBeCloseTo(200, 0);
     expect(draft.flag).toBe("did-nothing");                              // iteration 2: toolCalls 0, no error
+    // The engine's own iteration count, off the last `loop_iteration` — and deliberately not the
+    // same number as the progress above it: this loop is on 3 of 15 attempts while 2 of 12 scenes
+    // are written, and the situation line says both (`runSituation`, `src/projections.ts`).
+    expect(draft.iteration).toEqual({ n: 3, max: 15 });
     // The logged pipeline beside the pipeline the code builds today: "abc" is not the current
     // hash, so `changed` is true, which is the "this run is older than the code" answer the Run
     // page prints beside the run's own hash.
@@ -253,6 +257,9 @@ describe("RunStore", () => {
     expect(row.status).toBe("running");
     expect(row.waitingNote).toBe(REASON);
     expect(row.waitingUntil).toBe(RESETS);
+    // The step in flight, carried onto the row for the Board's situation line: the row has no step
+    // rows of its own, so without this a working row could only say "a step is in flight".
+    expect(row.position).toEqual({ stepId: "draft", startedAt: t(1) });
 
     // **The sleep ends at the retry's agent_query, not at the step's terminal event.** The
     // executor emits it the moment the sleep is over and then runs a full query — 447 s in the
