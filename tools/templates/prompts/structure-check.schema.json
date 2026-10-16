@@ -14,13 +14,62 @@
     "issues": {
       "type": "array",
       "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "law": {
+            "type": "string"
+          },
+          "line": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "law",
+          "line",
+          "text"
+        ]
+      }
+    },
+    "notes": {
+      "type": "array",
+      "items": {
         "type": "string"
       }
+    },
+    "prior": {
+      "type": "object",
+      "properties": {
+        "resolved": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "unresolved": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "resolved",
+        "unresolved"
+      ]
     }
   },
   "required": [
     "pass",
+    "verdict",
     "issues",
-    "verdict"
+    "notes",
+    "prior"
   ]
 }

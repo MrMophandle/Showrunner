@@ -325,9 +325,14 @@ describe("the init exercise: a whole show from init to its first NEEDS_IDEA", ()
     // carry (`tools/test/templates.test.ts` synthesises those per file as it loops; one context
     // file handed to one CLI invocation cannot). `show` is the config init just wrote, not the
     // fixture's: that is what makes this a check of the new show.
+    // `prior` and `round` come across too: the reviewers' prompts render their own prior verdict
+    // every round and the script gate's message states which round the panel went green on, so a
+    // context without them checks the first pass and nothing else — and `{{round.*}}`, unlike
+    // `{{prior.*}}`, is a hole by name rather than the word `none`, so the gate's message would be
+    // reported as not rendering at all.
     const fixture = JSON.parse(
       await readFile(path.join(import.meta.dirname, "fixtures/harbor-check-context.json"), "utf8"),
-    ) as { results: Record<string, unknown>; season: number };
+    ) as { results: Record<string, unknown>; season: number; prior: Record<string, unknown>; round: { n: number; costUsd: number } };
     const rejection = "The showrunner rejected this step: beat 4 has the Warden opening the conversation. He answers; he does not open.";
     const contextFile = path.join(await tempDir("init-exercise-ctx-"), "check-context.json");
     await writeFile(contextFile, JSON.stringify({
@@ -337,6 +342,8 @@ describe("the init exercise: a whole show from init to its first NEEDS_IDEA", ()
       season: fixture.season,
       show,
       results: { ...fixture.results, "outline-gate:rejection": rejection, "script-gate:rejection": rejection },
+      prior: fixture.prior,
+      round: fixture.round,
     }, null, 2), "utf8");
 
     const promptsDir = path.join(root, "prompts");

@@ -40,8 +40,45 @@ ones before it — then:
   loaded image, distinctive simile, or named construction — even
   paraphrased.
 
-Each issue: "<scene(s) + quote fragment(s) with counts> — <class:
-tic/image/construction/stock/cross-episode(<episode id>)> — <keep-which-one
-or replacement direction>". Pass ONLY if the draft is clean enough that a
-weekly listener would never feel the prose looping.
+Each issue must be one object with four fields:
+- `id` — a short stable name for this finding:
+  "rep-1", "rep-2". Reuse the id the previous round gave the same finding;
+  never renumber an id, and never reuse one for a different finding. The id is
+  how the next round knows which findings closed.
+- `law` — the written law the finding is a defect against, cited as
+  `<law file>:<section or line>`: the file, then the section heading or the
+  line number inside it, so
+  Canon/style-guide.md:## Rules of voice.
+- `line` — where the defect is in the script: the scene, and the line.
+- `text` — what is wrong, in one sentence.
+`pass` is true only when `issues` is empty.
+Raise an issue where a weekly listener would feel the prose looping, and
+carry in `text` the count that proves it.
+A finding you cannot cite a law and a line for is a preference and not a
+defect: put it in `notes`, which never fails the review.
+You block only on a measured count: a finding whose `text` carries no count
+is a note, and your keep-which-one direction is a suggestion and not a law —
+the writer may keep a different instance.
 Set "verdict" to "DRAFT PASSED" when pass is true, "DRAFT FAILED" when false.
+
+## Your prior verdict
+
+Your own verdict from the previous round of this script, or the word none when
+this is the first round:
+{{prior.repetition-check}}
+
+A round is one revision and one re-review, and the issue set only shrinks.
+From round 2 on you may block on two kinds of issue and no others:
+1. One of your own prior issues you judge unresolved. Keep its id, and say in
+   `text` what still stands.
+2. A regression — a new defect in text the revision changed. The writer's
+   round report lists the scenes it touched under the heading ## Changed, and
+   those scenes are the only text a new issue may be raised against.
+Everything else you notice this round goes in `notes` and fails nothing.
+
+Account for every prior issue by its id in `prior`: each goes in `resolved`
+or in `unresolved`. Every id in `unresolved` must appear in `issues` too,
+and no id in `resolved` may. A prior issue the writer's round report lists
+under the heading ## Deliberate exceptions — citing by file and line the
+clause of `Canon/style-guide.md` that licenses a knowing exception — is
+closed: it goes in `resolved`, and you do not raise it again.

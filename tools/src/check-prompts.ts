@@ -11,6 +11,16 @@
  *  sample set for the whole directory. A prompt naming a var that object does not carry is reported
  *  like any other hole.
  *
+ *  **The review round is two more context keys, `prior` and `round`.** A reviewer's prompt renders
+ *  its own previous verdict as `{{prior.<its own step id>}}` and the script gate's message states
+ *  which round the panel went green on, and both come from the run's `panel_round` event rather
+ *  than from any step's result — so the checker, which has no run, takes them from the context file
+ *  beside `results`. They are reported unlike each other on purpose, because the engine's renderer
+ *  answers them unlike each other: an id `prior` does not carry renders the word `none` (round 1
+ *  has no previous verdict for anybody, and failing there would fail the first round of every run),
+ *  while a missing `round` is a hole by name. A context file for a show should carry both, so that
+ *  what is checked is the round-2 prompt and not only the first pass.
+ *
  *  Every `.md` file in the directory is checked, with no special case for a gate message or a
  *  rejection prompt. A gate message is rendered by the same `renderPrompt` at run time and is read
  *  by the showrunner at an approval, so a hole in one misleads the one person the pipeline cannot
@@ -51,6 +61,18 @@ export interface CheckContext {
    *  one sample set the context file supplies. A prompt naming a var this object does not carry is
    *  a hole, which is the point — the check is what catches it before a run does. */
   vars?: Record<string, string>;
+  /** The previous review round's verdicts, by step id, for `{{prior.<stepId>}}` — what a run's
+   *  `panel_round` event carries. The reviewers' prompts and the writer's each render one every
+   *  round, and the engine's renderer answers an id this object does not hold with the word `none`
+   *  rather than a hole (round 1 has no previous verdict for anybody). It is here so a check can
+   *  exercise the *second* round's prompt, which is the one the convergence rule is written for:
+   *  with no `prior` every reviewer renders `none` and the round-2 text is never substituted. */
+  prior?: Record<string, unknown>;
+  /** The round a prompt may name as `{{round.n}}` and `{{round.costUsd}}` — the script gate's
+   *  message does both. Unlike `prior` this one is a hole when it is absent, because the engine's
+   *  renderer fails `{{round.*}}` by name, so a context file that omits it reports every prompt
+   *  that states which round the panel went green on. */
+  round?: { n: number; costUsd: number };
 }
 
 export interface CheckOptions {
@@ -73,6 +95,8 @@ export async function checkPrompts(opts: CheckOptions): Promise<CheckError[]> {
     // Record<string, unknown> without it.
     ...(context.show !== undefined ? { show: context.show as unknown as Record<string, unknown> } : {}),
     ...(context.vars !== undefined ? { vars: context.vars } : {}),
+    ...(context.prior !== undefined ? { prior: context.prior } : {}),
+    ...(context.round !== undefined ? { round: context.round } : {}),
   };
   const ctx = {
     episodeId: context.episodeId,
@@ -215,7 +239,7 @@ export async function promptBaseline(opts: BaselineOptions): Promise<BaselineRow
 // CLI
 
 const USAGE = "usage: check-prompts --prompts <dir> [--context <json-file>] [--baseline]\n"
-  + "  --context <file>  render every prompt and report the ones with holes: { episodeId, runId, showRoot, results, season?, show?, vars? }\n"
+  + "  --context <file>  render every prompt and report the ones with holes: { episodeId, runId, showRoot, results, season?, show?, vars?, prior?, round? }\n"
   + "  --baseline        report, per prompt, which side has drifted since init copied it\n"
   + "  one of the two is required; both may be given";
 
@@ -267,6 +291,28 @@ export function asCheckContext(value: unknown, file: string): CheckContext {
       if (typeof value !== "string") throw new Error(`context file ${file}: vars.${name} must be a string`);
     }
   }
+  // `prior` and `round`, refused rather than dropped for the same reason `vars` is: a dropped
+  // `round` would report the script gate's message as a hole and send the reader to the template,
+  // which is not the file at fault. The two are refused differently because the renderer treats
+  // them differently — a `prior` this object does not carry renders the word `none`, so only its
+  // *shape* can be wrong, while a missing `round` is a hole by name and its two fields must both
+  // be numbers a money line can print.
+  const prior = record["prior"];
+  if (prior !== undefined && (typeof prior !== "object" || prior === null || Array.isArray(prior))) {
+    throw new Error(`context file ${file}: prior must be an object of prior verdicts keyed by step id`);
+  }
+  const round = record["round"];
+  if (round !== undefined) {
+    if (typeof round !== "object" || round === null || Array.isArray(round)) {
+      throw new Error(`context file ${file}: round must be an object of { n, costUsd }`);
+    }
+    for (const key of ["n", "costUsd"] as const) {
+      const value = (round as Record<string, unknown>)[key];
+      if (typeof value !== "number" || !Number.isFinite(value)) {
+        throw new Error(`context file ${file}: round.${key} must be a finite number`);
+      }
+    }
+  }
   return {
     episodeId: record["episodeId"] as string,
     runId: record["runId"] as string,
@@ -275,6 +321,8 @@ export function asCheckContext(value: unknown, file: string): CheckContext {
     ...(typeof season === "number" ? { season } : {}),
     ...(typeof show === "object" && show !== null && !Array.isArray(show) ? { show: show as Record<string, unknown> } : {}),
     ...(vars !== undefined ? { vars: vars as Record<string, string> } : {}),
+    ...(prior !== undefined ? { prior: prior as Record<string, unknown> } : {}),
+    ...(round !== undefined ? { round: round as { n: number; costUsd: number } } : {}),
   };
 }
 

@@ -49,12 +49,21 @@ describe("prompt templates render against the invented show", () => {
   it("every prompt renders with no hole, given the Harbor Lights context", async () => {
     const context = JSON.parse(await readFile(path.join(__dirname, "fixtures/harbor-check-context.json"), "utf8"));
     const ctx = { episodeId: context.episodeId, runId: context.runId, showRoot: context.showRoot, results: context.results };
+    // The review round's two variables ride in the extra beside the show config, because they come
+    // from the run's `panel_round` event and not from any step's result. Asserted present rather
+    // than passed blindly: `{{prior.<id>}}` renders the word `none` for a step the object does not
+    // carry, so a fixture that quietly lost its `prior` would render every reviewer and check
+    // nothing. `{{round.*}}` has no such mercy — it is a hole by name, which the gate's message
+    // would report.
+    expect(Object.keys(context.prior)).toContain("tone-check");
+    expect(context.round).toEqual({ n: 2, costUsd: 12.3456 });
+    const round = { prior: context.prior, round: context.round };
     const failures: string[] = [];
     for (const name of await mdFiles(PROMPTS)) {
       const text = await readFile(path.join(PROMPTS, name), "utf8");
       const isReject = name.endsWith(".reject.md");
       const results = isReject ? { ...context.results, [`${name.replace(/\.reject\.md$/, "")}:rejection`]: "notes" } : context.results;
-      try { renderPrompt(text, { ...ctx, results }, { season: context.season, show: context.show }); }
+      try { renderPrompt(text, { ...ctx, results }, { season: context.season, show: context.show, ...round }); }
       catch (err) { failures.push(`${name}: ${err instanceof TemplateError ? err.message : String(err)}`); }
     }
     expect(failures).toEqual([]);
@@ -90,6 +99,193 @@ describe("prompt templates render against the invented show", () => {
       if (!/^You are the .+ for \*\{\{show\.showName\}\}\*\./.test(first)) bad.push(`${name}: ${first}`);
     }
     expect(bad).toEqual([]);
+  });
+});
+
+/** The six craft reviewers, whose prompts and schemas are one form. `canon-review-script` is not
+ *  among them because it is the form's source rather than a copy of it: its pass rule was already
+ *  mechanical, its non-failing field is `deviations`, and its issues are strings, so the six are
+ *  what this plan changed and the seventh is what they were changed to resemble. */
+const CRAFT_REVIEWERS = ["character-check", "environment-check", "flow-check", "repetition-check", "structure-check", "tone-check"] as const;
+
+/** Every reviewer the panel reads a verdict from: the six plus the canon review. Each renders its
+ *  own prior verdict, and the writer renders all seven. */
+const PANEL = [...CRAFT_REVIEWERS, "canon-review-script"] as const;
+
+async function promptText(name: string): Promise<string> {
+  return await readFile(path.join(PROMPTS, `${name}.md`), "utf8");
+}
+
+/** A prompt's text with every run of whitespace collapsed to one space, so a sentence can be
+ *  asserted whole. These prompts are hard-wrapped and reflowed by hand whenever a line grows, and a
+ *  rule that moved across a line break is still the rule — a test that read the raw text would turn
+ *  every rewrap into a failure and teach the next editor to pad the line instead. */
+const flat = (text: string): string => text.replace(/\s+/g, " ");
+
+describe("the panel's reviewers pass only on an empty issue list and judge their own prior issues", () => {
+  /** Why these assertions exist. The script gate now opens only on a green panel, so a reviewer's
+   *  pass rule is what decides whether a run ever ends. Six of the seven used to read "pass only
+   *  if the episode lands" and the like — a judgment about the whole draft, which a reviewer may
+   *  reach differently on identical text — and a loop with no round cap built on that cannot be
+   *  argued to terminate. The rules below are the convergence argument, written where the model
+   *  reads them. */
+  it("each of the six states the mechanical pass rule, the citation format and the non-failing field", async () => {
+    const missing: string[] = [];
+    for (const id of CRAFT_REVIEWERS) {
+      const text = flat(await promptText(id));
+      if (!text.includes("`pass` is true only when `issues` is empty")) missing.push(`${id}.md: the pass rule`);
+      if (!text.includes("`<law file>:<section or line>`")) missing.push(`${id}.md: the citation format`);
+      if (!text.includes("put it in `notes`, which never fails the review")) missing.push(`${id}.md: the non-failing field`);
+      // The issue is an object now, and the script line is one of its fields: an issue that cannot
+      // say where it is cannot be judged resolved next round.
+      if (!text.includes("`line` — where the defect is in the script")) missing.push(`${id}.md: the script line`);
+      // And the old rule is gone rather than merely outvoted by the new one.
+      if (/\bpass only if\b/i.test(text)) missing.push(`${id}.md: a judgment pass rule survives`);
+    }
+    expect(missing).toEqual([]);
+  });
+
+  it("each panel member renders its own prior verdict and no one else's", async () => {
+    const bad: string[] = [];
+    for (const id of PANEL) {
+      const text = await promptText(id);
+      if (!text.includes("## Your prior verdict")) bad.push(`${id}.md: no prior-verdict section`);
+      if (!text.includes(`{{prior.${id}}}`)) bad.push(`${id}.md: does not render {{prior.${id}}}`);
+      // A reviewer judges its own issues and nobody else's — that is what keeps the issue set
+      // shrinking — so a copy-paste that left another reviewer's id in place is a defect.
+      for (const other of PANEL) {
+        if (other !== id && text.includes(`{{prior.${other}}}`)) bad.push(`${id}.md: renders ${other}'s prior verdict`);
+      }
+    }
+    expect(bad).toEqual([]);
+  });
+
+  it("each of the six carries the round-2 rule and accounts for every prior issue by id", async () => {
+    const missing: string[] = [];
+    for (const id of CRAFT_REVIEWERS) {
+      const text = flat(await promptText(id));
+      if (!text.includes("From round 2 on you may block on two kinds of issue and no others")) missing.push(`${id}.md: the round-2 rule`);
+      if (!text.includes("One of your own prior issues you judge unresolved")) missing.push(`${id}.md: the unresolved-prior arm`);
+      if (!text.includes("A regression — a new defect in text the revision changed")) missing.push(`${id}.md: the regression arm`);
+      if (!text.includes("Account for every prior issue by its id in `prior`")) missing.push(`${id}.md: the prior accounting`);
+      // The two headings of the writer's round report, which is where a reviewer learns what the
+      // revision touched and which of its issues the writer declined on purpose.
+      if (!text.includes("## Changed")) missing.push(`${id}.md: does not name the changed-scenes heading`);
+      if (!text.includes("## Deliberate exceptions")) missing.push(`${id}.md: does not name the exceptions heading`);
+      if (!text.includes("Reuse the id the previous round gave the same finding")) missing.push(`${id}.md: the stable id`);
+    }
+    expect(missing).toEqual([]);
+  });
+
+  it("the licensing clause is named and never addressed, because the line belongs to a show", async () => {
+    // A template may not cite the line a particular show's style guide happens to write the
+    // judgment clause on — and this engine's own `canon/style-guide.md` template has no such
+    // section at all. The prompts name the clause by what it licenses and leave the writer to cite
+    // the file and the line of the guide the show actually has.
+    const bad: string[] = [];
+    for (const id of CRAFT_REVIEWERS) {
+      const text = flat(await promptText(id));
+      if (!text.includes("licenses a knowing exception")) bad.push(`${id}.md: the clause is not named`);
+      if (/Canon\/style-guide\.md:\d/.test(text)) bad.push(`${id}.md: cites a line number of a show's own guide`);
+    }
+    expect(bad).toEqual([]);
+  });
+
+  it("the six schemas are one form: ids on the issues, notes beside them, the prior accounted for", async () => {
+    interface ReviewerSchema {
+      properties: Record<string, { properties?: Record<string, unknown>; items?: { properties?: Record<string, unknown>; required?: string[] } }>;
+      required: string[];
+    }
+    const shapes: Record<string, unknown> = {};
+    for (const id of CRAFT_REVIEWERS) {
+      const schema = JSON.parse(await readFile(path.join(PROMPTS, `${id}.schema.json`), "utf8")) as ReviewerSchema;
+      const issues = schema.properties["issues"];
+      shapes[id] = {
+        properties: Object.keys(schema.properties).sort(),
+        required: [...schema.required].sort(),
+        issue: Object.keys(issues?.items?.properties ?? {}).sort(),
+        issueRequired: [...(issues?.items?.required ?? [])].sort(),
+        prior: Object.keys(schema.properties["prior"]?.properties ?? {}).sort(),
+      };
+    }
+    // One shape, six files. They are separate files and not one shared schema because a show's
+    // copy of each is its own to tune, which is also why a drift between them has to be a test.
+    const form = {
+      properties: ["issues", "notes", "pass", "prior", "verdict"],
+      required: ["issues", "notes", "pass", "prior", "verdict"],
+      issue: ["id", "law", "line", "text"],
+      issueRequired: ["id", "law", "line", "text"],
+      prior: ["resolved", "unresolved"],
+    };
+    expect(shapes).toEqual(Object.fromEntries(CRAFT_REVIEWERS.map((id) => [id, form])));
+  });
+
+  it("the canon review keeps its own schema, which is the one the six were modelled on", async () => {
+    // Its non-failing field is `deviations` and its pass rule was already "`pass` is true only
+    // when `issues` is empty", so the plan changed its prompt (it reads its prior verdict now) and
+    // deliberately not its schema.
+    const schema = JSON.parse(await readFile(path.join(PROMPTS, "canon-review.schema.json"), "utf8")) as { properties: Record<string, unknown>; required: string[] };
+    expect(Object.keys(schema.properties).sort()).toEqual(["deviations", "issues", "pass", "verdict"]);
+    expect([...schema.required].sort()).toEqual(["deviations", "issues", "pass", "verdict"]);
+  });
+});
+
+describe("the writer is told the precedence and reports its round", () => {
+  it("revise.md reads all seven verdicts as priors and never as step results", async () => {
+    // The round's order is hand-edits-script → revise → the reviewers → panel, so the revision
+    // runs *after* the reset that deleted the reviewers' results and *before* they produce new
+    // ones. A `{{results.tone-check}}` in this prompt is therefore a hole that fails the step on
+    // every round 2, which is why the verdicts arrive as `{{prior.<id>}}`.
+    const text = await promptText("revise");
+    const bad: string[] = [];
+    for (const id of PANEL) {
+      if (!text.includes(`{{prior.${id}}}`)) bad.push(`revise.md does not render {{prior.${id}}}`);
+      if (text.includes(`{{results.${id}}}`)) bad.push(`revise.md still renders {{results.${id}}}`);
+    }
+    if (!text.includes("{{prior.revise}}")) bad.push("revise.md does not render its own prior round report");
+    expect(bad).toEqual([]);
+  });
+
+  it("revise.md names the precedence, requires the two-section round report, and has no sentinel", async () => {
+    const text = flat(await promptText("revise"));
+    expect(text).toContain("A canon issue outranks every other finding");
+    expect(text).toContain("cites a law and a line outranks one that cites");
+    expect(text).toContain("satisfy the cited law");
+    expect(text).toContain("`repetition-check` blocks only on measured counts");
+    expect(text).toContain("## Changed");
+    expect(text).toContain("## Deliberate exceptions");
+    // The sentinel is retired. The measured convergence failure of the one real review round was
+    // the writer withholding it after doing the work, and the panel is the arbiter now: a
+    // revision that did not land is caught by the next round's verdicts.
+    expect(text).not.toContain("REVISIONS_COMPLETE");
+  });
+});
+
+describe("the script gate opens on a green panel and says what the rounds cost", () => {
+  it("is three lines, and the round sentence renders", async () => {
+    const context = JSON.parse(await readFile(path.join(__dirname, "fixtures/harbor-check-context.json"), "utf8"));
+    const text = await readFile(path.join(PROMPTS, "script-gate.gate.md"), "utf8");
+    const rendered = renderPrompt(
+      text,
+      { episodeId: context.episodeId, runId: context.runId, showRoot: context.showRoot, results: context.results },
+      { season: context.season, show: context.show, prior: context.prior, round: context.round },
+    );
+    expect(rendered.trimEnd().split("\n")).toEqual([
+      `Script drafted: ${context.show.episodesDir}/${context.episodeId}/script.md`,
+      "The panel is green after 2 round(s) ($12.3456 of review and revision).",
+      "Approve to commit. Reject with notes for a targeted revision.",
+    ]);
+    // The seven verdict dumps are gone: the gate opens green, so printing them said "pass" seven
+    // times over, and the console's verdict board draws the per-reviewer detail from the log.
+    for (const id of PANEL) expect(text).not.toContain(`{{results.${id}}}`);
+  });
+
+  it("the outline gate's message is left alone", async () => {
+    // Its panel is not looped — one canon reviewer, no round — and it already reads a path rather
+    // than dumping a verdict, which is the pattern the script gate was moved towards.
+    const text = await readFile(path.join(PROMPTS, "outline-gate.gate.md"), "utf8");
+    expect(text).toContain("{{results.canon-review-outline.verdict}}");
+    expect(text).not.toContain("{{round.");
   });
 });
 
