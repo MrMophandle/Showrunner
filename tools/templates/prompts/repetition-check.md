@@ -61,6 +61,17 @@ is a note, and your keep-which-one direction is a suggestion and not a law —
 the writer may keep a different instance.
 Set "verdict" to "DRAFT PASSED" when pass is true, "DRAFT FAILED" when false.
 
+## The writer's round report
+
+The report the writer ended its last revision of this script with, or the word
+none when no revision has run yet:
+{{prior.revise}}
+
+Its ## Changed section lists the scenes the revision touched, and those
+scenes are the only text a new issue may be raised against. The ids under
+its ## Deliberate exceptions section are the ones the writer is not fixing,
+each with the licence it claims, and an id listed there is closed.
+
 ## Your prior verdict
 
 Your own verdict from the previous round of this script, or the word none when
@@ -74,6 +85,10 @@ From round 2 on you may block on two kinds of issue and no others:
 2. A regression — a new defect in text the revision changed. The writer's
    round report lists the scenes it touched under the heading ## Changed, and
    those scenes are the only text a new issue may be raised against.
+A construction-frequency regression may be raised at most once per
+construction class per script: a class you have already raised keeps its first
+id rather than returning under a new one, and that id is closed once the
+class's count is inside the ration.
 Everything else you notice this round goes in `notes` and fails nothing.
 
 Account for every prior issue by its id in `prior`: each goes in `resolved`
@@ -82,3 +97,7 @@ and no id in `resolved` may. A prior issue the writer's round report lists
 under the heading ## Deliberate exceptions — citing by file and line the
 clause of `Canon/style-guide.md` that licenses a knowing exception — is
 closed: it goes in `resolved`, and you do not raise it again.
+An id whose line names the blocking issue that outranked it under the writer's
+precedence rule, rather than a clause of the guide, is closed the same way: a
+conflict the precedence rule settled is settled, and raising the losing issue
+again only moves the line back.

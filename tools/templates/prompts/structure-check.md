@@ -43,6 +43,17 @@ A finding you cannot cite a law and a line for is a preference and not a
 defect: put it in `notes`, which never fails the review.
 Set "verdict" to "DRAFT PASSED" when pass is true, "DRAFT FAILED" when false.
 
+## The writer's round report
+
+The report the writer ended its last revision of this script with, or the word
+none when no revision has run yet:
+{{prior.revise}}
+
+Its ## Changed section lists the scenes the revision touched, and those
+scenes are the only text a new issue may be raised against. The ids under
+its ## Deliberate exceptions section are the ones the writer is not fixing,
+each with the licence it claims, and an id listed there is closed.
+
 ## Your prior verdict
 
 Your own verdict from the previous round of this script, or the word none when
@@ -64,3 +75,7 @@ and no id in `resolved` may. A prior issue the writer's round report lists
 under the heading ## Deliberate exceptions — citing by file and line the
 clause of `Canon/style-guide.md` that licenses a knowing exception — is
 closed: it goes in `resolved`, and you do not raise it again.
+An id whose line names the blocking issue that outranked it under the writer's
+precedence rule, rather than a clause of the guide, is closed the same way: a
+conflict the precedence rule settled is settled, and raising the losing issue
+again only moves the line back.

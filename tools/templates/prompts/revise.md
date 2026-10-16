@@ -31,8 +31,10 @@ none when this is your first round on it:
 2. A blocking issue that cites a law and a line outranks one that cites
    judgment.
 3. Where two blocking issues conflict on one line, satisfy the cited law, and
-   record the choice in your round report. The next round's reviewers read that
-   report; a choice you do not record reads to them as an issue you ignored.
+   record the choice in your round report: the losing issue's id goes under
+   ## Deliberate exceptions, licensed by the id that outranked it. The next
+   round's reviewers read that report; a choice you do not record reads to them
+   as an issue you ignored.
 4. `repetition-check` blocks only on measured counts. Its keep-which-one
    direction is a note and not a law: keep whichever instance is load-bearing,
    and say which in your report when you keep a different one.
@@ -58,9 +60,11 @@ End your reply with exactly these two sections, and nothing after them:
     <one line per scene you touched: the scene, and what changed in it>
 
     ## Deliberate exceptions
-    <one line per issue id you are NOT fixing: the id, the clause of
-    Canon/style-guide.md that licenses a knowing exception, cited by file and
-    line, and why this one is knowing rather than an oversight>
+    <one line per issue id you are NOT fixing: the id, then its licence —
+    either the clause of Canon/style-guide.md that licenses a knowing
+    exception, cited by file and line, or the id of the blocking issue that
+    outranked this one under the precedence rule, named — and why this one is
+    knowing rather than an oversight>
 
 The next round's reviewers read that report. The scenes you list as changed are
 the only text they may raise a new issue against, and an issue id you list as a

@@ -56,6 +56,11 @@ describe("prompt templates render against the invented show", () => {
     // nothing. `{{round.*}}` has no such mercy — it is a hole by name, which the gate's message
     // would report.
     expect(Object.keys(context.prior)).toContain("tone-check");
+    // And the writer's round report, which every panel prompt renders from C-1 on. A fixture that
+    // lost this key would render the word `none` into eight prompts and assert nothing about the
+    // document the reviewers' two round-2 rules are written against.
+    expect(context.prior.revise).toContain("## Changed");
+    expect(context.prior.revise).toContain("## Deliberate exceptions");
     expect(context.round).toEqual({ n: 2, costUsd: 12.3456 });
     const round = { prior: context.prior, round: context.round };
     const failures: string[] = [];
@@ -145,12 +150,21 @@ describe("the panel's reviewers pass only on an empty issue list and judge their
     expect(missing).toEqual([]);
   });
 
-  it("each panel member renders its own prior verdict and no one else's", async () => {
+  it("each panel member renders its own prior verdict and the writer's round report, and no other reviewer's", async () => {
     const bad: string[] = [];
     for (const id of PANEL) {
       const text = await promptText(id);
       if (!text.includes("## Your prior verdict")) bad.push(`${id}.md: no prior-verdict section`);
       if (!text.includes(`{{prior.${id}}}`)) bad.push(`${id}.md: does not render {{prior.${id}}}`);
+      // **And the writer's round report, which is the document the two rules below it are written
+      // against** (C-1, the whole-branch review of 2026-10-15): the changed scenes a regression may
+      // be raised on, and the exception list that closes a prior issue. For the length of one branch
+      // that report was written by the engine into `panel_round`, required by all seven prompts,
+      // documented in this directory's README as something the reviewers read — and rendered into
+      // none of them, which left the loop's only bound the weekly quota. The assertion is positive
+      // on purpose: a prompt copied from another and reflowed without the variable fails here by
+      // name, instead of passing while the convergence argument quietly stops holding.
+      if (!text.includes("{{prior.revise}}")) bad.push(`${id}.md: does not render {{prior.revise}}`);
       // A reviewer judges its own issues and nobody else's — that is what keeps the issue set
       // shrinking — so a copy-paste that left another reviewer's id in place is a defect.
       for (const other of PANEL) {
@@ -173,8 +187,40 @@ describe("the panel's reviewers pass only on an empty issue list and judge their
       if (!text.includes("## Changed")) missing.push(`${id}.md: does not name the changed-scenes heading`);
       if (!text.includes("## Deliberate exceptions")) missing.push(`${id}.md: does not name the exceptions heading`);
       if (!text.includes("Reuse the id the previous round gave the same finding")) missing.push(`${id}.md: the stable id`);
+      // The two sentences of the round-report section that say what the report is read *for*, so a
+      // prompt that renders `{{prior.revise}}` and explains nothing is not counted as wired.
+      if (!text.includes("those scenes are the only text a new issue may be raised against")) missing.push(`${id}.md: the changed-scenes rule`);
+      if (!text.includes("an id listed there is closed")) missing.push(`${id}.md: the exceptions rule`);
+      // I-2: a conflict the writer's precedence rule settled has a licence of its own, and a
+      // reviewer that does not accept it re-raises the losing issue every round forever — the
+      // measured case, where one reviewer asks for a cut of the line another asks to keep.
+      if (!text.includes("the blocking issue that outranked it under the writer's precedence rule")) missing.push(`${id}.md: the outranked-issue licence`);
+      if (!text.includes("is closed the same way")) missing.push(`${id}.md: the licence does not close the issue`);
     }
     expect(missing).toEqual([]);
+  });
+
+  it("the canon review reads the report and closes nothing of its own by it", async () => {
+    // Canon is exempt from the writer's exception list by design, and from I-2's licence for the
+    // same reason: a canon issue outranks every other finding (`revise.md`'s precedence rule 1), so
+    // no canon issue is ever the outranked one. It still reads the report, because the changed
+    // scenes bound its regressions exactly as they bound the six's.
+    const text = flat(await promptText("canon-review-script"));
+    expect(text).toContain("{{prior.revise}}");
+    expect(text).toContain("a new contradiction of canon may be raised against");
+    expect(text).toContain("close nothing of yours");
+    expect(text).toContain("no issue of yours is ever the outranked one");
+  });
+
+  it("repetition-check's construction-frequency regression is raised once per class per script", async () => {
+    // I-3, the one reviewer whose findings are *created* by the act of fixing them: every revision
+    // writes new prose, and whatever construction the writer reaches for N times inside the changed
+    // scenes is a legal regression under arm 2. Without a bound this reviewer can block on a fresh
+    // construction every round forever without breaking a single rule, which makes the weekly quota
+    // the only stop in the one case the inventory predicted in advance (§6.4).
+    const text = flat(await promptText("repetition-check"));
+    expect(text).toContain("A construction-frequency regression may be raised at most once per construction class per script");
+    expect(text).toContain("closed once the class's count is inside the ration");
   });
 
   it("the licensing clause is named and never addressed, because the line belongs to a show", async () => {
@@ -254,6 +300,11 @@ describe("the writer is told the precedence and reports its round", () => {
     expect(text).toContain("`repetition-check` blocks only on measured counts");
     expect(text).toContain("## Changed");
     expect(text).toContain("## Deliberate exceptions");
+    // I-2: the licence the exceptions section accepts is two things now, not one — the guide's
+    // clause, or the id that outranked this issue — and precedence rule 3 says which section the
+    // losing id goes in, because a choice recorded anywhere else closes nothing.
+    expect(text).toContain("or the id of the blocking issue that outranked this one under the precedence rule, named");
+    expect(text).toContain("the losing issue's id goes under ## Deliberate exceptions, licensed by the id that outranked it");
     // The sentinel is retired. The measured convergence failure of the one real review round was
     // the writer withholding it after doing the work, and the panel is the arbiter now: a
     // revision that did not land is caught by the next round's verdicts.
