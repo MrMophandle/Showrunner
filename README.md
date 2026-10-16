@@ -94,8 +94,9 @@ root. Both ids are validated before they become that path. Every event carries `
 optional `stepId`, a `kind`, and a `payload`; the engine stamps `ts` itself, so a caller cannot
 backdate an entry.
 
-There are exactly nineteen kinds. The engine core writes fifteen of them; the three `agent_*` kinds
-and `step_waiting` are the agent executor's obligation.
+There are exactly twenty kinds. The engine core writes sixteen of them — `panel_round` is the
+runner's, written by a `panel` step — and the three `agent_*` kinds and `step_waiting` are the agent
+executor's obligation.
 
 | Kind | `stepId` | Payload the engine writes |
 |---|---|---|

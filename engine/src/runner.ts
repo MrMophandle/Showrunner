@@ -838,10 +838,18 @@ async function runPanelStep(
     const stale = [...new Set([...batched, ...plannedResets])]
       .filter((id) => id !== step.id && !visitedAfter(events, id, batchAt));
     if (stale.length > 0) {
-      // Round `written`'s writes stand and its re-runs do not. Nothing is written here — a second
-      // batch would reset steps that had already re-run, and a second `panel_round` would charge
-      // the run a round it never reviewed.
-      return { kind: "reset", stepIds: plannedResets };
+      // Round `written`'s writes stand and its re-runs do not, so the pass is sent back for **the
+      // stale steps only**. Nothing is written here — a second batch would reset steps that had
+      // already re-run, and a second `panel_round` would charge the run a round it never reviewed.
+      //
+      // **`stale` and not the whole declared set** (the whole-branch review of 2026-10-15). The
+      // runner drops the result of every id this outcome names (`execute`'s reset arm), so naming a
+      // step that had already re-run in this very pass would delete a fresh completion and run it
+      // again: on the measured pipeline that is a second writer call inside one round — $3.23 and
+      // the one-fresh-revise-per-round invariant — plus a second panel for every reviewer caught
+      // with it. The steps the crashed run owed are exactly the ones that have not been visited
+      // since its batch, and they are the ones to re-run.
+      return { kind: "reset", stepIds: stale };
     }
   }
 

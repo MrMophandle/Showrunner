@@ -81,6 +81,10 @@ async function setup(knobs: Knobs = {}) {
     calls.push(step.id);
     const nth = (runs.get(step.id) ?? 0) + 1;
     runs.set(step.id, nth);
+    // One agent_query per query is the executor's own obligation (`steps.ts`'s Executors contract),
+    // and it is what the log answers "how many times was this step queried" with — the question a
+    // round's cost turns on, since each query is a fresh session and its own money.
+    await emit("agent_query", { promptFile: `${step.id}.md`, model: step.model, context: step.context, resumed: false });
     if (step.id === "revise") {
       await emit("agent_result", { ok: true, toolCalls: 6, costUsd: knobs.reviseCostUsd ?? 3.2348, sessionId: `revise-${nth}` });
       return { ok: true, text: "revised", toolCalls: 6 };
@@ -105,6 +109,8 @@ async function setup(knobs: Knobs = {}) {
 }
 
 const kinds = (events: Event[], kind: Event["kind"]) => events.filter((e) => e.kind === kind);
+const queries = (events: Event[], stepId: string) => kinds(events, "agent_query").filter((e) => e.stepId === stepId).length;
+const starts = (events: Event[], stepId: string) => kinds(events, "step_started").filter((e) => e.stepId === stepId).length;
 const rounds = (events: Event[]) => kinds(events, "panel_round").map((e) => e.payload);
 const resetsBy = (events: Event[], by: string) => kinds(events, "step_reset").filter((e) => e.payload["by"] === by).map((e) => e.stepId);
 const at = (n: number) => `2026-01-01T10:00:${String(n).padStart(2, "0")}.000Z`;
@@ -167,6 +173,11 @@ describe("the panel step", () => {
     const started = events.filter((e) => e.kind === "step_started" && e.stepId === "panel").map((e) => e.payload["round"]);
     expect(started).toEqual([1, 2]);
     expect(events.find((e) => e.kind === "step_completed" && e.stepId === "panel")?.payload).toMatchObject({ result: { round: 2, green: true } });
+    // One fresh query per step per round, which is what the round's cost is a sum of: two rounds of
+    // two reviewers, and the writer called once — on round 2 only, since round 1 bypassed it.
+    expect(queries(events, "revise")).toBe(1);
+    expect(queries(events, "tone-check")).toBe(2);
+    expect(queries(events, "flow-check")).toBe(2);
     // The gate's sentence names the round the run reached and what the loop cost: four reviewer
     // calls at $0.7130 across the two rounds plus one revision at $3.2348, by session maximum.
     if (r.status === "waiting") expect(r.gate.message).toBe("The panel is green after 2 round(s) ($6.0868 of review and revision).");
@@ -181,15 +192,19 @@ describe("the panel step", () => {
     expect(runs.get("tone-check")).toBe(3);
     expect(runs.get("flow-check")).toBe(3);
     expect(calls.filter((c) => c === "revise")).toHaveLength(2);
+    expect(queries(events, "revise")).toBe(2);
+    expect(queries(events, "tone-check")).toBe(3);
     expect(events.filter((e) => e.kind === "step_started" && e.stepId === "panel").map((e) => e.payload["round"])).toEqual([1, 2, 3]);
     expect(events.find((e) => e.kind === "step_completed" && e.stepId === "panel")?.payload).toMatchObject({ result: { round: 3, green: true } });
   });
 
   it("(d) a crashed round's half-written batch is finished by one reset, not by a second round", async () => {
     // The log as a run that died between the batch's writes and the re-runs left it: round 1 is
-    // written, and four of the five step_resets landed — `flow-check`'s did not, so its round-1
-    // verdict is still standing and the pass will not re-run it on its own.
-    const { root, log, go } = await setup({ passes: (id, nth) => !(id === "tone-check" && nth === 1) });
+    // written — `tone-check` had failed it — and four of the five step_resets landed. `flow-check`'s
+    // did not, so its round-1 verdict is still standing and the pass will not re-run it on its own.
+    // The reviewers pass when they do re-run, which is the ordinary way a round ends: the writer
+    // revised, and round 2 is green. So the only thing this case measures is which steps re-ran.
+    const { root, log, go, calls } = await setup();
     const verdict = (pass: boolean) => ({ pass, verdict: pass ? "DRAFT PASSED" : "DRAFT FAILED", issues: pass ? [] : ["tone-check: round 1"] });
     await writeCrashLog(log.path, [
       { runId: "r1", kind: "run_started", payload: { pipeline: "p", episodeId: "s02e01" } },
@@ -220,9 +235,25 @@ describe("the panel step", () => {
     expect(rounds(events).map((p) => p["round"])).toEqual([1]);
     expect(resetsBy(events, "panel:panel:round-1")).toEqual(["hand-edits", "revise", "tone-check", "panel"]);
     // And the restart it asked for brought `flow-check` back, so round 2 judged two fresh verdicts.
-    expect(events.filter((e) => e.kind === "step_started" && e.stepId === "flow-check")).toHaveLength(2);
+    expect(starts(events, "flow-check")).toBe(2);
     expect(events.filter((e) => e.kind === "step_started" && e.stepId === "panel").map((e) => e.payload["round"])).toEqual([1, 2, 2]);
     expect(events.find((e) => e.kind === "step_completed" && e.stepId === "panel")?.payload).toMatchObject({ result: { round: 2, green: true } });
+
+    // **Only the stale steps re-ran, and that is the point of the recovery** (the whole-branch review
+    // of 2026-10-15). `flow-check` is the one step the crashed run never reset, so it is the one the
+    // restart owed; `hand-edits`, `revise` and `tone-check` had already re-run in the pass that
+    // reached the panel, and naming them in the outcome would have deleted those fresh completions
+    // and queried them a second time inside one round — a second writer call, $3.23, and the
+    // one-fresh-revise-per-round invariant with it.
+    expect(queries(events, "revise")).toBe(1);
+    expect(queries(events, "tone-check")).toBe(1);
+    expect(queries(events, "flow-check")).toBe(1);
+    expect(calls).toEqual(["revise", "tone-check", "flow-check"]);
+    expect(starts(events, "revise")).toBe(1);
+    expect(starts(events, "hand-edits")).toBe(2);
+    // One session per query, so the log cannot be read as one conversation resumed: the writer's
+    // round is a fresh call and there is exactly one of it.
+    expect(kinds(events, "agent_result").filter((e) => e.stepId === "revise").map((e) => e.payload["sessionId"])).toEqual(["revise-1"]);
   });
 
   it("(d2) a complete batch whose re-runs all happened is evaluated, not reset a second time", async () => {
