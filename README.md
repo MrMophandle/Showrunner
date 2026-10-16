@@ -474,13 +474,18 @@ reviewers, so the gate cannot reopen on a verdict about the script the fix agent
 any of them fails it writes a `panel_round` and resets the round — `hand-edits-script`, `revise`,
 `canon-review-script`, `canon-ledger-script`, the six checks and itself — so the pass runs the
 revision and the reviewers again. `revise` is one fresh writer call per round, bypassed on round 1 by
-a `when` that asks whether the log holds a `panel_round` yet, and each reviewer and the writer are
-handed the previous round's verdicts as `{{prior.<stepId>}}`. There is no round cap; the weekly quota
+a `when` that asks whether the panel's **latest** record is a red round, and each reviewer and the
+writer are handed the previous round's verdicts as `{{prior.<stepId>}}`. The question is the latest
+record and not "has any round ever been red", because the script gate's reset closure takes the
+writer in: asked the looser way, a rejection of a panel that had already gone green paid a writer
+call against issues the reviewers had closed. There is no round cap; the weekly quota
 is the only stop, and the operator's Resume continues the loop (see **The resume contract**).
 
 **`script-gate`'s message is three lines, and the seven verdicts are not among them.** The message
-names the script's path, says `The panel is green after N round(s) ($X of review and revision).`
-from `{{round.n}}` and `{{round.costUsd}}`, and gives the approve/reject line; the per-reviewer
+names the script's path, says `The panel is green after N round(s) ($X.XXXX of review and revision).`
+from `{{round.n}}` and `{{round.costUsd}}` — four decimals, the same format the gate head prints the
+figure in, since the two are one number read through one function — and gives the approve/reject
+line; the per-reviewer
 detail is the console's verdict board on the gate page (`console/README.md`, the Gate view). Before
 Plan J the message interpolated all eight results bare, and the s02e01 script gate of 2026-10-15
 printed 10,618 characters across 71 lines with the verdicts **stale by one revision** — the gate
@@ -618,10 +623,14 @@ The round itself is **The episode pipeline → The eight gates** above and **The
 below; the three paragraphs here are what the *operator* does about each result.
 
 - **A green panel asks for an approval and nothing else.** `script-gate` opens with its three-line
-  message — the script's path, `The panel is green after N round(s) ($X of review and revision).`,
-  and the approve/reject line — the gate page's verdict board carries what each of the seven
-  reviewers found, and the gate head prints `round N · $X.XXXX` beside the attempt. Neither recovery
-  move above applies: the run is waiting for an answer, not failed.
+  message — the script's path, `The panel is green after N round(s) ($X.XXXX of review and
+  revision).`, and the approve/reject line — the gate page's verdict board carries what each of the
+  seven reviewers found, and the gate head prints `round N · $X.XXXX` beside the attempt. Neither
+  recovery move above applies: the run is waiting for an answer, not failed. **N counts the rounds
+  that came back red.** A gate rejection re-runs the panel and writes no `panel_round` for the pass
+  it triggers, so a rejection adds its panel and its revision to the figure without advancing the
+  count: `green after 2 round(s) ($X.XXXX)` can name a figure that paid for three panels and two
+  revisions. The cost is honest and the count is red rounds.
 - **The weekly stop is cleared with `resumeRun`, and Resume continues the loop rather than
   restarting it.** The run is failed at `panel` with the sentence the resume contract quotes, and
   the panel wrote **no** `panel_round` and **no** `step_reset` before failing — so the round the
@@ -629,7 +638,11 @@ below; the three paragraphs here are what the *operator* does about each result.
   goes round because the figure that stopped the run is behind the `run_resumed`. The round count
   itself is never reset by a Resume: a run stopped in round 3 resumes into round 3. `resetSteps` is
   the wrong move here for the same reason it is wrong for a limit — it pays for the round's agent
-  steps again and buys no new verdict.
+  steps again and buys no new verdict. **A Resume taken before the week's quota has actually moved
+  pays a full round to learn that** — about $9.30 and ten minutes on the measured figures — because
+  the panel resets as soon as it is re-entered and the weekly figure is only read again from the
+  `agent_result`s of the round the Resume starts. The reset time the stop sentence quotes is the one
+  worth waiting for.
 - **A five-hour usage limit inside a round asks nothing of the operator**, and that outcome is the
   unchanged one above: the reviewer's or the writer's step logs `step_waiting`, the worker sleeps,
   the step ends with an ordinary `step_completed` when the retry succeeds, and the round carries on.
