@@ -379,8 +379,18 @@ export function iterationLabel(row: Pick<StepRow, "iteration"> | undefined): str
   return it === undefined ? undefined : `iteration ${it.n} of ${it.max}`;
 }
 
-/** Which round of the review panel the run is on — "round 3" — or undefined for a run whose panel
- *  has written none, which is every round 1 (`roundOf`, `server/runs.ts`).
+/** Which round of the review panel the run is on — "round 3" — or undefined on round 1 and for a
+ *  run whose panel has written no round at all (`roundOf`, `server/runs.ts`).
+ *
+ *  **The sentence names a round only from round 2** (Ryan's ruling, 2026-10-15). A run on its first
+ *  round reads exactly as it did before Plan J — `tone-check for 2m 10s` — because the clause exists
+ *  to tell round 3 from round 1, and "round 1" on twenty working rows of the Board is a clause that
+ *  distinguishes nothing while costing every reader of every ordinary run a moment working out that
+ *  it means nothing is wrong. **This is the only place that rule lives.** The round itself is
+ *  reported for a green round 1 — `RunView.round` and `GateView.round` both carry `{ n: 1, … }` —
+ *  because the Gate page's head must agree with the gate's own message, which says "green after 1
+ *  round(s)". Withholding the fact at the server to keep one sentence quiet would have made the gate
+ *  head contradict a figure the showrunner is approving.
  *
  *  **"round 3" and not "round 3 of N", because there is no N.** Plan J's panel has no cap: the loop
  *  runs until every reviewer passes and the only stop is the weekly quota (ruling 1, "No round
@@ -395,7 +405,7 @@ export function iterationLabel(row: Pick<StepRow, "iteration"> | undefined): str
  *  being read, and `RunView.round` carries it for the surfaces that want it. */
 export function roundLabel(run: Pick<SituationRun, "round">): string | undefined {
   const round = run.round;
-  return round === undefined ? undefined : `round ${round.n}`;
+  return round === undefined || round.n <= 1 ? undefined : `round ${round.n}`;
 }
 
 /** The engine's sentence for a run that is asleep waiting out a Claude plan usage limit, from

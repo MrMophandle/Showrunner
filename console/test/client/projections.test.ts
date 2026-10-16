@@ -2,8 +2,9 @@ import { describe, expect, it } from "vitest";
 import type { EpisodeRow, RunView, StepRow } from "../../shared/types.js";
 import {
   STALL_MS, composeNotesWithFlags, composeShotRejection, elapsed, firstLine, gateSummaryLine,
-  iterationLabel, positionStep, progressLabel, quietRow, readOnlyLine, resetLabel, runSituation,
-  safeHref, showLabel, showReadFailure, stageLabel, stallState, stalled, titleFor, waitingNote,
+  iterationLabel, positionStep, progressLabel, quietRow, readOnlyLine, resetLabel, roundLabel,
+  runSituation, safeHref, showLabel, showReadFailure, stageLabel, stallState, stalled, titleFor,
+  waitingNote,
 } from "../../src/projections.js";
 
 /** The client's pure helpers. Every one of them is a function of its arguments and a clock the
@@ -374,20 +375,26 @@ describe("runSituation", () => {
     });
   });
 
-  it("says nothing about a round before the panel has written one, which is every round 1", () => {
-    // The panel writes a `panel_round` only for a round that came back red, so round 1 has none and
-    // the view carries no `round` at all (`roundOf`, `server/runs.ts`). The sentence is then exactly
-    // what it was before Plan J — which is the point: an ordinary run that never loops never grows
-    // a clause, and "round 1" on every working row would be twenty rows of noise.
-    const round1 = view({
-      status: "running",
+  it("names a round only from round 2, whether round 1 is reported or absent", () => {
+    // Two different logs, one sentence. A first round still in flight has no round record at all and
+    // the view carries no `round` (`roundOf`, `server/runs.ts`); a panel that went green on its
+    // first round *is* reported, `{ n: 1, … }`, because the Gate page's head has to agree with the
+    // gate's own message ("green after 1 round(s)"). Neither grows a clause here, and that rule
+    // lives in `roundLabel` alone — an ordinary run that never loops reads exactly as it did before
+    // Plan J, and "round 1" on twenty working rows of the Board would distinguish nothing while
+    // costing every reader a moment working out that it means nothing is wrong.
+    const running = {
+      status: "running" as const,
       position: { stepId: "tone-check", startedAt: at },
       steps: [step({ id: "tone-check", kind: "agent", status: "running" })],
-    });
-    expect(runSituation(round1, plus(130))).toEqual({
-      subject: "A worker is on it.",
-      sentence: "tone-check for 2m 10s",
-    });
+    };
+    const expected = { subject: "A worker is on it.", sentence: "tone-check for 2m 10s" };
+    expect(runSituation(view(running), plus(130))).toEqual(expected);
+    expect(runSituation(view({ ...running, round: { n: 1, costUsd: 6.066 } }), plus(130))).toEqual(expected);
+    // And the label itself, which is where the rule is written.
+    expect(roundLabel({ round: { n: 1, costUsd: 6.066 } })).toBeUndefined();
+    expect(roundLabel({ round: { n: 2, costUsd: 12.132 } })).toBe("round 2");
+    expect(roundLabel({})).toBeUndefined();
   });
 
   it("puts the round outside the loop's iteration, because the round is what contains it", () => {

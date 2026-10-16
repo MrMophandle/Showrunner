@@ -387,11 +387,35 @@ describe("RunStore", () => {
       store.close();
     });
 
-    it("says nothing about a round for a run whose panel has written none", async () => {
+    it("reports a green round 1 off the completion alone, which is the record a first round leaves", async () => {
       const { root, store } = await appWith(await makeShow());
-      // Round 1 in flight, and a run whose panel went green on its first round, are the same log
-      // here: neither has a `panel_round`. The console reports no round for either, which is what
-      // keeps every ordinary run's situation line and gate head reading as they did before Plan J.
+      // The ordinary case: every reviewer passed first time, so the panel wrote no `panel_round` at
+      // all and its completion is the only round record in the log. The round is still reported —
+      // the gate's own message says "green after 1 round(s) ($6.0660 …)" and a head printing
+      // nothing beside it would be the page contradicting itself (Ryan's ruling, 2026-10-15). The
+      // situation line stays quiet on round 1 all the same, which is `roundLabel`'s rule and not
+      // this projection's.
+      await seedRun(root, "s02e01", "r1", [
+        { ts: t(0), kind: "run_started", payload: { pipeline: "episode", episodeId: "s02e01" } },
+        { ts: t(1), stepId: "panel", kind: "step_started", payload: { kind: "panel" } },
+        { ts: t(2), stepId: "panel", kind: "step_completed", payload: {
+          result: { round: 1, green: true }, round: 1, green: true, costUsd: 6.066,
+        } },
+      ]);
+      const v = await store.view("s02e01", "r1");
+      expect(v.round).toEqual({ n: 1, costUsd: 6.066 });
+      const row = await store.episodeRow("s02e01");
+      expect(row.round).toEqual({ n: 1, costUsd: 6.066 });
+      store.close();
+    });
+
+    it("says nothing about a round for a run whose panel has written neither record", async () => {
+      const { root, store } = await appWith(await makeShow());
+      // A first round still in flight: the reviewers have not reported, so the panel has written
+      // neither a `panel_round` nor a completion and there is no round record to read.
+      // `roundExtras` would answer round 1 and nothing spent, which is a figure this log does not
+      // carry — so the field is absent rather than invented. Every run of every pipeline with no
+      // panel in it reads the same way.
       await seedRun(root, "s02e01", "r1", [
         { ts: t(0), kind: "run_started", payload: { pipeline: "episode", episodeId: "s02e01" } },
         { ts: t(1), stepId: "tone-check", kind: "step_started", payload: { kind: "agent" } },

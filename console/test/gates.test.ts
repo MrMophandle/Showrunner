@@ -165,8 +165,20 @@ describe("the gate view", () => {
     expect(v.round).toEqual({ n: 3, costUsd: 19.4812 });
     store.close();
 
-    // `outline-gate` is reached by no panel at all, and neither is a `script-gate` whose panel went
-    // green on its first round. Both read exactly as they did before Plan J.
+    // A panel that went green on its first round wrote no `panel_round`, and its gate still carries
+    // the round — because the gate's own message says "The panel is green after 1 round(s)
+    // ($6.0660 of review and revision)", and a head printing nothing beside that would be the page
+    // contradicting itself about a figure the showrunner is being asked to approve (Ryan's ruling,
+    // 2026-10-15). The completion is the only round record such a log holds.
+    const first = await parkedAt("script-gate", [
+      { stepId: "panel", kind: "step_completed", payload: { result: { round: 1, green: true }, round: 1, green: true, costUsd: 6.066 } },
+    ]);
+    const green1 = (await gateView(first.ctx, first.store, "s02e01", "r1"))!;
+    expect(green1.round).toEqual({ n: 1, costUsd: 6.066 });
+    first.store.close();
+
+    // `outline-gate` is reached by no panel at all: no round record of either kind, and the head
+    // reads exactly as it did before Plan J. So does every gate but `script-gate`.
     const plain = await parkedAt("outline-gate");
     const outline = (await gateView(plain.ctx, plain.store, "s02e01", "r1"))!;
     expect(outline).not.toHaveProperty("round");

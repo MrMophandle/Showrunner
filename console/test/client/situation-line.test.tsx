@@ -97,6 +97,25 @@ describe("SituationLine", () => {
     expect(screen.queryAllByRole("button")).toHaveLength(0);
   });
 
+  it("draws no round clause on a reported round 1, which is the ordinary run", () => {
+    // A panel that went green first time is reported on the wire — the Gate page's head needs it to
+    // agree with the gate's own message — and says nothing here (Ryan's ruling, 2026-10-15). This
+    // is the sentence most runs show most of the time, so it is asserted on the screen and not only
+    // as a string: a `(round 1)` leaking onto every working line would be a clause that
+    // distinguishes nothing, on the one surface twenty rows of the Board share.
+    const round1 = runSituation({
+      status: "running",
+      position: { stepId: "tone-check", startedAt: "2026-10-15T14:00:00.000Z" },
+      steps: [{ id: "tone-check", kind: "agent", status: "running" }],
+      round: { n: 1, costUsd: 6.066 },
+    }, Date.parse("2026-10-15T14:02:10.000Z"));
+
+    const { container } = mount(round1, "running");
+
+    expect(screen.getByText("tone-check for 2m 10s")).toBeInTheDocument();
+    expect(container.textContent).not.toContain("round");
+  });
+
   it("presses the one move it is given, once", () => {
     const onClick = vi.fn();
     const crashed = runSituation({ status: "crashed" });

@@ -176,20 +176,28 @@ function loopIteration(stepEvents: Event[]): StepRow["iteration"] | undefined {
  *  one after it, unless a green completion came later" — and the number the console draws has to be
  *  the number the gate's message prints, which is `roundExtras`'.
  *
- *  **The rule: no `panel_round` in the log, no round on the screen.** `roundExtras` answers
- *  `{ n: 1, costUsd: 0 }` for a log with no round records, because a prompt rendering
- *  `{{round.n}}` on the first pass needs a number rather than a hole. A screen does not: "round 1"
- *  on every working row of the Board would be twenty rows of a clause that distinguishes nothing,
- *  and the clause exists precisely to tell round 3 from round 1. A run whose panel went green on
- *  its first round is the same log as a run in the middle of its first round, and both read as they
- *  did before Plan J — which is the behaviour every gate but `script-gate` keeps for good.
+ *  **The rule: a round is reported whenever the panel wrote either of its two records.** Those are a
+ *  `panel_round`, written for a round that came back red, and the panel's own `step_completed`,
+ *  written for the round that came back green — the same two `roundExtras` reads, which is why the
+ *  test below names both rather than only the red one. **A green round 1 is therefore reported**
+ *  (Ryan's ruling, 2026-10-15): the gate's rendered message says "The panel is green after 1
+ *  round(s) ($6.0660 of review and revision)", and a gate head printing nothing beside a message
+ *  printing that would be the page contradicting itself about a figure the showrunner is approving.
+ *  Whether a *situation line* says "round 1" is a different question, settled where the sentence is
+ *  written (`roundLabel`, `src/projections.ts`) and not by withholding the fact here.
+ *
+ *  What is still absent is a round for a run whose panel has written nothing at all — a round in
+ *  flight before its first verdicts are in, and every run of every pipeline with no panel in it. For
+ *  those there is no round record to read and `roundExtras`' `{ n: 1, costUsd: 0 }` would be a
+ *  figure the log never carried, which is the one thing a console must not put on a screen.
  *
  *  Exported so `gateView` (`server/gates.ts`) reads the round the same way the Run view and the
  *  Board's rows do; a gate head and a situation line disagreeing about which round a run is on
  *  would be worse than neither saying it. */
 export function roundOf(events: readonly Event[]): RunView["round"] | undefined {
-  if (!events.some((e) => e.kind === "panel_round")) return undefined;
-  return roundExtras(events).round;
+  const recorded = events.some((e) => e.kind === "panel_round"
+    || (e.kind === "step_completed" && e.payload["green"] === true && e.payload["round"] !== undefined));
+  return recorded ? roundExtras(events).round : undefined;
 }
 
 /** Every step of the pipeline definition as a row, in pipeline order, overlaid with the log.

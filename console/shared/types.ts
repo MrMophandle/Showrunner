@@ -123,11 +123,12 @@ export interface EpisodeRow {
   position?: { stepId: string; startedAt: string };
   /** Which round of the review panel the latest run is on and what it has cost — the same
    *  `{ n, costUsd }` the run's own view carries (`RunView.round`), copied onto the row by
-   *  `episodeRow` (`server/runs.ts`). Absent for a row whose run wrote no `panel_round`.
+   *  `episodeRow` (`server/runs.ts`). Absent for a row whose run's panel wrote no round record.
    *
    *  **It is on the row for the same reason `position` is: the Board's situation line says it.**
    *  `runSituation` (`src/projections.ts`) reads `round` and writes "`tone-check` for 2m 10s
-   *  (round 3)", and the row carries no step rows to derive it from. Without it a Board watching a
+   *  (round 3)" — **from round 2 on**, since a round 1 adds nothing to a working sentence
+   *  (`roundLabel`) — and the row carries no step rows to derive it from. Without it a Board watching a
    *  panel loop for an hour would draw twenty minutes of `tone-check`, then twenty of `revise`, then
    *  twenty of `tone-check` again, with nothing on the row to say the run was going forward rather
    *  than round in a circle. */
@@ -255,8 +256,15 @@ export interface RunView {
   failed?: { stepId: string; error: string };
   /** Which round of the review panel the run is on, and what the write phase has cost so far —
    *  read from the log's `panel_round` events and the panel's own green completion (`roundOf`,
-   *  `server/runs.ts`). Absent for every run whose panel has written no `panel_round`, which is
-   *  every round 1 and every run that never loops.
+   *  `server/runs.ts`). **Set as soon as the panel has written either record, a green round 1
+   *  included;** absent only for a run whose panel has written neither, which is a first round still
+   *  in flight and every run of a pipeline with no panel in it.
+   *
+   *  A round 1 is carried rather than withheld because the Gate page's head has to agree with the
+   *  gate's own rendered message, which says "The panel is green after 1 round(s)" (Ryan's ruling,
+   *  2026-10-15). The situation line stays quiet on round 1 all the same, and that rule lives in the
+   *  one place the sentence is written (`roundLabel`, `src/projections.ts`) rather than in the shape
+   *  of this field.
    *
    *  **It is on the run and not on a step row, because the round is a fact about the run.** Plan J's
    *  `panel` step re-runs the whole review round until every reviewer passes, so a reviewer running
@@ -509,8 +517,10 @@ export interface GateView {
   maxAttempts?: number;
   /** How many rounds the review panel took to come back green, and what those rounds cost — the
    *  same `{ n, costUsd }` the run's view carries (`RunView.round`), read off the same log by the
-   *  same function (`roundOf`, `server/runs.ts`). Absent for a gate no panel precedes, which is
-   *  every gate but `script-gate` and a `script-gate` whose panel went green on its first round.
+   *  same function (`roundOf`, `server/runs.ts`). Absent only for a gate no panel precedes, which is
+   *  every gate but `script-gate`; **a `script-gate` whose panel went green on its first round
+   *  carries `{ n: 1, costUsd }`** rather than nothing, because the head and the message have to
+   *  agree (Ryan's ruling, 2026-10-15).
    *
    *  **It is on the gate view because the gate opens only on a green panel** (Plan J, ruling 7), so
    *  "how many rounds did this take and what did it cost" is the question that stands beside "which
