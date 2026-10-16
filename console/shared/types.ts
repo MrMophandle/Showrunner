@@ -121,6 +121,17 @@ export interface EpisodeRow {
    *  the Board's sentence stops there: the loop iteration and the progress clauses belong to the
    *  Run view, which has them. Absent for a row whose latest run has nothing in flight. */
   position?: { stepId: string; startedAt: string };
+  /** Which round of the review panel the latest run is on and what it has cost — the same
+   *  `{ n, costUsd }` the run's own view carries (`RunView.round`), copied onto the row by
+   *  `episodeRow` (`server/runs.ts`). Absent for a row whose run wrote no `panel_round`.
+   *
+   *  **It is on the row for the same reason `position` is: the Board's situation line says it.**
+   *  `runSituation` (`src/projections.ts`) reads `round` and writes "`tone-check` for 2m 10s
+   *  (round 3)", and the row carries no step rows to derive it from. Without it a Board watching a
+   *  panel loop for an hour would draw twenty minutes of `tone-check`, then twenty of `revise`, then
+   *  twenty of `tone-check` again, with nothing on the row to say the run was going forward rather
+   *  than round in a circle. */
+  round?: { n: number; costUsd: number };
   /** Why the episode is blocked, in the operator's words: whether the premise is missing, and
    *  the exact references and showrunner-made shots that are not on disk. */
   needs: { ideaMissing: boolean; refsMissing: string[]; imagesMissing: string[] };
@@ -242,6 +253,29 @@ export interface RunView {
   position?: { stepId: string; startedAt: string };
   openGate?: { stepId: string; attempt: number; message: string; openedAt: string };
   failed?: { stepId: string; error: string };
+  /** Which round of the review panel the run is on, and what the write phase has cost so far —
+   *  read from the log's `panel_round` events and the panel's own green completion (`roundOf`,
+   *  `server/runs.ts`). Absent for every run whose panel has written no `panel_round`, which is
+   *  every round 1 and every run that never loops.
+   *
+   *  **It is on the run and not on a step row, because the round is a fact about the run.** Plan J's
+   *  `panel` step re-runs the whole review round until every reviewer passes, so a reviewer running
+   *  for the third time is indistinguishable from the first by its step id and its elapsed time
+   *  alone: `tone-check for 2m 10s` is the same sentence on round 1 and on round 7. The round is
+   *  what tells the two apart, and it belongs to no single step — `hand-edits-script`, `revise`, the
+   *  canon review, its ledger and the six checks all run inside one round. `StepRow.iteration` is
+   *  the other number and a different question: that is one loop step's count against its own cap.
+   *
+   *  `n` is the round the run is **in**, not the number that have finished: a `panel_round` records
+   *  a round that came back red, so one of them in the log means the run is on round 2. Once the
+   *  panel goes green its own `step_completed` carries the final number and the cost including that
+   *  closing round, and that record is the later one (`roundExtras`, `engine/src/agent-step.ts`).
+   *
+   *  `costUsd` is the round's own steps summed by session maximum, which is the engine's figure and
+   *  not a sum the console makes: `total_cost_usd` is cumulative per session, so `revise`'s shared
+   *  session reported one figure three times on the measured run (inventory J-08) and a naive sum
+   *  would have tripled it. */
+  round?: { n: number; costUsd: number };
   /** Every step of the pipeline definition, in pipeline order, overlaid with the log. */
   steps: StepRow[];
   /** The pipeline the run recorded on its `run_started` set beside the pipeline the console built
@@ -473,6 +507,18 @@ export interface GateView {
   verdicts: Record<string, unknown>;
   rejections: string[];
   maxAttempts?: number;
+  /** How many rounds the review panel took to come back green, and what those rounds cost — the
+   *  same `{ n, costUsd }` the run's view carries (`RunView.round`), read off the same log by the
+   *  same function (`roundOf`, `server/runs.ts`). Absent for a gate no panel precedes, which is
+   *  every gate but `script-gate` and a `script-gate` whose panel went green on its first round.
+   *
+   *  **It is on the gate view because the gate opens only on a green panel** (Plan J, ruling 7), so
+   *  "how many rounds did this take and what did it cost" is the question that stands beside "which
+   *  attempt am I answering" — and the Gate page prints both in the head, above the fold. The gate's
+   *  own rendered message says the same two numbers in words ("The panel is green after 3 round(s)
+   *  ($19.4812 of review and revision)"), and they agree because both are read from the log through
+   *  `roundExtras` (`engine/src/agent-step.ts`) rather than each counting for itself. */
+  round?: { n: number; costUsd: number };
 }
 
 /** One prompt file an agent step ran, as the run recorded it and as it stands on disk now.

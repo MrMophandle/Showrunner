@@ -150,6 +150,29 @@ describe("the gate view", () => {
     image.store.close();
   });
 
+  it("carries the round the panel took and what it cost, and no round for a gate no panel precedes", async () => {
+    // Plan J: `script-gate` opens only on a green panel, so how many rounds the panel took and what
+    // they cost is the first thing the approver wants beside the attempt — and the number has to be
+    // the one the gate's own message prints ("green after 3 round(s)"), which is why both read the
+    // log through `roundExtras` rather than each counting for itself.
+    const { ctx, store } = await parkedAt("script-gate", [
+      { stepId: "panel", kind: "panel_round", payload: { round: 1, green: false, costUsd: 6.066, verdicts: { "tone-check": { pass: false, issues: ["L41"] } }, by: "panel:panel:round-1" } },
+      { stepId: "panel", kind: "panel_round", payload: { round: 2, green: false, costUsd: 12.132, verdicts: { "tone-check": { pass: false, issues: ["L41"] } }, by: "panel:panel:round-2" } },
+      { stepId: "tone-check", kind: "step_completed", payload: { result: { pass: true, issues: [] } } },
+      { stepId: "panel", kind: "step_completed", payload: { result: { round: 3, green: true }, round: 3, green: true, costUsd: 19.4812 } },
+    ]);
+    const v = (await gateView(ctx, store, "s02e01", "r1"))!;
+    expect(v.round).toEqual({ n: 3, costUsd: 19.4812 });
+    store.close();
+
+    // `outline-gate` is reached by no panel at all, and neither is a `script-gate` whose panel went
+    // green on its first round. Both read exactly as they did before Plan J.
+    const plain = await parkedAt("outline-gate");
+    const outline = (await gateView(plain.ctx, plain.store, "s02e01", "r1"))!;
+    expect(outline).not.toHaveProperty("round");
+    plain.store.close();
+  });
+
   it("is undefined for a run with no gate open", async () => {
     const { root, ctx, store } = await appWith(await makeShow());
     await seedRun(root, "s02e01", "r1", [

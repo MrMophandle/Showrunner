@@ -173,6 +173,28 @@ describe("the Gate page's order", () => {
     expect(screen.queryByRole("button", { name: /reject attempt/ })).toBeNull();
   });
 
+  it("prints the round the panel took and its cost beside the attempt, and nothing when no panel ran", async () => {
+    // Plan J: `script-gate` opens only on a green panel, so the approver's first question beside
+    // "which attempt is this" is "how many rounds did it take and what did it cost". Both live in
+    // the head, which is the one part of the page the ruling of 2026-10-15 keeps above the fold.
+    // Four decimals, the format `src/pages/WhatHappened.tsx` already prints a money figure in.
+    const { container } = mount(gateView({ round: { n: 3, costUsd: 19.4812 } }));
+    await waitFor(() => { expect(screen.getByText(SCRIPT_LINE)).toBeInTheDocument(); });
+
+    const head = container.querySelector(".gate-meta");
+    expect(head?.textContent).toContain("attempt 1 of 10 · round 3 · $19.4812 · opened");
+
+    cleanup();
+
+    // A gate no panel precedes — every gate but `script-gate`, and a `script-gate` whose panel went
+    // green on its first round — reads exactly as it did before Plan J.
+    const plain = mount(gateView());
+    await waitFor(() => { expect(screen.getByText(SCRIPT_LINE)).toBeInTheDocument(); });
+    const plainHead = plain.container.querySelector(".gate-meta");
+    expect(plainHead?.textContent).toContain("attempt 1 of 10 · opened");
+    expect(plainHead?.textContent).not.toContain("round");
+  });
+
   it("puts the notes of previous rejections above the answer and outside the collapse", async () => {
     const { container } = mount(gateView({ rejections: ["scene 4 reads as two scenes — split it"] }));
     await waitFor(() => { expect(screen.getByText(SCRIPT_LINE)).toBeInTheDocument(); });

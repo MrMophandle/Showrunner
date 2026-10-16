@@ -315,4 +315,94 @@ describe("RunStore", () => {
     expect(v.openGate?.stepId).toBe("outline-gate");
     store.close();
   });
+
+  /** Plan J's review round on the wire. The `panel` step re-runs the whole review round until every
+   *  reviewer passes, writing one `panel_round` per red round with the round's number and what the
+   *  write phase has cost so far (`engine/src/runner.ts`'s `runPanelStep`), and the console carries
+   *  that as `round` on the run's view and on the Board's row. */
+  describe("the panel's round", () => {
+    const t = (s: number) => new Date(Date.UTC(2026, 9, 15, 18, 0, s)).toISOString();
+
+    /** Two red rounds and the reviewers of the third in flight. `round` on a `panel_round` is the
+     *  round that **failed**, so two of them means the run is on round 3 — which is the arithmetic
+     *  `roundExtras` does and this projection reuses rather than repeats. */
+    const twoRedRounds = [
+      { ts: t(0), kind: "run_started", payload: { pipeline: "episode", episodeId: "s02e01" } },
+      { ts: t(1), stepId: "panel", kind: "step_started", payload: { kind: "panel" } },
+      { ts: t(2), stepId: "panel", kind: "panel_round", payload: {
+        round: 1, green: false, costUsd: 6.066, by: "panel:panel:round-1",
+        verdicts: { "tone-check": { pass: false, issues: ["L41: forty-one words"] }, "flow-check": { pass: true, issues: [] } },
+      } },
+      { ts: t(3), stepId: "tone-check", kind: "step_reset", payload: { by: "panel:panel:round-1", round: 1 } },
+      { ts: t(4), stepId: "panel", kind: "step_reset", payload: { by: "panel:panel:round-1", round: 1 } },
+      { ts: t(5), stepId: "panel", kind: "step_started", payload: { kind: "panel" } },
+      { ts: t(6), stepId: "panel", kind: "panel_round", payload: {
+        round: 2, green: false, costUsd: 12.132, weeklyUtilization: 0.41, by: "panel:panel:round-2",
+        verdicts: { "tone-check": { pass: false, issues: ["L41: still forty-one words"] } },
+      } },
+      { ts: t(7), stepId: "tone-check", kind: "step_reset", payload: { by: "panel:panel:round-2", round: 2 } },
+      { ts: t(8), stepId: "panel", kind: "step_reset", payload: { by: "panel:panel:round-2", round: 2 } },
+      { ts: t(9), stepId: "tone-check", kind: "step_started", payload: { kind: "agent" } },
+    ];
+
+    it("projects the round in flight and its cost off the latest panel_round, on the view and on the Board's row", async () => {
+      const { root, store } = await appWith(await makeShow());
+      await seedRun(root, "s02e01", "r1", twoRedRounds);
+      await writeLock(root, "s02e01", "r1", process.pid);
+      const v = await store.view("s02e01", "r1");
+      // Two red rounds: the run is paying for round 3, and $12.1320 is what the write phase had
+      // cost when round 2 came back red.
+      expect(v.round).toEqual({ n: 3, costUsd: 12.132 });
+      // The Board's row carries the same object, because the row is where twenty situation lines
+      // read it from (`runSituation`, `src/projections.ts`) and the row holds no step rows of its
+      // own to derive it from.
+      const row = await store.episodeRow("s02e01");
+      expect(row.round).toEqual({ n: 3, costUsd: 12.132 });
+      // `panel_round` is in `projectSteps`' default arm: it is a record of a round, not a change of
+      // any step's state, and the statuses are the `step_reset` and `step_started` events' to set.
+      expect(v.steps.find((s) => s.id === "tone-check")).toMatchObject({ status: "running" });
+      expect(v.steps.find((s) => s.id === "panel")).toMatchObject({ kind: "panel", status: "pending" });
+      store.close();
+    });
+
+    it("takes the final round and its cost off the panel's own green completion, which is the later record", async () => {
+      const { root, store } = await appWith(await makeShow());
+      // The third round came back green. The panel writes no `panel_round` for a green round, so a
+      // reader that stopped at the last red one would print $12.1320 — the figure as it stood
+      // before the third revision and the third panel, most of the round's real cost missing. The
+      // completion carries the figure for exactly that reason, and it is the later record.
+      await seedRun(root, "s02e01", "r1", [
+        ...twoRedRounds,
+        { ts: t(20), stepId: "tone-check", kind: "step_completed", payload: { result: { pass: true, issues: [] } } },
+        { ts: t(21), stepId: "panel", kind: "step_started", payload: { kind: "panel" } },
+        { ts: t(22), stepId: "panel", kind: "step_completed", payload: {
+          result: { round: 3, green: true }, round: 3, green: true, costUsd: 19.4812,
+        } },
+        { ts: t(23), stepId: "script-gate", kind: "gate_opened", payload: { attempt: 1, message: "Script drafted: Episodes/s02e01/script.md" } },
+      ]);
+      const v = await store.view("s02e01", "r1");
+      expect(v.round).toEqual({ n: 3, costUsd: 19.4812 });
+      const row = await store.episodeRow("s02e01");
+      expect(row.round).toEqual({ n: 3, costUsd: 19.4812 });
+      store.close();
+    });
+
+    it("says nothing about a round for a run whose panel has written none", async () => {
+      const { root, store } = await appWith(await makeShow());
+      // Round 1 in flight, and a run whose panel went green on its first round, are the same log
+      // here: neither has a `panel_round`. The console reports no round for either, which is what
+      // keeps every ordinary run's situation line and gate head reading as they did before Plan J.
+      await seedRun(root, "s02e01", "r1", [
+        { ts: t(0), kind: "run_started", payload: { pipeline: "episode", episodeId: "s02e01" } },
+        { ts: t(1), stepId: "tone-check", kind: "step_started", payload: { kind: "agent" } },
+      ]);
+      await writeLock(root, "s02e01", "r1", process.pid);
+      const v = await store.view("s02e01", "r1");
+      expect(v.round).toBeUndefined();
+      expect(v).not.toHaveProperty("round");
+      const row = await store.episodeRow("s02e01");
+      expect(row).not.toHaveProperty("round");
+      store.close();
+    });
+  });
 });

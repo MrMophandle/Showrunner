@@ -357,6 +357,76 @@ describe("runSituation", () => {
     });
   });
 
+  it("names the round the panel is on, which is the run's number and not the step's", () => {
+    // Plan J: the review round repeats until every reviewer passes, so the step id alone no longer
+    // says where the run is — `tone-check` running for the third time looks exactly like the first.
+    // The round is a fact about the run and `round` is therefore on the view and on the Board's
+    // row, not on the step row the way an iteration is.
+    const round3 = view({
+      status: "running",
+      position: { stepId: "tone-check", startedAt: at },
+      steps: [step({ id: "tone-check", kind: "agent", status: "running" })],
+      round: { n: 3, costUsd: 12.132 },
+    });
+    expect(runSituation(round3, plus(130))).toEqual({
+      subject: "A worker is on it.",
+      sentence: "tone-check for 2m 10s (round 3)",
+    });
+  });
+
+  it("says nothing about a round before the panel has written one, which is every round 1", () => {
+    // The panel writes a `panel_round` only for a round that came back red, so round 1 has none and
+    // the view carries no `round` at all (`roundOf`, `server/runs.ts`). The sentence is then exactly
+    // what it was before Plan J — which is the point: an ordinary run that never loops never grows
+    // a clause, and "round 1" on every working row would be twenty rows of noise.
+    const round1 = view({
+      status: "running",
+      position: { stepId: "tone-check", startedAt: at },
+      steps: [step({ id: "tone-check", kind: "agent", status: "running" })],
+    });
+    expect(runSituation(round1, plus(130))).toEqual({
+      subject: "A worker is on it.",
+      sentence: "tone-check for 2m 10s",
+    });
+  });
+
+  it("puts the round outside the loop's iteration, because the round is what contains it", () => {
+    // Plan J's live pipeline cannot produce both at once — the round's steps are a guard and six
+    // agent steps, and `revise` became one fresh call per round with no loop (ruling 4) — but the
+    // order has to be decided somewhere rather than left to whichever clause was appended first.
+    const both = view({
+      status: "running",
+      position: { stepId: "draft", startedAt: at },
+      steps: [step({
+        id: "draft", kind: "loop", status: "running",
+        iteration: { n: 3, max: 15 },
+        progress: { done: 2, total: 12, unit: "scenes" },
+      })],
+      round: { n: 3, costUsd: 12.132 },
+    });
+    expect(runSituation(both, plus(725))).toEqual({
+      subject: "A worker is on it.",
+      sentence: "draft for 12m 05s (round 3, iteration 3 of 15) · 2/12 scenes",
+    });
+  });
+
+  it("leaves an open gate's sentence alone, because the gate's own head carries the round", () => {
+    // The round reaches the person who needs it on the Gate page, where the head prints
+    // `round 3 · $12.1320` beside the attempt (`src/pages/Gate.tsx`). Saying it here as well would
+    // be two places to keep in agreement for one fact, and the Board's question about a parked run
+    // is "who holds it", not "what did it cost".
+    const parked = row({
+      status: "waiting",
+      openGate: { stepId: "script-gate", attempt: 2, openedAt: "2026-10-15T14:05:00.000Z" },
+      round: { n: 3, costUsd: 12.132 },
+    });
+    expect(runSituation(parked, plus(60))).toEqual({
+      subject: "Needs you.",
+      sentence: "script-gate has been waiting for an answer since 14:05:00 (attempt 2).",
+      action: "gate",
+    });
+  });
+
   it("says the engine's reason verbatim for a step asleep until a usage limit resets (Plan I)", () => {
     // The subject keeps its comma: the engine's sentence continues it. And the status is
     // `running`, correctly — a worker is holding the run and beating its lock — so this case has

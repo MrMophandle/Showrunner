@@ -204,7 +204,16 @@ export function Gate() {
           <span className="mono">{view.stepId}</span>
         </h1>
         <div className="gate-meta mono">
-          {view.episodeId} · attempt {view.attempt}{view.maxAttempts !== undefined ? ` of ${view.maxAttempts}` : " (no cap)"} · opened {view.openedAt.slice(0, 19).replace("T", " ")}
+          {view.episodeId} · attempt {view.attempt}{view.maxAttempts !== undefined ? ` of ${view.maxAttempts}` : " (no cap)"}
+          {/* How many rounds the review panel took to come back green and what they cost. It sits
+              beside the attempt because `script-gate` opens only on a green panel (Plan J, ruling
+              7), so "how many rounds did this take" is the question that stands next to "which
+              attempt am I answering" — and the head is the part of this page the ruling of
+              2026-10-15 keeps above the fold. Four decimals, which is the format the console
+              already prints a money figure in (`src/pages/WhatHappened.tsx`). Absent for every gate
+              no panel precedes, which reads exactly as it did before Plan J. */}
+          {view.round !== undefined && ` · round ${view.round.n} · $${view.round.costUsd.toFixed(4)}`}
+          {" · "}opened {view.openedAt.slice(0, 19).replace("T", " ")}
         </div>
       </div>
 
