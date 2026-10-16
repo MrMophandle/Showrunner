@@ -422,11 +422,13 @@ The twenty-one stages (`NEEDS_IDEA` through `COMPLETE`) are derived on top of th
 
 ## The episode pipeline
 
-**`episodePipeline({ show, episodeId, engineRoot })` builds the seventy-three-step pipeline that
-takes one episode from its premise to a committed canon update** (`engine/src/pipelines/episode.ts`).
+**`episodePipeline({ show, episodeId, engineRoot })` builds the sixty-eight-step pipeline that
+takes one episode from its premise to a committed canon update** (`engine/src/pipelines/episode.ts`),
+seventy-eight steps counting the ten nested ones — eight gates' fix agents and two loop bodies.
 One run covers one episode, and the four Archon workflows are four phases of a single step list: the
-**write** phase (premise, outline, canon review, draft loop, the seven-reviewer panel run until it
-is green, publish copy),
+**write** phase (premise, the outline with its own canon review and gate, the draft loop, then the
+review round — the seven reviewers, the `panel` step, and for every failing verdict a revision and
+another round, until the panel is green and the script gate opens — then the publish copy),
 the **assets** phase (TTS script, casting, synthesis, three QC passes, mix, shot list, images), the
 **assemble** phase (NAS check, timeline, render, master, finalize, publish kit), and the **canon**
 phase (propose, diff, commit). The spec's ordering rules are therefore dependency edges rather than
@@ -474,9 +476,20 @@ any of them fails it writes a `panel_round` and resets the round — `hand-edits
 revision and the reviewers again. `revise` is one fresh writer call per round, bypassed on round 1 by
 a `when` that asks whether the log holds a `panel_round` yet, and each reviewer and the writer are
 handed the previous round's verdicts as `{{prior.<stepId>}}`. There is no round cap; the weekly quota
-is the only stop, and the operator's Resume continues the loop (see **The resume contract**). `canon-gate` is the one gate carrying a `when`: a canon
-phase whose diff is `NO_CHANGES` bypasses it, which is why `EPISODE_STAGE_MAP` keys `CANON` on
-`canon-commit` rather than on the gate.
+is the only stop, and the operator's Resume continues the loop (see **The resume contract**).
+
+**`script-gate`'s message is three lines, and the seven verdicts are not among them.** The message
+names the script's path, says `The panel is green after N round(s) ($X of review and revision).`
+from `{{round.n}}` and `{{round.costUsd}}`, and gives the approve/reject line; the per-reviewer
+detail is the console's verdict board on the gate page (`console/README.md`, the Gate view). Before
+Plan J the message interpolated all eight results bare, and the s02e01 script gate of 2026-10-15
+printed 10,618 characters across 71 lines with the verdicts **stale by one revision** — the gate
+re-rendered after the writer had rewritten the script the reviewers had read. A gate that opens only
+on a green panel cannot print a stale verdict, because the panel that let it open judged the script
+on disk.
+
+`canon-gate` is the one gate carrying a `when`: a canon phase whose diff is `NO_CHANGES` bypasses
+it, which is why `EPISODE_STAGE_MAP` keys `CANON` on `canon-commit` rather than on the gate.
 
 ### The three guards that stop the line
 
@@ -599,6 +612,28 @@ below are what the *operator* does about each result.
 **`resetSteps` is the wrong move for a limit of any kind**, because a limit changes none of the
 step's inputs: re-running from a step upstream of the limited one pays for every agent step between
 the two a second time and buys no new answer.
+
+**The review round reaches the operator as one of three outcomes, and only one of them is a move.**
+The round itself is **The episode pipeline → The eight gates** above and **The resume contract**
+below; the three paragraphs here are what the *operator* does about each result.
+
+- **A green panel asks for an approval and nothing else.** `script-gate` opens with its three-line
+  message — the script's path, `The panel is green after N round(s) ($X of review and revision).`,
+  and the approve/reject line — the gate page's verdict board carries what each of the seven
+  reviewers found, and the gate head prints `round N · $X.XXXX` beside the attempt. Neither recovery
+  move above applies: the run is waiting for an answer, not failed.
+- **The weekly stop is cleared with `resumeRun`, and Resume continues the loop rather than
+  restarting it.** The run is failed at `panel` with the sentence the resume contract quotes, and
+  the panel wrote **no** `panel_round` and **no** `step_reset` before failing — so the round the
+  Resume comes back to is the same round N, no revision has been paid for, and the next evaluation
+  goes round because the figure that stopped the run is behind the `run_resumed`. The round count
+  itself is never reset by a Resume: a run stopped in round 3 resumes into round 3. `resetSteps` is
+  the wrong move here for the same reason it is wrong for a limit — it pays for the round's agent
+  steps again and buys no new verdict.
+- **A five-hour usage limit inside a round asks nothing of the operator**, and that outcome is the
+  unchanged one above: the reviewer's or the writer's step logs `step_waiting`, the worker sleeps,
+  the step ends with an ordinary `step_completed` when the retry succeeds, and the round carries on.
+  A round is not a new kind of wait, and a sleeping worker inside round 3 is not a stopped loop.
 
 **A prompt that writes `{{season}}` fails for a production id the show's `airMap` does not place.**
 An aired id (`s02e01`) carries its season; a production id (`ep98`) has one only if `airMap` gives
