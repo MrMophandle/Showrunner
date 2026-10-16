@@ -146,7 +146,11 @@ describe("renderPrompt: the round's variables", () => {
   it("renders the round and its cost, and fails by name on anything else", () => {
     expect(renderPrompt("round {{round.n}} (${{round.costUsd}})", ctx, { round })).toBe("round 3 ($15.8878)");
     expect(renderPrompt("{{round.n}}", ctx, { round: { n: 1, costUsd: 0 } })).toBe("1");
-    expect(renderPrompt("${{round.costUsd}}", ctx, { round: { n: 1, costUsd: 0 } })).toBe("$0");
+    // Four decimals wherever the figure becomes text, so the gate's message and the gate's head
+    // print one string for one number: a round 1 reads `$0.0000`, not `$0`, and a figure whose
+    // value has a short tail is padded rather than printed short.
+    expect(renderPrompt("${{round.costUsd}}", ctx, { round: { n: 1, costUsd: 0 } })).toBe("$0.0000");
+    expect(renderPrompt("${{round.costUsd}}", ctx, { round: { n: 2, costUsd: 6.07 } })).toBe("$6.0700");
     expect(() => renderPrompt("{{round}}", ctx, { round })).toThrow(/round needs a field/);
     expect(() => renderPrompt("{{round.cost}}", ctx, { round })).toThrow(/unknown round field; the round carries n and costUsd/);
     // Absent is a named fault, not a hole: a caller that renders a prompt with no round — the

@@ -9,6 +9,7 @@ import { missingRefs, missingShowrunnerImages } from "../needs.js";
 import { handEdits } from "../provenance.js";
 import type { StageMap } from "../stages.js";
 import { verdictPass } from "../steps.js";
+import { panelIsRed } from "../agent-step.js";
 import type { AgentStep, GuardStep, LoopStep, NestedAgentStep, PanelStep, Pipeline, RunContext, ScriptStep, Step, StepId } from "../steps.js";
 
 /** The name every episode run records in its run_started event and its log path. It is a
@@ -252,8 +253,17 @@ export function episodePipeline(opts: EpisodePipelineOptions): Pipeline {
       // are in the log's `panel_round`, which is what `{{prior.*}}` reads. The engine repository's
       // template and the instance's copy are both Plan J's to change (Tasks 2 and 5), and until the
       // instance's copy is changed a round 2 in production fails here.
+      //
+      // **`when` asks whether the panel's *latest* record is red, not whether any round ever was**
+      // (the whole-branch review of 2026-10-15). The two differ on the rejection path: the script
+      // gate's reset closure takes in this step, so after a red round, a green round and a hand
+      // `Reject`, "has any round ever been red" is still true and the writer would run against
+      // round 1's verdicts — issues the panel has since judged resolved — with the showrunner's
+      // note rendered nowhere. `panelIsRed` is `roundExtras`' own resolution of which of the
+      // panel's two records is later, so the `when` and the `{{prior.*}}`/`{{round.*}}` the step
+      // would render cannot disagree about it.
       kind: "agent", id: "revise", dependsOn: ["hand-edits-script"],
-      when: (ctx) => (ctx.events ?? []).some((e) => e.kind === "panel_round" && e.stepId === "panel"),
+      when: (ctx) => panelIsRed(ctx.events),
       promptFile: "revise.md", model: "writer", allowedTools: ["Read", "Edit", "Write", "Glob", "Grep"],
       context: "fresh", inputs: [script, `${canonDir}/style-guide.md`], outputs: [script],
       timeoutMs: 60 * MIN, idleTimeoutMs: 15 * MIN,

@@ -282,7 +282,7 @@ describe("the write phase, run until green", () => {
     // Round 1's reviewers were handed no prior verdict, and the template said so in a word rather
     // than failing to render — the one hole in the template language that is not an error.
     expect(promptFor("tone-check", 1)).toContain("## Your prior verdict\nnone");
-    expect(promptFor("tone-check", 1)).toContain("Round 1 of the panel, $0 spent so far.");
+    expect(promptFor("tone-check", 1)).toContain("Round 1 of the panel, $0.0000 spent so far.");
 
     // ── the red round, as the log records it ────────────────────────────────────────────────────
     const round = rounds(events);
@@ -335,7 +335,7 @@ describe("the write phase, run until green", () => {
     // And what each reviewer was given on round 2: its own prior verdict, and no `none` anywhere.
     const tonePrompt = promptFor("tone-check", 2);
     expect(tonePrompt).toContain("tone-check round 1: the line runs past the cap");
-    expect(tonePrompt).toContain(`Round 2 of the panel, $${ROUND_1_COST} spent so far.`);
+    expect(tonePrompt).toContain(`Round 2 of the panel, $${ROUND_1_COST.toFixed(4)} spent so far.`);
     expect(tonePrompt).not.toContain("none");
     expect(promptFor("flow-check", 2)).not.toContain("none"); // a reviewer that passed round 1 still gets its own verdict
 
@@ -355,7 +355,7 @@ describe("the write phase, run until green", () => {
     if (r.status !== "waiting") return;
     expect(r.gate.message).toBe(
       `Script drafted: Episodes/${EP}/script.md\n`
-      + `The panel is green after 2 round(s) ($${GREEN_COST} of review and revision).\n`
+      + `The panel is green after 2 round(s) ($${GREEN_COST.toFixed(4)} of review and revision).\n`
       + "Approve to commit. Reject with notes for a targeted revision.\n",
     );
     // The showrunner is never shown a template: a hole would have failed the render, and a `{{` left

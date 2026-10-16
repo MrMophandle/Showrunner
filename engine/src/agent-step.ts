@@ -252,21 +252,41 @@ function renderExtraFor(opts: AgentExecutorOptions, ctx: RunContext, vars?: Reco
  *  nothing has been spent, and no step has a prior verdict: the three values a first pass needs,
  *  which is why they are supplied rather than left absent.
  *
+ *  **The green record is identified by its payload's shape, not by its step** (the whole-branch
+ *  review of 2026-10-15). Any `step_completed` carrying `green: true` **and** a `round` is read here
+ *  as a panel's green round. Only `runPanelStep` writes that pair today (`runner.ts`'s green exit),
+ *  so this is a coupling rather than a bug — but a second step that wrote both fields would be
+ *  counted as a round, and both readers of this function would move with it: the prompts'
+ *  `{{round.n}}` and the console's `roundOf`, which reports a round only when `found` is true.
+ *
  *  **`prior` comes from the red record only**, whichever is later. Only a red round has verdicts to
  *  hand on, and a green round's completion carries none; after a gate rejection re-runs a panel that
  *  had gone green, the reviewers are still shown the last verdicts anyone wrote.
  *
+ *  **`found` and `red` are this one walk's answers to two questions its callers used to ask for
+ *  themselves.** `found` says whether either record exists at all, which is the console's test for
+ *  "is there a round to draw" (`console/server/runs.ts`'s `roundOf`, which wrote the detection
+ *  predicate a second time until this field existed). `red` says whether the **latest** of the two
+ *  records is a red round, which is the question `revise`'s `when` asks through `panelIsRed`: "has
+ *  any round ever been red" is true forever after the first one, and answered that way a gate
+ *  rejection after a green round pays a writer call against issues the panel has already closed.
+ *  Both are reported rather than recomputed because the resolution of *which record is later* is the
+ *  part that must not exist twice.
+ *
  *  Exported because the gate-message renderer and the agent executor both go through
  *  `renderExtraFor`, and a console or a test that wants the same reading of a log should not write a
  *  second one. */
-export function roundExtras(events: readonly Event[] | undefined): { prior: Record<string, unknown>; round: { n: number; costUsd: number } } {
+export function roundExtras(events: readonly Event[] | undefined): { found: boolean; red: boolean; prior: Record<string, unknown>; round: { n: number; costUsd: number } } {
   let red: Event | undefined;
+  let latestIsRed = false;
   let latest: { round: number; costUsd: number } | undefined;
   for (const e of events ?? []) {
     if (e.kind === "panel_round") {
       red = e;
+      latestIsRed = true;
       latest = { round: Number(e.payload["round"]) + 1, costUsd: Number(e.payload["costUsd"]) };
     } else if (e.kind === "step_completed" && e.payload["green"] === true && e.payload["round"] !== undefined) {
+      latestIsRed = false;
       latest = { round: Number(e.payload["round"]), costUsd: Number(e.payload["costUsd"]) };
     }
   }
@@ -278,12 +298,29 @@ export function roundExtras(events: readonly Event[] | undefined): { prior: Reco
   // or in a gate message a showrunner approves: round 1 and nothing spent is the same answer as no
   // round at all, which is the conservative one.
   return {
+    found: latest !== undefined,
+    red: latestIsRed,
     prior,
     round: {
       n: latest !== undefined && Number.isFinite(latest.round) ? latest.round : 1,
       costUsd: latest !== undefined && Number.isFinite(latest.costUsd) ? latest.costUsd : 0,
     },
   };
+}
+
+/** Whether the panel's **latest** record is a red round — the question `revise`'s `when` asks
+ *  (`pipelines/episode.ts`), so the revision runs on the pass after a round came back red and not on
+ *  the pass after a showrunner's rejection of a panel that has since gone green.
+ *
+ *  It exists as a wrapper over `roundExtras` rather than as a predicate of its own because the two
+ *  have to agree about which of the panel's two records is later. Written separately, the pipeline's
+ *  `when` would answer "has any round ever been red" — true forever after the first red round — and
+ *  the rejection path would hand the writer the last red round's verdicts with `{{round.n}}`
+ *  resolved from the later green completion: one writer call (~$3.23 measured) spent re-working text
+ *  that is already fixed, against issues the reviewers have closed, with the showrunner's actual
+ *  note rendered nowhere. */
+export function panelIsRed(events: readonly Event[] | undefined): boolean {
+  return roundExtras(events).red;
 }
 
 /** The renderer a gate's `messageFile` needs, for `RunOptions.renderGateMessage`. It is built from

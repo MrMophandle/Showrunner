@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { answerGate, resumeRun, run } from "../src/runner.js";
-import { roundExtras } from "../src/agent-step.js";
+import { panelIsRed, roundExtras } from "../src/agent-step.js";
 import { EventLog, type Event } from "../src/events.js";
 import { orderSteps, PipelineError } from "../src/pipeline.js";
 import { renderPrompt } from "../src/prompt-template.js";
@@ -38,10 +38,13 @@ const show = (autoRetryWeeklyUtilizationMax = 65): ShowConfig => ({
 function pipelineOf(): Pipeline {
   const draft: GuardStep = { kind: "guard", id: "draft", check: () => ({ pass: true, message: "drafted" }) };
   const handEdits: GuardStep = { kind: "guard", id: "hand-edits", dependsOn: ["draft"], check: () => ({ pass: true, message: "no hand edits" }) };
-  // The writer: one fresh call per round, bypassed on round 1 because no panel_round exists yet.
+  // The writer: one fresh call per round, bypassed on round 1 because no panel_round exists yet —
+  // and bypassed again on the pass after a rejection of a panel that has since gone green, which is
+  // what `panelIsRed` asks and "has any round ever been red" did not. The miniature uses the same
+  // predicate `episodePipeline` does, so the two rejection cases below measure the shipped one.
   const revise: AgentStep = {
     kind: "agent", id: "revise", dependsOn: ["hand-edits"],
-    when: (ctx) => (ctx.events ?? []).some((e) => e.kind === "panel_round" && e.stepId === "panel"),
+    when: (ctx) => panelIsRed(ctx.events),
     promptFile: "revise.md", model: "writer", allowedTools: [], context: "fresh",
   };
   const reviewer = (id: string): AgentStep => ({
@@ -138,7 +141,7 @@ describe("the panel step", () => {
     // round's two reviewer calls cost — the figure the panel counted at its green exit, since a
     // green round writes no panel_round for anyone else to count from.
     expect(completed?.payload["costUsd"]).toBe(2);
-    if (r.status === "waiting") expect(r.gate.message).toBe("The panel is green after 1 round(s) ($2 of review and revision).");
+    if (r.status === "waiting") expect(r.gate.message).toBe("The panel is green after 1 round(s) ($2.0000 of review and revision).");
   });
 
   it("(b) writes the round, resets the five, re-runs the revision once and the reviewers again, and opens the gate on round 2", async () => {
@@ -289,6 +292,48 @@ describe("the panel step", () => {
     expect(events.find((e) => e.kind === "step_completed" && e.stepId === "panel")?.payload).toMatchObject({ result: { round: 2, green: true } });
   });
 
+  it("(d3) a crash between the round and its batch finishes the batch, and charges no second round", async () => {
+    // The window the guard used to miss (M-1, the whole-branch review of 2026-10-15). The two
+    // writes of a red round are not atomic: `panel_round` lands first and the `step_reset` batch
+    // after it, and the log below is a run that died in between — round 1 recorded, `tone-check`
+    // red, and **not one reset written**. Keyed on the batch alone the guard read that as "no round
+    // has been written here", re-judged the same red verdicts and wrote a *second* `panel_round`
+    // for them, after which `{{round.n}}` and the gate's sentence ran one high for the rest of the
+    // run. Anchored on the round's own record it reads as what it is: a batch still owed.
+    const { log, go } = await setup();
+    const verdict = (pass: boolean) => ({ pass, verdict: pass ? "DRAFT PASSED" : "DRAFT FAILED", issues: pass ? [] : ["tone-check: round 1"] });
+    await writeCrashLog(log.path, [
+      { runId: "r1", kind: "run_started", payload: { pipeline: "p", episodeId: "s02e01" } },
+      { runId: "r1", stepId: "draft", kind: "step_started", payload: { kind: "guard" } },
+      { runId: "r1", stepId: "draft", kind: "step_completed", payload: { result: "drafted" } },
+      { runId: "r1", stepId: "hand-edits", kind: "step_started", payload: { kind: "guard" } },
+      { runId: "r1", stepId: "hand-edits", kind: "step_completed", payload: { result: "no hand edits" } },
+      { runId: "r1", stepId: "revise", kind: "step_skipped", payload: { reason: "when: false" } },
+      { runId: "r1", stepId: "tone-check", kind: "step_started", payload: { kind: "agent" } },
+      { runId: "r1", stepId: "tone-check", kind: "step_completed", payload: { result: verdict(false) } },
+      { runId: "r1", stepId: "flow-check", kind: "step_started", payload: { kind: "agent" } },
+      { runId: "r1", stepId: "flow-check", kind: "step_completed", payload: { result: verdict(true) } },
+      { runId: "r1", stepId: "panel", kind: "step_started", payload: { kind: "panel", round: 1 } },
+      { runId: "r1", stepId: "panel", kind: "panel_round", payload: { round: 1, green: false, verdicts: { "tone-check": verdict(false), "flow-check": verdict(true) }, costUsd: 1.426, by: "panel:panel:round-1" } },
+    ]);
+
+    const r = await go();
+    expect(r).toMatchObject({ status: "waiting", gate: { stepId: "script-gate", attempt: 1 } });
+    const events = await log.read();
+    // **One round in the log, and it is the one the crashed run paid for.** Revert the anchor and
+    // this reads `[1, 2]`: the same red verdicts judged twice, and a round the run never reviewed.
+    expect(rounds(events).map((p) => p["round"])).toEqual([1]);
+    // The owed batch is written now, whole and signed with round 1's own signature, and no batch is
+    // written for a round 2 that no `panel_round` records.
+    expect(resetsBy(events, "panel:panel:round-1")).toEqual(["hand-edits", "revise", "tone-check", "flow-check", "panel"]);
+    expect(resetsBy(events, "panel:panel:round-2")).toEqual([]);
+    // So the restart is the ordinary round 2: one fresh revision, both reviewers re-run, green.
+    expect(queries(events, "revise")).toBe(1);
+    expect(queries(events, "tone-check")).toBe(1);
+    expect(events.filter((e) => e.kind === "step_started" && e.stepId === "panel").map((e) => e.payload["round"])).toEqual([1, 2, 2]);
+    expect(events.find((e) => e.kind === "step_completed" && e.stepId === "panel")?.payload).toMatchObject({ result: { round: 2, green: true } });
+  });
+
   it("(e) stops at the weekly ceiling with the operator's sentence and no reset, and the Resume continues the loop", async () => {
     const usage: AgentUsage = { available: true, fiveHour: { utilization: 26, resetsAt: null }, sevenDay: { utilization: 78, resetsAt: null } };
     const { log, go, calls } = await setup({ passes: (id, nth) => !(id === "tone-check" && nth === 1), usage, show: show(65) });
@@ -335,9 +380,12 @@ describe("the panel step", () => {
     // renders the word rather than failing, which is what lets a reviewer's prompt render at all on
     // the first pass.
     const first = roundExtras([]);
-    expect(first).toEqual({ prior: {}, round: { n: 1, costUsd: 0 } });
+    // `found` is the console's test for "is there a round to draw at all" and `red` is the one
+    // `revise`'s `when` asks; on an empty log both are false, and the round values are the
+    // conservative answer rather than an absence.
+    expect(first).toEqual({ found: false, red: false, prior: {}, round: { n: 1, costUsd: 0 } });
     expect(renderPrompt("prior: {{prior.tone-check}}; round {{round.n}}; ${{round.costUsd}}", { episodeId: "s02e01", runId: "r1", showRoot: "/show", results: {} }, first))
-      .toBe("prior: none; round 1; $0");
+      .toBe("prior: none; round 1; $0.0000");
 
     await go();
     const events = await log.read();
@@ -376,6 +424,60 @@ describe("the panel step", () => {
     const events = await log.read();
     expect(resetsBy(events, "script-gate")).toContain("panel");
     expect(events.filter((e) => e.kind === "step_started" && e.stepId === "panel").map((e) => e.payload["round"])).toEqual([1, 1]);
+  });
+
+  it("bypasses the revision when the rejected panel had gone green, and runs it when the panel goes red again", async () => {
+    // I-1 (the whole-branch review of 2026-10-15). `revise`'s `when` asks whether the panel's
+    // **latest** record is red, not whether any round ever was — and the difference is only visible
+    // on the rejection path, which is why it shipped. `tone-check` fails its first run, so round 1
+    // is red and round 2 is green; the showrunner then rejects, and the gate's reset closure takes
+    // in the writer. Asked the old question the writer would run here with round 1's verdicts —
+    // issues the panel has since judged resolved — and with the showrunner's note rendered nowhere,
+    // which is one writer call (~$3.23 measured) spent against text that is already fixed and a
+    // real chance of churning the change the fix agent just made from the note.
+    const { log, pipeline, ctx, executors, calls } = await setup({ passes: (id, nth) => !(id === "tone-check" && nth === 1) });
+    const gate = pipeline.steps.find((s) => s.id === "script-gate") as GateStep;
+    gate.rerunOnReject = ["hand-edits", ...REVIEWERS];
+    const go = () => run({ pipeline, ctx, log, executors, renderGateMessage: async (_f, c) => renderPrompt(GATE_MESSAGE, c, roundExtras(c.events)) });
+
+    expect(await go()).toMatchObject({ status: "waiting", gate: { stepId: "script-gate", attempt: 1 } });
+    await answerGate(log, "r1", "script-gate", { approved: false, notes: "scene two is flat" });
+    expect(await go()).toMatchObject({ status: "waiting", gate: { stepId: "script-gate", attempt: 2 } });
+
+    const events = await log.read();
+    // One revision, and it belongs to round 2. The pass after the rejection skipped the writer by
+    // its own `when`, so the round count and the writer's bill both stand still.
+    expect(calls.filter((c) => c === "revise")).toHaveLength(1);
+    expect(queries(events, "revise")).toBe(1);
+    expect(kinds(events, "step_skipped").filter((e) => e.stepId === "revise")).toHaveLength(2);
+    expect(rounds(events).map((p) => p["round"])).toEqual([1]);
+    // And the skip is the one *after* the rejection, not only round 1's.
+    const answered = events.findIndex((e) => e.kind === "gate_answered");
+    expect(events.findIndex((e, i) => i > answered && e.kind === "step_skipped" && e.stepId === "revise")).toBeGreaterThan(answered);
+  });
+
+  it("runs the revision after a rejection whose re-reviewed panel comes back red", async () => {
+    // The other direction of the same predicate: the rejection's pass re-reviews the fixed script
+    // and a reviewer fails it, so the panel writes round 2 and the round goes on as any red round
+    // does — the writer runs once, against the verdicts of the round that just failed.
+    const { log, pipeline, ctx, executors } = await setup({ passes: (id, nth) => !(id === "tone-check" && (nth === 1 || nth === 3)) });
+    const gate = pipeline.steps.find((s) => s.id === "script-gate") as GateStep;
+    gate.rerunOnReject = ["hand-edits", ...REVIEWERS];
+    const go = () => run({ pipeline, ctx, log, executors, renderGateMessage: async (_f, c) => renderPrompt(GATE_MESSAGE, c, roundExtras(c.events)) });
+
+    expect(await go()).toMatchObject({ status: "waiting", gate: { stepId: "script-gate", attempt: 1 } });
+    await answerGate(log, "r1", "script-gate", { approved: false, notes: "scene two is flat" });
+    const reopened = await go();
+    expect(reopened).toMatchObject({ status: "waiting", gate: { stepId: "script-gate", attempt: 2 } });
+    if (reopened.status === "waiting") expect(reopened.gate.message).toContain("green after 3 round(s)");
+
+    const events = await log.read();
+    expect(queries(events, "revise")).toBe(2);
+    expect(rounds(events).map((p) => p["round"])).toEqual([1, 2]);
+    // The second revision is the one the rejection's red round bought, so it lands after the answer.
+    const answered = events.findIndex((e) => e.kind === "gate_answered");
+    const revisions = events.filter((e) => e.kind === "agent_query" && e.stepId === "revise").map((e) => events.indexOf(e));
+    expect(revisions[1]).toBeGreaterThan(answered);
   });
 });
 

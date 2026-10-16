@@ -163,7 +163,14 @@ export function renderPrompt(template: string, ctx: TemplateContext, extra: Rend
       if (extra.round === undefined) return fail("round is not available");
       const field = expr.slice("round.".length);
       if (field === "n") return String(extra.round.n);
-      if (field === "costUsd") return String(extra.round.costUsd);
+      // **Four decimals, applied here because this is where the figure becomes text.** The console
+      // prints the same number in the gate's head with `toFixed(4)` (`src/pages/Gate.tsx`), and a
+      // `String()` here made the two disagree about one figure on one screen: a round costing 6.07
+      // read `$6.07` in the gate's message and `$6.0700` in its head, and a round 1 read `$0`
+      // against `$0.0000`. The format belongs at the render site rather than in `roundCostUsd`,
+      // which keeps returning a number so the event payload and the console's wire carry a figure
+      // arithmetic can be done on.
+      if (field === "costUsd") return extra.round.costUsd.toFixed(4);
       // Two fields and no path: the round is a number and a figure, and a name this does not know
       // is a typo in a prompt, which is exactly the kind of hole this module refuses to render.
       return fail("unknown round field; the round carries n and costUsd");

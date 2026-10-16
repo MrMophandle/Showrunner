@@ -169,7 +169,7 @@ describe("createAgentExecutor: events", () => {
     // renders rather than failing: round 1, nothing spent, and `none` for each prior verdict.
     const first = fake([init, success()]);
     await createAgentExecutor({ query: first.query, promptsDir })(step({ promptFile: "round.md" }), ctx(), recorder().emit);
-    expect(first.calls[0]!.prompt).toBe("Round 1 of the review, $0 spent.\nYour prior verdict: none\nThe writer's prior report: none\n");
+    expect(first.calls[0]!.prompt).toBe("Round 1 of the review, $0.0000 spent.\nYour prior verdict: none\nThe writer's prior report: none\n");
   });
   it("records the verdict, not the text, when the step has a schema", async () => {
     const f = fake([init, success({ structured_output: { pass: false }, permission_denials: [{ tool_name: "Bash" }, { tool_name: "Bash" }] })]);

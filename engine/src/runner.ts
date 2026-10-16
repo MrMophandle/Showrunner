@@ -714,8 +714,14 @@ function latestWeeklyUtilization(events: readonly Event[]): number | undefined {
  *  round, against $75.31 for the whole write phase, §2.4). That is also why no start index is
  *  needed: none of those steps can have run before the draft that produced the script they read.
  *
- *  Rounded to four decimals, the money format the console already prints
- *  (`console/src/pages/WhatHappened.tsx`), so a prompt renders `15.8878` rather than a float's tail. */
+ *  **The value is rounded to four decimals; the four-decimal *format* is applied where the figure is
+ *  printed.** Rounding here is what keeps a float's tail out of the log and out of a prompt
+ *  (`15.8878`, not `15.887800000000002`). It is not a format: `Math.round(x * 10_000) / 10_000` of
+ *  6.07 is 6.07 and of 0 is 0, so the two decimals and the bare zero are padded by the printers —
+ *  `prompt-template.ts`'s `{{round.costUsd}}` for the gate's message and the reviewers' prompts, and
+ *  `console/src/pages/Gate.tsx` for the gate's head, which is the format
+ *  `console/src/pages/WhatHappened.tsx` prints money in. Claiming the format here is what let the
+ *  message and the head disagree about one figure (the whole-branch review of 2026-10-15). */
 function roundCostUsd(events: readonly Event[], ids: ReadonlySet<StepId>): number {
   const perSession = new Map<string, number>();
   for (let i = 0; i < events.length; i++) {
@@ -762,8 +768,14 @@ function visitedAfter(events: readonly Event[], stepId: StepId, from: number): b
  *  across a reset (spec §6.5); the log is the record of how many rounds this script has cost.
  *
  *  **The idempotence guard has two clauses, and the second one is what makes it right.** The first
- *  is the plan's: a `step_reset` signed `panel:<id>:round-<N>` already stands after this step's last
- *  `step_started`, so the writes of round N happened. That alone is not enough to decide anything,
+ *  is the plan's, anchored on round N's own record: a `panel_round` for round N, or the
+ *  `step_reset` batch signed `panel:<id>:round-<N>`, already stands after this step's last
+ *  `step_started`, so some of the writes of round N happened. The `panel_round` is named first
+ *  because it is written first and a crash between the two appends leaves it alone, which is a batch
+ *  still owed rather than a round still to review; the batch stays in the clause as well, because
+ *  the owed batch is written from a *later* entry of this step and that entry's own `step_started`
+ *  then sits between the round and the batch — so after a second crash inside those appends the
+ *  batch is the only one of the two writes the anchor can still see. That alone is not enough to decide anything,
  *  because it is *also* true on the ordinary restarted pass — the batch is written after the
  *  `step_started` of the round that wrote it — and a step that answered "already done, reset again"
  *  there would reset a panel whose reviewers had just re-run, and pay seven more agent calls
@@ -796,15 +808,25 @@ async function runPanelStep(
   }
   const round = written + 1;
 
-  // The round's batch, as the log holds it: which ids were reset for the last round written, and
-  // where the last of those writes sits, so "has this step re-run since" has a position to measure
-  // from.
+  // Round `written`'s own writes, as the log holds them: the `panel_round` that records the round,
+  // and the `step_reset` batch that invalidates its work — which ids were reset, and where the last
+  // of those writes sits, so "has this step re-run since" has a position to measure from.
+  //
+  // **Both are read, because the two writes are not atomic** (the whole-branch review of
+  // 2026-10-15). The `panel_round` lands first and the batch after it, so a crash in that window
+  // leaves a round recorded with nothing reset. A guard that asked only about the batch read such a
+  // log as "no round has been written here", re-judged the same red verdicts and wrote a **second**
+  // `panel_round` for them, which ran `{{round.n}}` and the gate's sentence one high for the rest of
+  // the run.
   const priorBy = panelResetBy(step.id, written);
+  let roundAt = -1;
   let batchAt = -1;
   const batched: StepId[] = [];
   for (let i = lastStart + 1; i < events.length; i++) {
     const e = events[i];
-    if (e && e.kind === "step_reset" && e.stepId !== undefined && e.payload["by"] === priorBy) {
+    if (!e) continue;
+    if (e.kind === "panel_round" && e.stepId === step.id && Number(e.payload["round"]) === written) roundAt = i;
+    if (e.kind === "step_reset" && e.stepId !== undefined && e.payload["by"] === priorBy) {
       batchAt = i;
       batched.push(e.stepId);
     }
@@ -828,7 +850,18 @@ async function runPanelStep(
   const plannedResets = [...new Set([...step.resets, step.id])]
     .filter((id) => byId.has(id) && byId.get(id)?.kind !== "gate");
 
-  if (written > 0 && batchAt >= 0) {
+  if (written > 0 && (roundAt >= 0 || batchAt >= 0)) {
+    if (batchAt < 0) {
+      // **A `panel_round` with no batch after it is a batch still owed.** The round is paid for and
+      // recorded; what did not happen is the invalidation. So the batch is written now, signed with
+      // round `written`'s own signature, and **no second `panel_round`**: the round the crashed run
+      // reviewed is the round this log carries, and writing another would charge the run a round it
+      // never reviewed. The whole declared set is owed rather than a stale subset, because no reset
+      // landed at all — nothing has re-run, and every result in `ctx.results` is one the recorded
+      // round already judged.
+      for (const id of plannedResets) await emitFor(id)("step_reset", { by: priorBy, round: written });
+      return { kind: "reset", stepIds: plannedResets };
+    }
     // Every step the batch invalidated **except this one**: the panel's own re-run is this call, and
     // it has no completion after its own batch by construction — measuring itself would make the
     // guard fire on every ordinary restarted pass, which is the fault the second clause exists to
