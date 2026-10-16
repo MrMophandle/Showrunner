@@ -8,7 +8,8 @@ import { missingBibleFiles } from "../bible.js";
 import { missingRefs, missingShowrunnerImages } from "../needs.js";
 import { handEdits } from "../provenance.js";
 import type { StageMap } from "../stages.js";
-import type { AgentStep, GuardStep, LoopStep, NestedAgentStep, Pipeline, RunContext, ScriptStep, Step, StepId } from "../steps.js";
+import { verdictPass } from "../steps.js";
+import type { AgentStep, GuardStep, LoopStep, NestedAgentStep, PanelStep, Pipeline, RunContext, ScriptStep, Step, StepId } from "../steps.js";
 
 /** The name every episode run records in its run_started event and its log path. It is a
  *  constant rather than a literal at the call sites because the console, the run log and the
@@ -53,7 +54,6 @@ export const EPISODE_STAGE_MAP: StageMap = {
 const REVIEWERS = ["tone-check", "flow-check", "character-check", "structure-check", "environment-check", "repetition-check"] as const;
 
 function str(v: unknown, fallback: string): string { return typeof v === "string" && v !== "" ? v : fallback; }
-function verdictPass(v: unknown): boolean { return typeof v === "object" && v !== null && (v as { pass?: unknown }).pass === true; }
 function verdictField(v: unknown, key: string): unknown { return typeof v === "object" && v !== null ? (v as Record<string, unknown>)[key] : undefined; }
 async function isDir(p: string): Promise<boolean> { try { return (await stat(p)).isDirectory(); } catch { return false; } }
 
@@ -111,8 +111,14 @@ export function episodePipeline(opts: EpisodePipelineOptions): Pipeline {
   const commit = (id: StepId, dependsOn: StepId[], message: string, paths: string[]): ScriptStep =>
     ({ kind: "script", id, dependsOn, argv: py("git-commit.py", "--message", message, "--", ...paths), timeoutMs: 30_000 });
 
+  /** One panel member. It depends on `revise` as well as on `draft`, and that edge is load-bearing
+   *  at the console's production concurrency of 7: the runner batches every ready agent step
+   *  (`runner.ts`), so without it the writer's revision and the seven reviewers would run in one
+   *  batch and the reviewers would read `script.md` while it was being rewritten. On round 1 `revise`
+   *  is bypassed by its own `when`, and a bypassed dependency counts as satisfied, so the edge costs
+   *  the first round nothing. */
   const reviewer = (id: (typeof REVIEWERS)[number], inputs: string[]): AgentStep => ({
-    kind: "agent", id, dependsOn: ["draft"], promptFile: `${id}.md`, schemaFile: `${id}.schema.json`, model: "medium",
+    kind: "agent", id, dependsOn: ["draft", "revise"], promptFile: `${id}.md`, schemaFile: `${id}.schema.json`, model: "medium",
     allowedTools: ["Read", "Glob", "Grep"], context: "fresh", inputs, timeoutMs: 30 * MIN,
   });
 
@@ -224,7 +230,35 @@ export function episodePipeline(opts: EpisodePipelineOptions): Pipeline {
       kind: "guard", id: "hand-edits-script", dependsOn: ["draft"],
       check: async (ctx) => ({ pass: true, message: JSON.stringify({ handEdited: await handEdits(ctx, [script, outline]) }) }),
     },
-    canonReview("canon-review-script", ["hand-edits-script"], "canon-review-script.md", [script, outline, premise, lockedBeats, ...canonSpine]),
+    {
+      // One fresh writer call per round, and the round's order is why it is declared here rather
+      // than after the panel: `orderSteps` prefers declaration order among ready steps, so this is
+      // what puts the revision between the reset and the reviewers on every restarted pass —
+      // hand-edits-script → revise → the panel's seven → panel. On round 1 there is no `panel_round`
+      // in the log, `when` is false, and the step is bypassed, which is the round-1 case the old
+      // `review-gate` guard's "yes"/"no" message used to express (inventory J-17).
+      //
+      // `context: "fresh"` and no loop (Plan J, ruling 4). The shared session it used to run in is
+      // the measured convergence failure (J-21): on the s02e01 run two of its three iterations made
+      // **zero** tool calls in under 400 ms each, moved the session's cost not at all, burned the
+      // cap and failed the step — and one fresh iteration after the operator's Resume finished the
+      // work in six tool calls. The panel is the arbiter now, so the writer needs no sentinel: a
+      // revision that did not land is caught by the next round's verdicts.
+      //
+      // **`revise.md` must read the verdicts as `{{prior.<id>}}` and not as `{{results.<id>}}`.**
+      // This step now runs *before* the reviewers in the round, and the reset that preceded it
+      // deleted their results from `ctx.results` (`state.ts`'s step_reset, inventory J-14), so a
+      // `{{results.tone-check}}` in that prompt is a hole and the step fails to render. The verdicts
+      // are in the log's `panel_round`, which is what `{{prior.*}}` reads. The engine repository's
+      // template and the instance's copy are both Plan J's to change (Tasks 2 and 5), and until the
+      // instance's copy is changed a round 2 in production fails here.
+      kind: "agent", id: "revise", dependsOn: ["hand-edits-script"],
+      when: (ctx) => (ctx.events ?? []).some((e) => e.kind === "panel_round" && e.stepId === "panel"),
+      promptFile: "revise.md", model: "writer", allowedTools: ["Read", "Edit", "Write", "Glob", "Grep"],
+      context: "fresh", inputs: [script, `${canonDir}/style-guide.md`], outputs: [script],
+      timeoutMs: 60 * MIN, idleTimeoutMs: 15 * MIN,
+    } satisfies AgentStep,
+    canonReview("canon-review-script", ["hand-edits-script", "revise"], "canon-review-script.md", [script, outline, premise, lockedBeats, ...canonSpine]),
     ledger("canon-ledger-script", "canon-review-script", "script"),
     reviewer("tone-check", [`${canonDir}/style-guide.md`, script]),
     reviewer("flow-check", [`${canonDir}/episode-formula.md`, `${canonDir}/style-guide.md`, script, outline]),
@@ -233,16 +267,23 @@ export function episodePipeline(opts: EpisodePipelineOptions): Pipeline {
     reviewer("environment-check", [script, outline, `${canonDir}/technology.md`]),
     reviewer("repetition-check", [`${canonDir}/style-guide.md`, script]),
     {
-      kind: "guard", id: "review-gate", dependsOn: ["canon-review-script", ...REVIEWERS],
-      check: (ctx) => ({ pass: true, message: ["canon-review-script", ...REVIEWERS].every((id) => verdictPass(ctx.results[id])) ? "yes" : "no" }),
-    },
+      // The script gate opens only on a green panel (Ryan's ruling of 2026-10-15). Every round the
+      // seven verdicts are read here: all pass and the panel completes, so `script-gate` is reached;
+      // one fails and the round's ten steps and this step are reset, and the pass runs the revision
+      // and the panel again. There is no cap — the weekly quota is the only stop, and the operator's
+      // Resume continues the loop.
+      //
+      // `resets` is the closure the script gate's own `rerunOnReject` already produced on a human
+      // rejection (inventory J-01, measured as exactly these ten), written out here plus this step,
+      // because a round is a decision about which work to repeat rather than a consequence of the
+      // dependency graph. `canon-ledger-script` re-runs safely: the ledger dedupes on
+      // (where, deviation), which its own script says in the same words.
+      kind: "panel", id: "panel", dependsOn: ["canon-review-script", ...REVIEWERS],
+      reviewers: ["canon-review-script", ...REVIEWERS],
+      resets: ["hand-edits-script", "revise", "canon-review-script", "canon-ledger-script", ...REVIEWERS, "panel"],
+    } satisfies PanelStep,
     {
-      kind: "loop", id: "revise", dependsOn: ["review-gate"], when: (ctx) => ctx.results["review-gate"] === "no",
-      until: "REVISIONS_COMPLETE", maxIterations: 3, inputs: [script, `${canonDir}/style-guide.md`], outputs: [script],
-      body: { kind: "agent", id: "revise-body", promptFile: "revise.md", model: "writer", allowedTools: ["Read", "Edit", "Write", "Glob", "Grep"], context: "shared", idleTimeoutMs: 15 * MIN },
-    },
-    {
-      kind: "gate", id: "script-gate", dependsOn: ["revise", "canon-ledger-script"], messageFile: "script-gate.gate.md", maxAttempts: 10,
+      kind: "gate", id: "script-gate", dependsOn: ["panel", "canon-ledger-script"], messageFile: "script-gate.gate.md", maxAttempts: 10,
       onReject: fixAgent("script-gate-fix", "script-gate.reject.md", "writer", ["Read", "Edit", "Write", "Glob", "Grep"], [script]),
       rerunOnReject: ["hand-edits-script", ...REVIEWERS],
     },

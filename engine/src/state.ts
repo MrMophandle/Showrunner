@@ -51,14 +51,28 @@ export function deriveRunState(events: Event[]): RunState {
         }
         break;
       case "step_reset":
-        // Written by a gate rejection (payload.by is the gate) or by resetSteps (payload.by is
-        // "operator"): the step's work is invalidated, so it returns to pending and its result
-        // leaves ctx.results until it completes again.
+        // Written by a gate rejection (payload.by is the gate), by a red panel round (payload.by is
+        // "panel:<panel id>:round-<n>") or by resetSteps (payload.by is "operator"): the step's work
+        // is invalidated, so it returns to pending and its result leaves ctx.results until it
+        // completes again. A panel resets itself as part of its own batch, which is what returns it
+        // to pending so the restarted pass evaluates the re-run reviewers.
         if (id) {
           delete s.steps[id];
           delete s.results[id];
           if (s.position?.stepId === id) delete s.position;
         }
+        break;
+      case "panel_round":
+        // A `panel` step's record that a round came back red: the round number, the verdicts, the
+        // round's cost and the weekly figure. **It changes no status, no result and no position**,
+        // and the case is written out rather than left to `default` so that is a rule rather than
+        // an accident of this switch. The panel's own status comes from its step_started,
+        // step_completed, step_failed and step_reset like any step's; the round's effect on the
+        // other steps arrives as the step_reset batch written immediately after this event, which
+        // the case above applies. A reader that wants the round — the agent executor's
+        // `{{prior.*}}` and `{{round.*}}`, the console's run view — reads the event out of the log
+        // itself, because the round is history rather than state: every round the run has paid for
+        // is still in the log after the last one is projected away.
         break;
       case "step_started":
         if (id) { s.steps[id] = "running"; s.position = { stepId: id, startedAt: e.ts }; }

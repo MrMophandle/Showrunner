@@ -91,6 +91,28 @@ export function orderSteps(p: Pipeline): Step[] {
       if (!byId.has(r)) throw new PipelineError(`gate ${JSON.stringify(s.id)} names unknown step ${JSON.stringify(r)} in rerunOnReject`);
     }
   }
+  for (const s of p.steps) {
+    if (s.kind !== "panel") continue;
+    // A panel with no reviewer is green by vacuity — "every reviewer passed" over an empty list —
+    // so the gate downstream of it would open on no verdict at all. Refused at load time, where it
+    // is a typo, rather than at the panel, where it is a script nobody reviewed.
+    if (s.reviewers.length === 0) {
+      throw new PipelineError(`panel ${JSON.stringify(s.id)} names no reviewer, so every round would be green by vacuity, in pipeline ${p.name}`);
+    }
+    const deps = new Set(s.dependsOn ?? []);
+    for (const r of s.reviewers) {
+      if (!byId.has(r)) throw new PipelineError(`panel ${JSON.stringify(s.id)} names unknown step ${JSON.stringify(r)} in reviewers`);
+      // The panel reads each reviewer's result, and the ordered walk is the only thing that
+      // guarantees a reviewer has run before the panel is reached: a reviewer the panel does not
+      // depend on could be ordered after it, and the round would judge an absent verdict.
+      if (!deps.has(r)) {
+        throw new PipelineError(`panel ${JSON.stringify(s.id)} reads ${JSON.stringify(r)}'s verdict without depending on it; add it to dependsOn, in pipeline ${p.name}`);
+      }
+    }
+    for (const r of s.resets) {
+      if (!byId.has(r)) throw new PipelineError(`panel ${JSON.stringify(s.id)} names unknown step ${JSON.stringify(r)} in resets`);
+    }
+  }
   const remaining = new Map<StepId, Set<StepId>>();
   for (const s of p.steps) remaining.set(s.id, new Set(s.dependsOn ?? []));
   const out: Step[] = [];
@@ -129,6 +151,11 @@ export interface StepDescription {
   idleTimeoutMs?: number; messageFile?: string; maxAttempts?: number; rerunOnReject?: StepId[];
   onReject?: NestedStepDescription; body?: NestedStepDescription;
   until?: string; maxIterations?: number; cwd?: string;
+  /** A `panel` step's two lists: the steps whose verdicts decide the round, and the steps a failed
+   *  round re-runs. Described because they are the whole of what the step does — a reviewer added
+   *  to the panel or dropped from the reset set changes the round, and so must change the pipeline
+   *  hash — and because the console's rail draws the kind from this description. */
+  reviewers?: StepId[]; resets?: StepId[];
   /** The step's `{{vars.<name>}}` values (agent and gate steps), keys sorted. Described because a
    *  changed var changes what the step's prompt says and so must change the pipeline hash. */
   vars?: Record<string, string>;
@@ -187,6 +214,9 @@ export function describePipeline(p: Pipeline): PipelineDescription {
     if (s.kind === "loop") {
       d.until = s.until; d.maxIterations = s.maxIterations;
       d.body = describeNested(s.body);
+    }
+    if (s.kind === "panel") {
+      d.reviewers = [...s.reviewers]; d.resets = [...s.resets];
     }
     return d;
   });

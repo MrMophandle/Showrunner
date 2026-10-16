@@ -117,6 +117,60 @@ describe("createAgentExecutor: events", () => {
     expect(rec.events[3]!.payload).toMatchObject({ ok: true, subtype: "success", text: "final text", toolCalls: 2, numTurns: 3, durationMs: 1200, costUsd: 0.02, sessionId: "sess-1", permissionDenials: 0, deniedTools: [] });
     expect("verdict" in rec.events[3]!.payload).toBe(false);
   });
+  it("records the plan's utilization windows on every agent_result that saw them, and omits the field otherwise", async () => {
+    // The field Plan J adds, and the gap it closes (inventory J-19): before it, the weekly figure
+    // reached the log only through `limit.weeklyUtilization` or `step_waiting`, both of which need a
+    // classified limit, so an unlimited run carried no figure at all — and a `panel` step's weekly
+    // stop has to read one on a run where nothing was ever limited.
+    const windows: AgentUsage = { available: true, fiveHour: { utilization: 26, resetsAt: null }, sevenDay: { utilization: 38, resetsAt: null } };
+    const f = fake([init, { type: "usage", usage: windows }, success()]);
+    const rec = recorder();
+    await createAgentExecutor({ query: f.query, promptsDir })(step(), ctx(), rec.emit);
+    expect(rec.events.at(-1)!.payload["usage"]).toEqual(windows);
+
+    // A stream that yielded none — an SDK whose control request went unanswered — leaves the field
+    // absent rather than writing a figure nobody measured.
+    const bare = fake([init, success()]);
+    const rec2 = recorder();
+    await createAgentExecutor({ query: bare.query, promptsDir })(step(), ctx(), rec2.emit);
+    expect("usage" in rec2.events.at(-1)!.payload).toBe(false);
+  });
+  it("renders the round and the prior verdicts from the log's latest panel_round", async () => {
+    // The handoff the reset would otherwise break (inventory J-14): a reviewer's own last verdict is
+    // deleted from ctx.results by the step_reset that re-ran it, so the prompt reads it back out of
+    // the log, which RunContext.events already carries. The round and its cost ride on the same
+    // event, so one record answers "which round is this" for the reviewers, the writer and the gate.
+    const events = [
+      { ts: "2026-01-01T10:00:00.000Z", runId: "r1", kind: "run_started" as const, payload: {} },
+      {
+        ts: "2026-01-01T10:05:00.000Z", runId: "r1", stepId: "panel", kind: "panel_round" as const,
+        payload: {
+          round: 2, green: false, costUsd: 15.8878, by: "panel:panel:round-2",
+          verdicts: { "tone-check": { pass: false, issues: ["scene five — the analogy ration"] }, revise: "## Changed\nScene five." },
+        },
+      },
+    ];
+    const f = fake([init, success()]);
+    await createAgentExecutor({ query: f.query, promptsDir })(step({ promptFile: "round.md" }), { ...ctx(), events }, recorder().emit);
+    expect(f.calls[0]!.prompt).toBe([
+      "Round 3 of the review, $15.8878 spent.",
+      "Your prior verdict: {",
+      '  "pass": false,',
+      '  "issues": [',
+      '    "scene five — the analogy ration"',
+      "  ]",
+      "}",
+      "The writer's prior report: ## Changed",
+      "Scene five.",
+      "",
+    ].join("\n"));
+
+    // With no panel_round in the log — round 1, and every run before Plan J — the same prompt
+    // renders rather than failing: round 1, nothing spent, and `none` for each prior verdict.
+    const first = fake([init, success()]);
+    await createAgentExecutor({ query: first.query, promptsDir })(step({ promptFile: "round.md" }), ctx(), recorder().emit);
+    expect(first.calls[0]!.prompt).toBe("Round 1 of the review, $0 spent.\nYour prior verdict: none\nThe writer's prior report: none\n");
+  });
   it("records the verdict, not the text, when the step has a schema", async () => {
     const f = fake([init, success({ structured_output: { pass: false }, permission_denials: [{ tool_name: "Bash" }, { tool_name: "Bash" }] })]);
     const rec = recorder();

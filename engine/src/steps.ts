@@ -1,5 +1,6 @@
 import type { Progress } from "./state.js";
 import type { Event } from "./events.js";
+import type { ShowConfig } from "./show-config.js";
 
 export type StepId = string;
 
@@ -8,7 +9,7 @@ export type EventKind =
   | "step_started" | "step_completed" | "step_failed" | "step_skipped" | "step_cached" | "step_reset"
   | "step_progress" | "step_waiting" | "script_line"
   | "agent_query" | "agent_tool_call" | "agent_result"
-  | "loop_iteration"
+  | "loop_iteration" | "panel_round"
   | "gate_opened" | "gate_answered"
   | "input_changed";
 
@@ -29,6 +30,15 @@ export interface RunContext {
    *  it here rather than opening the log itself; executors ignore it. Optional so a caller that
    *  builds a context by hand, as the tests do, need not supply one. */
   events?: readonly Event[];
+  /** The show's config, when the caller has one. Read by the runner for exactly one number — the
+   *  weekly auto-retry ceiling (`agents.autoRetryWeeklyUtilizationMax`) a `panel` step compares the
+   *  log's latest seven-day utilization against before it starts another round. It is optional, and
+   *  the runner falls back to the house default (`DEFAULT_AUTO_RETRY_WEEKLY_UTILIZATION_MAX`), so a
+   *  caller that builds a context by hand — every test, the bible interview — still runs; a show
+   *  that configures its own ceiling has to pass this, which the console's worker does. The agent
+   *  executor does **not** read it: its own `AgentExecutorOptions.show` is the config it renders
+   *  `{{show.*}}` from, and the two are deliberately separate seams. */
+  show?: ShowConfig;
 }
 
 interface StepBase {
@@ -165,7 +175,49 @@ export interface LoopStep extends StepBase {
   progress?: (ctx: RunContext) => Progress | Promise<Progress>;
 }
 
-export type Step = GuardStep | ScriptStep | AgentStep | GateStep | LoopStep;
+/** A verdict-driven round: the step that reads a set of reviewers' verdicts and, when any of them
+ *  failed, invalidates the round's work and makes the pass run it again. It is the engine's one
+ *  trigger for the reset path a gate rejection already uses (inventory J-01, J-02), and it exists
+ *  because no other kind can express the outcome: a `guard` can only pass or fail the whole run
+ *  (J-03), and a `loop`'s body is one agent step rather than a sequence (J-04).
+ *
+ *  **Green:** every id in `reviewers` has a result whose `pass` is true, and the step completes with
+ *  `{ round, green: true }` — which is what lets a gate downstream of it open only on a green panel.
+ *
+ *  **Red:** the step writes one `panel_round` event carrying the round's number, the verdicts, the
+ *  round's cost and the weekly figure, then a `step_reset` for every id in `resets` — **including
+ *  its own**, which is what returns it to pending so the restarted pass evaluates it again — and
+ *  returns the reset outcome, so the runner restarts the pass with those steps pending.
+ *
+ *  There is no round cap (Ryan's ruling of 2026-10-15). The only stop is the weekly quota: at or
+ *  above the show's `agents.autoRetryWeeklyUtilizationMax` the step fails with the operator's
+ *  sentence instead of resetting, and the operator's Resume continues the loop.
+ *
+ *  `reviewers` must be a subset of `dependsOn` (`orderSteps` refuses otherwise): the panel reads
+ *  those steps' results, and the ordered walk is what guarantees they have run. `resets` names the
+ *  steps whose work a failed round invalidates, in pipeline order, and it is a declared list rather
+ *  than a computed closure because the round is a decision about which work to repeat, not a
+ *  consequence of the dependency graph. */
+export interface PanelStep extends StepBase {
+  kind: "panel";
+  /** The steps whose verdicts decide the round. Each must also be in `dependsOn`. */
+  reviewers: StepId[];
+  /** The steps a failed round re-runs, the panel's own id among them. Gates are never reset. */
+  resets: StepId[];
+}
+
+export type Step = GuardStep | ScriptStep | AgentStep | GateStep | LoopStep | PanelStep;
+
+/** Whether a step's result is a verdict that passed: an object whose `pass` is exactly `true`.
+ *
+ *  Exported because two readers need the identical rule and a one-line copy in each is a rule that
+ *  drifts: the `panel` step's own check (runner.ts) and the episode pipeline's `when` predicates and
+ *  guard messages (pipelines/episode.ts). Anything that is not an object with `pass === true` — a
+ *  missing result, a string, a verdict with `pass: "true"` — is not a pass, because a reviewer that
+ *  did not say it passed has not passed. */
+export function verdictPass(v: unknown): boolean {
+  return typeof v === "object" && v !== null && (v as { pass?: unknown }).pass === true;
+}
 
 export interface Pipeline {
   name: string;
