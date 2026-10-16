@@ -179,7 +179,10 @@ function loopIteration(stepEvents: Event[]): StepRow["iteration"] | undefined {
  *  **The rule: a round is reported whenever the panel wrote either of its two records.** Those are a
  *  `panel_round`, written for a round that came back red, and the panel's own `step_completed`,
  *  written for the round that came back green — the same two `roundExtras` reads, which is why the
- *  test below names both rather than only the red one. **A green round 1 is therefore reported**
+ *  test below names both rather than only the red one. **Which is why the detection is `roundExtras`'
+ *  `found` and not a predicate here:** this function used to spell the two records out a second time,
+ *  so the shape of a panel's green completion was written in two files that had to change together
+ *  and said so in neither (the whole-branch review of 2026-10-15). **A green round 1 is therefore reported**
  *  (Ryan's ruling, 2026-10-15): the gate's rendered message says "The panel is green after 1
  *  round(s) ($6.0660 of review and revision)", and a gate head printing nothing beside a message
  *  printing that would be the page contradicting itself about a figure the showrunner is approving.
@@ -195,9 +198,8 @@ function loopIteration(stepEvents: Event[]): StepRow["iteration"] | undefined {
  *  Board's rows do; a gate head and a situation line disagreeing about which round a run is on
  *  would be worse than neither saying it. */
 export function roundOf(events: readonly Event[]): RunView["round"] | undefined {
-  const recorded = events.some((e) => e.kind === "panel_round"
-    || (e.kind === "step_completed" && e.payload["green"] === true && e.payload["round"] !== undefined));
-  return recorded ? roundExtras(events).round : undefined;
+  const { found, round } = roundExtras(events);
+  return found ? round : undefined;
 }
 
 /** Every step of the pipeline definition as a row, in pipeline order, overlaid with the log.

@@ -52,12 +52,57 @@ function wire(e: Event): WireEvent {
   return { ts: e.ts, ...(e.stepId !== undefined ? { stepId: e.stepId } : {}), kind: e.kind, payload: e.payload };
 }
 
+/** A red review round as the troubleshooter's context carries it: everything the panel wrote about
+ *  the round, with the verdict objects replaced by the ids they belong to and which of them failed.
+ *
+ *  **Why this one kind is thinned.** `panel_round.verdicts` is keyed on every step the round resets
+ *  whose result the run had — the seven verdicts, the writer's round report, the hand-edit record
+ *  and the ledger's line — which is about ten kilobytes of JSON per red round on a real run. There
+ *  is no round cap, so a five-round run would otherwise put fifty kilobytes of verdict objects into
+ *  a prompt whose question is almost always "why did this stop", and the answer is in the round's
+ *  shape rather than in a reviewer's prose. What survives is what the event feed prints for the same
+ *  event (`src/components/EventFeed.tsx`'s `eventSummary`): the round, the reviewers that failed, and
+ *  the cost. The verdicts themselves are one `Read` away — the context names the run's own log path,
+ *  and the agent has `Read`, `Glob` and `Grep`.
+ *
+ *  **The failing ids, not the ones that raised issues.** `pass` and `issues` are decoupled: on the
+ *  one measured round a reviewer passed carrying five pieces of craft advice, and naming it among
+ *  the failures would send the reader after a defect it never claimed. The test is `pass === true`
+ *  on an entry that is a verdict at all — an object carrying a `pass`, which is `server/gates.ts`'s
+ *  `isVerdict` rule — because the event is keyed on every reset step and two of those results are
+ *  not verdicts: the hand-edit guard's JSON record and the ledger's result line. Counted as
+ *  non-passing they would be named as failing reviewers on every round. It is a few lines here
+ *  rather than an import because the console's other two readers of a verdict's `pass`
+ *  (`src/components/Verdicts.tsx`, `src/components/EventFeed.tsx`) live in React component modules,
+ *  and the server has no business loading one to ask a question about a payload. */
+function thinRound(e: Event): WireEvent {
+  const verdicts = e.payload["verdicts"];
+  const entries = typeof verdicts === "object" && verdicts !== null && !Array.isArray(verdicts)
+    ? Object.entries(verdicts as Record<string, unknown>)
+    : [];
+  const isVerdict = (v: unknown): v is Record<string, unknown> =>
+    typeof v === "object" && v !== null && !Array.isArray(v) && "pass" in (v as Record<string, unknown>);
+  return {
+    ...wire(e),
+    payload: {
+      ...e.payload,
+      verdicts: {
+        of: entries.map(([id]) => id),
+        failed: entries.filter(([, v]) => isVerdict(v) && v["pass"] !== true).map(([id]) => id),
+      },
+    },
+  };
+}
+
 /** The run's events with the chatter collapsed: the last fifty `script_line`s per step and the
  *  last `step_progress` per step, everything else whole, all of it in log order.
  *
  *  Collapsed by counting first and then walking, rather than by keeping a per-step buffer, so the
  *  result is a subsequence of the log in the log's own order — an agent reading it sees the
- *  surviving lines where they actually happened, between the step's start and its failure. */
+ *  surviving lines where they actually happened, between the step's start and its failure.
+ *
+ *  One kind is thinned in place instead of being dropped: a `panel_round` keeps its round, its cost
+ *  and its signature and loses the verdict objects, for the reasons `thinRound` states. */
 function collapse(events: Event[]): WireEvent[] {
   const lineCounts = new Map<string, number>();
   const progressCounts = new Map<string, number>();
@@ -80,6 +125,9 @@ function collapse(events: Event[]): WireEvent[] {
       const n = (progressSeen.get(key) ?? 0) + 1;
       progressSeen.set(key, n);
       if (n < (progressCounts.get(key) ?? 0)) continue;
+    } else if (e.kind === "panel_round") {
+      out.push(thinRound(e));
+      continue;
     }
     out.push(wire(e));
   }

@@ -32,6 +32,41 @@ async function seedBusyRun(root: string): Promise<void> {
   await seedRun(root, "s02e01", "r1", events);
 }
 
+/** One reviewer's verdict at the size a real one is: the object issues Plan J's schemas require,
+ *  with enough prose in each to make the point this test measures — a `panel_round` carries about
+ *  ten kilobytes of these per red round, and there is no round cap. */
+function bigVerdict(id: string, pass: boolean) {
+  return {
+    pass, verdict: pass ? "DRAFT PASSED" : "DRAFT FAILED",
+    issues: pass ? [] : Array.from({ length: 8 }, (_, i) => ({
+      id: `${id}-${i + 1}`,
+      law: "Canon/style-guide.md:## Cadence",
+      line: `Scene ${i + 1}, the quay bench — line ${200 + i}`,
+      text: "The narrator's sentence runs past the cap that section sets, and the build it serves is not a climax; ".repeat(4),
+    })),
+    notes: Array.from({ length: 5 }, () => "A preference rather than a defect, which fails nothing and is here for the writer. ".repeat(3)),
+    prior: { resolved: [] as string[], unresolved: [] as string[] },
+  };
+}
+
+/** A run that went two red review rounds, as the panel writes them: a `panel_round` per round
+ *  carrying every reset step's result, then the reset burst. */
+async function seedRoundsRun(root: string): Promise<void> {
+  const reviewers = ["tone-check", "flow-check", "character-check", "structure-check", "environment-check", "repetition-check", "canon-review-script"];
+  const events: SeedEvent[] = [{ kind: "run_started", payload: { pipeline: "episode", episodeId: "s02e01" } }];
+  for (const round of [1, 2]) {
+    const verdicts: Record<string, unknown> = { "hand-edits-script": '{"handEdited": []}', "canon-ledger-script": "LEDGER OK: 0 deviations logged." };
+    for (const id of reviewers) verdicts[id] = bigVerdict(id, id !== "tone-check" && id !== "repetition-check");
+    events.push({ stepId: "panel", kind: "step_started", payload: { kind: "panel", round } });
+    events.push({
+      stepId: "panel", kind: "panel_round",
+      payload: { round, green: false, verdicts, costUsd: 6.066, by: `panel:panel:round-${round}` },
+    });
+    events.push({ stepId: "revise", kind: "step_reset", payload: { by: `panel:panel:round-${round}`, round } });
+  }
+  await seedRun(root, "s02e01", "r1", events);
+}
+
 describe("the what-happened context", () => {
   it("reports each prompt's hash at the run against the file on disk", async () => {
     const { root, ctx, store } = await appWith(await makeShow());
@@ -67,6 +102,44 @@ describe("the what-happened context", () => {
     // Everything else is kept whole, and in log order.
     expect(context.events[0]?.kind).toBe("run_started");
     expect(context.events.filter((e) => e.kind === "agent_query").length).toBe(2);
+    store.close();
+  });
+
+  it("summarises a review round instead of passing ten kilobytes of verdicts into the prompt", async () => {
+    // M-6 (the whole-branch review of 2026-10-15). `collapse` thinned the chatter and left every
+    // other kind whole, and `panel_round` is the one kind whose payload is enormous: it carries
+    // every reset step's result so the next round's prompts can read them back, which on a real
+    // round is about ten kilobytes of verdict objects. There is no round cap, so a five-round run
+    // put roughly fifty kilobytes of JSON into a prompt whose question is "why did this stop".
+    const { root, ctx, store } = await appWith(await makeShow());
+    await seedRoundsRun(root);
+    const context = await assemble(ctx, store, "s02e01", "r1");
+    const rounds = context.events.filter((e) => e.kind === "panel_round");
+    expect(rounds).toHaveLength(2);
+
+    // What survives is what the feed prints: the round, the ids it carried, and the ones that
+    // failed — the reviewers that did not **pass**, not the ones that raised issues, since `pass`
+    // and `issues` are decoupled and a passing reviewer may carry five pieces of craft advice.
+    const summary = rounds[0]?.payload["verdicts"] as { of: string[]; failed: string[] };
+    expect(summary.failed).toEqual(["tone-check", "repetition-check"]);
+    expect(summary.of).toContain("hand-edits-script");
+    expect(summary.of).toHaveLength(9);
+    // The round's own figures are untouched: they are what the question is usually about.
+    expect(rounds[0]?.payload["round"]).toBe(1);
+    expect(rounds[0]?.payload["costUsd"]).toBe(6.066);
+    expect(rounds[0]?.payload["by"]).toBe("panel:panel:round-1");
+
+    // And the verdict prose is gone, which is the whole saving: the raw log still has it, and the
+    // troubleshooter has `Read` and the log's path.
+    const wire = JSON.stringify(context.events);
+    expect(wire).not.toContain("the build it serves is not a climax");
+    expect(wire).not.toContain("A preference rather than a defect");
+    const raw = await readFile(path.join(root, "Production/s02e01/runs/r1.jsonl"), "utf8");
+    expect(raw).toContain("the build it serves is not a climax");
+    expect(wire.length * 4).toBeLessThan(raw.length);
+
+    // Everything else about the round is still there, in log order.
+    expect(context.events.filter((e) => e.kind === "step_reset")).toHaveLength(2);
     store.close();
   });
 

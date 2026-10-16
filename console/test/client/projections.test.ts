@@ -588,11 +588,11 @@ describe("progressLabel", () => {
 describe("gateSummaryLine", () => {
   it("takes the sentence a gate template opens with, not the verdicts under it", () => {
     // The real shape of a script gate's message (`tools/templates/prompts/script-gate.gate.md`):
-    // one sentence naming the file, then the reviewers' results, which is the half the expander
-    // folds away.
+    // one sentence naming the file, then what the panel cost to turn green and the approve/reject
+    // line, which are the half the expander folds away.
     const message = [
       "Script drafted: Episodes/s02e01/script.md",
-      'Panel verdict (review-gate all-pass): {"pass":true,"issues":[]}',
+      "The panel is green after 2 round(s) ($12.1320 of review and revision).",
       "Approve to commit. Reject with notes for a targeted revision.",
     ].join("\n");
     expect(gateSummaryLine(message)).toBe("Script drafted: Episodes/s02e01/script.md");

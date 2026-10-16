@@ -62,9 +62,18 @@ export function eventSummary(e: WireEvent): string {
       // advice (inventory J-09, J-13), and naming it among the failures would send the reader
       // looking for a defect it did not claim. `readVerdict` is the console's one defensive reader
       // of a show's own verdict shape, shared with the gate's verdict board rather than copied.
+      //
+      // **And only an entry that is a verdict at all can be a failing one.** The event is keyed on
+      // every step the round resets, and two of those results are not verdicts — the hand-edit
+      // guard's JSON record and the canon ledger's result line (R-22; nine keys on the real
+      // pipeline) — so a filter on `readVerdict(v).pass` alone named them among the failing
+      // reviewers on every round, since a string reads as `pass: false`. The test for "is this a
+      // verdict" is `server/gates.ts`' own: an object carrying a `pass`.
       const verdicts = p["verdicts"];
+      const isVerdict = (v: unknown): boolean =>
+        typeof v === "object" && v !== null && !Array.isArray(v) && "pass" in (v as Record<string, unknown>);
       const red = typeof verdicts === "object" && verdicts !== null && !Array.isArray(verdicts)
-        ? Object.entries(verdicts).filter(([, v]) => !readVerdict(v).pass).map(([id]) => id)
+        ? Object.entries(verdicts).filter(([, v]) => isVerdict(v) && !readVerdict(v).pass).map(([id]) => id)
         : [];
       const costUsd = p["costUsd"];
       const cost = typeof costUsd === "number" ? ` · $${costUsd.toFixed(4)}` : "";

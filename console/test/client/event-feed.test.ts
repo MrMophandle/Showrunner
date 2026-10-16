@@ -61,6 +61,22 @@ describe("eventSummary for panel_round", () => {
     expect(eventSummary(panelRound({ verdicts: ["tone-check"] }))).toBe("round 2 red · $6.0660");
   });
 
+  it("does not name the round's non-verdict results among the failing reviewers", () => {
+    // The event is keyed on every step the round resets, not on the reviewers alone (R-22), so a
+    // real payload carries the hand-edit guard's JSON record and the ledger's result line beside
+    // the nine verdicts. Neither is a verdict, and reading a string's `pass` as false named both as
+    // failing reviewers on every round (found by the fix wave of 2026-10-16, while giving the
+    // troubleshooter's context the same summary this line is).
+    expect(eventSummary(panelRound({
+      verdicts: {
+        "hand-edits-script": '{"handEdited": []}',
+        "tone-check": { pass: false },
+        "canon-ledger-script": "LEDGER OK: 0 deviations logged.",
+        "flow-check": { pass: true },
+      },
+    }))).toBe("round 2 red — tone-check · $6.0660");
+  });
+
   it("names every reviewer when the whole panel is red, in the payload's own key order", () => {
     expect(eventSummary(panelRound({
       round: 1,

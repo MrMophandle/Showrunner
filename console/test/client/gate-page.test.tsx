@@ -45,13 +45,20 @@ const SCRIPT_URL = "/api/shows/harbor/episodes/s02e01/files/Episodes/s02e01/scri
 const SCRIPT_LINE = "INT. HARBOR OFFICE — DAWN";
 
 /** The message as the script gate's own template renders it
- *  (`tools/templates/prompts/script-gate.gate.md`): one sentence naming the file, then the
- *  reviewers' verdicts as the raw JSON Ryan opened the page on. */
+ *  (`tools/templates/prompts/script-gate.gate.md`): three lines — the script's path, what the panel
+ *  cost to turn green, and the approve/reject line. The fixture used to carry the pre-Plan-J
+ *  message, which interpolated the seven verdicts as raw JSON and which this engine can no longer
+ *  produce; the tests only need *a* message, so nothing failed, and the cost was a reader taking the
+ *  fixture for the current shape (the whole-branch review of 2026-10-15). */
 const MESSAGE = [
   "Script drafted: Episodes/s02e01/script.md",
-  'Panel verdict (review-gate all-pass): {"pass":true,"issues":[],"reviewers":["tone","flow","character","environment","structure","repetition","canon"]}',
+  "The panel is green after 2 round(s) ($12.1320 of review and revision).",
   "Approve to commit. Reject with notes for a targeted revision.",
 ].join("\n");
+
+/** The message's second line — the one inside the collapse, since the first is the summary. It is
+ *  what the order assertions below measure the message's position by. */
+const MESSAGE_BODY = "The panel is green after 2 round(s)";
 
 /** The first line as the summary says it, which is `gateSummaryLine`'s answer for `MESSAGE`. */
 const SUMMARY = "Script drafted: Episodes/s02e01/script.md";
@@ -123,6 +130,93 @@ beforeEach(() => {
   vi.stubGlobal("EventSource", FakeEventSource);
 });
 
+describe("the verdict board at the gate", () => {
+  /** A craft reviewer's verdict in the shape Plan J's six schemas now require: object issues with
+   *  stable ids, the non-failing `notes`, and the by-id `prior` accounting. */
+  const verdict = (over: Record<string, unknown> = {}) => ({
+    pass: true,
+    verdict: "DRAFT PASSED",
+    issues: [] as unknown[],
+    notes: [] as unknown[],
+    prior: { resolved: [] as string[], unresolved: [] as string[] },
+    ...over,
+  });
+
+  it("says what a reviewer noted and what it closed, so a green by declaration is visible", async () => {
+    // The case the whole-branch review of 2026-10-15 named (I-4, I-5): the reviewers' close rule is
+    // unconditional, so a writer that lists every finding under its round report's deliberate
+    // exceptions turns the panel green in one round with nothing fixed in the text. The ids go to
+    // `prior.resolved` and out of `issues`, the advisory findings go to `notes`, and the gate's
+    // message no longer prints the verdicts — so before this the page showed `pass` and a cost, and
+    // the one way a green can be false was invisible at the gate it opens.
+    const { container } = mount(gateView({
+      verdicts: {
+        "tone-check": verdict({
+          notes: [
+            "Scene Nine reads a shade warmer than the register asks.",
+            "The narrator's second paragraph could lose a clause.",
+            "Two adjacent lines open on the same preposition.",
+          ],
+          prior: { resolved: ["tone-1", "tone-2", "tone-3"], unresolved: [] },
+        }),
+      },
+    }));
+    await waitFor(() => { expect(screen.getByText(SCRIPT_LINE)).toBeInTheDocument(); });
+
+    // The chip: the issue count prints at zero, because `pass · 0 issues · 3 notes` is a reviewer
+    // that found three things and blocked on none, which is not the same fact as finding nothing.
+    const chip = container.querySelector(".verdict-chip");
+    expect(chip?.textContent).toContain("pass");
+    expect(container.querySelector(".verdict-count")?.textContent).toBe("0 issues · 3 notes");
+
+    // And the detail, which is where the three notes and the three closed ids are readable.
+    chip?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await waitFor(() => { expect(container.querySelector(".verdict-detail")).not.toBeNull(); });
+    const detail = container.querySelector(".verdict-detail");
+    expect(detail?.textContent).toContain("3 notes, which fail nothing");
+    expect(detail?.textContent).toContain("Scene Nine reads a shade warmer");
+    expect(detail?.textContent).toContain("Two adjacent lines open on the same preposition");
+    expect(detail?.textContent).toContain("closed this round: tone-1, tone-2, tone-3");
+  });
+
+  it("a verdict with neither notes nor a prior reads as nothing raised, and draws neither block", async () => {
+    const { container } = mount(gateView({ verdicts: { "flow-check": verdict() } }));
+    await waitFor(() => { expect(screen.getByText(SCRIPT_LINE)).toBeInTheDocument(); });
+
+    expect(container.querySelector(".verdict-count")?.textContent).toBe("0 issues");
+    container.querySelector(".verdict-chip")?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await waitFor(() => { expect(container.querySelector(".verdict-detail")).not.toBeNull(); });
+    expect(container.querySelector(".verdict-notes")).toBeNull();
+    expect(container.querySelector(".verdict-closed")).toBeNull();
+    expect(container.querySelector(".verdict-detail")?.textContent).toContain("this reviewer listed no issues");
+  });
+
+  it("counts an issue and a note in the singular, and keeps the issues quotable", async () => {
+    const { container } = mount(gateView({
+      verdicts: {
+        "tone-check": verdict({
+          pass: false,
+          verdict: "DRAFT FAILED",
+          issues: [{ id: "tone-1", law: "Canon/style-guide.md:## Cadence", line: "Scene Four — line 212", text: "The sentence runs past the cap that section sets." }],
+          notes: ["One note, which fails nothing."],
+          prior: { resolved: ["tone-2"], unresolved: ["tone-1"] },
+        }),
+      },
+    }));
+    await waitFor(() => { expect(screen.getByText(SCRIPT_LINE)).toBeInTheDocument(); });
+
+    expect(container.querySelector(".verdict-count")?.textContent).toBe("1 issue · 1 note");
+    container.querySelector(".verdict-chip")?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await waitFor(() => { expect(container.querySelector(".verdict-detail")).not.toBeNull(); });
+    // The issue reads as the board's one-line form, and the quote button is still on it alone: a
+    // note fails nothing, and quoting one into a rejection would read as though it had.
+    expect(container.querySelector(".verdict-issues")?.textContent).toContain("Scene Four — line 212: The sentence runs past the cap");
+    expect(container.querySelectorAll(".verdict-issues .btn-quote")).toHaveLength(1);
+    expect(container.querySelectorAll(".verdict-notes .btn-quote")).toHaveLength(0);
+    expect(container.querySelector(".verdict-closed")?.textContent).toContain("closed this round: tone-2");
+  });
+});
+
 describe("the Gate page's order", () => {
   it("draws the artifact before the message, and the answer between them", async () => {
     const { container } = mount(gateView());
@@ -135,9 +229,9 @@ describe("the Gate page's order", () => {
     // which is an attribute and not text in the document.
     const script = positionOf(container, SCRIPT_LINE);
     const answer = positionOf(container, "your answer");
-    const verdictJson = positionOf(container, "Panel verdict (review-gate all-pass)");
+    const message = positionOf(container, MESSAGE_BODY);
     expect(script).toBeLessThan(answer);
-    expect(answer).toBeLessThan(verdictJson);
+    expect(answer).toBeLessThan(message);
   });
 
   it("starts with the message collapsed, its first line as the summary", async () => {
@@ -167,7 +261,7 @@ describe("the Gate page's order", () => {
 
     // The same page, read rather than answered (ruling H-03): the artifact still comes first and
     // the message is still last, and neither button exists to be pressed.
-    expect(positionOf(container, SCRIPT_LINE)).toBeLessThan(positionOf(container, "Panel verdict (review-gate all-pass)"));
+    expect(positionOf(container, SCRIPT_LINE)).toBeLessThan(positionOf(container, MESSAGE_BODY));
     expect(screen.getByText(/answered where the show is writable/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /approve attempt/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /reject attempt/ })).toBeNull();
