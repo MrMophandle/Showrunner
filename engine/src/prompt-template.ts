@@ -30,6 +30,11 @@ type TemplateContext = Pick<RunContext, "episodeId" | "runId" | "showRoot" | "re
 const VARIABLE = /\{\{([^{}]*)\}\}/g;
 const LEFTOVER_BRACE = /\{\{|\}\}/;
 
+/** What `{{prior.<stepId>}}` renders when there is no previous verdict for that step — round 1, or a
+ *  step that was not in the last round's reset set. The word rather than an empty object or an empty
+ *  string, because the reviewers' prompts are written against it ("Your prior verdict: none"). */
+const NO_PRIOR = "none";
+
 /** What the caller supplies beyond the run context: the episode's numeric season and the show's
  *  config. Both are optional, and both are only ever *needed* by a template that names them —
  *  `{{season}}` fails for an episode whose season cannot be determined, but a prompt that never
@@ -40,6 +45,19 @@ export interface RenderExtra {
   /** The step's own `vars` (steps.ts); `{{vars.<name>}}` fails when the step declared none, or
    *  none by that name. */
   vars?: Record<string, string>;
+  /** The verdicts of the **previous** review round, by step id, from the latest `panel_round` event
+   *  in the run's log. `{{prior.<stepId>}}` renders one of them, and an id this map does not carry
+   *  renders the word `none` rather than failing — see `renderPrompt`'s note, since that is the one
+   *  hole in this module that is not an error: on round 1 there is no previous verdict and the
+   *  reviewers' prompts still have to render. The values are the verdicts as the reviewers returned
+   *  them, so a prompt may not assume a shape. */
+  prior?: Record<string, unknown>;
+  /** The round a `panel` step is about to run, and what the review and revision of this script have
+   *  cost so far: `{{round.n}}` and `{{round.costUsd}}`. Round 1 before any `panel_round` exists,
+   *  with a cost of 0. Supplied by the agent executor and by the gate-message renderer from the same
+   *  function, so a reviewer's prompt and the gate's message cannot disagree about which round the
+   *  run is on. */
+  round?: { n: number; costUsd: number };
 }
 
 /** Renders one resolved value as prompt text. Shared by the `results` and the `show` branches so
@@ -69,6 +87,14 @@ function renderValue(value: unknown, fail: (why: string) => never): string {
  *  episode with no season, `{{show.*}}` for an executor built without a show config, `{{vars.*}}`
  *  for a step that declared no vars at all, which is a different fault from a step that declared
  *  some but not that name and is worded differently for that reason.
+ *
+ *  Two more read `extra` and come from the run's `panel_round` events rather than from any step's
+ *  result: `{{prior.<stepId>}}`, that step's verdict in the **previous** review round, and
+ *  `{{round.n}}` / `{{round.costUsd}}`, the round about to run and what the review and revision have
+ *  cost. `{{prior.*}}` is the single exception to "every hole is an error": an id with no previous
+ *  verdict renders the word `none`, because round 1 has none for anybody and every reviewer's prompt
+ *  names its own. `{{round.*}}` is not an exception — it fails when the caller supplied no round, as
+ *  `{{vars.*}}` does, and on a field it does not know.
  *
  *  A doubled brace surviving the substitution is the one hole VARIABLE cannot see — its character
  *  class matches no brace, so `{{results.{x}}}` and an unterminated `{{results.setup` match nothing
@@ -113,6 +139,41 @@ export function renderPrompt(template: string, ctx: TemplateContext, extra: Rend
       // literal text "null" or "[object Object]" into a prompt or into a gate message a
       // showrunner approves. Every hole in this module is an error; this is one of them.
       return renderValue(extra.vars[name], fail);
+    }
+    if (expr === "prior" || expr.startsWith("prior.")) {
+      if (expr === "prior") return fail("prior needs a step id");
+      const id = expr.slice("prior.".length);
+      // One segment, never a path. A step id cannot contain ":" (pipeline.ts) and carries no "." in
+      // any pipeline the engine ships, and a dotted path would need the `none` rule applied at
+      // every level — "the prior verdict has no such field" is not the same answer as "there is no
+      // prior verdict", and a prompt that asked for a field of `none` would read as prose.
+      if (id === "" || id.includes(".")) return fail("malformed step id");
+      const value = extra.prior === undefined || !Object.prototype.hasOwnProperty.call(extra.prior, id)
+        ? undefined
+        : extra.prior[id];
+      // **The one hole in this module that is not an error.** Round 1 has no previous verdict for
+      // anyone, and every reviewer's prompt renders `{{prior.<self>}}`; failing there would fail
+      // the first round of every run. `none` is a word the prompts are written against, so the
+      // model is told there is nothing rather than shown an empty object.
+      if (value === null || value === undefined) return NO_PRIOR;
+      return renderValue(value, fail);
+    }
+    if (expr === "round" || expr.startsWith("round.")) {
+      if (expr === "round") return fail("round needs a field");
+      if (extra.round === undefined) return fail("round is not available");
+      const field = expr.slice("round.".length);
+      if (field === "n") return String(extra.round.n);
+      // **Four decimals, applied here because this is where the figure becomes text.** The console
+      // prints the same number in the gate's head with `toFixed(4)` (`src/pages/Gate.tsx`), and a
+      // `String()` here made the two disagree about one figure on one screen: a round costing 6.07
+      // read `$6.07` in the gate's message and `$6.0700` in its head, and a round 1 read `$0`
+      // against `$0.0000`. The format belongs at the render site rather than in `roundCostUsd`,
+      // which keeps returning a number so the event payload and the console's wire carry a figure
+      // arithmetic can be done on.
+      if (field === "costUsd") return extra.round.costUsd.toFixed(4);
+      // Two fields and no path: the round is a number and a figure, and a name this does not know
+      // is a typo in a prompt, which is exactly the kind of hole this module refuses to render.
+      return fail("unknown round field; the round carries n and costUsd");
     }
     if (expr === "results" || !expr.startsWith("results.")) return fail("unknown variable");
     const rest = expr.slice("results.".length);

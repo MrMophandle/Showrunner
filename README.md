@@ -94,27 +94,29 @@ root. Both ids are validated before they become that path. Every event carries `
 optional `stepId`, a `kind`, and a `payload`; the engine stamps `ts` itself, so a caller cannot
 backdate an entry.
 
-There are exactly nineteen kinds. The engine core writes fifteen of them; the three `agent_*` kinds
-and `step_waiting` are the agent executor's obligation.
+There are exactly twenty kinds. The engine core writes sixteen of them — `panel_round` is the
+runner's, written by a `panel` step — and the three `agent_*` kinds and `step_waiting` are the agent
+executor's obligation.
 
 | Kind | `stepId` | Payload the engine writes |
 |---|---|---|
 | `run_started` | no | `pipeline`, `episodeId`, and `trigger` when the caller supplied one |
 | `run_finished` | no | `status`: `"completed"` or `"failed"` |
 | `run_resumed` | no | `by` when the caller named one — written by `resumeRun` or by `resetSteps` on a finished run: the run is no longer finished, and failed and swept steps are pending again |
-| `step_started` | yes | `kind`; a script adds `argv` and `inputHashes`; an agent adds `inputHashes`; a loop adds `body`, `until`, `max`; a gate's fix agent adds `rejectionOf` and `attempt` |
-| `step_completed` | yes | a guard writes `result`; a script writes `inputHashes` and `outputHashes`; an agent writes those two plus `result` and `toolCalls`; a loop writes `result` and `iterations`; a gate's fix agent writes `result` and `toolCalls` |
+| `step_started` | yes | `kind`; a script adds `argv` and `inputHashes`; an agent adds `inputHashes`; a loop adds `body`, `until`, `max`; a panel adds `round` and `reviewers`; a gate's fix agent adds `rejectionOf` and `attempt` |
+| `step_completed` | yes | a guard writes `result`; a script writes `inputHashes` and `outputHashes`; an agent writes those two plus `result` and `toolCalls`; a loop writes `result` and `iterations`; a panel writes `result` (`{round, green: true}`), `round`, `green` and `costUsd`; a gate's fix agent writes `result` and `toolCalls` |
 | `step_failed` | yes | `error` |
 | `step_skipped` | yes | `reason` — `"dependency failed: <id>"`, `"dependency skipped: <id>"`, or `"when: false"` |
 | `step_cached` | yes | `inputHashes`, `outputHashes`, and `result` when the cached completion recorded one |
-| `step_reset` | yes | `by`, and `attempt` when a gate wrote it — written by a gate rejection (`by` is the gate) or by `resetSteps` (`by` is `operator`): the step returns to pending and its result leaves `ctx.results` |
+| `step_reset` | yes | `by`, plus `attempt` when a gate wrote it or `round` when a panel did — written by a gate rejection (`by` is the gate), by a red panel round (`by` is `panel:<panel id>:round-<n>`) or by `resetSteps` (`by` is `operator`): the step returns to pending and its result leaves `ctx.results` |
 | `step_progress` | yes | `done`, `total`, `unit`, and an optional `message` |
 | `step_waiting` | yes | `reason`, `window`, `resetsAt`, `ceiling`, and `weeklyUtilization` when the SDK answered with one — written by the agent executor before it sleeps out a plan usage limit. The step **stays `running`**: a worker is still on it |
 | `script_line` | yes | `stream` (`"stdout"` or `"stderr"`) and `line` |
 | `agent_query` | yes | the prompt file, model, allowlist and context policy the query ran with — written by the agent executor |
 | `agent_tool_call` | yes | the tool invoked and its arguments — written by the agent executor |
-| `agent_result` | yes | the verdict JSON if the step has a schema, the final text otherwise, plus `limit` when a usage limit or another SDK error kind ended the query — written by the agent executor |
+| `agent_result` | yes | the verdict JSON if the step has a schema, the final text otherwise, plus `limit` when a usage limit or another SDK error kind ended the query, and `usage` — the plan's five-hour and seven-day windows, asked of the SDK on **every** query — written by the agent executor |
 | `loop_iteration` | yes | `iteration`, `max`, `sentinel`, `toolCalls`, and `error` on a failed iteration |
+| `panel_round` | yes | `round`, `green: false`, `verdicts` (every reset step's result the run had, by step id), `costUsd` (the round's own steps, by session maximum), `by` (`panel:<id>:round-<n>`), and `weeklyUtilization` when the log carried one — written by a `panel` step when a round came back red, immediately before its `step_reset` batch. It changes no status: the round is history, and the reset beside it is what moves the steps |
 | `gate_opened` | yes | `attempt` and the `message` shown verbatim |
 | `gate_answered` | yes | `approved`, `attempt`, `waitedMs`, and `notes` and `by` when given |
 | `input_changed` | yes | `before` and `after`, the declared inputs' hashes on either side of the change |
@@ -135,6 +137,7 @@ not contain `:`, because the runner reserves `<id>:rejection` and `<id>:iteratio
 | `agent` | `promptFile`, `model`, `allowedTools`, `context` (`"fresh"` or `"shared"`), optional `schema` **or** `schemaFile`, `maxTurns`, `idleTimeoutMs`, `maxBudgetUsd` |
 | `gate` | `message(ctx)` **or** `messageFile`, optional `onReject` agent, `rerunOnReject`, `maxAttempts` (default 10) |
 | `loop` | `body` agent, `until` sentinel, `maxIterations`, optional `progress(ctx)` |
+| `panel` | `reviewers` (the steps whose verdicts decide the round; each must also be in `dependsOn`) and `resets` (the steps a failed round re-runs, the panel's own id among them) |
 
 **A schema and a gate message may live in the show's prompts directory rather than in the step.**
 An agent step names its schema either inline as `schema` or as a `schemaFile` — a draft-07 JSON file
@@ -198,6 +201,8 @@ or queried.
 | `{{season}}` | the episode's numeric season, unpadded (`Canon/season-{{season}}.md`) — read off an aired id, or from the show config's `airMap` for a production id |
 | `{{show.<path>}}` | a dotted path into the show config (`{{show.showName}}`, `{{show.video.fps}}`), by the same value rules as `{{results.*}}` |
 | `{{vars.<name>}}` | one of the step's own `vars` (`AgentStep.vars`, `GateStep.vars`): a flat name, never a path, so one prompt file can be run for several targets — a pipeline that writes fourteen files with one `write.md` names each target in the step rather than in fourteen prompt files |
+| `{{prior.<stepId>}}` | that step's verdict in the **previous** review round, read out of the log's latest `panel_round` — not out of `ctx.results`, which the round's own reset emptied. A step with no previous verdict renders the word `none`, which is the one hole in the template language that is not an error: round 1 has none for anybody and every reviewer's prompt names its own |
+| `{{round.n}}`, `{{round.costUsd}}` | the review round the pass is in and what review and revision have cost, from the same records — a red round's `panel_round` (the next round) or a green round's own `step_completed` (that round). Round 1 and `0` before any panel has run |
 
 **Every hole is an error.** An unknown variable, a step with no result, a path through a non-object,
 a missing key, a null value, or a value `JSON.stringify` cannot represent throws `TemplateError`
@@ -307,12 +312,19 @@ without sentinel REVISIONS_COMPLETE` (the s02e01 run of 2026-10-14).
 
 Three SDK signals reach the executor through `engine/src/sdk-query.ts`: an assistant message's
 `error` (`rate_limit`, or one of twelve other kinds), a `rate_limit_event` naming the window, its
-utilization and its reset, and — asked of the query object once, after a rejected limit — the plan's
-own utilization windows. That usage call is marked EXPERIMENTAL by the SDK, so it is wrapped: a
-missing method, a throw, or no answer inside ten seconds all mean "the weekly utilization is
-unknown", and none of them can fail a query. It is asked **inside** the message loop, because the
-transport closes with the stream: measured live on 2026-10-15, the same call answered in 183 ms
-mid-stream and failed instantly once the stream had ended.
+utilization and its reset, and — asked of the query object once per query, whether or not anything
+was limited — the plan's own utilization windows, which ride on `agent_result` as `usage`. That usage
+call is marked EXPERIMENTAL by the SDK, so it is wrapped: a missing method, a throw, or no answer
+inside ten seconds all mean "the weekly utilization is unknown", and none of them can fail a query.
+It is asked **inside** the message loop, because the transport closes with the stream: measured live
+on 2026-10-15, the same call answered in 183 ms mid-stream and failed instantly once the stream had
+ended; re-measured on an ordinary unlimited query it answered in 149 ms with both windows.
+
+**It is asked on every query because it is the only source of the weekly figure.** The same probe
+measured what an unlimited query's stream carries: one `rate_limit_event`, `status: "allowed"`,
+window `five_hour`, **no utilization on it and no seven-day event at all**. So a run that is never
+limited learns the week's quota from this call and nowhere else — which is what a `panel` step's
+weekly stop reads before it starts another review round.
 
 **The weekly figure has two sources, in that order of preference**: a seven-day `rate_limit_event`
 in the stream, when one arrived with a utilization on it, and otherwise the usage call. The event is
@@ -410,10 +422,13 @@ The twenty-one stages (`NEEDS_IDEA` through `COMPLETE`) are derived on top of th
 
 ## The episode pipeline
 
-**`episodePipeline({ show, episodeId, engineRoot })` builds the seventy-three-step pipeline that
-takes one episode from its premise to a committed canon update** (`engine/src/pipelines/episode.ts`).
+**`episodePipeline({ show, episodeId, engineRoot })` builds the sixty-eight-step pipeline that
+takes one episode from its premise to a committed canon update** (`engine/src/pipelines/episode.ts`),
+seventy-eight steps counting the ten nested ones — eight gates' fix agents and two loop bodies.
 One run covers one episode, and the four Archon workflows are four phases of a single step list: the
-**write** phase (premise, outline, canon review, draft loop, the six-reviewer panel, publish copy),
+**write** phase (premise, the outline with its own canon review and gate, the draft loop, then the
+review round — the seven reviewers, the `panel` step, and for every failing verdict a revision and
+another round, until the panel is green and the script gate opens — then the publish copy),
 the **assets** phase (TTS script, casting, synthesis, three QC passes, mix, shot list, images), the
 **assemble** phase (NAS check, timeline, render, master, finalize, publish kit), and the **canon**
 phase (propose, diff, commit). The spec's ordering rules are therefore dependency edges rather than
@@ -452,9 +467,34 @@ reopens the gate at the next attempt; `<gate>:rejections` keeps every note the g
 `script-gate`'s closure is the one worth reading twice. `canon-review-script` depends on
 `hand-edits-script`, so the rejection pulls it in and it re-reviews with the rejection note in
 scope; `draft` is *upstream* of every named step and is never reset, so a rejected script is fixed
-and re-reviewed rather than redrafted. `canon-gate` is the one gate carrying a `when`: a canon
-phase whose diff is `NO_CHANGES` bypasses it, which is why `EPISODE_STAGE_MAP` keys `CANON` on
-`canon-commit` rather than on the gate.
+and re-reviewed rather than redrafted. The closure also takes in `panel`, which depends on the
+reviewers, so the gate cannot reopen on a verdict about the script the fix agent replaced.
+
+**`script-gate` opens only on a green panel.** The `panel` step reads the seven verdicts, and while
+any of them fails it writes a `panel_round` and resets the round — `hand-edits-script`, `revise`,
+`canon-review-script`, `canon-ledger-script`, the six checks and itself — so the pass runs the
+revision and the reviewers again. `revise` is one fresh writer call per round, bypassed on round 1 by
+a `when` that asks whether the panel's **latest** record is a red round, and each reviewer and the
+writer are handed the previous round's verdicts as `{{prior.<stepId>}}`. The question is the latest
+record and not "has any round ever been red", because the script gate's reset closure takes the
+writer in: asked the looser way, a rejection of a panel that had already gone green paid a writer
+call against issues the reviewers had closed. There is no round cap; the weekly quota
+is the only stop, and the operator's Resume continues the loop (see **The resume contract**).
+
+**`script-gate`'s message is three lines, and the seven verdicts are not among them.** The message
+names the script's path, says `The panel is green after N round(s) ($X.XXXX of review and revision).`
+from `{{round.n}}` and `{{round.costUsd}}` — four decimals, the same format the gate head prints the
+figure in, since the two are one number read through one function — and gives the approve/reject
+line; the per-reviewer
+detail is the console's verdict board on the gate page (`console/README.md`, the Gate view). Before
+Plan J the message interpolated all eight results bare, and the s02e01 script gate of 2026-10-15
+printed 10,618 characters across 71 lines with the verdicts **stale by one revision** — the gate
+re-rendered after the writer had rewritten the script the reviewers had read. A gate that opens only
+on a green panel cannot print a stale verdict, because the panel that let it open judged the script
+on disk.
+
+`canon-gate` is the one gate carrying a `when`: a canon phase whose diff is `NO_CHANGES` bypasses
+it, which is why `EPISODE_STAGE_MAP` keys `CANON` on `canon-commit` rather than on the gate.
 
 ### The three guards that stop the line
 
@@ -577,6 +617,36 @@ below are what the *operator* does about each result.
 **`resetSteps` is the wrong move for a limit of any kind**, because a limit changes none of the
 step's inputs: re-running from a step upstream of the limited one pays for every agent step between
 the two a second time and buys no new answer.
+
+**The review round reaches the operator as one of three outcomes, and only one of them is a move.**
+The round itself is **The episode pipeline → The eight gates** above and **The resume contract**
+below; the three paragraphs here are what the *operator* does about each result.
+
+- **A green panel asks for an approval and nothing else.** `script-gate` opens with its three-line
+  message — the script's path, `The panel is green after N round(s) ($X.XXXX of review and
+  revision).`, and the approve/reject line — the gate page's verdict board carries what each of the
+  seven reviewers found, and the gate head prints `round N · $X.XXXX` beside the attempt. Neither
+  recovery move above applies: the run is waiting for an answer, not failed. **N counts the rounds
+  that came back red.** A gate rejection re-runs the panel and writes no `panel_round` for the pass
+  it triggers, so a rejection adds its panel and its revision to the figure without advancing the
+  count: `green after 2 round(s) ($X.XXXX)` can name a figure that paid for three panels and two
+  revisions. The cost is honest and the count is red rounds.
+- **The weekly stop is cleared with `resumeRun`, and Resume continues the loop rather than
+  restarting it.** The run is failed at `panel` with the sentence the resume contract quotes, and
+  the panel wrote **no** `panel_round` and **no** `step_reset` before failing — so the round the
+  Resume comes back to is the same round N, no revision has been paid for, and the next evaluation
+  goes round because the figure that stopped the run is behind the `run_resumed`. The round count
+  itself is never reset by a Resume: a run stopped in round 3 resumes into round 3. `resetSteps` is
+  the wrong move here for the same reason it is wrong for a limit — it pays for the round's agent
+  steps again and buys no new verdict. **A Resume taken before the week's quota has actually moved
+  pays a full round to learn that** — about $9.30 and ten minutes on the measured figures — because
+  the panel resets as soon as it is re-entered and the weekly figure is only read again from the
+  `agent_result`s of the round the Resume starts. The reset time the stop sentence quotes is the one
+  worth waiting for.
+- **A five-hour usage limit inside a round asks nothing of the operator**, and that outcome is the
+  unchanged one above: the reviewer's or the writer's step logs `step_waiting`, the worker sleeps,
+  the step ends with an ordinary `step_completed` when the retry succeeds, and the round carries on.
+  A round is not a new kind of wait, and a sleeping worker inside round 3 is not a stopped loop.
 
 **A prompt that writes `{{season}}` fails for a production id the show's `airMap` does not place.**
 An aired id (`s02e01`) carries its season; a production id (`ep98`) has one only if `airMap` gives
@@ -844,6 +914,21 @@ A run restarts by replaying its log; there is no separate state file to reconcil
 - **A gate rejection re-runs the steps the gate names** (`rerunOnReject`) and everything
   downstream of them, after the fix agent, before the gate reopens; the reset is recorded once
   per rejection, so a crash between the resets and the re-runs does not reset a second time.
+- **A review round resumes at the round the log says, and the only stop is the weekly quota.** A
+  `panel` step counts the `panel_round` events it has written over the whole run — `run_resumed`
+  does not reset that count — so the round after a Resume is the next one and not the first. Its
+  reset batch is signed `panel:<id>:round-<n>` and is recorded once per round: a crash between the
+  batch and the re-runs is answered by returning the reset again, without a second round or a
+  second batch, and once every reset step has been visited since the batch the panel judges the
+  re-run verdicts instead. There is **no round cap**. A red round stops the run only when the
+  latest `agent_result.usage.sevenDay.utilization` in the log is at or above
+  `agents.autoRetryWeeklyUtilizationMax`, and then the step fails with the operator's sentence —
+  `Manual resume needed: the panel is still red after round 3 and the weekly quota is at 78%, at or
+  above the 65% auto-retry ceiling (agents.autoRetryWeeklyUtilizationMax); press Resume after the
+  reset to continue the loop.` — and writes nothing else, so the Resume comes back to the same
+  round. The figure is read only from events **after** the last `run_resumed`, or the resumed panel
+  would read the number that stopped it and fail again in the same millisecond; an unknown figure
+  is never a stop.
 - **A failed run is resumed with `resumeRun`**, which continues from the failed step without
   re-running any completed agent step.
 - **`resetSteps` is the operator's "re-run from here"**; on a run with an open gate it leaves the

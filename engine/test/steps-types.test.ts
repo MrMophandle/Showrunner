@@ -27,13 +27,13 @@ describe("agent step types", () => {
 });
 
 describe("event kinds", () => {
-  it("pins the EventKind union to nineteen kinds, in the order the union declares them", () => {
+  it("pins the EventKind union to twenty kinds, in the order the union declares them", () => {
     const kinds = [
       "run_started", "run_finished", "run_resumed",
       "step_started", "step_completed", "step_failed", "step_skipped", "step_cached", "step_reset",
       "step_progress", "step_waiting", "script_line",
       "agent_query", "agent_tool_call", "agent_result",
-      "loop_iteration",
+      "loop_iteration", "panel_round",
       "gate_opened", "gate_answered",
       "input_changed",
     ] as const satisfies readonly EventKind[];
@@ -46,8 +46,8 @@ describe("event kinds", () => {
       kinds.map((k) => [k, true]),
     ) as Record<(typeof kinds)[number], true>;
 
-    expect(kinds).toHaveLength(19);
-    expect(new Set(kinds).size).toBe(19);
-    expect(Object.keys(covered)).toHaveLength(19);
+    expect(kinds).toHaveLength(20);
+    expect(new Set(kinds).size).toBe(20);
+    expect(Object.keys(covered)).toHaveLength(20);
   });
 });

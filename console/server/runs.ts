@@ -4,7 +4,7 @@ import { readFile, readdir, stat } from "node:fs/promises";
 import {
   BIBLE_FILES, BYPASS_REASON, EPISODE_STAGE_MAP, EventLog, RUN_ID, bibleFilePipeline, bibleLogDir,
   deriveRunState, deriveStage, describePipeline,
-  episodePipeline, latestRunId, listEpisodeIds, parseEpisodeId, pipelineHash,
+  episodePipeline, latestRunId, listEpisodeIds, parseEpisodeId, pipelineHash, roundExtras,
   type Event, type Needs, type RunState, type StepDescription,
 } from "@showrunner/engine";
 import { buildVars } from "@showrunner/tools";
@@ -162,6 +162,44 @@ function loopIteration(stepEvents: Event[]): StepRow["iteration"] | undefined {
     if (typeof n === "number" && typeof max === "number") found = { n, max };
   }
   return found;
+}
+
+/** Which round of the review panel a run is on and what the write phase has cost, or undefined for
+ *  a run whose panel has written no `panel_round`.
+ *
+ *  **The arithmetic is the engine's, reused and not repeated.** `roundExtras`
+ *  (`engine/src/agent-step.ts`) is the function the agent executor and the gate-message renderer
+ *  both read a round through, and its doc comment asks any console or test that wants the same
+ *  reading of a log to call it rather than write a second one. So this wrapper adds exactly one
+ *  thing: the console's own rule about when there is a round to report at all. The alternative was
+ *  a second implementation of "a `panel_round` records the round that failed, so the run is on the
+ *  one after it, unless a green completion came later" — and the number the console draws has to be
+ *  the number the gate's message prints, which is `roundExtras`'.
+ *
+ *  **The rule: a round is reported whenever the panel wrote either of its two records.** Those are a
+ *  `panel_round`, written for a round that came back red, and the panel's own `step_completed`,
+ *  written for the round that came back green — the same two `roundExtras` reads, which is why the
+ *  test below names both rather than only the red one. **Which is why the detection is `roundExtras`'
+ *  `found` and not a predicate here:** this function used to spell the two records out a second time,
+ *  so the shape of a panel's green completion was written in two files that had to change together
+ *  and said so in neither (the whole-branch review of 2026-10-15). **A green round 1 is therefore reported**
+ *  (Ryan's ruling, 2026-10-15): the gate's rendered message says "The panel is green after 1
+ *  round(s) ($6.0660 of review and revision)", and a gate head printing nothing beside a message
+ *  printing that would be the page contradicting itself about a figure the showrunner is approving.
+ *  Whether a *situation line* says "round 1" is a different question, settled where the sentence is
+ *  written (`roundLabel`, `src/projections.ts`) and not by withholding the fact here.
+ *
+ *  What is still absent is a round for a run whose panel has written nothing at all — a round in
+ *  flight before its first verdicts are in, and every run of every pipeline with no panel in it. For
+ *  those there is no round record to read and `roundExtras`' `{ n: 1, costUsd: 0 }` would be a
+ *  figure the log never carried, which is the one thing a console must not put on a screen.
+ *
+ *  Exported so `gateView` (`server/gates.ts`) reads the round the same way the Run view and the
+ *  Board's rows do; a gate head and a situation line disagreeing about which round a run is on
+ *  would be worse than neither saying it. */
+export function roundOf(events: readonly Event[]): RunView["round"] | undefined {
+  const { found, round } = roundExtras(events);
+  return found ? round : undefined;
 }
 
 /** Every step of the pipeline definition as a row, in pipeline order, overlaid with the log.
@@ -502,6 +540,11 @@ export class RunStore {
     // has them — and without it every working row would read "a step is in flight", which is true
     // of all of them and tells the reader nothing.
     if (view.position) row.position = view.position;
+    // Which round of the review panel the run is on, for the same sentence: "A worker is on it.
+    // `tone-check` for 2m 10s (round 3)". Without it a Board watching a panel loop for an hour
+    // would draw the same three step ids going round and round with nothing to say the run was
+    // making progress rather than repeating itself.
+    if (view.round) row.round = view.round;
     // A run asleep until a usage limit resets reads `running`, because a worker is holding it and
     // beating its lock — so the sentence is the only thing that tells the Board and the tab title
     // that the minutes passing are a wait and not work (Plan I).
@@ -681,6 +724,12 @@ export class RunStore {
     // The position carries no progress of its own: the progress belongs to the step's row, where
     // the client draws it, and two copies of it would be two things to keep in agreement.
     if (state.position !== undefined) view.position = { stepId: state.position.stepId, startedAt: state.position.startedAt };
+    // Which round of the review panel the run is on. Derived from the events and not from the step
+    // rows, because a round is a thing that *happened* some number of times and the rows carry only
+    // where each step ended up: `tone-check` on round 3 and `tone-check` on round 1 are the same
+    // row (`RunView.round`, `shared/types.ts`).
+    const round = roundOf(events);
+    if (round !== undefined) view.round = round;
     if (state.openGate !== undefined) view.openGate = { ...state.openGate };
     const failed = failedOf(events, state);
     if (failed !== undefined) view.failed = failed;

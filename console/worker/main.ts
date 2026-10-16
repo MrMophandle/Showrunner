@@ -74,7 +74,11 @@ export async function runOnce(opts: WorkerOptions, deps: WorkerDeps = {}): Promi
     const priorLogs = (await runLogPaths(opts.showRoot, opts.episodeId, productionDir)).filter((p) => p !== logFile).map((p) => new EventLog(p));
     let result: RunResult;
     try {
-      result = await run({ pipeline, ctx: { runId: opts.runId, episodeId: opts.episodeId, showRoot: opts.showRoot, trigger: opts.operator }, log: new EventLog(logFile), executors, priorLogs, renderGateMessage, ...(opts.concurrency !== undefined ? { concurrency: opts.concurrency } : {}) });
+      // `show` on the context, not only on the agent options: the runner reads one number out of it
+      // — `agents.autoRetryWeeklyUtilizationMax`, the ceiling a `panel` step's round compares the
+      // week's quota against before it starts another one. Without it the runner falls back to the
+      // house default, and a show that configured its own ceiling would be judged against 65.
+      result = await run({ pipeline, ctx: { runId: opts.runId, episodeId: opts.episodeId, showRoot: opts.showRoot, trigger: opts.operator, show }, log: new EventLog(logFile), executors, priorLogs, renderGateMessage, ...(opts.concurrency !== undefined ? { concurrency: opts.concurrency } : {}) });
     } catch (err) {
       const detail = `run() rejected: ${err instanceof Error ? err.stack ?? err.message : String(err)}`;
       await note(detail);

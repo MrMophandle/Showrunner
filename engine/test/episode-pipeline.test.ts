@@ -36,6 +36,43 @@ describe("episodePipeline", () => {
     expect(p.steps).toHaveLength(68);
   });
 
+  it("runs the review round in the order the reset depends on: hand edits, the revision, the panel's seven, the panel, the gate", () => {
+    // The order is not decoration: `orderSteps` prefers declaration order among ready steps, and
+    // this sequence is what puts the writer's revision between the reset and the reviewers on every
+    // restarted pass. The reviewers depend on `revise` as well as on `draft` so that the console's
+    // production `--concurrency 7` cannot batch the revision together with the panel it feeds — a
+    // reviewer reading the script while the writer rewrites it.
+    const order = orderSteps(p).map((s) => s.id);
+    const index = (id: string) => order.indexOf(id);
+    expect(index("hand-edits-script")).toBeLessThan(index("revise"));
+    for (const id of ["canon-review-script", "tone-check", "flow-check", "character-check", "structure-check", "environment-check", "repetition-check"]) {
+      expect(index("revise"), id).toBeLessThan(index(id));
+      expect(index(id), id).toBeLessThan(index("panel"));
+    }
+    expect(index("panel")).toBeLessThan(index("script-gate"));
+    const by = new Map(p.steps.map((s) => [s.id, s]));
+    expect(by.get("revise")?.dependsOn).toEqual(["hand-edits-script"]);
+    expect(by.get("tone-check")?.dependsOn).toEqual(["draft", "revise"]);
+    expect(by.get("script-gate")?.dependsOn).toEqual(["panel", "canon-ledger-script"]);
+    // The round the panel resets is the ten steps the script gate's own rejection closure already
+    // re-ran (inventory J-01), and the panel itself — the eleventh — which is what makes it
+    // evaluate the re-run verdicts rather than keep its own.
+    const panel = by.get("panel");
+    expect(panel?.kind).toBe("panel");
+    if (panel?.kind !== "panel") return;
+    expect(panel.reviewers).toEqual(["canon-review-script", "tone-check", "flow-check", "character-check", "structure-check", "environment-check", "repetition-check"]);
+    expect(panel.resets).toEqual(["hand-edits-script", "revise", "canon-review-script", "canon-ledger-script", "tone-check", "flow-check", "character-check", "structure-check", "environment-check", "repetition-check", "panel"]);
+    expect(panel.dependsOn).toEqual(panel.reviewers);
+    // And the revision runs only from round 2 on: round 1 is the pass with no panel_round in the
+    // log, where `when` is false and the step is bypassed.
+    const when = by.get("revise")?.when;
+    expect(when?.({ runId: "r1", episodeId: "s02e01", showRoot: "/show", results: {} })).toBe(false);
+    expect(when?.({
+      runId: "r1", episodeId: "s02e01", showRoot: "/show", results: {},
+      events: [{ ts: "t", runId: "r1", stepId: "panel", kind: "panel_round", payload: { round: 1 } }],
+    })).toBe(true);
+  });
+
   it("has the eight gates in run order, each opening its DRAFT_ stage", () => {
     const gates = orderSteps(p).filter((s) => s.kind === "gate").map((s) => s.id);
     expect(gates).toEqual(["outline-gate", "script-gate", "casting-gate", "audio-gate", "nano-banana-gate", "image-gate", "final-gate", "canon-gate"]);
@@ -201,7 +238,9 @@ export function fakeExecutors(root: string, knobs: { failOnce?: Set<string>; rev
       }
       case "tone-check": case "flow-check": case "character-check": case "structure-check": case "environment-check": case "repetition-check":
         return { ok: true, text: "", toolCalls: 2, verdict: pass("PASSED") };
-      case "revise-body": return { ok: true, text: "REVISIONS_COMPLETE", toolCalls: 2 };
+      // One fresh call per round now, under the step's own id: the `revise` loop and its
+      // `revise-body` are gone, and the panel decides whether the revision landed (Plan J).
+      case "revise": return { ok: true, text: "## Changed\nScene two.", toolCalls: 2 };
       case "publish-copy": await w(`Episodes/${ep}/publish.json`, JSON.stringify({ logline: "A week." })); return { ok: true, text: "A week.", toolCalls: 1 };
       case "tts-script": await w(`Production/${ep}/tts-script.json`, "{}"); return { ok: true, text: "cast: Vale; guests: none", toolCalls: 3 };
       case "visual-direction":

@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import type { SDKAssistantMessage, SDKControlGetUsageResponse, SDKRateLimitEvent, SDKResultSuccess } from "@anthropic-ai/claude-agent-sdk";
-import { toAgentMessage, toUsage, usageMessage, type UsageCapableQuery } from "../src/sdk-query.js";
+import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
+import { streamWithUsage, toAgentMessage, toUsage, usageMessage, type UsageCapableQuery } from "../src/sdk-query.js";
 
 // This file imports the adapter module, which is allowed: loading @anthropic-ai/claude-agent-sdk has
 // no side effect — no process is spawned and no binary is looked up until query() is called — so the
@@ -178,5 +179,88 @@ describe("the usage call", () => {
       usage: { available: true, fiveHour: { utilization: 100, resetsAt: RESET_ISO }, sevenDay: { utilization: 41, resetsAt: "2026-10-19T04:00:00.000Z" } },
     });
     expect(calls).toEqual([{ skipBehaviors: true }]);
+  });
+});
+
+describe("streamWithUsage", () => {
+  /** A query object as the SDK hands one over: an async iterable that is also the control-request
+   *  surface. The usage method counts its calls, so "once per query" is measured rather than
+   *  assumed. */
+  function fakeQuery(messages: SDKMessage[], answer?: SDKControlGetUsageResponse) {
+    const calls: Array<{ skipBehaviors?: boolean } | undefined> = [];
+    const q: AsyncIterable<SDKMessage> & UsageCapableQuery = {
+      [Symbol.asyncIterator]: async function* () { for (const m of messages) yield m; },
+      ...(answer !== undefined
+        ? { usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: (o?: { skipBehaviors?: boolean }) => { calls.push(o); return Promise.resolve(answer); } }
+        : {}),
+    };
+    return { q, calls };
+  }
+  const answer = {
+    rate_limits_available: true,
+    rate_limits: {
+      five_hour: { utilization: 26, resets_at: RESET_ISO },
+      seven_day: { utilization: 38, resets_at: "2026-10-20T17:59:59.591847+00:00" },
+    },
+  } as unknown as SDKControlGetUsageResponse;
+  const init = { type: "system", subtype: "init", session_id: "sess-1" } as unknown as SDKMessage;
+  const result = { type: "result", subtype: "success", result: "READY", session_id: "sess-1", num_turns: 1 } as unknown as SDKResultSuccess;
+  const allowed = { type: "rate_limit_event", rate_limit_info: { status: "allowed", rateLimitType: "five_hour", resetsAt: RESET_EPOCH_SECONDS } } as unknown as SDKRateLimitEvent;
+
+  it("asks the usage call on every query, not only a limited one, and yields exactly one usage message", async () => {
+    // The probe of 2026-10-15 is why this is unconditional: an ordinary unlimited query's stream
+    // carried one `allowed` five-hour event with no utilization on it and no seven-day event at all,
+    // so the usage call is the only source of the weekly figure a `panel` step reads before it
+    // starts another round. The stream below is that measured shape.
+    const { q, calls } = fakeQuery([init, allowed, result], answer);
+    const out = [];
+    for await (const m of streamWithUsage(q, false)) out.push(m);
+    expect(calls).toEqual([{ skipBehaviors: true }]);
+    expect(out.map((m) => m.type)).toEqual(["system", "usage", "rate_limit_event", "result"]);
+    expect(out.filter((m) => m.type === "usage")).toHaveLength(1);
+    expect(out[1]!.usage).toEqual({
+      available: true,
+      fiveHour: { utilization: 26, resetsAt: RESET_ISO },
+      sevenDay: { utilization: 38, resetsAt: "2026-10-20T17:59:59.591847+00:00" },
+    });
+    // The SDK's own messages are passed through in order and unchanged beside the synthetic one.
+    expect(out[0]).toEqual({ type: "system", subtype: "init", session_id: "sess-1" });
+    expect(out[3]).toMatchObject({ type: "result", subtype: "success", result: "READY", num_turns: 1 });
+  });
+
+  it("asks once however long the stream runs, and answers available: false when the call is missing", async () => {
+    const { q, calls } = fakeQuery([init, allowed, allowed, result], answer);
+    const out = [];
+    for await (const m of streamWithUsage(q, false)) out.push(m);
+    expect(calls).toHaveLength(1);
+    expect(out.filter((m) => m.type === "usage")).toHaveLength(1);
+
+    // A query object without the EXPERIMENTAL method — an SDK that renamed or dropped it — still
+    // yields its one usage message, saying the question could not be answered. Nothing fails over a
+    // figure the readers can do without.
+    const bare = fakeQuery([init, result]);
+    const none = [];
+    for await (const m of streamWithUsage(bare.q, false)) none.push(m);
+    expect(none.map((m) => m.type)).toEqual(["system", "usage", "result"]);
+    expect(none[1]!.usage).toEqual({ available: false });
+  });
+
+  it("yields nothing at all for an empty stream, so no usage message arrives without a query", async () => {
+    const { q, calls } = fakeQuery([], answer);
+    const out = [];
+    for await (const m of streamWithUsage(q, false)) out.push(m);
+    expect(out).toEqual([]);
+    expect(calls).toEqual([]);
+  });
+
+  it("drops the synthetic StructuredOutput tool call when the query ran with a schema", async () => {
+    const verdict = {
+      type: "assistant",
+      message: { content: [{ type: "tool_use", id: "tu1", name: "StructuredOutput", input: { pass: true } }] },
+    } as unknown as SDKAssistantMessage;
+    const { q } = fakeQuery([verdict], answer);
+    const out = [];
+    for await (const m of streamWithUsage(q, true)) out.push(m);
+    expect(out[0]!.message?.content).toEqual([]);
   });
 });

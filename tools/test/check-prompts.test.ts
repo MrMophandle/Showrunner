@@ -88,6 +88,49 @@ describe("asCheckContext: the context file's vars", () => {
   });
 });
 
+describe("asCheckContext: the review round's prior verdicts and round figures", () => {
+  async function parsed(body: unknown): Promise<ReturnType<typeof asCheckContext>> {
+    const dir = await mkdtemp(path.join(tmpdir(), "chk-ctx-"));
+    const file = path.join(dir, "context.json");
+    await writeFile(file, JSON.stringify(body));
+    return asCheckContext(JSON.parse(await readFile(file, "utf8")) as unknown, file);
+  }
+  const base = { episodeId: "s02e01", runId: "r", showRoot: "/s", results: {} };
+  const prior = { "tone-check": { pass: false, issues: [{ id: "tone-1" }] } };
+
+  it("renders {{prior.<stepId>}} and {{round.*}} from the context file", async () => {
+    const context = await parsed({ ...base, prior, round: { n: 3, costUsd: 18.5 } });
+    const dir = await mkdtemp(path.join(tmpdir(), "chk-"));
+    await writeFile(path.join(dir, "tone-check.md"), "Last round: {{prior.tone-check}}");
+    await writeFile(path.join(dir, "gate.gate.md"), "Green after {{round.n}} round(s) (${{round.costUsd}}).");
+    expect(await checkPrompts({ promptsDir: dir, context })).toEqual([]);
+  });
+
+  it("answers a step the prior does not carry with `none`, and a missing round with a hole", async () => {
+    // The two are deliberately unalike, because the engine's renderer treats them unalike: round 1
+    // has no previous verdict for anybody and every reviewer's prompt renders its own, so `none` is
+    // an answer; a round the caller never supplied is a hole like any other.
+    const dir = await mkdtemp(path.join(tmpdir(), "chk-"));
+    await writeFile(path.join(dir, "flow-check.md"), "Last round: {{prior.flow-check}}");
+    await writeFile(path.join(dir, "gate.gate.md"), "Green after {{round.n}} round(s).");
+    const errors = await checkPrompts({ promptsDir: dir, context: await parsed({ ...base, prior }) });
+    expect(errors).toEqual([{ file: "gate.gate.md", error: expect.stringContaining("{{round.n}}: round is not available") }]);
+  });
+
+  it("refuses a prior that is not an object and a round whose figures are not numbers", async () => {
+    await expect(parsed({ ...base, prior: [] })).rejects.toThrow(/context\.json: prior must be an object of prior verdicts keyed by step id/);
+    await expect(parsed({ ...base, prior: "none" })).rejects.toThrow(/prior must be an object of prior verdicts/);
+    await expect(parsed({ ...base, round: { n: 2 } })).rejects.toThrow(/context\.json: round\.costUsd must be a finite number/);
+    await expect(parsed({ ...base, round: { n: "2", costUsd: 1 } })).rejects.toThrow(/round\.n must be a finite number/);
+    await expect(parsed({ ...base, round: [2, 1] })).rejects.toThrow(/round must be an object of \{ n, costUsd \}/);
+  });
+
+  it("accepts a context file with neither, leaving both fields absent", async () => {
+    const context = await parsed(base);
+    expect(["prior" in context, "round" in context]).toEqual([false, false]);
+  });
+});
+
 /** The drift report, over a real show.
  *
  *  `initScaffold` is used rather than a hand-built directory on purpose: what the report compares

@@ -1,7 +1,7 @@
 {
   "episodeId": "s02e01",
   "runId": "check-prompts",
-  "showRoot": "/Users/ryanperkowski/GitHub/DeadLight",
+  "showRoot": "/Users/ryanperkowski/GitHub/DeadLight2",
   "season": 2,
   "show": {
     "showName": "Dead Light",
@@ -223,6 +223,10 @@
     "nano-banana-generate": "NANO_OK: 18 of 18 character shots generated, 0 audit failures.",
     "outline-gate:rejection": "The showrunner rejected this step: the ending does not pay off the cold open, and Opha's scale is wrong in two shots. Fix both and resubmit.",
     "outline-gate:rejections": [],
+    "panel": {
+      "round": 2,
+      "green": true
+    },
     "populator-check": "POPULATORS_BAD: s05-galley-supper \u2014 \"the crew\" (banned substring); s09-dock-argument \u2014 \"several figures\" (banned substring).",
     "propose": "Proposed canon edits: two ledger threads advanced, one character sheet amended.",
     "publish-copy": "A salvage crew takes a contract on a dead hauler that still has power, and finds the reason it was left running.",
@@ -231,7 +235,6 @@
       "verdict": "DRAFT PASSED",
       "issues": []
     },
-    "review-gate": "no",
     "script-gate:rejection": "The showrunner rejected this step: the ending does not pay off the cold open, and Opha's scale is wrong in two shots. Fix both and resubmit.",
     "script-gate:rejections": [],
     "season-status": "SEASON STATUS: 10 episodes, 10 finalized, 0 drafting.",
@@ -248,5 +251,103 @@
     },
     "tts-script": "TTS script written: 7 speakers, 214 segments, 3 guest voices to design.",
     "validate-manifest": "MANIFEST OK: 7 speakers, 214 segments, 0 warnings."
+  },
+  "prior": {
+    "canon-review-script": {
+      "pass": true,
+      "verdict": "CANON PASSED",
+      "issues": [],
+      "deviations": []
+    },
+    "tone-check": {
+      "pass": false,
+      "verdict": "DRAFT FAILED",
+      "issues": [
+        {
+          "id": "tone-1",
+          "law": "Canon/style-guide.md:## The retention contract",
+          "line": "Scene Five, The Bad Claim \u2014 \"Sarn said his quiet word to the hull as the locks let go\"",
+          "text": "The detail is singled out and left mysterious, which marks it as load-bearing, yet nothing in the episode restates or pays it off; it should be one plain clause that washes over."
+        },
+        {
+          "id": "tone-2",
+          "law": "Canon/style-guide.md:## Rules of voice",
+          "line": "Scene Five, The Bad Claim \u2014 \"'Take the tag,' he said\"",
+          "text": "Sarn's first spoken line of the episode is three words before the attribution, under the five-word runway the section requires for a voice the listener has not calibrated yet."
+        }
+      ],
+      "notes": [
+        "Scene Seven's stew beat is a shade warmer than the register asks. Nothing in the guide forbids it, so it is a preference and not an issue."
+      ],
+      "prior": {
+        "resolved": [],
+        "unresolved": []
+      }
+    },
+    "flow-check": {
+      "pass": true,
+      "verdict": "DRAFT PASSED",
+      "issues": [],
+      "notes": [
+        "Scene Eight's toll-booth sentence may read clipped aloud even though it is within the letter of the cadence rule; worth a listen-check."
+      ],
+      "prior": {
+        "resolved": [],
+        "unresolved": []
+      }
+    },
+    "character-check": {
+      "pass": true,
+      "verdict": "DRAFT PASSED",
+      "issues": [],
+      "notes": [],
+      "prior": {
+        "resolved": [],
+        "unresolved": []
+      }
+    },
+    "structure-check": {
+      "pass": true,
+      "verdict": "DRAFT PASSED",
+      "issues": [],
+      "notes": [],
+      "prior": {
+        "resolved": [],
+        "unresolved": []
+      }
+    },
+    "environment-check": {
+      "pass": true,
+      "verdict": "DRAFT PASSED",
+      "issues": [],
+      "notes": [],
+      "prior": {
+        "resolved": [],
+        "unresolved": []
+      }
+    },
+    "repetition-check": {
+      "pass": false,
+      "verdict": "DRAFT FAILED",
+      "issues": [
+        {
+          "id": "rep-1",
+          "law": "Canon/style-guide.md:## Rules of voice",
+          "line": "Scenes 1,2,3,4,6,7,8,9,10,11,12 \u2014 lines 13, 39, 135, 161, 183, 253, 285, 293, 299, 307, 321, 417, 429",
+          "text": "The \"the way X did Y\" construction is used 13 times in one episode, past its ration; keep the two load-bearing instances (Veleth's seal-reading simile at line 39, Trent's tide-line simile at line 321) and rewrite the rest as plain declaratives."
+        }
+      ],
+      "notes": [],
+      "prior": {
+        "resolved": [],
+        "unresolved": []
+      }
+    },
+    "revise": "## Changed\nScene Five, The Bad Claim \u2014 the hull line is one plain clause now, and the locks carry the beat.\nScene Seven, The Tally \u2014 two of the four physical tells cut; the crew's dissent carries on one.\nScenes Two, Six, Nine, Ten, Eleven, Twelve \u2014 eleven \"the way X did Y\" constructions rewritten as declaratives; Veleth's seal-reading simile and Trent's tide-line simile kept.\n\n## Deliberate exceptions\ntone-2 \u2014 Canon/style-guide.md:63-66, the clause that licenses a knowing break: Sarn's three words are the character, and the short entrance is on purpose.",
+    "hand-edits-script": "{\"handEdited\": []}"
+  },
+  "round": {
+    "n": 2,
+    "costUsd": 15.8878
   }
 }

@@ -5,9 +5,12 @@ import { ENGINE_VERSION } from "./version.js";
 import { BYPASS_REASON, deriveRunState, type GateState, type RunState } from "./state.js";
 import { hashFiles, sameHashes } from "./hash.js";
 import { isReservedEpisodeId, parseEpisodeId } from "./ids.js";
+import { verdictPass } from "./steps.js";
+import { panelStopSentence } from "./agent-step.js";
+import { DEFAULT_AUTO_RETRY_WEEKLY_UTILIZATION_MAX } from "./show-config.js";
 import type {
-  AgentStep, Emit, Executors, GateMessageRenderer, GateStep, GuardResult, LoopStep, Pipeline,
-  RunContext, ScriptStep, Step, StepId,
+  AgentStep, Emit, Executors, GateMessageRenderer, GateStep, GuardResult, LoopStep, PanelStep,
+  Pipeline, RunContext, ScriptStep, Step, StepId,
 } from "./steps.js";
 
 export interface RunOptions {
@@ -374,7 +377,8 @@ type StepOutcome =
   | { kind: "completed"; result?: unknown }
   | { kind: "failed"; error: string }
   | { kind: "waiting"; gate: GateState }
-  /** A gate rejection reset these steps; the pass restarts so they run before the gate reopens. */
+  /** A gate rejection or a red panel round reset these steps; the pass restarts so they run again
+   *  before the gate reopens or the panel judges them a second time. */
   | { kind: "reset"; stepIds: StepId[] };
 
 async function runStep(
@@ -413,6 +417,8 @@ async function runStep(
       return runGateStep(step, ctx, emit, executors, emitFor, events, pipeline, renderGateMessage);
     case "loop":
       return runLoopStep(step, ctx, emit, executors, events);
+    case "panel":
+      return runPanelStep(step, ctx, emit, emitFor, events, pipeline);
   }
 }
 
@@ -649,4 +655,291 @@ async function runLoopStep(
   const error = `exhausted ${step.maxIterations} iterations without sentinel ${step.until}`;
   await emit("step_failed", { error });
   return { kind: "failed", error };
+}
+
+/** The reset batch's signature in `step_reset.payload.by`, and the panel's idempotence anchor: the
+ *  panel's id and the round whose work the batch invalidated. The gate writes its own id there
+ *  (`runGateStep`) and `resetSteps` writes `"operator"`; a round needs the number too, because a
+ *  panel resets the same ten steps every round and "has this reset already happened" is a question
+ *  about one round. The colon is safe: `orderSteps` refuses a step id that contains one. */
+function panelResetBy(stepId: StepId, round: number): string {
+  return `panel:${stepId}:round-${round}`;
+}
+
+/** The weekly quota as a percentage, read backwards out of the log, or undefined when the question
+ *  has no answer in it.
+ *
+ *  **Only `agent_result.usage.sevenDay.utilization`, and only after the last `run_resumed`.** The
+ *  first half is the source Plan J attaches to every query: the 2026-10-15 probe measured that an
+ *  ordinary unlimited query's stream carries no seven-day `rate_limit_event` at all, so the SDK's
+ *  usage call is the only source and `limit.weeklyUtilization` exists only on a classified limit.
+ *  The second half is the Resume rule: the figure that stopped the run is still in the log, and a
+ *  panel that read it would fail again in the same millisecond on the operator's Resume — the same
+ *  fault `8c75077` fixed for a loop's iteration count. After a Resume the panel therefore knows no
+ *  weekly figure until the reviewers have queried again, and an unknown figure never stops the loop
+ *  (Plan I stops on a known figure; a run whose steps report no usage at all must go round again
+ *  rather than halt). */
+function latestWeeklyUtilization(events: readonly Event[]): number | undefined {
+  let from = 0;
+  for (let i = 0; i < events.length; i++) if (events[i]?.kind === "run_resumed") from = i + 1;
+  for (let i = events.length - 1; i >= from; i--) {
+    const e = events[i];
+    if (!e || e.kind !== "agent_result") continue;
+    const usage = e.payload["usage"];
+    if (typeof usage !== "object" || usage === null) continue;
+    const sevenDay = (usage as { sevenDay?: unknown }).sevenDay;
+    if (typeof sevenDay !== "object" || sevenDay === null) continue;
+    const u = (sevenDay as { utilization?: unknown }).utilization;
+    if (typeof u === "number" && Number.isFinite(u)) return u;
+  }
+  return undefined;
+}
+
+/** What the review and the revision of this script have cost so far, in US dollars: the sum over the
+ *  round's own steps of `agent_result.costUsd`, **taking the maximum per session rather than adding
+ *  every event**.
+ *
+ *  The maximum is not a rounding choice, it is what `total_cost_usd` means (inventory J-08): the
+ *  SDK's figure is cumulative **per session**, so the three iterations of one shared-session step on
+ *  the s02e01 run each reported `costUsd: 6.587001` and adding them would have billed the showrunner
+ *  three times for one conversation. Every step in a round is `context: "fresh"` after Plan J, so
+ *  each session contributes one event and the maximum is that event's figure; the rule is written as
+ *  a maximum anyway, because a shared session added later would otherwise be multiplied silently.
+ *  An `agent_result` with no session id is keyed on its own position in the log, so it counts once
+ *  and never collapses with an unrelated event.
+ *
+ *  **The round's own steps, which is what excludes the draft.** The ids are the panel's `reviewers`
+ *  and `resets` — the reviewers, the canon review and the writer's revision — and nothing else, so
+ *  the figure is the one the gate's message calls "of review and revision" ($15.89 on the measured
+ *  round, against $75.31 for the whole write phase, §2.4). That is also why no start index is
+ *  needed: none of those steps can have run before the draft that produced the script they read.
+ *
+ *  **The value is rounded to four decimals; the four-decimal *format* is applied where the figure is
+ *  printed.** Rounding here is what keeps a float's tail out of the log and out of a prompt
+ *  (`15.8878`, not `15.887800000000002`). It is not a format: `Math.round(x * 10_000) / 10_000` of
+ *  6.07 is 6.07 and of 0 is 0, so the two decimals and the bare zero are padded by the printers —
+ *  `prompt-template.ts`'s `{{round.costUsd}}` for the gate's message and the reviewers' prompts, and
+ *  `console/src/pages/Gate.tsx` for the gate's head, which is the format
+ *  `console/src/pages/WhatHappened.tsx` prints money in. Claiming the format here is what let the
+ *  message and the head disagree about one figure (the whole-branch review of 2026-10-15). */
+function roundCostUsd(events: readonly Event[], ids: ReadonlySet<StepId>): number {
+  const perSession = new Map<string, number>();
+  for (let i = 0; i < events.length; i++) {
+    const e = events[i];
+    if (!e || e.kind !== "agent_result" || e.stepId === undefined || !ids.has(e.stepId)) continue;
+    const cost = e.payload["costUsd"];
+    if (typeof cost !== "number" || !Number.isFinite(cost)) continue;
+    const sessionId = e.payload["sessionId"];
+    const key = typeof sessionId === "string" && sessionId !== "" ? `session:${sessionId}` : `event:${i}`;
+    perSession.set(key, Math.max(perSession.get(key) ?? 0, cost));
+  }
+  let total = 0;
+  for (const v of perSession.values()) total += v;
+  return Math.round(total * 10_000) / 10_000;
+}
+
+/** Whether the pass has reached a step again after the given position in the log — the test for
+ *  "this step has re-run since the reset that invalidated it", which is the second half of the
+ *  panel's idempotence guard.
+ *
+ *  Three terminal events count, not one: a step that completed, a script step whose inputs and
+ *  outputs were unchanged and was served from cache, and a step its own `when` turned off this time
+ *  round. All three mean the pass visited it, which is what the guard is asking; counting only
+ *  `step_completed` would read a legitimately bypassed step as work still owed and send the round
+ *  back for another pass. A step that re-ran and *failed* is not here because the panel is never
+ *  reached in that pass — its dependency failed and the runner skips it. */
+function visitedAfter(events: readonly Event[], stepId: StepId, from: number): boolean {
+  for (let i = from + 1; i < events.length; i++) {
+    const e = events[i];
+    if (!e || e.stepId !== stepId) continue;
+    if (e.kind === "step_completed" || e.kind === "step_cached" || e.kind === "step_skipped") return true;
+  }
+  return false;
+}
+
+/** The review round: read the reviewers' verdicts, and either open the way downstream or invalidate
+ *  the round's work and make the pass run it again. This is the trigger the inventory found missing
+ *  (J-01, J-02) on the reset path a gate rejection already had.
+ *
+ *  **The round's number comes from the log and nothing else.** It is one more than the number of
+ *  `panel_round` events this step has written, counted over the whole run — not since this step's
+ *  last `step_started`, the way a loop counts its iterations, and **not** reset by `run_resumed`,
+ *  because a Resume continues the loop rather than starting it over. Nothing is held in memory
+ *  across a reset (spec §6.5); the log is the record of how many rounds this script has cost.
+ *
+ *  **The idempotence guard has two clauses, and the second one is what makes it right.** The first
+ *  is the plan's, anchored on round N's own record: a `panel_round` for round N, or the
+ *  `step_reset` batch signed `panel:<id>:round-<N>`, already stands after this step's last
+ *  `step_started`, so some of the writes of round N happened. The `panel_round` is named first
+ *  because it is written first and a crash between the two appends leaves it alone, which is a batch
+ *  still owed rather than a round still to review; the batch stays in the clause as well, because
+ *  the owed batch is written from a *later* entry of this step and that entry's own `step_started`
+ *  then sits between the round and the batch — so after a second crash inside those appends the
+ *  batch is the only one of the two writes the anchor can still see. That alone is not enough to decide anything,
+ *  because it is *also* true on the ordinary restarted pass — the batch is written after the
+ *  `step_started` of the round that wrote it — and a step that answered "already done, reset again"
+ *  there would reset a panel whose reviewers had just re-run, and pay seven more agent calls
+ *  ($6.07, §2.2) for a verdict it already had. So the second clause asks whether the restart
+ *  actually happened: has every step in the batch completed since it? If one has not, the batch was
+ *  written by a run that died before the re-runs finished, and this call returns the reset again
+ *  **without writing a second batch or a second round**. If they all have, the verdicts in
+ *  `ctx.results` are the re-run ones and this is round N+1, which is the ordinary case.
+ *
+ *  **The weekly stop is the only stop** (Ryan's ruling of 2026-10-15). There is no round cap: a red
+ *  round resets and the pass runs again, however many times, unless the week's quota is at or above
+ *  the show's `agents.autoRetryWeeklyUtilizationMax`. Then the step fails with
+ *  `panelStopSentence` — the operator's own sentence, with both numbers — and writes **nothing
+ *  else**: no `panel_round`, no `step_reset`. So the round the operator resumes into is the same
+ *  round N, and the Resume re-evaluates the verdicts that are still in the log and then resets. */
+async function runPanelStep(
+  step: PanelStep, ctx: RunContext, emit: Emit, emitFor: (id: StepId | undefined) => Emit,
+  events: Event[], pipeline: Pipeline,
+): Promise<StepOutcome> {
+  // Both readings of the log are taken before this entry's step_started is appended: that write
+  // would otherwise become "this step's last step_started" and move the anchor the guard measures
+  // from. The log is append-only, so array position is the authoritative order.
+  let lastStart = -1;
+  let written = 0;
+  for (let i = 0; i < events.length; i++) {
+    const e = events[i];
+    if (!e || e.stepId !== step.id) continue;
+    if (e.kind === "step_started") lastStart = i;
+    if (e.kind === "panel_round") written++;
+  }
+  const round = written + 1;
+
+  // Round `written`'s own writes, as the log holds them: the `panel_round` that records the round,
+  // and the `step_reset` batch that invalidates its work — which ids were reset, and where the last
+  // of those writes sits, so "has this step re-run since" has a position to measure from.
+  //
+  // **Both are read, because the two writes are not atomic** (the whole-branch review of
+  // 2026-10-15). The `panel_round` lands first and the batch after it, so a crash in that window
+  // leaves a round recorded with nothing reset. A guard that asked only about the batch read such a
+  // log as "no round has been written here", re-judged the same red verdicts and wrote a **second**
+  // `panel_round` for them, which ran `{{round.n}}` and the gate's sentence one high for the rest of
+  // the run.
+  const priorBy = panelResetBy(step.id, written);
+  let roundAt = -1;
+  let batchAt = -1;
+  const batched: StepId[] = [];
+  for (let i = lastStart + 1; i < events.length; i++) {
+    const e = events[i];
+    if (!e) continue;
+    if (e.kind === "panel_round" && e.stepId === step.id && Number(e.payload["round"]) === written) roundAt = i;
+    if (e.kind === "step_reset" && e.stepId !== undefined && e.payload["by"] === priorBy) {
+      batchAt = i;
+      batched.push(e.stepId);
+    }
+  }
+
+  await emit("step_started", { kind: "panel", round, reviewers: [...step.reviewers] });
+
+  // The ids a red round invalidates: everything the step declares, its own id included — the one
+  // that returns the panel itself to pending so the restarted pass evaluates the re-run verdicts.
+  // No gate, ever: an approval the showrunner already gave is not invalidated by a review round, and
+  // resetting a gate would erase that answer from the projection (the rule `runGateStep` states at
+  // its own closure). Deduplicated, because a pipeline that names the panel in its own `resets` — as
+  // the episode pipeline does, so the list reads as the whole round — must not write two.
+  //
+  // Unlike a gate's closure this list is **not** filtered to steps that already have a status. The
+  // batch is also the log's record of the round, and the guard above reads it back to decide whether
+  // a crashed run owed the re-runs; a batch written short of its own declaration would make that
+  // record ambiguous. A `step_reset` for a step that was pending anyway costs one line in the log
+  // and changes nothing in the projection.
+  const byId = new Map(pipeline.steps.map((s) => [s.id, s] as const));
+  const plannedResets = [...new Set([...step.resets, step.id])]
+    .filter((id) => byId.has(id) && byId.get(id)?.kind !== "gate");
+
+  if (written > 0 && (roundAt >= 0 || batchAt >= 0)) {
+    if (batchAt < 0) {
+      // **A `panel_round` with no batch after it is a batch still owed.** The round is paid for and
+      // recorded; what did not happen is the invalidation. So the batch is written now, signed with
+      // round `written`'s own signature, and **no second `panel_round`**: the round the crashed run
+      // reviewed is the round this log carries, and writing another would charge the run a round it
+      // never reviewed. The whole declared set is owed rather than a stale subset, because no reset
+      // landed at all — nothing has re-run, and every result in `ctx.results` is one the recorded
+      // round already judged.
+      for (const id of plannedResets) await emitFor(id)("step_reset", { by: priorBy, round: written });
+      return { kind: "reset", stepIds: plannedResets };
+    }
+    // Every step the batch invalidated **except this one**: the panel's own re-run is this call, and
+    // it has no completion after its own batch by construction — measuring itself would make the
+    // guard fire on every ordinary restarted pass, which is the fault the second clause exists to
+    // avoid. Whatever the outcome, the `step_started` emitted above has moved the anchor past this
+    // batch, so the guard answers at most once per entry and a log it cannot read its way out of
+    // still makes progress.
+    const stale = [...new Set([...batched, ...plannedResets])]
+      .filter((id) => id !== step.id && !visitedAfter(events, id, batchAt));
+    if (stale.length > 0) {
+      // Round `written`'s writes stand and its re-runs do not, so the pass is sent back for **the
+      // stale steps only**. Nothing is written here — a second batch would reset steps that had
+      // already re-run, and a second `panel_round` would charge the run a round it never reviewed.
+      //
+      // **`stale` and not the whole declared set** (the whole-branch review of 2026-10-15). The
+      // runner drops the result of every id this outcome names (`execute`'s reset arm), so naming a
+      // step that had already re-run in this very pass would delete a fresh completion and run it
+      // again: on the measured pipeline that is a second writer call inside one round — $3.23 and
+      // the one-fresh-revise-per-round invariant — plus a second panel for every reviewer caught
+      // with it. The steps the crashed run owed are exactly the ones that have not been visited
+      // since its batch, and they are the ones to re-run.
+      return { kind: "reset", stepIds: stale };
+    }
+  }
+
+  // The verdicts. A reviewer with no result at all is a fault rather than a red verdict: the panel
+  // cannot judge what it cannot read, and calling it red would loop forever on a step that will
+  // never produce one. The ordered walk and `orderSteps`' reviewers-must-be-dependencies rule make
+  // this unreachable through `run`; it is here because a hand-built pipeline can still get there.
+  const absent = step.reviewers.filter((id) => !Object.prototype.hasOwnProperty.call(ctx.results, id));
+  if (absent.length > 0) {
+    const error = `panel ${JSON.stringify(step.id)}: no verdict from ${absent.map((id) => JSON.stringify(id)).join(", ")}`;
+    await emit("step_failed", { error });
+    return { kind: "failed", error };
+  }
+  const costIds = new Set([...step.reviewers, ...step.resets].filter((id) => id !== step.id));
+  const red = step.reviewers.filter((id) => !verdictPass(ctx.results[id]));
+  if (red.length === 0) {
+    const result = { round, green: true };
+    // The green round carries the cost figure too, and that is what makes the gate's sentence true.
+    // A reader that took the figure from the last `panel_round` alone would print what the run had
+    // spent when the last round came back **red** — on the measured figures that is the whole
+    // revision and the whole closing panel missing, 60% of the real total — because a green round
+    // writes no `panel_round` and the final reviewers' `agent_result`s land after the last one. The
+    // panel is the only reader that knows which steps are the round's, so it is the one that counts
+    // them, at both of its exits.
+    await emit("step_completed", { result, round, green: true, costUsd: roundCostUsd(events, costIds) });
+    return { kind: "completed", result };
+  }
+
+  // Red. The weekly quota decides whether the loop goes round again or hands the run to the
+  // operator; the figure and the ceiling are both read here so the sentence and the decision cannot
+  // disagree.
+  const weekly = latestWeeklyUtilization(events);
+  const ceiling = ctx.show?.agents?.autoRetryWeeklyUtilizationMax ?? DEFAULT_AUTO_RETRY_WEEKLY_UTILIZATION_MAX;
+  if (weekly !== undefined && weekly >= ceiling) {
+    const error = panelStopSentence({ round, weekly, ceiling });
+    await emit("step_failed", { error });
+    return { kind: "failed", error };
+  }
+
+  // The round, as the log will carry it. `verdicts` is keyed on every id this round resets whose
+  // result the run has — the reviewers' seven, and the writer's own round report — because the reset
+  // on the next line deletes all of them from the derived state, and the prompts of the next round
+  // read them back from this event as `{{prior.<id>}}` (J-14). The writer's own report is in there on
+  // purpose: a reviewer is told what the writer said it changed, and the writer is reminded what it
+  // promised last round.
+  const verdicts: Record<StepId, unknown> = {};
+  for (const id of [...new Set([...step.reviewers, ...step.resets])]) {
+    if (id === step.id) continue;
+    if (Object.prototype.hasOwnProperty.call(ctx.results, id)) verdicts[id] = ctx.results[id];
+  }
+  const by = panelResetBy(step.id, round);
+  await emit("panel_round", {
+    round, green: false, verdicts,
+    costUsd: roundCostUsd(events, costIds),
+    ...(weekly !== undefined ? { weeklyUtilization: weekly } : {}),
+    by,
+  });
+  for (const id of plannedResets) await emitFor(id)("step_reset", { by, round });
+  return { kind: "reset", stepIds: plannedResets };
 }

@@ -449,7 +449,9 @@ select { min-height: var(--tap); }
 .feed-kind-gate_opened { color: var(--needs); }
 .feed-kind-gate_answered { color: var(--needs); }
 .feed-kind-run_finished { color: var(--approved); }
-.feed-kind-step_reset, .feed-kind-run_resumed { color: var(--draft); }
+/* A panel round is a reset burst — it writes `step_reset` for the round's ten steps on the next
+   line — so it carries the colour the feed already gives work going round again. */
+.feed-kind-step_reset, .feed-kind-run_resumed, .feed-kind-panel_round { color: var(--draft); }
 .feed-text { overflow-wrap: anywhere; }
 
 .feed-toggle {
@@ -542,6 +544,10 @@ select { min-height: var(--tap); }
 .verdict-detail-head { color: var(--text-dim); margin-bottom: 0.3rem; }
 .verdict-issues { margin: 0; padding-left: 1.2rem; }
 .verdict-issues li { display: flex; gap: 0.5rem; align-items: baseline; padding: 0.15rem 0; }
+.verdict-detail-sub { color: var(--text-dim); margin: 0.5rem 0 0.2rem; }
+.verdict-notes { margin: 0; padding-left: 1.2rem; color: var(--text-dim); }
+.verdict-notes li { padding: 0.15rem 0; }
+.verdict-closed { color: var(--text-dim); margin: 0.5rem 0 0; }
 .btn-quote { min-height: var(--tap); min-width: var(--tap); padding: 0 0.5rem; font-size: 0.78rem; }
 .verdict-raw pre { overflow: auto; max-height: 18rem; }
 

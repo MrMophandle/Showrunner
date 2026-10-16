@@ -50,3 +50,34 @@ Each issue must be one string: "<script location> — <what conflicts> —
 <canon file that says otherwise>". `pass` is true only when `issues` is empty
 (deviations never fail the review). Set `verdict` to "CANON PASSED" when pass is
 true, "CANON FAILED" when false.
+
+## The writer's round report
+
+The report the writer ended its last revision of this script with, or the word
+none when no revision has run yet:
+{{prior.revise}}
+
+Its ## Changed section lists the scenes the revision touched, and those
+scenes are the only text a new contradiction of canon may be raised against.
+The ids under its ## Deliberate exceptions section close nothing of yours —
+canon carries no judgment — so you read that section only to see which issues
+the writer declined and why.
+
+## Your prior verdict
+
+Your own verdict from the previous round of this script, or the word none when
+this is the first round:
+{{prior.canon-review-script}}
+
+A round is one revision and one re-review, and the issue set only shrinks.
+Re-check every issue you listed then against the current script: one the
+revision resolved is not raised again, and one it did not resolve comes back
+in the same words, so the writer can see it is the same issue. From round 2 on
+your issues are those still-standing ones plus any new contradiction of canon
+in text the revision changed — the writer's round report lists the scenes it
+touched under the heading ## Changed. Canon carries no judgment, so an issue
+of yours is never closed by the writer's Deliberate exceptions list: only the
+showrunner closes one, through `deviations` and the provenance rule above.
+That holds for either licence the writer may claim. A clause of the guide does
+not close a canon issue, and neither does an outranking issue id: a canon issue
+outranks every other finding, so no issue of yours is ever the outranked one.

@@ -78,6 +78,44 @@ describe("SituationLine", () => {
     expect(screen.queryAllByRole("link")).toHaveLength(0);
   });
 
+  it("draws the round the panel is on inside the working sentence", () => {
+    // Plan J's loop on the screen. A reviewer running for the third time is indistinguishable from
+    // the first by its step id and its elapsed time alone, so the round is the only thing on this
+    // line that says the run is making progress through a loop rather than repeating itself — and
+    // it is still a sentence and not an invitation, because a panel going round again needs nobody.
+    const round3 = runSituation({
+      status: "running",
+      position: { stepId: "tone-check", startedAt: "2026-10-15T14:00:00.000Z" },
+      steps: [{ id: "tone-check", kind: "agent", status: "running" }],
+      round: { n: 3, costUsd: 12.132 },
+    }, Date.parse("2026-10-15T14:02:10.000Z"));
+
+    mount(round3, "running");
+
+    expect(screen.getByText("A worker is on it.")).toBeInTheDocument();
+    expect(screen.getByText("tone-check for 2m 10s (round 3)")).toBeInTheDocument();
+    expect(screen.queryAllByRole("button")).toHaveLength(0);
+  });
+
+  it("draws no round clause on a reported round 1, which is the ordinary run", () => {
+    // A panel that went green first time is reported on the wire — the Gate page's head needs it to
+    // agree with the gate's own message — and says nothing here (Ryan's ruling, 2026-10-15). This
+    // is the sentence most runs show most of the time, so it is asserted on the screen and not only
+    // as a string: a `(round 1)` leaking onto every working line would be a clause that
+    // distinguishes nothing, on the one surface twenty rows of the Board share.
+    const round1 = runSituation({
+      status: "running",
+      position: { stepId: "tone-check", startedAt: "2026-10-15T14:00:00.000Z" },
+      steps: [{ id: "tone-check", kind: "agent", status: "running" }],
+      round: { n: 1, costUsd: 6.066 },
+    }, Date.parse("2026-10-15T14:02:10.000Z"));
+
+    const { container } = mount(round1, "running");
+
+    expect(screen.getByText("tone-check for 2m 10s")).toBeInTheDocument();
+    expect(container.textContent).not.toContain("round");
+  });
+
   it("presses the one move it is given, once", () => {
     const onClick = vi.fn();
     const crashed = runSituation({ status: "crashed" });

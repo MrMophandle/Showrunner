@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { WireEvent } from "../../shared/types.js";
 import { firstLine } from "../projections.js";
+import { readVerdict } from "./Verdicts.js";
 
 /** The run's log, newest last, auto-following.
  *
@@ -48,6 +49,36 @@ export function eventSummary(e: WireEvent): string {
       return str("reason") ?? "";
     case "step_skipped":
       return str("reason") ?? "";
+    case "panel_round": {
+      // Plan J's review round came back red, which is the event the `step_reset` burst below it
+      // belongs to. The payload carries every reset step's result so the next round's prompts can
+      // read them back (`{{prior.<id>}}`, inventory J-14) — ten kilobytes of verdict objects on a
+      // real run — so this case exists to keep that out of the feed: the fallback arm renders a
+      // payload as truncated JSON, and for this one kind that would be the whole line and none of
+      // the meaning.
+      //
+      // The reviewers that **failed**, not the ones that raised issues. `pass` and `issues` are
+      // decoupled: on the measured s02e01 round `flow-check` passed carrying five pieces of craft
+      // advice (inventory J-09, J-13), and naming it among the failures would send the reader
+      // looking for a defect it did not claim. `readVerdict` is the console's one defensive reader
+      // of a show's own verdict shape, shared with the gate's verdict board rather than copied.
+      //
+      // **And only an entry that is a verdict at all can be a failing one.** The event is keyed on
+      // every step the round resets, and two of those results are not verdicts — the hand-edit
+      // guard's JSON record and the canon ledger's result line (R-22; nine keys on the real
+      // pipeline) — so a filter on `readVerdict(v).pass` alone named them among the failing
+      // reviewers on every round, since a string reads as `pass: false`. The test for "is this a
+      // verdict" is `server/gates.ts`' own: an object carrying a `pass`.
+      const verdicts = p["verdicts"];
+      const isVerdict = (v: unknown): boolean =>
+        typeof v === "object" && v !== null && !Array.isArray(v) && "pass" in (v as Record<string, unknown>);
+      const red = typeof verdicts === "object" && verdicts !== null && !Array.isArray(verdicts)
+        ? Object.entries(verdicts).filter(([, v]) => isVerdict(v) && !readVerdict(v).pass).map(([id]) => id)
+        : [];
+      const costUsd = p["costUsd"];
+      const cost = typeof costUsd === "number" ? ` · $${costUsd.toFixed(4)}` : "";
+      return `round ${String(p["round"] ?? "?")} red${red.length > 0 ? ` — ${red.join(", ")}` : ""}${cost}`;
+    }
     case "step_reset":
       return `by ${str("by") ?? "someone"}`;
     case "run_resumed":

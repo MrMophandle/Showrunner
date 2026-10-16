@@ -3,35 +3,51 @@ import type { AgentContentBlock, AgentMessage, AgentQueryOptions, AgentUsage, Qu
 
 /** The one place the engine touches the Agent SDK. Everything the executor reads is copied onto
  *  AgentMessage field by field, so a change in the SDK's types shows up here as a compile error
- *  and nowhere else.
+ *  and nowhere else. */
+export const sdkQuery: QueryFn = ({ prompt, options }: { prompt: string; options: AgentQueryOptions }) =>
+  streamWithUsage(query({ prompt, options: { ...options } }), options.outputFormat !== undefined);
+
+/** The SDK's stream, mapped onto AgentMessage, with the plan's utilization windows asked for once
+ *  and yielded as one synthetic `usage` message — the only message in the stream the SDK did not
+ *  send.
  *
- *  The query **object** is held in a local rather than iterated as an expression, because a plan
- *  usage limit is the one fault the stream alone cannot describe: a `rate_limit_event` names the
- *  window it rejected, but the weekly figure Ryan's auto-retry rule reads lives behind the object's
- *  own usage call. So after the first rejected limit this generator asks that call once and yields
- *  one synthetic `usage` message, which is the only message in the stream the SDK did not send.
+ *  **The call is made on every query, not only after a rejected limit** (Plan J, ruling 6). The
+ *  weekly figure is what decides two things now: whether the executor waits out a five-hour limit
+ *  (Plan I), and whether a `panel` step starts another review round at all — and the second reader
+ *  needs the figure on an ordinary, unlimited query, where no limit will ever be classified. The
+ *  2026-10-15 probe (`engine/test/agent-live.test.ts`, the `usage:` test, re-run for Plan J) settles
+ *  that there is no second source: an unlimited query's stream carried exactly one
+ *  `rate_limit_event`, `{"status":"allowed","window":"five_hour"}` with **no `utilization` and no
+ *  seven-day event at all**, while the usage call answered in **149 ms** with both windows
+ *  (`five_hour` 26%, `seven_day` 38%). So the call is the only source, and it is cheap: 149 ms
+ *  against a 374.8-second panel round is 0.04% of it, and the seven reviewers' calls overlap at
+ *  concurrency 7.
  *
- *  **The call has to happen inside this loop, and that is not a style choice.** Measured live on
- *  2026-10-15 against SDK 0.3.283 with a plain string prompt (`engine/test/agent-live.test.ts`, the
- *  `usage:` test): called mid-stream it answered in 183 ms with both windows
- *  (`available: true`); called after the same stream had ended it failed instantly, and the
- *  wrapper reported `available: false`. The transport closes with the stream, so a limit discovered
- *  here must be asked about here. */
-export const sdkQuery: QueryFn = async function* ({ prompt, options }: { prompt: string; options: AgentQueryOptions }) {
-  const dropVerdictTool = options.outputFormat !== undefined;
-  const q = query({ prompt, options: { ...options } });
+ *  **It has to happen inside this loop, and that is not a style choice.** The same probe: called
+ *  mid-stream it answered; called after the same stream had ended it failed in 0 ms and the wrapper
+ *  reported `available: false`. The transport closes with the stream. So the call is made at the
+ *  first message the stream yields, which is the earliest point at which the transport is known to
+ *  be open, and `askedForUsage` keeps it to once per query however many messages or rejections
+ *  follow. Nothing here can reject: `usageMessage` turns a missing method, a throw and a timeout
+ *  into `{ available: false }`.
+ *
+ *  Exported for this file's own unit tests, which drive it with a fake query object: `sdkQuery`
+ *  calls the SDK's `query` and so cannot be tested without a session, while everything worth
+ *  testing — the once-per-query rule, the single synthetic message, the order of the stream — lives
+ *  here. The parameter is typed as the two things this function uses, so a real `Query` satisfies it
+ *  and a test's object does too. */
+export async function* streamWithUsage(
+  q: AsyncIterable<SDKMessage> & UsageCapableQuery, dropVerdictTool: boolean,
+): AsyncGenerator<AgentMessage> {
   let askedForUsage = false;
   for await (const m of q) {
-    const mapped = toAgentMessage(m, dropVerdictTool);
-    yield mapped;
-    // Once per query, not once per event: the windows keep reporting as a stream drains, and the
-    // executor needs one answer, not one per rejection.
-    if (!askedForUsage && mapped.rateLimit?.status === "rejected") {
+    yield toAgentMessage(m, dropVerdictTool);
+    if (!askedForUsage) {
       askedForUsage = true;
       yield await usageMessage(q);
     }
   }
-};
+}
 
 /** How long the usage call is given to answer before it is treated as unavailable. It is a timeout
  *  rather than a plain await because the call is an SDK **control request**, and `sdk.d.ts` says

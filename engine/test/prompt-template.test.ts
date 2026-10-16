@@ -114,3 +114,47 @@ describe("{{vars.<name>}}", () => {
     expect(renderPrompt("{{results.x}}", { ...ctx, results: { x: { a: 1 } } })).toBe(JSON.stringify({ a: 1 }, null, 2));
   });
 });
+
+describe("renderPrompt: the round's variables", () => {
+  const prior = { "tone-check": { pass: false, issues: ["scene five"] }, revise: "## Changed\nScene five.", empty: null };
+  const round = { n: 3, costUsd: 15.8878 };
+
+  it("renders a prior verdict by step id, as the same JSON a result renders as", () => {
+    expect(renderPrompt("{{prior.tone-check}}", ctx, { prior })).toBe(JSON.stringify(prior["tone-check"], null, 2));
+    expect(renderPrompt("{{prior.revise}}", ctx, { prior })).toBe("## Changed\nScene five.");
+  });
+
+  it("renders `none` for a step with no prior verdict, and for a caller that supplied no priors at all", () => {
+    // The one hole in this module that is not an error. Round 1 has no previous verdict for anybody
+    // and every reviewer's prompt names its own, so failing here would fail the first round of every
+    // run. A null in the map reads the same way: there is nothing to judge against.
+    expect(renderPrompt("{{prior.flow-check}}", ctx, { prior })).toBe("none");
+    expect(renderPrompt("{{prior.empty}}", ctx, { prior })).toBe("none");
+    expect(renderPrompt("{{prior.tone-check}}", ctx)).toBe("none");
+    expect(renderPrompt("prior: {{prior.tone-check}}.", ctx, { prior: {} })).toBe("prior: none.");
+  });
+
+  it("fails on a bare {{prior}} and on a dotted path into a verdict", () => {
+    // A path would need the `none` rule at every level, and "the prior verdict has no such field" is
+    // not the same answer as "there is no prior verdict": a prompt asking for a field of `none`
+    // would render as prose. One segment only.
+    expect(() => renderPrompt("{{prior}}", ctx, { prior })).toThrow(/prior needs a step id/);
+    expect(() => renderPrompt("{{prior.tone-check.pass}}", ctx, { prior })).toThrow(/malformed step id/);
+    expect(() => renderPrompt("{{prior.}}", ctx, { prior })).toThrow(/malformed step id/);
+  });
+
+  it("renders the round and its cost, and fails by name on anything else", () => {
+    expect(renderPrompt("round {{round.n}} (${{round.costUsd}})", ctx, { round })).toBe("round 3 ($15.8878)");
+    expect(renderPrompt("{{round.n}}", ctx, { round: { n: 1, costUsd: 0 } })).toBe("1");
+    // Four decimals wherever the figure becomes text, so the gate's message and the gate's head
+    // print one string for one number: a round 1 reads `$0.0000`, not `$0`, and a figure whose
+    // value has a short tail is padded rather than printed short.
+    expect(renderPrompt("${{round.costUsd}}", ctx, { round: { n: 1, costUsd: 0 } })).toBe("$0.0000");
+    expect(renderPrompt("${{round.costUsd}}", ctx, { round: { n: 2, costUsd: 6.07 } })).toBe("$6.0700");
+    expect(() => renderPrompt("{{round}}", ctx, { round })).toThrow(/round needs a field/);
+    expect(() => renderPrompt("{{round.cost}}", ctx, { round })).toThrow(/unknown round field; the round carries n and costUsd/);
+    // Absent is a named fault, not a hole: a caller that renders a prompt with no round — the
+    // prompt checker's context file before it carries one — is told what it did not supply.
+    expect(() => renderPrompt("{{round.n}}", ctx)).toThrow(/\{\{round\.n\}\}: round is not available/);
+  });
+});

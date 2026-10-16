@@ -313,6 +313,9 @@ export interface SituationRun {
    *  where the finished episode is and what made it, which is the whole of what an archived row
    *  has to say. */
   archiveNote?: string;
+  /** Which round of the review panel the run is on, as both callers carry it (`RunView.round` and
+   *  `EpisodeRow.round`). Absent for every run whose panel has written no `panel_round`. */
+  round?: { n: number; costUsd: number };
   /** The run's step rows, which the Run view has and a Board row does not. */
   steps?: StepRow[];
 }
@@ -376,6 +379,35 @@ export function iterationLabel(row: Pick<StepRow, "iteration"> | undefined): str
   return it === undefined ? undefined : `iteration ${it.n} of ${it.max}`;
 }
 
+/** Which round of the review panel the run is on — "round 3" — or undefined on round 1 and for a
+ *  run whose panel has written no round at all (`roundOf`, `server/runs.ts`).
+ *
+ *  **The sentence names a round only from round 2** (Ryan's ruling, 2026-10-15). A run on its first
+ *  round reads exactly as it did before Plan J — `tone-check for 2m 10s` — because the clause exists
+ *  to tell round 3 from round 1, and "round 1" on twenty working rows of the Board is a clause that
+ *  distinguishes nothing while costing every reader of every ordinary run a moment working out that
+ *  it means nothing is wrong. **This is the only place that rule lives.** The round itself is
+ *  reported for a green round 1 — `RunView.round` and `GateView.round` both carry `{ n: 1, … }` —
+ *  because the Gate page's head must agree with the gate's own message, which says "green after 1
+ *  round(s)". Withholding the fact at the server to keep one sentence quiet would have made the gate
+ *  head contradict a figure the showrunner is approving.
+ *
+ *  **"round 3" and not "round 3 of N", because there is no N.** Plan J's panel has no cap: the loop
+ *  runs until every reviewer passes and the only stop is the weekly quota (ruling 1, "No round
+ *  cap"). That is the opposite of `iterationLabel`, whose whole purpose is the denominator — "a loop
+ *  on iteration 14 of 15 is about to fail" — and a round with nothing to be close to has nothing to
+ *  be "of". The inventory asked this question directly (J-27) and this is the answer: the numerator
+ *  alone, which still does the one job the line needs, telling round 3 from round 1.
+ *
+ *  **And no cost here.** The round's cost is on the gate head, where somebody is deciding whether
+ *  to approve what it bought (`src/pages/Gate.tsx`), and in the gate's own message. On a Board of
+ *  twenty rows it would be a figure that moves every few minutes beside a step id that is the thing
+ *  being read, and `RunView.round` carries it for the surfaces that want it. */
+export function roundLabel(run: Pick<SituationRun, "round">): string | undefined {
+  const round = run.round;
+  return round === undefined || round.n <= 1 ? undefined : `round ${round.n}`;
+}
+
 /** The engine's sentence for a run that is asleep waiting out a Claude plan usage limit, from
  *  whichever of the two shapes the caller has: the Board's row-level `waitingNote`, or the step row
  *  the Run view holds.
@@ -412,8 +444,17 @@ function sleepingNote(run: SituationRun): string | undefined {
  *
  *  It re-derives nothing. The elapsed time is `elapsed`, the progress clause is `progressLabel` —
  *  the same function `ProgressBar` renders, so the line and the bar cannot disagree — the in-flight
- *  row is `positionStep`, the iteration clause is `iterationLabel`, and a usage-limit wait is read
- *  the way the server reads it (`sleepingNote`).
+ *  row is `positionStep`, the iteration clause is `iterationLabel`, the round clause is
+ *  `roundLabel`, and a usage-limit wait is read the way the server reads it (`sleepingNote`).
+ *
+ *  **The round is said in the working sentence only** (Plan J, ruling 8). A run parked at the
+ *  script gate has a round to report, and it is reported one click away in the gate's own head,
+ *  where the person deciding whether to approve the panel's work is reading (`src/pages/Gate.tsx`)
+ *  — and in the gate's rendered message. Saying it here as well would be two places to keep in
+ *  agreement about one fact, and the Board's question about a parked run is who holds it, which the
+ *  gate sentence already answers. A failed run says its round too, in the engine's own stop
+ *  sentence: the weekly-quota failure names the round it stopped on, and the `failed` arm below
+ *  prints that error's first line verbatim.
  *
  *  **The order of the checks is the status, except that a usage-limit wait outranks the working
  *  sentence.** Such a run reads `running`, because a worker is holding it and beating its lock
@@ -460,8 +501,14 @@ export function runSituation(run: SituationRun, now: Date | number = Date.now())
       if (position === undefined) return { subject: SUBJECT_WORKING, sentence: "a step is in flight" };
       const row = positionStep(run);
       let sentence = `${position.stepId} for ${elapsed(position.startedAt, now)}`;
-      const iteration = iterationLabel(row);
-      if (iteration !== undefined) sentence += ` (${iteration})`;
+      // The round and the loop's iteration share one parenthetical, the round first, because the
+      // round is what *contains* the iteration: Plan J's panel re-runs the whole review round, and
+      // any loop inside it is counting its own attempts within that round. The live pipeline cannot
+      // produce both at once — a round's steps are one guard and seven agent steps, `revise` having
+      // become a single fresh call per round (ruling 4) — but the order is decided here rather than
+      // left to whichever clause happened to be appended first.
+      const clauses = [roundLabel(run), iterationLabel(row)].filter((c) => c !== undefined);
+      if (clauses.length > 0) sentence += ` (${clauses.join(", ")})`;
       if (row?.progress !== undefined) sentence += ` · ${progressLabel(row.progress)}`;
       return { subject: SUBJECT_WORKING, sentence };
     }

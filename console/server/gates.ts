@@ -4,7 +4,7 @@ import {
   deriveRunState, describePipeline, episodePipeline, mixFilename, parseEpisodeId,
 } from "@showrunner/engine";
 import type { GateArtifact, GateView } from "../shared/types.js";
-import type { RunStore } from "./runs.js";
+import { roundOf, type RunStore } from "./runs.js";
 import type { ShowContext } from "./show.js";
 
 /** The gate view: what the showrunner is being asked, and the file the question is about.
@@ -153,6 +153,12 @@ export async function gateView(ctx: ShowContext, store: RunStore, episodeId: str
   const rejected = state.results[`${gate.stepId}:rejections`];
   const rejections = Array.isArray(rejected) ? rejected.map((note) => String(note)) : [];
 
+  // How many rounds the review panel took and what they cost. Read with the same function the Run
+  // view and the Board's rows use (`roundOf`, `server/runs.ts`), so the head of this page, the
+  // Board's situation line and the gate's own rendered message all name one number. Absent for a
+  // gate no panel precedes, which is every gate here but `script-gate`.
+  const round = roundOf(events);
+
   return {
     episodeId,
     runId,
@@ -164,5 +170,6 @@ export async function gateView(ctx: ShowContext, store: RunStore, episodeId: str
     verdicts,
     rejections,
     ...(maxAttempts !== undefined ? { maxAttempts } : {}),
+    ...(round !== undefined ? { round } : {}),
   };
 }

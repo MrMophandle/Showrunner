@@ -2,8 +2,9 @@ import { describe, expect, it } from "vitest";
 import type { EpisodeRow, RunView, StepRow } from "../../shared/types.js";
 import {
   STALL_MS, composeNotesWithFlags, composeShotRejection, elapsed, firstLine, gateSummaryLine,
-  iterationLabel, positionStep, progressLabel, quietRow, readOnlyLine, resetLabel, runSituation,
-  safeHref, showLabel, showReadFailure, stageLabel, stallState, stalled, titleFor, waitingNote,
+  iterationLabel, positionStep, progressLabel, quietRow, readOnlyLine, resetLabel, roundLabel,
+  runSituation, safeHref, showLabel, showReadFailure, stageLabel, stallState, stalled, titleFor,
+  waitingNote,
 } from "../../src/projections.js";
 
 /** The client's pure helpers. Every one of them is a function of its arguments and a clock the
@@ -357,6 +358,82 @@ describe("runSituation", () => {
     });
   });
 
+  it("names the round the panel is on, which is the run's number and not the step's", () => {
+    // Plan J: the review round repeats until every reviewer passes, so the step id alone no longer
+    // says where the run is — `tone-check` running for the third time looks exactly like the first.
+    // The round is a fact about the run and `round` is therefore on the view and on the Board's
+    // row, not on the step row the way an iteration is.
+    const round3 = view({
+      status: "running",
+      position: { stepId: "tone-check", startedAt: at },
+      steps: [step({ id: "tone-check", kind: "agent", status: "running" })],
+      round: { n: 3, costUsd: 12.132 },
+    });
+    expect(runSituation(round3, plus(130))).toEqual({
+      subject: "A worker is on it.",
+      sentence: "tone-check for 2m 10s (round 3)",
+    });
+  });
+
+  it("names a round only from round 2, whether round 1 is reported or absent", () => {
+    // Two different logs, one sentence. A first round still in flight has no round record at all and
+    // the view carries no `round` (`roundOf`, `server/runs.ts`); a panel that went green on its
+    // first round *is* reported, `{ n: 1, … }`, because the Gate page's head has to agree with the
+    // gate's own message ("green after 1 round(s)"). Neither grows a clause here, and that rule
+    // lives in `roundLabel` alone — an ordinary run that never loops reads exactly as it did before
+    // Plan J, and "round 1" on twenty working rows of the Board would distinguish nothing while
+    // costing every reader a moment working out that it means nothing is wrong.
+    const running = {
+      status: "running" as const,
+      position: { stepId: "tone-check", startedAt: at },
+      steps: [step({ id: "tone-check", kind: "agent", status: "running" })],
+    };
+    const expected = { subject: "A worker is on it.", sentence: "tone-check for 2m 10s" };
+    expect(runSituation(view(running), plus(130))).toEqual(expected);
+    expect(runSituation(view({ ...running, round: { n: 1, costUsd: 6.066 } }), plus(130))).toEqual(expected);
+    // And the label itself, which is where the rule is written.
+    expect(roundLabel({ round: { n: 1, costUsd: 6.066 } })).toBeUndefined();
+    expect(roundLabel({ round: { n: 2, costUsd: 12.132 } })).toBe("round 2");
+    expect(roundLabel({})).toBeUndefined();
+  });
+
+  it("puts the round outside the loop's iteration, because the round is what contains it", () => {
+    // Plan J's live pipeline cannot produce both at once — the round's steps are a guard and six
+    // agent steps, and `revise` became one fresh call per round with no loop (ruling 4) — but the
+    // order has to be decided somewhere rather than left to whichever clause was appended first.
+    const both = view({
+      status: "running",
+      position: { stepId: "draft", startedAt: at },
+      steps: [step({
+        id: "draft", kind: "loop", status: "running",
+        iteration: { n: 3, max: 15 },
+        progress: { done: 2, total: 12, unit: "scenes" },
+      })],
+      round: { n: 3, costUsd: 12.132 },
+    });
+    expect(runSituation(both, plus(725))).toEqual({
+      subject: "A worker is on it.",
+      sentence: "draft for 12m 05s (round 3, iteration 3 of 15) · 2/12 scenes",
+    });
+  });
+
+  it("leaves an open gate's sentence alone, because the gate's own head carries the round", () => {
+    // The round reaches the person who needs it on the Gate page, where the head prints
+    // `round 3 · $12.1320` beside the attempt (`src/pages/Gate.tsx`). Saying it here as well would
+    // be two places to keep in agreement for one fact, and the Board's question about a parked run
+    // is "who holds it", not "what did it cost".
+    const parked = row({
+      status: "waiting",
+      openGate: { stepId: "script-gate", attempt: 2, openedAt: "2026-10-15T14:05:00.000Z" },
+      round: { n: 3, costUsd: 12.132 },
+    });
+    expect(runSituation(parked, plus(60))).toEqual({
+      subject: "Needs you.",
+      sentence: "script-gate has been waiting for an answer since 14:05:00 (attempt 2).",
+      action: "gate",
+    });
+  });
+
   it("says the engine's reason verbatim for a step asleep until a usage limit resets (Plan I)", () => {
     // The subject keeps its comma: the engine's sentence continues it. And the status is
     // `running`, correctly — a worker is holding the run and beating its lock — so this case has
@@ -511,11 +588,11 @@ describe("progressLabel", () => {
 describe("gateSummaryLine", () => {
   it("takes the sentence a gate template opens with, not the verdicts under it", () => {
     // The real shape of a script gate's message (`tools/templates/prompts/script-gate.gate.md`):
-    // one sentence naming the file, then the reviewers' results, which is the half the expander
-    // folds away.
+    // one sentence naming the file, then what the panel cost to turn green and the approve/reject
+    // line, which are the half the expander folds away.
     const message = [
       "Script drafted: Episodes/s02e01/script.md",
-      'Panel verdict (review-gate all-pass): {"pass":true,"issues":[]}',
+      "The panel is green after 2 round(s) ($12.1320 of review and revision).",
       "Approve to commit. Reject with notes for a targeted revision.",
     ].join("\n");
     expect(gateSummaryLine(message)).toBe("Script drafted: Episodes/s02e01/script.md");

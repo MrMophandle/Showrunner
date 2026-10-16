@@ -1,4 +1,5 @@
 import path from "node:path";
+import type { Event } from "./events.js";
 import type { AgentLimit, AgentOutcome, AgentStep, Emit, Executors, GateMessageRenderer, JsonSchema, RunContext } from "./steps.js";
 import { isReservedEpisodeId } from "./ids.js";
 import { loadPrompt, renderPrompt, type RenderExtra } from "./prompt-template.js";
@@ -208,7 +209,11 @@ function promptsDirFor(opts: AgentExecutorOptions, ctx: RunContext): string {
  *
  *  `vars` comes from the step rather than from the executor's options — the step declares them —
  *  and is spread in only when it was given, so a step with no vars leaves the field absent and
- *  `{{vars.*}}` fails with "vars are not available" rather than with a missing name. */
+ *  `{{vars.*}}` fails with "vars are not available" rather than with a missing name.
+ *
+ *  `prior` and `round` come from the run's log and are **always** supplied, because their round-1
+ *  values are real answers rather than absences: no previous verdict for anybody, round 1, nothing
+ *  spent. See `roundExtras`. */
 function renderExtraFor(opts: AgentExecutorOptions, ctx: RunContext, vars?: Record<string, string>): RenderExtra {
   let season: number | undefined;
   if (opts.show && !isReservedEpisodeId(ctx.episodeId)) {
@@ -218,11 +223,104 @@ function renderExtraFor(opts: AgentExecutorOptions, ctx: RunContext, vars?: Reco
       if (!(err instanceof ShowConfigError)) throw err;
     }
   }
+  const { prior, round } = roundExtras(ctx.events);
   return {
     ...(season !== undefined ? { season } : {}),
     ...(opts.show ? { show: opts.show as unknown as Record<string, unknown> } : {}),
     ...(vars !== undefined ? { vars } : {}),
+    prior, round,
   };
+}
+
+/** The review round as a prompt sees it, read from the log's latest `panel_round`: the previous
+ *  round's verdicts for `{{prior.<stepId>}}`, and the round about to run with its cost so far for
+ *  `{{round.n}}` and `{{round.costUsd}}`.
+ *
+ *  **The log and not `ctx.results`, and that is the whole point** (inventory J-14). A red round
+ *  resets the round's steps, and `step_reset` deletes each one's result from the derived state
+ *  (`state.ts`), so by the time a reviewer re-runs its own last verdict is gone from `ctx.results`.
+ *  It survives in the log, which `RunContext.events` already carries for exactly this kind of
+ *  reader.
+ *
+ *  **Two records answer the round, and the later one wins.** A `panel_round` is written when a round
+ *  came back **red**, so the pass about to run is the one after it: one of them in the log means
+ *  `n` is 2. A panel's own `step_completed` is written when a round came back **green**, and that
+ *  round is the one the run is in: `n` is its number, which is what the `script-gate` message means
+ *  by "green after 2 round(s)". Taking only the red record would make the gate's sentence print the
+ *  cost as it stood when the loop last failed — the closing panel and the revision before it
+ *  missing, which on the measured figures is most of the total. With neither record it is round 1,
+ *  nothing has been spent, and no step has a prior verdict: the three values a first pass needs,
+ *  which is why they are supplied rather than left absent.
+ *
+ *  **The green record is identified by its payload's shape, not by its step** (the whole-branch
+ *  review of 2026-10-15). Any `step_completed` carrying `green: true` **and** a `round` is read here
+ *  as a panel's green round. Only `runPanelStep` writes that pair today (`runner.ts`'s green exit),
+ *  so this is a coupling rather than a bug — but a second step that wrote both fields would be
+ *  counted as a round, and both readers of this function would move with it: the prompts'
+ *  `{{round.n}}` and the console's `roundOf`, which reports a round only when `found` is true.
+ *
+ *  **`prior` comes from the red record only**, whichever is later. Only a red round has verdicts to
+ *  hand on, and a green round's completion carries none; after a gate rejection re-runs a panel that
+ *  had gone green, the reviewers are still shown the last verdicts anyone wrote.
+ *
+ *  **`found` and `red` are this one walk's answers to two questions its callers used to ask for
+ *  themselves.** `found` says whether either record exists at all, which is the console's test for
+ *  "is there a round to draw" (`console/server/runs.ts`'s `roundOf`, which wrote the detection
+ *  predicate a second time until this field existed). `red` says whether the **latest** of the two
+ *  records is a red round, which is the question `revise`'s `when` asks through `panelIsRed`: "has
+ *  any round ever been red" is true forever after the first one, and answered that way a gate
+ *  rejection after a green round pays a writer call against issues the panel has already closed.
+ *  Both are reported rather than recomputed because the resolution of *which record is later* is the
+ *  part that must not exist twice.
+ *
+ *  Exported because the gate-message renderer and the agent executor both go through
+ *  `renderExtraFor`, and a console or a test that wants the same reading of a log should not write a
+ *  second one. */
+export function roundExtras(events: readonly Event[] | undefined): { found: boolean; red: boolean; prior: Record<string, unknown>; round: { n: number; costUsd: number } } {
+  let red: Event | undefined;
+  let latestIsRed = false;
+  let latest: { round: number; costUsd: number } | undefined;
+  for (const e of events ?? []) {
+    if (e.kind === "panel_round") {
+      red = e;
+      latestIsRed = true;
+      latest = { round: Number(e.payload["round"]) + 1, costUsd: Number(e.payload["costUsd"]) };
+    } else if (e.kind === "step_completed" && e.payload["green"] === true && e.payload["round"] !== undefined) {
+      latestIsRed = false;
+      latest = { round: Number(e.payload["round"]), costUsd: Number(e.payload["costUsd"]) };
+    }
+  }
+  const verdicts = red?.payload["verdicts"];
+  const prior = typeof verdicts === "object" && verdicts !== null && !Array.isArray(verdicts)
+    ? (verdicts as Record<string, unknown>)
+    : {};
+  // A payload whose numbers a hand-edited log made unreadable must not render as `NaN` in a prompt
+  // or in a gate message a showrunner approves: round 1 and nothing spent is the same answer as no
+  // round at all, which is the conservative one.
+  return {
+    found: latest !== undefined,
+    red: latestIsRed,
+    prior,
+    round: {
+      n: latest !== undefined && Number.isFinite(latest.round) ? latest.round : 1,
+      costUsd: latest !== undefined && Number.isFinite(latest.costUsd) ? latest.costUsd : 0,
+    },
+  };
+}
+
+/** Whether the panel's **latest** record is a red round — the question `revise`'s `when` asks
+ *  (`pipelines/episode.ts`), so the revision runs on the pass after a round came back red and not on
+ *  the pass after a showrunner's rejection of a panel that has since gone green.
+ *
+ *  It exists as a wrapper over `roundExtras` rather than as a predicate of its own because the two
+ *  have to agree about which of the panel's two records is later. Written separately, the pipeline's
+ *  `when` would answer "has any round ever been red" — true forever after the first red round — and
+ *  the rejection path would hand the writer the last red round's verdicts with `{{round.n}}`
+ *  resolved from the later green completion: one writer call (~$3.23 measured) spent re-working text
+ *  that is already fixed, against issues the reviewers have closed, with the showrunner's actual
+ *  note rendered nowhere. */
+export function panelIsRed(events: readonly Event[] | undefined): boolean {
+  return roundExtras(events).red;
 }
 
 /** The renderer a gate's `messageFile` needs, for `RunOptions.renderGateMessage`. It is built from
@@ -448,11 +546,36 @@ function manualResumeSentence(o: { window: string | undefined; time: string | un
   return `${opening}${resetsClause(o.time)} and the weekly quota is at ${o.weekly}%, ${relation} (agents.autoRetryWeeklyUtilizationMax).`;
 }
 
+/** The two words every sentence that hands the run back to the operator starts with. One constant
+ *  because the sentences are built in two places now — the executor's usage-limit shapes here, and
+ *  the `panel` step's weekly stop (`panelStopSentence`, read by the runner) — and the console's
+ *  operator-facing copy keys on the phrase. A literal written twice is a literal reworded once. */
+const MANUAL_RESUME = "Manual resume needed:";
+
 /** The opening that every usage-limit sentence shares. Written once because six sentence shapes
  *  hang off it — four from `manualResumeSentence` and `limitedAgainSentence`'s two arms — and the
  *  same literal in two builders is a literal that gets reworded in one of them. */
 function limitOpening(window: string | undefined): string {
-  return `Manual resume needed: the writer's session hit its ${windowLabel(window)} limit`;
+  return `${MANUAL_RESUME} the writer's session hit its ${windowLabel(window)} limit`;
+}
+
+/** The step error a `panel` writes instead of starting another round, when the week's quota is at or
+ *  above the show's auto-retry ceiling (Ryan's ruling of 2026-10-15, Plan J ruling 6).
+ *
+ *  It is built here, beside Plan I's sentences, rather than in the runner, because this module owns
+ *  every sentence that asks the operator for a Resume and they have to read as one voice: the same
+ *  opening, the same bare percentages, the same named config key in parentheses. The runner imports
+ *  it; nothing else in the engine builds an operator sentence.
+ *
+ *  **"at or above", where Plan I's `manualResumeSentence` says "at" or "above".** The panel's rule is
+ *  one `>=` comparison and has one sentence, so the phrase states the test; the executor's rule is
+ *  reached from a `<` test and distinguishes the two sides because its reader is deciding whether a
+ *  wait was owed. The numbers are the figure the log carried and the ceiling that refused it, as
+ *  percentages, which is the form every other usage sentence and the console's own copy use. */
+export function panelStopSentence(o: { round: number; weekly: number; ceiling: number }): string {
+  return `${MANUAL_RESUME} the panel is still red after round ${o.round} and the weekly quota is at ${o.weekly}%, `
+    + `at or above the ${o.ceiling}% auto-retry ceiling (agents.autoRetryWeeklyUtilizationMax); `
+    + "press Resume after the reset to continue the loop.";
 }
 
 /** The step's error when the limit tripped again on the retry. One wait is all the executor takes
@@ -783,6 +906,15 @@ export function createAgentExecutor(opts: AgentExecutorOptions): Executors["agen
       ...(sessionId !== undefined ? { sessionId } : {}),
       permissionDenials: denials.length, deniedTools,
       ...(limit !== undefined ? { limit } : {}),
+      // The plan's utilization windows as the wrapper answered them for this query, on every query
+      // and not only a limited one (Plan J, ruling 6). Until this field existed the figure reached
+      // the log only through `limit.weeklyUtilization` or `step_waiting`, both of which need a
+      // classified limit, so an unlimited run carried no weekly figure at all (inventory J-19: zero
+      // in all fourteen logs measured). A `panel` step reads the latest of these before it starts
+      // another round, and What-happened can answer "how full was the week when this ran". Absent
+      // when the wrapper yielded no usage message, which is how a query that never opened a stream
+      // reads.
+      ...(last.usage !== undefined ? { usage: last.usage } : {}),
       ...(outcome.ok && schema ? { verdict: outcome.verdict } : {}),
       ...(outcome.ok && !schema ? { text: outcome.text } : {}),
       ...(!outcome.ok ? { error: outcome.error } : {}),
