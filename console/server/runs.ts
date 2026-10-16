@@ -140,6 +140,30 @@ function loopFlag(stepEvents: Event[]): StepRow["flag"] | undefined {
   return flag;
 }
 
+/** Which iteration a running loop is on and the cap it is counting towards — the **last**
+ *  `loop_iteration` since the loop's last `step_started`, or none for a step that has had none.
+ *
+ *  The last one and not the count of them, because the engine's own number is on the event
+ *  (`engine/src/runner.ts` emits `{ iteration, max }` per iteration) and counting the events here
+ *  would be a second, weaker way of knowing: a resumed loop starts its count at `done + 1` from
+ *  the events it reads back, and a console that counted rows would disagree with the engine about
+ *  which iteration is running the moment a run was resumed.
+ *
+ *  This is the number the situation line's "(iteration 3 of 15)" is, and it is not the step's
+ *  `progress`: the draft loop reports "2/12 scenes" against a cap of fifteen iterations
+ *  (`StepRow.iteration`'s doc comment, `shared/types.ts`). Both are drawn, because one says how
+ *  much work is done and the other how close the loop is to exhausting its attempts. */
+function loopIteration(stepEvents: Event[]): StepRow["iteration"] | undefined {
+  let found: StepRow["iteration"] | undefined;
+  for (const e of stepEvents) {
+    if (e.kind !== "loop_iteration") continue;
+    const n = e.payload["iteration"];
+    const max = e.payload["max"];
+    if (typeof n === "number" && typeof max === "number") found = { n, max };
+  }
+  return found;
+}
+
 /** Every step of the pipeline definition as a row, in pipeline order, overlaid with the log.
  *  The rows come from the definition and not from the log, which is what makes the run view a
  *  picture of the whole episode rather than of the part that has happened: a step the log never
@@ -168,7 +192,7 @@ function projectSteps(descriptions: StepDescription[], events: Event[]): StepRow
         row.status = "running";
         row.startedAt = e.ts;
         delete row.endedAt; delete row.error; delete row.result; delete row.toolCalls; delete row.progress; delete row.flag;
-        delete row.note; delete row.waitingUntil;
+        delete row.iteration; delete row.note; delete row.waitingUntil;
         break;
       case "step_waiting":
         // Plan I: the agent executor hit a Claude plan usage limit and the worker is sleeping
@@ -223,7 +247,7 @@ function projectSteps(descriptions: StepDescription[], events: Event[]): StepRow
       case "step_reset":
         row.status = "pending";
         delete row.endedAt; delete row.error; delete row.result; delete row.toolCalls; delete row.progress; delete row.flag;
-        delete row.note; delete row.waitingUntil;
+        delete row.iteration; delete row.note; delete row.waitingUntil;
         break;
       case "gate_opened":
         row.status = "waiting";
@@ -255,6 +279,8 @@ function projectSteps(descriptions: StepDescription[], events: Event[]): StepRow
     if (progress !== undefined) row.progress = progress;
     const flag = loopFlag(stepEvents);
     if (flag !== undefined) row.flag = flag;
+    const iteration = loopIteration(stepEvents);
+    if (iteration !== undefined) row.iteration = iteration;
   }
   return [...rows.values()];
 }
@@ -470,6 +496,12 @@ export class RunStore {
     // several paragraphs of rendered prose, and twenty of them is the Board's whole payload.
     if (view.openGate) row.openGate = { stepId: view.openGate.stepId, attempt: view.openGate.attempt, openedAt: view.openGate.openedAt };
     if (view.failed) row.failed = view.failed;
+    // The step in flight, for the Board's situation line: "A worker is on it. `draft` for 12m 05s"
+    // (`runSituation`, `src/projections.ts`). The row carries no step rows, so this is as far as the
+    // Board's sentence can go — the iteration and the progress clauses are the Run view's, which
+    // has them — and without it every working row would read "a step is in flight", which is true
+    // of all of them and tells the reader nothing.
+    if (view.position) row.position = view.position;
     // A run asleep until a usage limit resets reads `running`, because a worker is holding it and
     // beating its lock — so the sentence is the only thing that tells the Board and the tab title
     // that the minutes passing are a wait and not work (Plan I).

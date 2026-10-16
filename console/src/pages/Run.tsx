@@ -2,11 +2,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import type { EventBatch, RunView, WireEvent } from "../../shared/types.js";
 import { getJson, post, showHref, showPath, useApi, useCoalesced, useConsole, useNow, useSSE, useShowKey } from "../api.js";
-import { elapsed, stageLabel, stallState } from "../projections.js";
+import { elapsed, iterationLabel, positionStep, runSituation, stageLabel, stallState } from "../projections.js";
 import { ActionBar } from "../components/ActionBar.js";
 import { AutoTextarea } from "../components/AutoTextarea.js";
 import { EventFeed } from "../components/EventFeed.js";
 import { ProgressBar } from "../components/ProgressBar.js";
+import { SituationLine, type SituationAction } from "../components/SituationLine.js";
 import { StepRail } from "../components/StepRail.js";
 
 /** One run, at three altitudes and then at the bottom one.
@@ -62,6 +63,12 @@ export function Run() {
   const [withdrawing, setWithdrawing] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Resume and Continue live beside the situation line rather than in the action bar, because the
+  // line is what says a run has failed or crashed and the move belongs with the statement of the
+  // problem. The confirmation Continue needs is on the page for the same reason the withdrawal's
+  // is: a confirmation that explains what it is about to kill is a paragraph, not a button.
+  const [acting, setActing] = useState<string | null>(null);
+  const [confirmContinue, setConfirmContinue] = useState(false);
 
   /** Reads everything appended since this page's cursor. */
   const pull = useCallback(async (): Promise<void> => {
@@ -112,6 +119,23 @@ export function Run() {
     return () => { cancelled = true; };
   }, [base]);
 
+  /** Resume or Continue: the engine's verb, then a refetch. **No success notice** — the situation
+   *  line above is the feedback, and it says what the run is doing rather than what was asked of
+   *  it a moment ago (Ryan's ruling, 2026-10-15). */
+  async function act(name: "resume" | "continue"): Promise<void> {
+    setActing(name);
+    setError(null);
+    setNotice(null);
+    try {
+      await post(`${base}/${name}`, {});
+      refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setActing(null);
+    }
+  }
+
   async function withdraw(stepId: string): Promise<void> {
     setWithdrawing(stepId);
     setError(null);
@@ -148,8 +172,13 @@ export function Run() {
   const run = view.data;
   const stage = stageLabel(run.stage);
   const stall = stallState(run, now);
-  const current = run.position === undefined ? undefined : run.steps.find((s) => s.id === run.position?.stepId);
+  const current = positionStep(run);
+  const iteration = iterationLabel(current);
   const worker = run.worker;
+  // The one thing the page says before anything else: is the system working, or is it waiting on
+  // the showrunner, and for what. One projection, one vocabulary, three callers — this slot, the
+  // Board's rows, and the tab title's five forms it is the in-page form of.
+  const situation = runSituation(run, now);
 
   // One of the run's own files beside its log, as a url the artifact route serves — built the way
   // the What-happened page builds the troubleshooting log's. Both are null until
@@ -160,6 +189,26 @@ export function Run() {
     : showPath(showKey, `/episodes/${encodeURIComponent(episodeId)}/files/${encodeURIComponent(show.productionDir)}/${encodeURIComponent(episodeId)}/runs/${encodeURIComponent(`${runId}${suffix}`)}`);
   const workerLogUrl = runFileUrl(".worker.log");
   const workerOutUrl = runFileUrl(".worker.out");
+
+  // The one move the situation names, as this page is able to offer it. The open gate is a GET and
+  // so stays on a read-only show, which is the carve-out ruling H-03 makes for the two links that
+  // only read; Resume and Continue are POSTs the server answers 403 to, so they are offered only
+  // where the console can act.
+  const gateHref = showHref(showKey, `/episodes/${run.episodeId}/runs/${run.runId}/gate`);
+  const primary = ((): SituationAction | undefined => {
+    switch (situation.action) {
+      case "gate":
+        return run.openGate === undefined ? undefined : { label: `open gate · ${run.openGate.stepId}`, href: gateHref };
+      case "resume":
+        return canAct ? { label: acting === "resume" ? "resuming…" : "resume", onClick: () => { void act("resume"); }, busy: acting !== null } : undefined;
+      case "continue":
+        // The first click opens the confirmation below, which is the one that posts: Continue
+        // replays the open step and signals the dead worker's process groups first.
+        return canAct && !confirmContinue ? { label: "continue", onClick: () => { setConfirmContinue(true); } } : undefined;
+      default:
+        return undefined;
+    }
+  })();
 
   // The gates that would keep their approvals if this withdrawal went through: every approved gate
   // after the subject in pipeline order. The authoritative list comes back from the route, which
@@ -194,11 +243,38 @@ export function Run() {
         </div>
       </div>
 
+      <SituationLine situation={situation} status={run.status} {...(primary === undefined ? {} : { action: primary })} />
+
+      {confirmContinue && (
+        <div className="action-confirm">
+          <p>
+            Continuing replays the open step. {worker !== undefined && worker.groups.length > 0
+              ? <>The dead worker recorded <span className="mono">{worker.groups.length}</span> live process {worker.groups.length === 1 ? "group" : "groups"} — <span className="mono">{worker.groups.join(", ")}</span> — and they are signalled first, because a replay starting while the old render is still writing would put two processes on one file.</>
+              : <>The dead worker recorded no live process groups, so nothing is signalled.</>}
+          </p>
+          <div className="action-row">
+            <button
+              type="button"
+              className="btn btn-danger"
+              disabled={acting !== null}
+              onClick={() => { setConfirmContinue(false); void act("continue"); }}
+            >
+              {acting === "continue" ? "continuing…" : worker !== undefined && worker.groups.length > 0 ? "kill the groups and continue" : "continue"}
+            </button>
+            <button type="button" className="btn" onClick={() => { setConfirmContinue(false); }}>cancel</button>
+          </div>
+        </div>
+      )}
+
       <section className="altitudes">
         <div className="altitude">
           <div className="altitude-label">stage</div>
           <span className={`chip chip-stage chip-${stage.kind}`}>{stage.text}</span>
-          <div className={`altitude-sub chip chip-${run.status}`}>{run.status}</div>
+          {/* The run's status is not a chip here any more. The one word — "waiting", "running",
+              "failed" — was the page's only statement of who held the run, and the situation line
+              above now says it in a sentence with the step, the age and the move (Ryan's ruling,
+              2026-10-15). The stage chip stays: a stage is where the episode has got to, which is
+              a different question from who holds it. */}
           {worker !== undefined && (
             <div className="altitude-sub quiet mono">
               pid {worker.pid} {worker.alive ? "live" : "dead"} · beat {elapsed(worker.heartbeatAt, now)} ago
@@ -215,6 +291,10 @@ export function Run() {
               <>
                 <div className="altitude-step"><span className="mono">{current.id}</span> <span className="quiet">{current.kind}</span></div>
                 <div className="altitude-sub mono">{elapsed(current.startedAt, now)} in this step</div>
+                {/* How close a loop is to exhausting its attempts, in the same words the situation
+                    line uses (`iterationLabel`). It is not the progress bar's number: the draft
+                    loop reports "2/12 scenes" against a cap of fifteen iterations. */}
+                {iteration !== undefined && <div className="altitude-sub mono">{iteration}</div>}
                 {/* Why this step has been in flight for ninety minutes without writing anything:
                     it is asleep until a Claude plan usage limit resets, and the worker will re-run
                     it on its own (Plan I). The engine's sentence verbatim — "waiting for the usage
@@ -244,18 +324,10 @@ export function Run() {
         </div>
       </section>
 
-      {run.openGate !== undefined && (
-        <p className="gate-banner">
-          <span className="mono">{run.openGate.stepId}</span> has been waiting for an answer since{" "}
-          <span className="mono">{run.openGate.openedAt.slice(11, 19)}</span> (attempt {run.openGate.attempt}).{" "}
-          <Link to={showHref(showKey, `/episodes/${run.episodeId}/runs/${run.runId}/gate`)}>read it</Link>
-        </p>
-      )}
-      {run.failed !== undefined && (
-        <p className="error-line">
-          <span className="mono">{run.failed.stepId}</span> failed: {run.failed.error.split("\n")[0]}
-        </p>
-      )}
+      {/* The gate banner and the failed step's error line were here. Both said what the situation
+          line at the top now says — the gate's step, age and attempt; the failed step and its
+          first error line — and the line says it with the move beside it, so printing either here
+          as well would be the one page saying one thing twice (Ryan's ruling, 2026-10-15). */}
       {/* A log the store could not read to its end. Everything above and below is derived from the
           bytes before the bad one, so the page says the run's picture has stopped rather than
           presenting a frozen view as a current one. */}
