@@ -193,7 +193,7 @@ Ryan accepted the core model below on 2026-09-26 and added one requirement that 
 |---|---|---|
 | **Board** | every episode's stage and state, with `NEEDS_` and `DRAFT_` visibly distinct | the one derivation, over the show repository's run logs and milestone state |
 | **Run view** | stage → step → progress, time since last event, the live event log | §6.6 |
-| **Gate view** | the gate message, the artifact it refers to (outline, script, mix, shot sheet, video, canon diff) | approve, or reject with notes |
+| **Gate view** | the gate message, the artifact it refers to (outline, script, mix, shot sheet, video, canon diff) | approve, or reject with notes — and edit the gate's markdown artifact in place, the save landing on the one file on disk (added 2026-10-27; §8) |
 | **"What happened"** | one run's log, pipeline definition, prompt files by hash, and outputs | assembles that context and hands it to an agent (§6.8) |
 
 Deferred from the current console: the season map, the desk state, discuss, notes, and the standalone shot re-roll, ambient pass, and casting-pile buttons. Re-roll and ambient pass survive in the first build **as gate rejections**, which is the path they already take inside the workflows.
