@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import type { GateArtifact, GateView } from "../../shared/types.js";
-import { ApiError, post, showHref, showPath, useApi, useConsole, useSSE, useShowKey, useTextApi, type DirEntry } from "../api.js";
+import { ApiError, editHref, post, showHref, showPath, useApi, useConsole, useSSE, useShowKey, useTextApi, type DirEntry } from "../api.js";
 import { composeNotesWithFlags, gateSummaryLine, readOnlyLine } from "../projections.js";
 import { AudioSeek } from "../components/AudioSeek.js";
 import { AutoTextarea } from "../components/AutoTextarea.js";
@@ -47,9 +47,26 @@ const REDIRECT_MS = 2_000;
 
 /** A gate's markdown artifact: the outline, the script, the image sheet, the canon ledger. In a
  *  pane with its own scrollbar, because a script is four hundred lines and the Approve button has
- *  to stay reachable. */
-function MarkdownArtifact({ url }: { url: string }) {
+ *  to stay reachable.
+ *
+ *  `version` changes when a `file` message names this pane's path — the editor saved it — and the
+ *  pane refetches, so the gate shows the saved text without a reload: one file, one version
+ *  (Ryan, 2026-10-27).
+ *
+ *  Compared against a ref rather than taken as this component's `key`, which is the other way to
+ *  make a prop force a reread. A changed key unmounts the pane and mounts a new one, and the new
+ *  one starts with `useTextApi`'s `data` at null: the text vanishes for the length of the fetch
+ *  and the reader's position inside a four-hundred-line script goes with it. Refetching in place
+ *  leaves the old text on screen until the new bytes arrive. `seen` starts at the first `version`,
+ *  so the mount's own fetch is not immediately followed by a second one. */
+function MarkdownArtifact({ url, version }: { url: string; version: string }) {
   const file = useTextApi(url);
+  const seen = useRef(version);
+  useEffect(() => {
+    if (seen.current === version) return;
+    seen.current = version;
+    file.refetch();
+  }, [version, file]);
   if (file.error !== null && file.data === null) return <p className="error-line">{file.error}</p>;
   if (file.data === null) return <p className="quiet">reading…</p>;
   return <Markdown text={file.data} className="pane" />;
@@ -119,13 +136,24 @@ export function Gate() {
   const [moved, setMoved] = useState<string | null>(null);
   const [gone, setGone] = useState<string | null>(null);
   const [changed, setChanged] = useState(false);
+  // The hash each edited file is at, by show-relative path, as the `file` messages for this run
+  // have reported it. A pane reads its own path out of this map and refetches when the string it
+  // finds there changes, so one save refetches one pane and leaves the others alone.
+  const [fileVersions, setFileVersions] = useState<Record<string, string>>({});
   const redirect = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => () => { if (redirect.current !== null) clearTimeout(redirect.current); }, []);
 
-  // A notice, never a refetch: see the file header.
+  // A notice, never a refetch, for the run's log: see the file header. A `file` message is the one
+  // exception, and it is not an exception to the ruling — it says a file this gate is about was
+  // saved through the console's own editor, which is this page's reader editing the thing they are
+  // reading, not the pipeline moving underneath them. `hello` and `episodes` carry no run, so both
+  // kinds are narrowed before the run is compared.
   useSSE((message) => {
-    if (message.type === "run" && message.show === showKey && message.episodeId === episodeId && message.runId === runId) setChanged(true);
+    if (message.type !== "run" && message.type !== "file") return;
+    if (message.show !== showKey || message.episodeId !== episodeId || message.runId !== runId) return;
+    if (message.type === "run") setChanged(true);
+    else setFileVersions((versions) => ({ ...versions, [message.path]: message.hash }));
   });
 
   function applyFlags(next: Record<string, string>): void {
@@ -247,8 +275,27 @@ export function Gate() {
               {artifact.listUrl === undefined && (
                 <a className="btn btn-small" href={artifact.url} download>download</a>
               )}
+              {/* Editable from the gate it is being read at (Ryan's ruling, 2026-10-27), and only
+                  where this console may write: a read-only show refuses the editor's POST the way
+                  it refuses the answer (ruling H-03), so offering the link there would be offering
+                  a button that is refused.
+
+                  The link asks first when the notes box has words in it. Opening the editor is an
+                  in-app navigation that unmounts this page, and a rejection's notes exist nowhere
+                  but that box until the answer is posted — so the operator who types three
+                  paragraphs and then clicks edit to look at the line they are describing would
+                  lose all of it with nothing to fire on. */}
+              {artifact.kind === "markdown" && canAct && (
+                <Link
+                  className="btn btn-small"
+                  to={editHref(showKey, episodeId, runId, artifact.path)}
+                  onClick={(e) => {
+                    if (notes.trim() !== "" && !window.confirm("You have typed rejection notes. Leave them behind and open the editor?")) e.preventDefault();
+                  }}
+                >edit</Link>
+              )}
             </div>
-            {artifact.kind === "markdown" && <MarkdownArtifact url={artifact.url} />}
+            {artifact.kind === "markdown" && <MarkdownArtifact url={artifact.url} version={fileVersions[artifact.path] ?? ""} />}
             {artifact.kind === "diff" && <DiffArtifact url={artifact.url} />}
             {(artifact.kind === "json" || artifact.kind === "text") && <TextArtifact url={artifact.url} json={artifact.kind === "json"} />}
             {artifact.kind === "audio" && <AudioArtifact artifact={artifact} />}

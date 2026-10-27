@@ -10,6 +10,7 @@ import { Bible } from "./pages/Bible.js";
 import { Board } from "./pages/Board.js";
 import { Run } from "./pages/Run.js";
 import { Gate } from "./pages/Gate.js";
+import { Edit } from "./pages/Edit.js";
 import { NewShow } from "./pages/NewShow.js";
 import { WhatHappened } from "./pages/WhatHappened.js";
 import { NoSuchPage, Shows } from "./pages/Shows.js";
@@ -59,6 +60,10 @@ export function App() {
         <Route path="bible/:key" element={<Bible />} />
         <Route path="episodes/:id/runs/:run" element={<Run />} />
         <Route path="episodes/:id/runs/:run/gate" element={<Gate />} />
+        {/* The editor for one markdown artifact of the run's open gate. The `*` is the file's
+            show-relative path, which react-router hands the page back decoded — slashes and all —
+            so one route serves every file a gate lists rather than one route per artifact kind. */}
+        <Route path="episodes/:id/runs/:run/edit/*" element={<Edit />} />
         <Route path="episodes/:id/runs/:run/what-happened" element={<WhatHappened />} />
         <Route path="*" element={<ShowNoSuchPage />} />
       </Route>

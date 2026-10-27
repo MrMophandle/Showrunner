@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { GateView, SseMessage } from "../../shared/types.js";
-import { parseMessage, showHref, showPath } from "../../src/api.js";
+import type { FileRead, GateView, SseMessage } from "../../shared/types.js";
+import { editHref, filePath, parseMessage, showHref, showPath } from "../../src/api.js";
 import { appWith, appWithShows, makeShow, seedRun, writeIn } from "../helpers.js";
 import { SHOW_KEY as CLIENT_SHOW_KEY } from "../../shared/show-key.js";
 import { SHOW_KEY as SERVER_SHOW_KEY } from "../../server/registry.js";
@@ -167,6 +167,45 @@ describe("showPath and showHref", () => {
   });
 });
 
+describe("filePath and editHref, the editor's two addresses", () => {
+  it("names the editor's read at an address this app answers, for a file the open gate lists", async () => {
+    // Asserted against the running app for this file's own reason: the editor page builds this
+    // path itself, so a path that only agreed with a literal in this test would be a second
+    // declaration of the route's shape rather than a reading of it.
+    const { root, key, app, store } = await appWith(await makeShow());
+    await seedRun(root, "s02e01", "r1", [
+      { kind: "run_started", payload: { pipeline: "episode", episodeId: "s02e01" } },
+      { stepId: "outline-gate", kind: "gate_opened", payload: { attempt: 1, message: "Approve the outline." } },
+    ]);
+    await writeIn(root, "Episodes/s02e01/outline.md", "# The Missing Week\n");
+    const url = filePath(key, "s02e01", "r1", "Episodes/s02e01/outline.md");
+    const res = await app.request(url);
+    expect(res.status, url).toBe(200);
+    const read = await res.json() as FileRead;
+    expect(read.path).toBe("Episodes/s02e01/outline.md");
+    expect(read.text).toBe("# The Missing Week\n");
+    expect(read.hash).toMatch(/^[0-9a-f]{64}$/);
+    store.close();
+  });
+
+  it("put the show-relative path in the url as segments, one api address and one browser address", () => {
+    expect(filePath("harbor", "s02e01", "r1", "Episodes/s02e01/script.md"))
+      .toBe("/api/shows/harbor/episodes/s02e01/runs/r1/files/Episodes/s02e01/script.md");
+    expect(editHref("harbor", "s02e01", "r1", "Episodes/s02e01/script.md"))
+      .toBe("/shows/harbor/episodes/s02e01/runs/r1/edit/Episodes/s02e01/script.md");
+  });
+
+  it("encode each segment on its own, so a space becomes %20 and a separator stays a separator", () => {
+    // The image sheet is the real filename with a space in it. Encoding the whole path would make
+    // `%2F` of the three slashes and the route would see one segment; encoding none of it would
+    // put a raw space in the url.
+    expect(filePath("harbor", "s02e01", "r1", "Production/s02e01/images/IMAGE SHEET.md"))
+      .toBe("/api/shows/harbor/episodes/s02e01/runs/r1/files/Production/s02e01/images/IMAGE%20SHEET.md");
+    expect(editHref("harbor", "s02e01", "r1", "Production/s02e01/images/IMAGE SHEET.md"))
+      .toBe("/shows/harbor/episodes/s02e01/runs/r1/edit/Production/s02e01/images/IMAGE%20SHEET.md");
+  });
+});
+
 describe("the show key's grammar", () => {
   it("is one regex for the form's label and the server's fence", () => {
     // `NewShow.tsx` warns "that is not a key" while a key is being typed, which is a label and not
@@ -195,6 +234,19 @@ describe("parseMessage, the notices the client keeps and the ones it drops", () 
     // start so the channel is never the reason that page does not work.
     expect(parseMessage(line({ type: "setup", show: "live", key: "world-overview", runId: "r2", offset: 7 })))
       .toEqual({ type: "setup", show: "live", key: "world-overview", runId: "r2", offset: 7 });
+  });
+
+  it("reads a file notice, which is what tells an editor its file was written elsewhere", () => {
+    // Published by `RunStore.publishFile` after every successful editor save (`server/app.ts`'s
+    // file route). The hash is the whole of how a page tells its own save from someone else's:
+    // the notice carries no author, so an editor compares the hash it holds with this one.
+    expect(parseMessage(line({ type: "file", show: "live", episodeId: "s02e01", runId: "r1", path: "Episodes/s02e01/script.md", hash: "a".repeat(64) })))
+      .toEqual({ type: "file", show: "live", episodeId: "s02e01", runId: "r1", path: "Episodes/s02e01/script.md", hash: "a".repeat(64) } satisfies SseMessage);
+    // Without the path or the hash the notice says nothing an editor can act on: which file, and
+    // whether the write was its own.
+    expect(parseMessage(line({ type: "file", show: "live", episodeId: "s02e01", runId: "r1", hash: "a".repeat(64) }))).toBeUndefined();
+    expect(parseMessage(line({ type: "file", show: "live", episodeId: "s02e01", runId: "r1", path: "Episodes/s02e01/script.md" }))).toBeUndefined();
+    expect(parseMessage(line({ type: "file", episodeId: "s02e01", runId: "r1", path: "x.md", hash: "a" }))).toBeUndefined();
   });
 
   it("drops a notice that cannot say which show it is about", () => {

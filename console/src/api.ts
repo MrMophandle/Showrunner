@@ -78,6 +78,34 @@ export function bibleHref(show: string, key?: string): string {
   return showHref(show, key === undefined ? "/bible" : `/bible/${encodeURIComponent(key)}`);
 }
 
+/** A show-relative path as url segments: each segment encoded on its own, so a slash stays a
+ *  slash — the same shape `artifactUrl` builds on the server (`server/gates.ts`).
+ *
+ *  Encoding the whole string instead would turn every separator into `%2F` and collapse a path
+ *  into one opaque segment that no `:path{.+}` route matches as a path; encoding nothing would
+ *  break on the first filename with a space in it, and the image sheets have them. */
+function encodedSegments(showRelative: string): string {
+  return showRelative.split("/").map((seg) => encodeURIComponent(seg)).join("/");
+}
+
+/** The api address of one editable markdown artifact of a run's open gate: the editor's `GET`
+ *  (`{path, text, hash}`) and its `POST` (`{text, baseHash}`) are the same address.
+ *
+ *  Run-scoped rather than episode-scoped, like the server route it names, because which files may
+ *  be edited is a fact about the gate that is open and not about the episode's tree. */
+export function filePath(show: string, episodeId: string, runId: string, showRelative: string): string {
+  return showPath(show, `/episodes/${encodeURIComponent(episodeId)}/runs/${encodeURIComponent(runId)}/files/${encodedSegments(showRelative)}`);
+}
+
+/** The browser address of the editor for that artifact — `App.tsx`'s
+ *  `/shows/:show/episodes/:id/runs/:run/edit/*`, whose splat is the show-relative path. Separate
+ *  from `filePath` for the reason `showHref` is separate from `showPath`: one is a route of the
+ *  client and the other a route of the server, and a single builder with a flag would be one place
+ *  where a link could silently become a fetch. */
+export function editHref(show: string, episodeId: string, runId: string, showRelative: string): string {
+  return showHref(show, `/episodes/${encodeURIComponent(episodeId)}/runs/${encodeURIComponent(runId)}/edit/${encodedSegments(showRelative)}`);
+}
+
 /** The key of the show the current page is looking at, read from the url's `:show` segment.
  *
  *  The key comes from the url and not from the fetched `ShowInfo` because it is needed on the
@@ -98,17 +126,29 @@ export interface DirEntry {
   isDir: boolean;
 }
 
-/** A failed request, carrying the status the server answered and the message it answered with.
+/** A failed request, carrying the status the server answered, the message it answered with, and
+ *  the parsed body that message came out of.
+ *
  *  The status matters to one caller in particular: the Gate page tells a 409 "the gate moved"
  *  from a 409 "the gate is not open" from a 409 "a worker holds this run", and all three are the
- *  engine's own wording, which the console must not paraphrase. */
+ *  engine's own wording, which the console must not paraphrase.
+ *
+ *  `body` is there because the status is not always enough to tell two refusals apart. The file
+ *  route answers 409 both for a file that changed on disk — a conflict the editor resolves by
+ *  offering the current text, and the only 409 that carries `hash` — and for a live worker
+ *  holding the run, which has nothing to do with the file and must not cost the operator their
+ *  typed text. The key on the body is the discriminator, and reading the server's own payload is
+ *  what keeps the console from matching on the shape of an English sentence. Undefined whenever
+ *  the body was not a JSON object: an empty body, HTML from a proxy, a truncated stream. */
 export class ApiError extends Error {
   readonly status: number;
+  readonly body: Record<string, unknown> | undefined;
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, body?: Record<string, unknown>) {
     super(message);
     this.name = "ApiError";
     this.status = status;
+    this.body = body;
   }
 }
 
@@ -122,8 +162,9 @@ function isRecord(v: unknown): v is Record<string, unknown> {
 function errorFrom(status: number, statusText: string, text: string): ApiError {
   let parsed: unknown;
   try { parsed = text === "" ? undefined : JSON.parse(text); } catch { parsed = undefined; }
-  const message = isRecord(parsed) && typeof parsed["error"] === "string" ? parsed["error"] : (text.trim() === "" ? `${status} ${statusText}` : text.trim());
-  return new ApiError(status, message);
+  const body = isRecord(parsed) ? parsed : undefined;
+  const message = body !== undefined && typeof body["error"] === "string" ? body["error"] : (text.trim() === "" ? `${status} ${statusText}` : text.trim());
+  return new ApiError(status, message, body);
 }
 
 /** A GET, parsed as JSON, throwing `ApiError` on anything but a 2xx. */
@@ -296,6 +337,12 @@ function setLive(value: boolean): void {
  *  on: taking it would have a Board re-read its whole show on another show's heartbeat and a Run
  *  page tail a log it is not drawing.
  *
+ *  A `file` notice — published by the server after every successful editor save — says which
+ *  show-relative path was written and what the bytes now hash to, and **it names no author**. An
+ *  editor open on that path therefore tells its own save from someone else's by comparing the hash
+ *  it holds with the notice's, which is why `path` and `hash` are both required here: a notice
+ *  missing either is a notice no editor can act on.
+ *
  *  A `setup` notice is read by one page, the Bible view (`pages/Bible.tsx`): it refetches the rail
  *  for any key of its own show and the open file for its own key, and refuses to refetch a gate it
  *  is showing — a notice there raises a banner instead, because the attempt the author read is the
@@ -365,6 +412,14 @@ export function parseMessage(raw: string): SseMessage | undefined {
     const offset = parsed["offset"];
     if (typeof show !== "string" || typeof key !== "string" || typeof runId !== "string" || typeof offset !== "number") return undefined;
     return { type: "setup", show, key, runId, offset };
+  }
+  if (type === "file") {
+    const episodeId = parsed["episodeId"];
+    const runId = parsed["runId"];
+    const path = parsed["path"];
+    const hash = parsed["hash"];
+    if (typeof show !== "string" || typeof episodeId !== "string" || typeof runId !== "string" || typeof path !== "string" || typeof hash !== "string") return undefined;
+    return { type: "file", show, episodeId, runId, path, hash };
   }
   return undefined;
 }

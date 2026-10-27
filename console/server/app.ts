@@ -5,12 +5,15 @@ import type { Context, MiddlewareHandler } from "hono";
 import { stream as streamText, streamSSE } from "hono/streaming";
 import {
   ENGINE_VERSION, EventLog, STAGES, answerGate, deriveRunState, describePipeline, episodePipeline,
-  latestRunId, listEpisodeIds, mintRunId, parseEpisodeId, resetSteps, resumeRun, withdrawApproval,
+  hashFile, latestRunId, listEpisodeIds, mintRunId, parseEpisodeId, resetSteps, resumeRun,
+  withdrawApproval,
   type Pipeline, type PipelineDescription, type QueryFn, type RunState,
 } from "@showrunner/engine";
 import { ImportRefused, initScaffold, type GateChoice } from "@showrunner/tools";
-import type { EpisodeRow, EventBatch, FailedShow, ShowInfo, ShowsList, SseMessage } from "../shared/types.js";
-import { serveArtifact, serveRunLog } from "./artifacts.js";
+import type {
+  EpisodeRow, EventBatch, FailedShow, FileRead, FileWritten, ShowInfo, ShowsList, SseMessage,
+} from "../shared/types.js";
+import { editableArtifact, serveArtifact, serveRunLog, writeAtomically } from "./artifacts.js";
 import {
   answerBibleGate, bibleFile, bibleFilePath, bibleRows, collectingIO, finishBible, saveAnswers,
   startBibleRun, unapprovedBibleFiles, type BibleDeps,
@@ -25,8 +28,9 @@ import { killRecordedGroups, readLock, spawnWorker } from "./workers.js";
 
 /** The console's HTTP surface: the read side — what the show is, what its episodes are, what one
  *  run looks like, and one channel that says when any of that changed — and the write side, which
- *  is the six actions an operator can take on a run plus the gate view, the episode's own files
- *  and "what happened".
+ *  is the actions an operator can take on a run — answering its gate, resuming it, continuing it,
+ *  resetting steps, withdrawing an approval, starting it, and **saving an edit to one of the open
+ *  gate's markdown artifacts** — plus the gate view, the episode's own files and "what happened".
  *
  *  Four rules hold across every route.
  *
@@ -34,7 +38,7 @@ import { killRecordedGroups, readLock, spawnWorker } from "./workers.js";
  *  the `ShowContext` and the `RunStore` of the show the request means. The one exception is
  *  `GET /api/events`, which is one channel across every registered show and stamps the show key on
  *  every message instead. The middleware is also where a read-only show refuses a POST and where
- *  an unknown key becomes a 404, so neither refusal is seven handlers' job to remember.
+ *  an unknown key becomes a 404, so neither refusal is any handler's job to remember.
  *
  *  Every `:id` is validated with `parseEpisodeId` and every `:run` against `RUN_ID` **before** any
  *  path is built from it, because these are the strings that become filesystem paths: an unchecked
@@ -45,9 +49,13 @@ import { killRecordedGroups, readLock, spawnWorker } from "./workers.js";
  *  and an action spawns a detached worker and forgets it: this server can be restarted, upgraded
  *  or killed without a four-hour render noticing.
  *
- *  And every action goes **lock, append, spawn** — in that order, for the reasons set out above
- *  the actions below. A refusal at any of the three is a 409 carrying the engine's or the
- *  spawner's own message, because that message is what the operator reads. */
+ *  And every action that moves a run goes **lock, append, spawn** — in that order, for the
+ *  reasons set out above the actions below. A refusal at any of the three is a 409 carrying the
+ *  engine's or the spawner's own message, because that message is what the operator reads. The
+ *  file save is the one write that is not such an action: it goes **lock, write, publish** — it
+ *  refuses a run a live worker holds, as every action does, then writes the artifact and
+ *  announces it on the channel, appending nothing to the log and spawning no worker, because
+ *  editing a file the showrunner is being asked about does not advance the run. */
 
 /** How often an idle SSE stream sends a comment line. Long enough not to be chatter, short
  *  enough to keep an intermediary from closing a stream it thinks is dead. */
@@ -416,9 +424,9 @@ export function createApp(
    *  validating it once here is the fence spec §4.4 asks for (the episode ids beneath it are
    *  fenced the same way, once, by `checkEpisodeId`).
    *
-   *  **403 for any POST to a read-only show.** Here and not in the seven POST handlers, for a
+   *  **403 for any POST to a read-only show.** Here and not in every POST handler, for a
    *  measured reason: a POST to a path no route registered still matches `/api/shows/:show/*`, so
-   *  the refusal covers the whole subtree rather than the seven paths somebody remembered. The
+   *  the refusal covers the whole subtree rather than the paths somebody remembered. The
    *  retired repository and the live instance name the same NAS root and the same final filename,
    *  so one write in the wrong tree overwrites a finished season (ruling H-03) — this is the line
    *  that makes listing the retired show safe. */
@@ -1115,6 +1123,57 @@ export function createApp(
     const valid = checkEpisodeId(id);
     if (!valid.ok) return c.json({ error: valid.error }, 400);
     return serveArtifact(c, c.get("ctx"), id, c.req.param("path"));
+  });
+
+  /** The editor's read of one artifact of the run's open gate: the text and the hash the write
+   *  must carry back. Run-scoped, unlike the artifact route above, because "which files may be
+   *  edited" is a fact about the gate that is open, not about the episode's tree. */
+  app.get("/api/shows/:show/episodes/:id/runs/:run/files/:path{.+}", async (c) => {
+    const ctx = c.get("ctx");
+    const checked = checkIds(c);
+    if (!checked.ok) return c.json({ error: checked.error }, 400);
+    const target = await editableArtifact(ctx, c.get("store"), checked.id, checked.run, c.req.param("path"));
+    if (!target.ok) return c.json({ error: target.error }, target.status);
+    const hash = await hashFile(target.abs);
+    if (hash === null) return c.json({ error: `${target.rel} does not exist` }, 404);
+    const text = await readFile(target.abs, "utf8");
+    return c.json({ path: target.rel, text, hash } satisfies FileRead);
+  });
+
+  /** The editor's save. The body's `baseHash` is the hash the editor read; a file whose bytes no
+   *  longer hash to it has changed underneath the editor — another tab, the showrunner's own
+   *  editor, a worker — and the write is refused with the current hash rather than applied over
+   *  the top. A live worker holding the run refuses the write too, as every action route does. */
+  app.post("/api/shows/:show/episodes/:id/runs/:run/files/:path{.+}", async (c) => {
+    const ctx = c.get("ctx");
+    const checked = checkIds(c);
+    if (!checked.ok) return c.json({ error: checked.error }, 400);
+    const body = await readJsonBody(c);
+    const text = body["text"];
+    const baseHash = body["baseHash"];
+    if (typeof text !== "string") return c.json({ error: "text must be a string" }, 400);
+    if (typeof baseHash !== "string" || baseHash === "") return c.json({ error: "baseHash must be the hash the editor read" }, 400);
+    const store = c.get("store");
+    const target = await editableArtifact(ctx, store, checked.id, checked.run, c.req.param("path"));
+    if (!target.ok) return c.json({ error: target.error }, target.status);
+    const held = await readLock(ctx, checked.id, checked.run);
+    if (held?.alive === true) return c.json({ error: `run ${checked.run} is held by pid ${held.pid}` }, 409);
+    const current = await hashFile(target.abs);
+    // A file the gate lists but which is not on disk is an absence, not a conflict: the same 404
+    // the read answers, before any hash is compared, so the editor is never told its `baseHash`
+    // is stale about a file that was never there.
+    if (current === null) return c.json({ error: `${target.rel} does not exist` }, 404);
+    if (current !== baseHash) {
+      return c.json({ error: `${target.rel} changed on disk since the editor read it; reload to see the current text`, hash: current }, 409);
+    }
+    const bytes = await writeAtomically(target.abs, text);
+    // Read back through the engine's `hashFile`, not recomputed from `text`: every hash the
+    // console hands out is the hash of the bytes on disk, from one function. The extra read of a
+    // markdown file is cheap, and the null branch is unreachable after a successful rename.
+    const hash = await hashFile(target.abs);
+    if (hash === null) return c.json({ error: `${target.rel} could not be read back after the write` }, 500);
+    store.publishFile(checked.id, checked.run, target.rel, hash);
+    return c.json({ path: target.rel, hash, bytes } satisfies FileWritten);
   });
 
   /** The run's raw log, as a download: the file to attach to a bug report. */

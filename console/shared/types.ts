@@ -476,6 +476,7 @@ export type SseMessage =
   | { type: "run"; show: string; episodeId: string; runId: string; offset: number }
   | { type: "episodes"; show: string }
   | { type: "setup"; show: string; key: string; runId: string; offset: number }
+  | { type: "file"; show: string; episodeId: string; runId: string; path: string; hash: string }
   | { type: "hello"; operator: string; shows: { key: string; showName: string; readOnly: boolean }[]; failed: FailedShow[] };
 
 /** One file (or one directory of files) a gate refers to, as a url the artifact route serves.
@@ -489,9 +490,19 @@ export type SseMessage =
 export interface GateArtifact {
   kind: "markdown" | "audio" | "video" | "images" | "diff" | "json" | "text";
   label: string;
+  /** The show-relative path the url serves, for the editor's address and for matching a `file`
+   *  message. */
+  path: string;
   url: string;
   listUrl?: string;
 }
+
+/** One markdown artifact of an open gate, as the editor reads it: the text and the sha256 hex of
+ *  the bytes on disk. The hash goes back as `baseHash` on the write, so a save against a file
+ *  that changed underneath the editor is refused (409) rather than silently overwriting it. */
+export interface FileRead { path: string; text: string; hash: string }
+/** The answer to a write: the hash of what is now on disk, which is the next write's `baseHash`. */
+export interface FileWritten { path: string; hash: string; bytes: number }
 
 /** Everything the Gate page draws: the question the gate is asking, the files it is asking about,
  *  and the evidence the pipeline gathered before it asked.

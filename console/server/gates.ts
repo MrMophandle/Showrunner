@@ -66,14 +66,17 @@ async function exists(absolute: string): Promise<boolean> {
 
 /** A file artifact: one url, no listing. */
 function file(showKey: string, episodeId: string, kind: GateArtifact["kind"], showRelative: string, label?: string): GateArtifact {
-  return { kind, label: label ?? path.posix.basename(showRelative), url: artifactUrl(showKey, episodeId, showRelative) };
+  return {
+    kind, label: label ?? path.posix.basename(showRelative), path: showRelative,
+    url: artifactUrl(showKey, episodeId, showRelative),
+  };
 }
 
 /** A directory artifact: the same url twice, which is what marks it as a directory. See
  *  `GateArtifact` in `shared/types.ts` for why `listUrl` is not a different address. */
 function dir(showKey: string, episodeId: string, kind: GateArtifact["kind"], showRelative: string, label: string): GateArtifact {
   const url = artifactUrl(showKey, episodeId, showRelative);
-  return { kind, label, url, listUrl: url };
+  return { kind, label, path: showRelative, url, listUrl: url };
 }
 
 /** The artifacts one gate refers to, every path relative to the show root and under one of the
