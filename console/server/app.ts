@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import path from "node:path";
 import { mkdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { Hono } from "hono";
@@ -420,9 +419,9 @@ export function createApp(
    *  validating it once here is the fence spec §4.4 asks for (the episode ids beneath it are
    *  fenced the same way, once, by `checkEpisodeId`).
    *
-   *  **403 for any POST to a read-only show.** Here and not in the seven POST handlers, for a
+   *  **403 for any POST to a read-only show.** Here and not in every POST handler, for a
    *  measured reason: a POST to a path no route registered still matches `/api/shows/:show/*`, so
-   *  the refusal covers the whole subtree rather than the seven paths somebody remembered. The
+   *  the refusal covers the whole subtree rather than the paths somebody remembered. The
    *  retired repository and the live instance name the same NAS root and the same final filename,
    *  so one write in the wrong tree overwrites a finished season (ruling H-03) — this is the line
    *  that makes listing the retired show safe. */
@@ -1155,11 +1154,19 @@ export function createApp(
     const held = await readLock(ctx, checked.id, checked.run);
     if (held?.alive === true) return c.json({ error: `run ${checked.run} is held by pid ${held.pid}` }, 409);
     const current = await hashFile(target.abs);
+    // A file the gate lists but which is not on disk is an absence, not a conflict: the same 404
+    // the read answers, before any hash is compared, so the editor is never told its `baseHash`
+    // is stale about a file that was never there.
+    if (current === null) return c.json({ error: `${target.rel} does not exist` }, 404);
     if (current !== baseHash) {
       return c.json({ error: `${target.rel} changed on disk since the editor read it; reload to see the current text`, hash: current }, 409);
     }
     const bytes = await writeAtomically(target.abs, text);
-    const hash = createHash("sha256").update(Buffer.from(text, "utf8")).digest("hex");
+    // Read back through the engine's `hashFile`, not recomputed from `text`: every hash the
+    // console hands out is the hash of the bytes on disk, from one function. The extra read of a
+    // markdown file is cheap, and the null branch is unreachable after a successful rename.
+    const hash = await hashFile(target.abs);
+    if (hash === null) return c.json({ error: `${target.rel} could not be read back after the write` }, 500);
     store.publishFile(checked.id, checked.run, target.rel, hash);
     return c.json({ path: target.rel, hash, bytes } satisfies FileWritten);
   });

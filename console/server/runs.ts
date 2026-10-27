@@ -513,8 +513,8 @@ export class RunStore {
    *  the pane that shows it, and an editor open on the same file in another tab learns the hash
    *  it holds is stale. Published by the file route and by nothing else — the engine's own writes
    *  reach the pages as `run` messages, through the log. */
-  publishFile(episodeId: string, runId: string, path: string, hash: string): void {
-    this.#publish({ type: "file", show: this.#ctx.key, episodeId, runId, path, hash });
+  publishFile(episodeId: string, runId: string, showRelative: string, hash: string): void {
+    this.#publish({ type: "file", show: this.#ctx.key, episodeId, runId, path: showRelative, hash });
   }
 
   /** One run at the middle altitude: the pipeline's steps overlaid with the log, what is in

@@ -237,13 +237,13 @@ export async function editableArtifact(
  *  write atomic; the temp file is removed again when either step throws, so a leftover is the
  *  crash case and not the ordinary one.
  *
- *  The temp name carries the pid and does **not** start with a dot. The editor route can never
- *  serve a leftover whatever it is called — `editableArtifact` serves only a path the open gate
- *  lists, and no gate lists a `.tmp-` name, so a request for one is a 403 — while the episode's
- *  artifact route (`serveArtifact`) would serve a leftover asked for by its exact name, since
- *  `resolveArtifactPath` refuses only a segment that *starts* with a dot. That is the intent: a
- *  leftover should be visible in a listing and readable by the operator who finds it, rather than
- *  hidden as a dotfile the listing filters out. */
+ *  The temp name carries the pid and does **not** start with a dot. The editor route refuses a
+ *  leftover — `script.md.tmp-4242` — by the "not markdown" rule, a 400, because the name does not
+ *  end in `.md`; it never reaches the comparison against the gate's artifact list. The episode's
+ *  artifact route (`serveArtifact`) does serve a leftover asked for by its exact name, since
+ *  `resolveArtifactPath` refuses only a segment that *starts* with a dot, and that is the intent:
+ *  a leftover should be visible in a listing and readable by the operator who finds it, rather
+ *  than hidden as a dotfile the listing filters out. */
 export async function writeAtomically(abs: string, text: string): Promise<number> {
   const tmp = `${abs}.tmp-${process.pid}`;
   try {

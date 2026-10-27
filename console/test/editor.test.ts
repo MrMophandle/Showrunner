@@ -100,6 +100,15 @@ describe("the editor's file route", () => {
     store.close();
   });
 
+  it("is 404 for a write to a listed file that is not on disk, and creates nothing", async () => {
+    const { root, app, store } = await parkedAt("script-gate");
+    const res = await post(app, `${FILES}/${SCRIPT}`, { text: "x\n", baseHash: "a".repeat(64) });
+    expect(res.status).toBe(404);
+    expect(((await res.json()) as { error: string }).error).toContain("does not exist");
+    expect(await readdir(path.join(root, "Episodes", "s02e01"))).not.toContain("script.md");
+    store.close();
+  });
+
   it("refuses a write while a live worker holds the run", async () => {
     const { root, app, store } = await parkedAt("script-gate");
     await writeIn(root, SCRIPT, "text\n");
