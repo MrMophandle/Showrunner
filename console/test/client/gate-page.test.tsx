@@ -296,6 +296,10 @@ describe("the Gate page's order", () => {
     expect(screen.getByText(/answered where the show is writable/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /approve attempt/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /reject attempt/ })).toBeNull();
+    // Nor the edit link: the file route refuses a write to a read-only show the same way the gate
+    // refuses an answer (ruling H-03), and `canAct` is the only thing the link's existence hangs
+    // on, so this is the assertion that exercises that guard.
+    expect(screen.queryByRole("link", { name: /^edit$/i })).toBeNull();
   });
 
   it("prints the round the panel took and its cost beside the attempt, and nothing when no panel ran", async () => {
