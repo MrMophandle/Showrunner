@@ -514,6 +514,18 @@ select { min-height: var(--tap); }
 .artifact-label { font-weight: 600; }
 .artifact-video { width: 100%; max-width: 64rem; background: #000; border-radius: var(--radius); }
 
+/* The editor page: the box and the preview side by side, each with its own scrollbar, the page
+   never scrolling as a whole — the Save button and the save's status stay where they are while a
+   400-line script is being read. Below 60rem the two stack, which is the iPad in portrait. */
+.editor { display: flex; flex-direction: column; gap: 0.6rem; height: calc(100vh - 7rem); }
+.editor-head { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
+.editor-path { color: var(--text-dim); }
+.editor-notice { background: var(--bg-raised); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.5rem 0.9rem; margin: 0; }
+.editor-split { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; min-height: 0; flex: 1; }
+.editor-text { width: 100%; height: 100%; resize: none; padding: 0.6rem 0.9rem; background: var(--bg-raised); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius); line-height: 1.5; font-size: 0.95rem; }
+.editor-preview { overflow: auto; padding: 0.6rem 0.9rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-raised); }
+@media (max-width: 60rem) { .editor-split { grid-template-columns: 1fr; } .editor { height: auto; } }
+
 .gate-answer label { display: block; color: var(--text-dim); font-size: 0.88rem; margin-bottom: 0.2rem; }
 .auto-textarea { min-height: 5rem; resize: vertical; }
 
