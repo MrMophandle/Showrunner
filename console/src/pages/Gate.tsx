@@ -278,9 +278,21 @@ export function Gate() {
               {/* Editable from the gate it is being read at (Ryan's ruling, 2026-10-27), and only
                   where this console may write: a read-only show refuses the editor's POST the way
                   it refuses the answer (ruling H-03), so offering the link there would be offering
-                  a button that is refused. */}
+                  a button that is refused.
+
+                  The link asks first when the notes box has words in it. Opening the editor is an
+                  in-app navigation that unmounts this page, and a rejection's notes exist nowhere
+                  but that box until the answer is posted — so the operator who types three
+                  paragraphs and then clicks edit to look at the line they are describing would
+                  lose all of it with nothing to fire on. */}
               {artifact.kind === "markdown" && canAct && (
-                <Link className="btn btn-small" to={editHref(showKey, episodeId, runId, artifact.path)}>edit</Link>
+                <Link
+                  className="btn btn-small"
+                  to={editHref(showKey, episodeId, runId, artifact.path)}
+                  onClick={(e) => {
+                    if (notes.trim() !== "" && !window.confirm("You have typed rejection notes. Leave them behind and open the editor?")) e.preventDefault();
+                  }}
+                >edit</Link>
               )}
             </div>
             {artifact.kind === "markdown" && <MarkdownArtifact url={artifact.url} version={fileVersions[artifact.path] ?? ""} />}

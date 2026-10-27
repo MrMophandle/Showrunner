@@ -31,12 +31,19 @@ import { Edit } from "../../src/pages/Edit.js";
  *
  *  Harbor Lights is the fixture show's world, as everywhere else in this suite. */
 afterEach(cleanup);
+// The navigation tests spy on `window.confirm`; vitest is not configured to restore mocks between
+// tests, so a spy left standing would answer the next test's confirm as well.
+afterEach(() => { vi.restoreAllMocks(); });
 
 const FILE_URL = "/api/shows/harbor/episodes/s02e01/runs/r1/files/Episodes/s02e01/script.md";
 const EDIT_HREF = "/shows/harbor/episodes/s02e01/runs/r1/edit/Episodes/s02e01/script.md";
 const TEXT = "## COLD OPEN\n\nVale checked the tide table twice.\n";
 const HASH = "a".repeat(64);
 const NEW_HASH = "b".repeat(64);
+/** What the gate's route renders under `mount`. "Back to the gate" is an in-app navigation — no
+ *  document unloads and no `beforeunload` fires — so the only way a test can see that the link was
+ *  followed is that the other route's element is on the screen in the editor's place. */
+const GATE_MARK = "the gate page, where the link goes";
 
 /** What the file route answers a `GET` with, mutable so a test can change the file underneath the
  *  page the way another editor would. `stubFetch` resets it. */
@@ -93,6 +100,7 @@ function mount(canAct = true) {
       <MemoryRouter initialEntries={[EDIT_HREF]}>
         <Routes>
           <Route path="/shows/:show/episodes/:id/runs/:run/edit/*" element={<Edit />} />
+          <Route path="/shows/:show/episodes/:id/runs/:run/gate" element={<p>{GATE_MARK}</p>} />
         </Routes>
       </MemoryRouter>
     </ConsoleContext.Provider>,
@@ -178,5 +186,57 @@ describe("the editor page", () => {
     fireEvent.click(screen.getByRole("button", { name: /load the current text/i }));
     await waitFor(() => { expect(box).toHaveValue("written elsewhere\n"); });
     expect(screen.queryByText(/saved elsewhere/i)).not.toBeInTheDocument();
+  });
+
+  it("sends a worker-lock refusal to the error line, with no offer to discard the edit", async () => {
+    // The server answers 409 for two unrelated refusals: a file that changed on disk, which the
+    // page resolves by offering the current text, and a live worker holding the run, which has
+    // nothing to do with the file. The lock refusal carries no `hash`, and that is the test — so
+    // the page must not offer to throw away the typed text over a run that is simply busy.
+    stubFetch(() => new Response(JSON.stringify({ error: "run r1 is held by pid 4242" }), { status: 409 }));
+    mount();
+    const box = await screen.findByRole("textbox", { name: /script\.md/i });
+    fireEvent.change(box, { target: { value: "my edit\n" } });
+    fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() => { expect(screen.getByText("run r1 is held by pid 4242")).toBeInTheDocument(); });
+    expect(screen.queryByRole("button", { name: /load the current text/i })).toBeNull();
+    expect(box).toHaveValue("my edit\n");
+  });
+
+  it("asks before the gate link discards unsaved text, and stays put when the answer is no", async () => {
+    stubFetch(() => new Response("{}", { status: 200 }));
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    mount();
+    const box = await screen.findByRole("textbox", { name: /script\.md/i });
+    fireEvent.change(box, { target: { value: "my edit\n" } });
+    fireEvent.click(screen.getByRole("link", { name: /back to the gate/i }));
+
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("textbox", { name: /script\.md/i })).toHaveValue("my edit\n");
+    expect(screen.queryByText(GATE_MARK)).toBeNull();
+  });
+
+  it("follows the gate link when the showrunner accepts the loss", async () => {
+    stubFetch(() => new Response("{}", { status: 200 }));
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    mount();
+    const box = await screen.findByRole("textbox", { name: /script\.md/i });
+    fireEvent.change(box, { target: { value: "my edit\n" } });
+    fireEvent.click(screen.getByRole("link", { name: /back to the gate/i }));
+
+    expect(confirm).toHaveBeenCalledTimes(1);
+    await waitFor(() => { expect(screen.getByText(GATE_MARK)).toBeInTheDocument(); });
+  });
+
+  it("does not ask at all when nothing is typed, which is the ordinary way back", async () => {
+    stubFetch(() => new Response("{}", { status: 200 }));
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    mount();
+    await screen.findByRole("textbox", { name: /script\.md/i });
+    fireEvent.click(screen.getByRole("link", { name: /back to the gate/i }));
+
+    expect(confirm).not.toHaveBeenCalled();
+    await waitFor(() => { expect(screen.getByText(GATE_MARK)).toBeInTheDocument(); });
   });
 });

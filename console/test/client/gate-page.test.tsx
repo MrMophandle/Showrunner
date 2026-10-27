@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import type { GateView } from "../../shared/types.js";
 import { ConsoleContext, type ConsoleData } from "../../src/api.js";
@@ -36,6 +36,9 @@ import { Gate } from "../../src/pages/Gate.js";
  *  explained in `test/client/ProgressBar.test.tsx`'s header. Harbor Lights is the fixture show's
  *  world, as everywhere else in this suite. */
 afterEach(cleanup);
+// The edit-link test spies on `window.confirm`; vitest is not configured to restore mocks between
+// tests, so a spy left standing would answer the next test's confirm as well.
+afterEach(() => { vi.restoreAllMocks(); });
 
 /** The run the fixture gate belongs to. One constant, because three things have to agree about
  *  it: the view's `runId`, the `:run` segment of the route the page is mounted at, and the `runId`
@@ -357,5 +360,21 @@ describe("the Gate page's order", () => {
     deliver({ type: "file", show: "harbor", episodeId: "s02e01", runId: RUN_ID, path: SCRIPT_PATH, hash: "c".repeat(64) });
 
     await waitFor(() => { expect(screen.getByText("INT. HARBOR OFFICE — DUSK")).toBeInTheDocument(); });
+  });
+
+  it("asks before the edit link throws away typed rejection notes", async () => {
+    // Opening the editor unmounts this page, and the notes box is the one place a rejection's
+    // words exist — nothing has posted them yet. So the link asks, and a no leaves the page and
+    // the words exactly where they were.
+    mount(gateView());
+    await screen.findByText(SCRIPT_LINE);
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+
+    fireEvent.change(screen.getByLabelText("notes"), { target: { value: "scene 4 reads as two scenes — split it" } });
+    fireEvent.click(screen.getByRole("link", { name: /^edit$/i }));
+
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(screen.getByLabelText("notes")).toHaveValue("scene 4 reads as two scenes — split it");
+    expect(screen.getByText(SCRIPT_LINE)).toBeInTheDocument();
   });
 });

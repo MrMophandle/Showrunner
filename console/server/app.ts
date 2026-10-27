@@ -28,8 +28,9 @@ import { killRecordedGroups, readLock, spawnWorker } from "./workers.js";
 
 /** The console's HTTP surface: the read side — what the show is, what its episodes are, what one
  *  run looks like, and one channel that says when any of that changed — and the write side, which
- *  is the six actions an operator can take on a run plus the gate view, the episode's own files
- *  and "what happened".
+ *  is the actions an operator can take on a run — answering its gate, resuming it, continuing it,
+ *  resetting steps, withdrawing an approval, starting it, and **saving an edit to one of the open
+ *  gate's markdown artifacts** — plus the gate view, the episode's own files and "what happened".
  *
  *  Four rules hold across every route.
  *
@@ -37,7 +38,7 @@ import { killRecordedGroups, readLock, spawnWorker } from "./workers.js";
  *  the `ShowContext` and the `RunStore` of the show the request means. The one exception is
  *  `GET /api/events`, which is one channel across every registered show and stamps the show key on
  *  every message instead. The middleware is also where a read-only show refuses a POST and where
- *  an unknown key becomes a 404, so neither refusal is seven handlers' job to remember.
+ *  an unknown key becomes a 404, so neither refusal is any handler's job to remember.
  *
  *  Every `:id` is validated with `parseEpisodeId` and every `:run` against `RUN_ID` **before** any
  *  path is built from it, because these are the strings that become filesystem paths: an unchecked
@@ -48,9 +49,13 @@ import { killRecordedGroups, readLock, spawnWorker } from "./workers.js";
  *  and an action spawns a detached worker and forgets it: this server can be restarted, upgraded
  *  or killed without a four-hour render noticing.
  *
- *  And every action goes **lock, append, spawn** — in that order, for the reasons set out above
- *  the actions below. A refusal at any of the three is a 409 carrying the engine's or the
- *  spawner's own message, because that message is what the operator reads. */
+ *  And every action that moves a run goes **lock, append, spawn** — in that order, for the
+ *  reasons set out above the actions below. A refusal at any of the three is a 409 carrying the
+ *  engine's or the spawner's own message, because that message is what the operator reads. The
+ *  file save is the one write that is not such an action: it goes **lock, write, publish** — it
+ *  refuses a run a live worker holds, as every action does, then writes the artifact and
+ *  announces it on the channel, appending nothing to the log and spawning no worker, because
+ *  editing a file the showrunner is being asked about does not advance the run. */
 
 /** How often an idle SSE stream sends a comment line. Long enough not to be chatter, short
  *  enough to keep an intermediary from closing a stream it thinks is dead. */

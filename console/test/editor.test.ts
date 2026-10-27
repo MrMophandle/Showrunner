@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import type { SseMessage } from "../shared/types.js";
+import { writeAtomically } from "../server/artifacts.js";
 import { appWith, appWithShows, makeShow, seedRun, writeIn, writeLock, type SeedEvent } from "./helpers.js";
 
 const FILES = "/api/shows/show/episodes/s02e01/runs/r1/files";
@@ -138,5 +139,26 @@ describe("the editor's file route", () => {
     const res = await post(app, `${FILES}/${SCRIPT}`, { text: "edit\n", baseHash: sha("text\n") });
     expect(res.status).toBe(403);
     for (const s of stores.values()) s.close();
+  });
+});
+
+describe("writeAtomically", () => {
+  it("names its temp file per write, so two overlapping saves of one artifact cannot share it", async () => {
+    // Two POSTs to the same artifact arrive in one Node process, and `writeAtomically` is async:
+    // every `await` yields the event loop, so the two calls interleave at the write and the
+    // rename. With one temp name per process they staged into the same file — one call's bytes
+    // landing on the artifact under the other call's name, or a rename finding nothing there at
+    // all. With a name per write neither can touch the other's staging file, so whichever rename
+    // lands last is the file, whole.
+    const root = await makeShow();
+    const abs = path.join(root, SCRIPT);
+    await writeIn(root, SCRIPT, "what the gate is showing\n");
+    const first = "## COLD OPEN\n\nVale checked the tide table twice, and said nothing about it.\n";
+    const second = "## COLD OPEN\n\nMaeve waited.\n";
+
+    await Promise.all([writeAtomically(abs, first), writeAtomically(abs, second)]);
+
+    expect([first, second]).toContain(await readFile(abs, "utf8"));
+    expect((await readdir(path.dirname(abs))).filter((n) => n.includes(".tmp-"))).toEqual([]);
   });
 });

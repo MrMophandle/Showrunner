@@ -15,12 +15,23 @@ import { Markdown } from "../components/Markdown.js";
  *  the typed text stays in the box for the showrunner to reconcile, never silently overwritten and
  *  never silently discarded.
  *
- *  **There is exactly one path by which the box loses what was typed into it, and the showrunner
- *  has to take it deliberately: the "load the current text" button.** Everything else that could
- *  reach into the box — a re-render, a `file` notice from another editor, a refused save — leaves
- *  it alone. The `loaded` ref is what enforces that: it holds the hash the box was last filled
- *  from, so the fill effect runs once per distinct read and never again, and clearing it is how
- *  the page says "the next read may refill the box".
+ *  **Nothing takes the typed text out of the box without the showrunner saying so, by one of three
+ *  paths.** The "load the current text" button discards it on purpose, and is the only path that
+ *  does so without a second question. The "Back to the gate" link is an in-app navigation that
+ *  unmounts this page, so the link itself asks before it goes — `beforeunload` does not fire on a
+ *  `pushState`, and nothing else would notice. A document unload — a reload, a tab closed, an
+ *  address typed over this one — is caught by the `beforeunload` handler below, which is the
+ *  browser's own dialog.
+ *
+ *  **The browser's Back button is not guarded.** react-router's `useBlocker` is the thing that
+ *  would guard it and it exists only on a data router; the console mounts `BrowserRouter` around
+ *  `Routes` (`src/main.tsx`), so a popstate unmounts this page with no question asked. Converting
+ *  the app to a data router is the fix and is not this page's to make.
+ *
+ *  Everything else that could reach into the box — a re-render, a `file` notice from another
+ *  editor, a refused save — leaves it alone. The `loaded` ref is what enforces that: it holds the
+ *  hash the box was last filled from, so the fill effect runs once per distinct read and never
+ *  again, and clearing it is how the page says "the next read may refill the box".
  *
  *  The preview is the same renderer the gate's pane uses, fed from the box as it is typed: what
  *  the showrunner sees on the right is what the gate will show. */
@@ -78,11 +89,18 @@ export function Edit() {
     setConflict("This file was saved elsewhere while you were editing. Save will be refused until you load the current text; your edits stay in the box until then.");
   });
 
-  // Unsaved text lives in this box and nowhere else, so leaving the page is the one way to lose it
-  // that the page cannot refuse on the showrunner's behalf. The browser asks instead.
+  // Unsaved text lives in this box and nowhere else. This handler covers the unload of the
+  // document — a reload, a tab closed, an address typed over this one — and the browser puts up
+  // its own dialog. The in-app route change is a different event and is guarded on the link
+  // itself; the Back button is guarded by neither (see this page's header comment).
   useEffect(() => {
     if (!dirty) return;
-    const warn = (e: BeforeUnloadEvent): void => { e.preventDefault(); };
+    const warn = (e: BeforeUnloadEvent): void => {
+      e.preventDefault();
+      // Safari acts on the legacy `returnValue` and not on `preventDefault` alone. The string is
+      // never shown — every browser prints its own wording — so an empty one is the whole ask.
+      e.returnValue = "";
+    };
     window.addEventListener("beforeunload", warn);
     return () => { window.removeEventListener("beforeunload", warn); };
   }, [dirty]);
@@ -101,11 +119,14 @@ export function Edit() {
       setSavedAt(new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }));
       setConflict(null);
     } catch (err) {
-      // A 409 is the one refusal that is not an error on this page but a fork in the road, and the
-      // server's sentence says which file changed and what to do about it. It goes in the notice,
-      // beside the button that acts on it, in the engine's own wording — and not in the error line
-      // as well, so the operator reads the refusal once.
-      if (err instanceof ApiError && err.status === 409) setConflict(err.message);
+      // The file route answers 409 for two refusals that have nothing to do with each other, and
+      // the body is what tells them apart: the staleness refusal carries the file's current
+      // `hash`, the worker-lock refusal carries no `hash` at all. Only the first is a fork in the
+      // road rather than an error — it goes in the notice beside the button that acts on it, in
+      // the server's own wording, and not in the error line as well, so the operator reads that
+      // refusal once. Everything else, the lock 409 included, is an error line and leaves the box
+      // and the notice as they were: a run that is busy is no reason to offer to discard an edit.
+      if (err instanceof ApiError && err.status === 409 && typeof err.body?.["hash"] === "string") setConflict(err.message);
       else setError(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(false);
@@ -145,13 +166,27 @@ export function Edit() {
   return (
     <section className="editor">
       <header className="editor-head">
-        <Link to={gateHref} className="btn btn-small">Back to the gate</Link>
+        {/* The one in-app navigation this page offers, and the one the showrunner is likeliest to
+            take with a half-typed scene in the box. Leaving unmounts the page and the text is
+            gone, so the link asks — `beforeunload` is not fired by a route change. */}
+        <Link
+          to={gateHref}
+          className="btn btn-small"
+          onClick={(e) => {
+            if (dirty && !window.confirm("You have unsaved changes. Leave without saving?")) e.preventDefault();
+          }}
+        >Back to the gate</Link>
         <span className="mono editor-path">{showRelative}</span>
         {canAct && (
           <button type="button" className="btn" disabled={!dirty || busy} onClick={() => { void save(); }}>Save</button>
         )}
         <span className="quiet">{status}</span>
         {error !== null && <span className="error-line">{error}</span>}
+        {/* A read that failed after the first one succeeded — the gate closed while the editor
+            was open, so "load the current text" has nothing to load. The early return above
+            covers only the first read, and without this line the button would do nothing visible
+            at all. */}
+        {file.error !== null && <span className="error-line">{file.error}</span>}
       </header>
       {readOnly && <p className="action-reason">{readOnlyLine(showKey, "this file is read here and edited where the show is writable")}</p>}
       {conflict !== null && (

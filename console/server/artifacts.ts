@@ -1,5 +1,6 @@
 import path from "node:path";
 import { createReadStream } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { Readable } from "node:stream";
 import { readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { EventLog, parseEpisodeId } from "@showrunner/engine";
@@ -237,15 +238,23 @@ export async function editableArtifact(
  *  write atomic; the temp file is removed again when either step throws, so a leftover is the
  *  crash case and not the ordinary one.
  *
- *  The temp name carries the pid and does **not** start with a dot. The editor route refuses a
- *  leftover — `script.md.tmp-4242` — by the "not markdown" rule, a 400, because the name does not
- *  end in `.md`; it never reaches the comparison against the gate's artifact list. The episode's
+ *  **The temp name is unique per write, not per process**, because this function is async and the
+ *  console serves one artifact to more than one request: every `await` yields the event loop, so
+ *  two saves of the same file interleave at the write and the rename. Sharing one name let the
+ *  second call's bytes land on the artifact under the first call's rename — the first caller then
+ *  hashing and publishing a file it did not write — and let the second rename find nothing there
+ *  at all. The uuid makes each call's staging file its own, so neither write can reach the other's,
+ *  and the catch below removes only the file this call created.
+ *
+ *  The temp name does **not** start with a dot. The editor route refuses a leftover —
+ *  `script.md.tmp-4242-<uuid>` — by the "not markdown" rule, a 400, because the name does not end
+ *  in `.md`; it never reaches the comparison against the gate's artifact list. The episode's
  *  artifact route (`serveArtifact`) does serve a leftover asked for by its exact name, since
  *  `resolveArtifactPath` refuses only a segment that *starts* with a dot, and that is the intent:
  *  a leftover should be visible in a listing and readable by the operator who finds it, rather
  *  than hidden as a dotfile the listing filters out. */
 export async function writeAtomically(abs: string, text: string): Promise<number> {
-  const tmp = `${abs}.tmp-${process.pid}`;
+  const tmp = `${abs}.tmp-${process.pid}-${randomUUID()}`;
   try {
     await writeFile(tmp, text, "utf8");
     await rename(tmp, abs);

@@ -126,17 +126,29 @@ export interface DirEntry {
   isDir: boolean;
 }
 
-/** A failed request, carrying the status the server answered and the message it answered with.
+/** A failed request, carrying the status the server answered, the message it answered with, and
+ *  the parsed body that message came out of.
+ *
  *  The status matters to one caller in particular: the Gate page tells a 409 "the gate moved"
  *  from a 409 "the gate is not open" from a 409 "a worker holds this run", and all three are the
- *  engine's own wording, which the console must not paraphrase. */
+ *  engine's own wording, which the console must not paraphrase.
+ *
+ *  `body` is there because the status is not always enough to tell two refusals apart. The file
+ *  route answers 409 both for a file that changed on disk — a conflict the editor resolves by
+ *  offering the current text, and the only 409 that carries `hash` — and for a live worker
+ *  holding the run, which has nothing to do with the file and must not cost the operator their
+ *  typed text. The key on the body is the discriminator, and reading the server's own payload is
+ *  what keeps the console from matching on the shape of an English sentence. Undefined whenever
+ *  the body was not a JSON object: an empty body, HTML from a proxy, a truncated stream. */
 export class ApiError extends Error {
   readonly status: number;
+  readonly body: Record<string, unknown> | undefined;
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, body?: Record<string, unknown>) {
     super(message);
     this.name = "ApiError";
     this.status = status;
+    this.body = body;
   }
 }
 
@@ -150,8 +162,9 @@ function isRecord(v: unknown): v is Record<string, unknown> {
 function errorFrom(status: number, statusText: string, text: string): ApiError {
   let parsed: unknown;
   try { parsed = text === "" ? undefined : JSON.parse(text); } catch { parsed = undefined; }
-  const message = isRecord(parsed) && typeof parsed["error"] === "string" ? parsed["error"] : (text.trim() === "" ? `${status} ${statusText}` : text.trim());
-  return new ApiError(status, message);
+  const body = isRecord(parsed) ? parsed : undefined;
+  const message = body !== undefined && typeof body["error"] === "string" ? body["error"] : (text.trim() === "" ? `${status} ${statusText}` : text.trim());
+  return new ApiError(status, message, body);
 }
 
 /** A GET, parsed as JSON, throwing `ApiError` on anything but a 2xx. */
