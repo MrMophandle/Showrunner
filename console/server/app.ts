@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { mkdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { Hono } from "hono";
@@ -5,12 +6,15 @@ import type { Context, MiddlewareHandler } from "hono";
 import { stream as streamText, streamSSE } from "hono/streaming";
 import {
   ENGINE_VERSION, EventLog, STAGES, answerGate, deriveRunState, describePipeline, episodePipeline,
-  latestRunId, listEpisodeIds, mintRunId, parseEpisodeId, resetSteps, resumeRun, withdrawApproval,
+  hashFile, latestRunId, listEpisodeIds, mintRunId, parseEpisodeId, resetSteps, resumeRun,
+  withdrawApproval,
   type Pipeline, type PipelineDescription, type QueryFn, type RunState,
 } from "@showrunner/engine";
 import { ImportRefused, initScaffold, type GateChoice } from "@showrunner/tools";
-import type { EpisodeRow, EventBatch, FailedShow, ShowInfo, ShowsList, SseMessage } from "../shared/types.js";
-import { serveArtifact, serveRunLog } from "./artifacts.js";
+import type {
+  EpisodeRow, EventBatch, FailedShow, FileRead, FileWritten, ShowInfo, ShowsList, SseMessage,
+} from "../shared/types.js";
+import { editableArtifact, serveArtifact, serveRunLog, writeAtomically } from "./artifacts.js";
 import {
   answerBibleGate, bibleFile, bibleFilePath, bibleRows, collectingIO, finishBible, saveAnswers,
   startBibleRun, unapprovedBibleFiles, type BibleDeps,
@@ -1115,6 +1119,49 @@ export function createApp(
     const valid = checkEpisodeId(id);
     if (!valid.ok) return c.json({ error: valid.error }, 400);
     return serveArtifact(c, c.get("ctx"), id, c.req.param("path"));
+  });
+
+  /** The editor's read of one artifact of the run's open gate: the text and the hash the write
+   *  must carry back. Run-scoped, unlike the artifact route above, because "which files may be
+   *  edited" is a fact about the gate that is open, not about the episode's tree. */
+  app.get("/api/shows/:show/episodes/:id/runs/:run/files/:path{.+}", async (c) => {
+    const ctx = c.get("ctx");
+    const checked = checkIds(c);
+    if (!checked.ok) return c.json({ error: checked.error }, 400);
+    const target = await editableArtifact(ctx, c.get("store"), checked.id, checked.run, c.req.param("path"));
+    if (!target.ok) return c.json({ error: target.error }, target.status);
+    const hash = await hashFile(target.abs);
+    if (hash === null) return c.json({ error: `${target.rel} does not exist` }, 404);
+    const text = await readFile(target.abs, "utf8");
+    return c.json({ path: target.rel, text, hash } satisfies FileRead);
+  });
+
+  /** The editor's save. The body's `baseHash` is the hash the editor read; a file whose bytes no
+   *  longer hash to it has changed underneath the editor — another tab, the showrunner's own
+   *  editor, a worker — and the write is refused with the current hash rather than applied over
+   *  the top. A live worker holding the run refuses the write too, as every action route does. */
+  app.post("/api/shows/:show/episodes/:id/runs/:run/files/:path{.+}", async (c) => {
+    const ctx = c.get("ctx");
+    const checked = checkIds(c);
+    if (!checked.ok) return c.json({ error: checked.error }, 400);
+    const body = await readJsonBody(c);
+    const text = body["text"];
+    const baseHash = body["baseHash"];
+    if (typeof text !== "string") return c.json({ error: "text must be a string" }, 400);
+    if (typeof baseHash !== "string" || baseHash === "") return c.json({ error: "baseHash must be the hash the editor read" }, 400);
+    const store = c.get("store");
+    const target = await editableArtifact(ctx, store, checked.id, checked.run, c.req.param("path"));
+    if (!target.ok) return c.json({ error: target.error }, target.status);
+    const held = await readLock(ctx, checked.id, checked.run);
+    if (held?.alive === true) return c.json({ error: `run ${checked.run} is held by pid ${held.pid}` }, 409);
+    const current = await hashFile(target.abs);
+    if (current !== baseHash) {
+      return c.json({ error: `${target.rel} changed on disk since the editor read it; reload to see the current text`, hash: current }, 409);
+    }
+    const bytes = await writeAtomically(target.abs, text);
+    const hash = createHash("sha256").update(Buffer.from(text, "utf8")).digest("hex");
+    store.publishFile(checked.id, checked.run, target.rel, hash);
+    return c.json({ path: target.rel, hash, bytes } satisfies FileWritten);
   });
 
   /** The run's raw log, as a download: the file to attach to a bug report. */

@@ -72,7 +72,7 @@ function gateView(over: Partial<GateView> = {}): GateView {
     maxAttempts: 10,
     openedAt: "2026-10-15T14:05:00.000Z",
     message: MESSAGE,
-    artifacts: [{ kind: "markdown", label: "script.md", url: SCRIPT_URL }],
+    artifacts: [{ kind: "markdown", label: "script.md", path: "Episodes/s02e01/script.md", url: SCRIPT_URL }],
     verdicts: {},
     rejections: [],
     ...over,

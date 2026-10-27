@@ -1,9 +1,11 @@
 import path from "node:path";
 import { createReadStream } from "node:fs";
 import { Readable } from "node:stream";
-import { readdir, stat } from "node:fs/promises";
+import { readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { EventLog, parseEpisodeId } from "@showrunner/engine";
 import type { Context } from "hono";
+import { gateView } from "./gates.js";
+import type { RunStore } from "./runs.js";
 import type { ShowContext } from "./show.js";
 
 /** The artifact route's fence and its reader. The console serves the episode's own files — the
@@ -210,4 +212,46 @@ export async function serveRunLog(c: Context, ctx: ShowContext, episodeId: strin
   try { info = await stat(file); } catch { return c.json({ error: `no log for run ${runId} of ${episodeId}` }, 404); }
   if (!info.isFile()) return c.json({ error: `no log for run ${runId} of ${episodeId}` }, 404);
   return serveFile(c, file, info.size, `${runId}.jsonl`, true);
+}
+
+/** The one artifact the editor may read or write: a markdown file the run's OPEN gate lists.
+ *  Three refusals, each its own status: the fence's 400 (`resolveArtifactPath`, then "not
+ *  markdown"), a 404 when no gate is open on the run, and a 403 when the gate is open but does
+ *  not list this file — `Episodes/<id>/outline.md` at the script gate, say, which is a real file
+ *  the showrunner may not edit from there because nothing downstream would notice the edit. */
+export async function editableArtifact(
+  ctx: ShowContext, store: RunStore, episodeId: string, runId: string, showRelative: string,
+): Promise<{ ok: true; rel: string; abs: string; gateId: string } | { ok: false; status: 400 | 403 | 404; error: string }> {
+  const fenced = resolveArtifactPath(ctx, episodeId, showRelative);
+  if (!fenced.ok) return { ok: false, status: 400, error: fenced.error };
+  if (!fenced.rel.endsWith(".md")) return { ok: false, status: 400, error: `path ${JSON.stringify(fenced.rel)} is not a markdown file; the editor edits markdown only` };
+  const view = await gateView(ctx, store, episodeId, runId);
+  if (view === undefined) return { ok: false, status: 404, error: `no gate is open on run ${runId} of ${episodeId}; a file is editable only while a gate that lists it is open` };
+  const listed = view.artifacts.some((a) => a.kind === "markdown" && a.path === fenced.rel);
+  if (!listed) return { ok: false, status: 403, error: `${fenced.rel} is not a file ${view.stepId} edits` };
+  return { ok: true, rel: fenced.rel, abs: fenced.abs, gateId: view.stepId };
+}
+
+/** Writes `text` to `abs` by way of a sibling temp file and a rename, so a reader never sees a
+ *  half-written artifact and a crash leaves the old text in place. The rename is what makes the
+ *  write atomic; the temp file is removed again when either step throws, so a leftover is the
+ *  crash case and not the ordinary one.
+ *
+ *  The temp name carries the pid and does **not** start with a dot. The editor route can never
+ *  serve a leftover whatever it is called — `editableArtifact` serves only a path the open gate
+ *  lists, and no gate lists a `.tmp-` name, so a request for one is a 403 — while the episode's
+ *  artifact route (`serveArtifact`) would serve a leftover asked for by its exact name, since
+ *  `resolveArtifactPath` refuses only a segment that *starts* with a dot. That is the intent: a
+ *  leftover should be visible in a listing and readable by the operator who finds it, rather than
+ *  hidden as a dotfile the listing filters out. */
+export async function writeAtomically(abs: string, text: string): Promise<number> {
+  const tmp = `${abs}.tmp-${process.pid}`;
+  try {
+    await writeFile(tmp, text, "utf8");
+    await rename(tmp, abs);
+  } catch (err) {
+    await rm(tmp, { force: true });
+    throw err;
+  }
+  return Buffer.byteLength(text, "utf8");
 }

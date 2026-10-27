@@ -30,7 +30,7 @@ describe("the gate view", () => {
     const v = view!;
     expect(v).toMatchObject({ episodeId: "s02e01", runId: "r1", stepId: "outline-gate", attempt: 1, message: "Approve outline-gate." });
     expect(v.openedAt).toMatch(/^\d{4}-/);
-    expect(v.artifacts[0]).toEqual({ kind: "markdown", label: "outline.md", url: `${FILES}/Episodes/s02e01/outline.md` });
+    expect(v.artifacts[0]).toEqual({ kind: "markdown", label: "outline.md", path: "Episodes/s02e01/outline.md", url: `${FILES}/Episodes/s02e01/outline.md` });
     expect((v.verdicts["canon-review-outline"] as { pass: boolean }).pass).toBe(true);
     expect(v.rejections).toEqual([]);
     expect(v.maxAttempts).toBe(10);
@@ -45,7 +45,7 @@ describe("the gate view", () => {
     const v = (await gateView(ctx, store, "s02e01", "r1"))!;
     expect(v.attempt).toBe(2);
     expect(v.rejections).toEqual(["the ending is rushed"]);
-    expect(v.artifacts).toEqual([{ kind: "markdown", label: "script.md", url: `${FILES}/Episodes/s02e01/script.md` }]);
+    expect(v.artifacts).toEqual([{ kind: "markdown", label: "script.md", path: "Episodes/s02e01/script.md", url: `${FILES}/Episodes/s02e01/script.md` }]);
     store.close();
   });
 
@@ -54,8 +54,8 @@ describe("the gate view", () => {
     const v = (await gateView(ctx, store, "s02e01", "r1"))!;
     expect(v.artifacts.map((a) => a.kind)).toEqual(["diff", "markdown"]);
     expect(v.artifacts).toEqual([
-      { kind: "diff", label: "canon-diff.patch", url: `${FILES}/Production/s02e01/canon-diff.patch` },
-      { kind: "markdown", label: "canon-ledger.md", url: `${FILES}/Episodes/s02e01/canon-ledger.md` },
+      { kind: "diff", label: "canon-diff.patch", path: "Production/s02e01/canon-diff.patch", url: `${FILES}/Production/s02e01/canon-diff.patch` },
+      { kind: "markdown", label: "canon-ledger.md", path: "Episodes/s02e01/canon-ledger.md", url: `${FILES}/Episodes/s02e01/canon-ledger.md` },
     ]);
     store.close();
   });
@@ -63,40 +63,40 @@ describe("the gate view", () => {
   it("names the mastered video at final-gate when one is on disk, and the render when it is not", async () => {
     const { root, ctx, store } = await parkedAt("final-gate");
     const bare = (await gateView(ctx, store, "s02e01", "r1"))!;
-    expect(bare.artifacts[0]).toEqual({ kind: "video", label: "episode.mp4", url: `${FILES}/Production/s02e01/video/episode.mp4` });
-    expect(bare.artifacts[1]).toEqual({ kind: "json", label: "publish.json", url: `${FILES}/Episodes/s02e01/publish.json` });
+    expect(bare.artifacts[0]).toEqual({ kind: "video", label: "episode.mp4", path: "Production/s02e01/video/episode.mp4", url: `${FILES}/Production/s02e01/video/episode.mp4` });
+    expect(bare.artifacts[1]).toEqual({ kind: "json", label: "publish.json", path: "Episodes/s02e01/publish.json", url: `${FILES}/Episodes/s02e01/publish.json` });
     expect(bare.maxAttempts).toBe(2);
 
     await writeIn(root, "Production/s02e01/video/episode-mastered.mp4", "not really an mp4");
     const mastered = (await gateView(ctx, store, "s02e01", "r1"))!;
-    expect(mastered.artifacts[0]).toEqual({ kind: "video", label: "episode-mastered.mp4", url: `${FILES}/Production/s02e01/video/episode-mastered.mp4` });
+    expect(mastered.artifacts[0]).toEqual({ kind: "video", label: "episode-mastered.mp4", path: "Production/s02e01/video/episode-mastered.mp4", url: `${FILES}/Production/s02e01/video/episode-mastered.mp4` });
     store.close();
   });
 
   it("names the casting, audio and image artifacts of the four remaining gates", async () => {
     const casting = await parkedAt("casting-gate");
     expect((await gateView(casting.ctx, casting.store, "s02e01", "r1"))!.artifacts).toEqual([
-      { kind: "json", label: "tts-script.json", url: `${FILES}/Production/s02e01/tts-script.json` },
-      { kind: "audio", label: "guest-refs/", url: `${FILES}/Production/s02e01/guest-refs`, listUrl: `${FILES}/Production/s02e01/guest-refs` },
+      { kind: "json", label: "tts-script.json", path: "Production/s02e01/tts-script.json", url: `${FILES}/Production/s02e01/tts-script.json` },
+      { kind: "audio", label: "guest-refs/", path: "Production/s02e01/guest-refs", url: `${FILES}/Production/s02e01/guest-refs`, listUrl: `${FILES}/Production/s02e01/guest-refs` },
     ]);
     casting.store.close();
 
     const audio = await parkedAt("audio-gate");
     expect((await gateView(audio.ctx, audio.store, "s02e01", "r1"))!.artifacts).toEqual([
-      { kind: "audio", label: "HarborLight S02E01.wav", url: `${FILES}/Production/s02e01/audio/HarborLight%20S02E01.wav` },
+      { kind: "audio", label: "HarborLight S02E01.wav", path: "Production/s02e01/audio/HarborLight S02E01.wav", url: `${FILES}/Production/s02e01/audio/HarborLight%20S02E01.wav` },
     ]);
     audio.store.close();
 
     const nano = await parkedAt("nano-banana-gate");
     expect((await gateView(nano.ctx, nano.store, "s02e01", "r1"))!.artifacts).toEqual([
-      { kind: "images", label: "images/", url: `${FILES}/Production/s02e01/images`, listUrl: `${FILES}/Production/s02e01/images` },
-      { kind: "markdown", label: "IMAGE-SHEET.md", url: `${FILES}/Production/s02e01/images/IMAGE-SHEET.md` },
+      { kind: "images", label: "images/", path: "Production/s02e01/images", url: `${FILES}/Production/s02e01/images`, listUrl: `${FILES}/Production/s02e01/images` },
+      { kind: "markdown", label: "IMAGE-SHEET.md", path: "Production/s02e01/images/IMAGE-SHEET.md", url: `${FILES}/Production/s02e01/images/IMAGE-SHEET.md` },
     ]);
     nano.store.close();
 
     const image = await parkedAt("image-gate");
     expect((await gateView(image.ctx, image.store, "s02e01", "r1"))!.artifacts).toEqual([
-      { kind: "images", label: "images/", url: `${FILES}/Production/s02e01/images`, listUrl: `${FILES}/Production/s02e01/images` },
+      { kind: "images", label: "images/", path: "Production/s02e01/images", url: `${FILES}/Production/s02e01/images`, listUrl: `${FILES}/Production/s02e01/images` },
     ]);
     expect((await gateView(image.ctx, image.store, "s02e01", "r1"))!.maxAttempts).toBe(5);
     image.store.close();
