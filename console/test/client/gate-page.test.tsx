@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import type { GateView } from "../../shared/types.js";
 import { ConsoleContext, type ConsoleData } from "../../src/api.js";
@@ -37,8 +37,21 @@ import { Gate } from "../../src/pages/Gate.js";
  *  world, as everywhere else in this suite. */
 afterEach(cleanup);
 
+/** The run the fixture gate belongs to. One constant, because three things have to agree about
+ *  it: the view's `runId`, the `:run` segment of the route the page is mounted at, and the `runId`
+ *  on a `file` notice — the page drops a notice whose run is not the one it is drawing. */
+const RUN_ID = "20261015-120000-abcd";
+
 /** The gate's one artifact: a markdown script, served by the artifact route. */
 const SCRIPT_URL = "/api/shows/harbor/episodes/s02e01/files/Episodes/s02e01/script.md";
+
+/** The script's show-relative path: the editor's address is built from it, and a `file` notice
+ *  names it. */
+const SCRIPT_PATH = "Episodes/s02e01/script.md";
+
+/** Where the pane's edit link goes — `api.ts`'s `editHref` for this run and this path, which is
+ *  `App.tsx`'s `/shows/:show/episodes/:id/runs/:run/edit/*` route. */
+const EDIT_HREF = `/shows/harbor/episodes/s02e01/runs/${RUN_ID}/edit/${SCRIPT_PATH}`;
 
 /** A line of the script the gate is about — the text that must reach the screen *before* anything
  *  the message says. */
@@ -66,34 +79,51 @@ const SUMMARY = "Script drafted: Episodes/s02e01/script.md";
 function gateView(over: Partial<GateView> = {}): GateView {
   return {
     episodeId: "s02e01",
-    runId: "20261015-120000-abcd",
+    runId: RUN_ID,
     stepId: "script-gate",
     attempt: 1,
     maxAttempts: 10,
     openedAt: "2026-10-15T14:05:00.000Z",
     message: MESSAGE,
-    artifacts: [{ kind: "markdown", label: "script.md", path: "Episodes/s02e01/script.md", url: SCRIPT_URL }],
+    artifacts: [{ kind: "markdown", label: "script.md", path: SCRIPT_PATH, url: SCRIPT_URL }],
     verdicts: {},
     rejections: [],
     ...over,
   };
 }
 
-/** jsdom has no `EventSource`; the page opens the console's channel on mount. */
+/** jsdom has no `EventSource`; the page opens the console's channel on mount. The instance is
+ *  kept so a test can hand the page a notice, the way `test/client/edit-page.test.tsx` does. */
 class FakeEventSource {
+  static last: FakeEventSource | null = null;
   onopen: (() => void) | null = null;
   onmessage: ((e: MessageEvent) => void) | null = null;
   onerror: (() => void) | null = null;
+  constructor() { FakeEventSource.last = this; }
   close(): void { /* nothing to close */ }
 }
 
-/** The network, answered from the view under test: the gate route, the artifact, and 404 for
- *  anything this page should not be asking for. */
+/** Delivers one line on the channel, as `api.ts`'s `connect` would receive it. */
+function deliver(message: unknown): void {
+  act(() => {
+    FakeEventSource.last?.onmessage?.(new MessageEvent("message", { data: JSON.stringify(message) }));
+  });
+}
+
+/** What the artifact route is serving at this moment, as a mutable object rather than a constant,
+ *  so a test can change the bytes on "disk" between the pane's first read and its refetch — which
+ *  is the whole of what "the pane follows the save" means. Reset to `SCRIPT_LINE` in `beforeEach`,
+ *  so every other test reads the same script it always did. `test/client/edit-page.test.tsx` keeps
+ *  its file the same way. */
+const disk = { script: SCRIPT_LINE };
+
+/** The network, answered from the view under test: the gate route, the artifact as `disk` holds it,
+ *  and 404 for anything this page should not be asking for. */
 function stubFetch(view: GateView): void {
   vi.stubGlobal("fetch", vi.fn(async (input: unknown) => {
     const url = String(input);
     if (url.endsWith("/gate")) return new Response(JSON.stringify(view), { status: 200 });
-    if (url === SCRIPT_URL) return new Response(SCRIPT_LINE, { status: 200 });
+    if (url === SCRIPT_URL) return new Response(disk.script, { status: 200 });
     return new Response(JSON.stringify({ error: `no stub for ${url}` }), { status: 404 });
   }));
 }
@@ -108,7 +138,7 @@ function mount(view: GateView, console_: Partial<ConsoleData> = {}) {
   };
   return render(
     <ConsoleContext.Provider value={value}>
-      <MemoryRouter initialEntries={["/shows/harbor/episodes/s02e01/runs/20261015-120000-abcd/gate"]}>
+      <MemoryRouter initialEntries={[`/shows/harbor/episodes/s02e01/runs/${RUN_ID}/gate`]}>
         <Routes>
           <Route path="/shows/:show/episodes/:id/runs/:run/gate" element={<Gate />} />
         </Routes>
@@ -127,6 +157,7 @@ function positionOf(container: HTMLElement, text: string): number {
 }
 
 beforeEach(() => {
+  disk.script = SCRIPT_LINE;
   vi.stubGlobal("EventSource", FakeEventSource);
 });
 
@@ -300,5 +331,27 @@ describe("the Gate page's order", () => {
     // of the page that says what was already asked for.
     const details = container.querySelector("details");
     expect(details?.textContent).not.toContain("scene 4 reads as two scenes");
+  });
+
+  it("offers an edit link on the script's pane, to the editor's address", async () => {
+    // Ryan's ruling of 2026-10-27: a markdown artifact is editable from the gate's own pane, so the
+    // operator who finds a typo at the gate does not go to a terminal and lose the open gate.
+    mount(gateView());
+    await screen.findByText(SCRIPT_LINE);
+
+    expect(screen.getByRole("link", { name: /^edit$/i })).toHaveAttribute("href", EDIT_HREF);
+  });
+
+  it("refetches the script's pane when a file message names it", async () => {
+    // One file, one version (Ryan, 2026-10-27): the editor saved, the server published a `file`
+    // notice naming this pane's path, and the pane shows the saved text without a reload. The
+    // notice carries a hash and no text, so what the pane does with it is refetch.
+    mount(gateView());
+    await screen.findByText(SCRIPT_LINE);
+
+    disk.script = "INT. HARBOR OFFICE — DUSK";
+    deliver({ type: "file", show: "harbor", episodeId: "s02e01", runId: RUN_ID, path: SCRIPT_PATH, hash: "c".repeat(64) });
+
+    await waitFor(() => { expect(screen.getByText("INT. HARBOR OFFICE — DUSK")).toBeInTheDocument(); });
   });
 });
