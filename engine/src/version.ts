@@ -26,8 +26,13 @@ export function readEngineVersion(file = path.resolve(path.dirname(fileURLToPath
  *  which engine wrote it, and shown in the console's header. **Derived, never bumped by hand**
  *  (Ryan-ruled 2026-10-29): `<major>.<minor>` from `package.json`, the patch is the count of
  *  commits reachable from the build's HEAD, the build metadata is the short hash, `.dirty` when the
- *  tree had uncommitted changes — so every commit increments it by construction. It lives in a
- *  module that imports nothing from the engine, because `runner.ts` reads it: taking it from the
+ *  tree had uncommitted changes — so every commit increments it by construction. **The count and
+ *  the `.dirty` flag are the repository's, not this package's**: the patch counts every commit in
+ *  the Showrunner repository, and a modified tracked file anywhere in it — `console/`, `tools/`,
+ *  `docs/`, `render/` — marks the engine build dirty. `engine` is the package that carries the
+ *  number, not the scope the number measures; the string names a repository commit, so `dirty` has
+ *  to mean the repository's tracked tree differs from that commit. It lives in a module that
+ *  imports nothing from the engine, because `runner.ts` reads it: taking it from the
  *  `index.ts` barrel would make runner.ts import index.ts while index.ts re-exports runner.ts, a
  *  cycle that drags the whole barrel into runner's evaluation. `index.ts` re-exports it, so the
  *  public name is unchanged. The file is resolved relative to this module, which sits one level
