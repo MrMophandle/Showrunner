@@ -1,5 +1,7 @@
 node_modules/
 dist/
+# derived by engine/scripts/write-version.mjs at build and test time; never committed
+engine/version.json
 *.log
 .DS_Store
 .superpowers/

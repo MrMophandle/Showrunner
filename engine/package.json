@@ -6,8 +6,11 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "scripts": {
+    "version:write": "node scripts/write-version.mjs",
+    "pretest": "npm run version:write",
     "test": "vitest run",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json",
+    "prebuild": "npm run version:write",
     "build": "tsc"
   },
   "devDependencies": {
