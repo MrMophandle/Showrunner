@@ -835,3 +835,13 @@ export const GATE_BUTTONS: readonly { key: GateChoiceKey; label: string }[] = [
 export function showsPageIsEmpty(shows: unknown[] | null, failed: unknown[]): boolean {
   return shows !== null && shows.length === 0 && failed.length === 0;
 }
+
+/** The chip beside a run's recorded engine version: the log records the engine once, at
+ *  `run_started`, and a run resumed under later engines keeps that first number — s02e01's run of
+ *  2026-10-14 says `engine 0.0.1` after three resumes under derived versions (Ryan, 2026-10-30:
+ *  "engine still shows v0.0.1"). The chip says what runs today when it differs; null when the
+ *  two agree or either is unknown, so an old log with no version draws nothing. */
+export function engineDrift(started: string | undefined, now: string | undefined): string | null {
+  if (started === undefined || now === undefined || started === now) return null;
+  return `engine now ${now}`;
+}
