@@ -804,6 +804,10 @@ export function createApp(
    *  bad pick refusable: the order is lock, write, answer, spawn, so a refused pick is a 400 with
    *  the manifest unchanged and the gate still open at the same attempt, while a pick written
    *  after the answer would race the worker this route then spawns for the manifest it reads.
+   *  **A pick the route accepted is not rolled back when `answerGate` then refuses the answer** —
+   *  a stale `expectedAttempt` answers 409 with the picked take already in the manifest, and the
+   *  gate stays open at the attempt it was open at, so the operator answers again and the choice
+   *  they already made still stands.
    *  Accepted at `casting-gate` only — a take per guest, show-relative — and the engine learns of
    *  an accepted pick through `tts-generate`'s input hash rather than through anything appended
    *  here (`applyCastingPicks`, `server/artifacts.ts`). */

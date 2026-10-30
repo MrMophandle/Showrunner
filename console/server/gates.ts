@@ -97,13 +97,24 @@ export async function gateArtifacts(ctx: ShowContext, episodeId: string, gateId:
       return [file(ctx.key, episodeId, "markdown", `${ep}/outline.md`)];
     case "script-gate":
       return [file(ctx.key, episodeId, "markdown", `${ep}/script.md`)];
-    case "casting-gate":
+    case "casting-gate": {
       // The voices first: the decision at this gate is about the guest takes, and the manifest is
       // what the takes are cast into (Ryan, 2026-10-30: "I want to jump RIGHT to the voices").
+      //
+      // The directory is `guestRefsDirOf`'s and not a hardcoded `guest-refs`, so that **this
+      // artifact's `path` and the casting block's `dir` are one string for every show**: the page
+      // lists this artifact and sends `${artifact.path}/<take>` as the pick, which the answer
+      // route then checks against `guestRefsDirOf` again — two spellings here would list one
+      // directory and pick from another, and for a show that configures `audio.guestRefsDir`
+      // every pick would be refused by name. The label follows the directory for the same reason:
+      // a pane headed `guest-refs/` over the contents of `voices/` is the same disagreement in
+      // the one place the operator reads it.
+      const refs = guestRefsDirOf(ctx.show, episodeId);
       return [
-        dir(ctx.key, episodeId, "audio", `${prod}/guest-refs`, "guest-refs/"),
+        dir(ctx.key, episodeId, "audio", refs, `${path.posix.basename(refs)}/`),
         file(ctx.key, episodeId, "json", `${prod}/tts-script.json`),
       ];
+    }
     case "audio-gate":
       return [file(ctx.key, episodeId, "audio", `${prod}/audio/${mixFilename(ctx.show, episodeId)}`)];
     case "nano-banana-gate":

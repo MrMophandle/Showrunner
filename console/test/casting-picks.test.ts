@@ -69,6 +69,35 @@ describe("picks on the casting gate's answer", () => {
     store.close();
   });
 
+  /** The order — write the manifest, then answer the gate — read through its one visible
+   *  consequence: a pick the route accepts is **already on disk** when `answerGate` refuses the
+   *  answer for a stale `expectedAttempt`. The gate stays open at the attempt it was open at, so
+   *  the refusal is retryable, and the retry re-applies the same pick.
+   *
+   *  Asserted this way round because the order is otherwise invisible: a successful answer leaves
+   *  the same manifest whichever way the two steps are sequenced. Reversing them — answer first,
+   *  then write — would make this test's manifest unchanged, and would also let the worker this
+   *  route spawns read `tts-script.json` while the pick was still being written to it.
+   *
+   *  **A pick is not rolled back when the answer is refused.** That is the deliberate choice: the
+   *  showrunner's choice of take is a fact about the casting, not about this answer, and the
+   *  operator who answers again gets the take they picked. */
+  it("has already written the pick when the answer is refused for a stale attempt, and the retry stands", async () => {
+    const { root, app, store } = await parkedAtCasting();
+    const stale = await answer(app, { stepId: "casting-gate", approved: true, expectedAttempt: 2, picks: { Pim: `${REFS}/pim-2.wav` } });
+    expect(stale.status).toBe(409);
+    expect(((await stale.json()) as { error: string }).error).toContain("is open at attempt 1");
+    expect((await manifest(root)).cast["Pim"]?.ref).toBe(`${REFS}/pim-2.wav`);
+    expect((await store.get("s02e01", "r1")).events.some((e) => e.kind === "gate_answered")).toBe(false);
+
+    // The gate is still open at attempt 1, so the answer the operator meant to give still lands.
+    const retry = await answer(app, { stepId: "casting-gate", approved: true, expectedAttempt: 1, picks: { Pim: `${REFS}/pim-2.wav` } });
+    expect(retry.status).toBe(200);
+    expect((await manifest(root)).cast["Pim"]?.ref).toBe(`${REFS}/pim-2.wav`);
+    expect((await store.get("s02e01", "r1")).events.some((e) => e.kind === "gate_answered")).toBe(true);
+    store.close();
+  });
+
   it("refuses a pick for a name that is not a guest, and leaves the manifest and the gate alone", async () => {
     const { root, app, store } = await parkedAtCasting();
     const res = await answer(app, { stepId: "casting-gate", approved: true, expectedAttempt: 1, picks: { narrator: `${REFS}/pim-2.wav` } });
@@ -133,6 +162,12 @@ describe("picks on the casting gate's answer", () => {
     expect(refs).toBe("Production/s02e01/voices");
     const view = (await gateView(ctx, store, "s02e01", "r1"))!;
     expect(view.casting?.dir).toBe("Production/s02e01/voices");
+    // One directory, named once: the gate's audio artifact is the same path as the casting block,
+    // because the page builds its listing url from the artifact and its pick values from
+    // `artifact.path`. Two different strings here would list one directory and pick from another.
+    const audio = view.artifacts.find((a) => a.kind === "audio")!;
+    expect(audio.path).toBe("Production/s02e01/voices");
+    expect(audio.path).toBe(view.casting?.dir);
 
     // A take under the default directory exists on disk and is still refused: this show's takes
     // are not there.

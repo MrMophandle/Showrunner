@@ -282,7 +282,7 @@ export async function writeAtomically(abs: string, text: string): Promise<number
  *
  *  **Nothing is recorded in the run log for a pick.** The engine learns of the change the way it
  *  learns of any edit to a declared input: `tts-generate` declares `tts-script.json` as its input
- *  (`engine/src/pipelines/episode.ts:321`), and `runScriptStep` compares the fresh input hashes
+ *  (`engine/src/pipelines/episode.ts:325`), and `runScriptStep` compares the fresh input hashes
  *  with the last completion's (`engine/src/runner.ts:429-442`), so a picked manifest is not
  *  served from `step_cached` and emits `input_changed` instead. The hash trail is the record; a
  *  console-minted event would be a second claim about the same fact, able to disagree with the
