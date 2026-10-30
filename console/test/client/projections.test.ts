@@ -4,8 +4,7 @@ import {
   STALL_MS, composeNotesWithFlags, composeShotRejection, elapsed, firstLine, gateSummaryLine,
   iterationLabel, positionStep, progressLabel, quietRow, readOnlyLine, resetLabel, roundLabel,
   runSituation, safeHref, showLabel, showReadFailure, stageLabel, stallState, stalled, titleFor,
-  waitingNote,
-} from "../../src/projections.js";
+  waitingNote, engineDrift } from "../../src/projections.js";
 
 /** The client's pure helpers. Every one of them is a function of its arguments and a clock the
  *  caller passes in, which is the whole reason they live outside the components: a stall label
@@ -668,5 +667,14 @@ describe("safeHref", () => {
     // relative url. It is the smaller, separate wart the whole-branch review named beside the
     // tab case (2026-10-02 final-review.md, M-1) and left to the deferred list.
     expect(safeHref("//host.example/x")).toBe("//host.example/x");
+  });
+});
+
+describe("engineDrift", () => {
+  it("names the engine running today only when it differs from the one that started the run", () => {
+    expect(engineDrift("0.0.1", "0.0.397+280b3a3")).toBe("engine now 0.0.397+280b3a3");
+    expect(engineDrift("0.0.397+280b3a3", "0.0.397+280b3a3")).toBeNull();
+    expect(engineDrift(undefined, "0.0.397+280b3a3")).toBeNull();
+    expect(engineDrift("0.0.1", undefined)).toBeNull();
   });
 });

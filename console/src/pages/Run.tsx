@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import type { EventBatch, RunView, WireEvent } from "../../shared/types.js";
 import { getJson, post, showHref, showPath, useApi, useCoalesced, useConsole, useNow, useSSE, useShowKey } from "../api.js";
-import { elapsed, iterationLabel, positionStep, runSituation, stageLabel, stallState } from "../projections.js";
+import { elapsed, iterationLabel, positionStep, runSituation, stageLabel, stallState, engineDrift } from "../projections.js";
 import { ActionBar } from "../components/ActionBar.js";
 import { AutoTextarea } from "../components/AutoTextarea.js";
 import { EventFeed } from "../components/EventFeed.js";
@@ -231,7 +231,12 @@ export function Run() {
         <div className="run-pipeline quiet mono">
           {run.pipeline.name}
           {run.pipeline.hash !== undefined && ` · ${run.pipeline.hash.slice(0, 12)}`}
-          {run.pipeline.engineVersion !== undefined && ` · engine ${run.pipeline.engineVersion}`}
+          {run.pipeline.engineVersion !== undefined && ` · started under engine ${run.pipeline.engineVersion}`}
+          {/* The engine the log names is the one that started the run; the chip is the one running
+              today, drawn only when they differ (`engineDrift`). */}
+          {engineDrift(run.pipeline.engineVersion, show?.engineVersion) !== null && (
+            <span className="chip chip-needs chip-inline">{engineDrift(run.pipeline.engineVersion, show?.engineVersion)}</span>
+          )}
           {/* The logged hash beside the hash of the pipeline the code builds today: the two
               differing is why this run has steps the code does not, and the first thing to know
               about a run whose rail does not look like the pipeline. Marked the way the
