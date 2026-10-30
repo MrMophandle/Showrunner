@@ -98,18 +98,46 @@ function TextArtifact({ url, json }: { url: string; json: boolean }) {
  *  `guest-refs/`). The directory case is the reason `listUrl` exists: one route serves both a file
  *  and a listing, so the presence of `listUrl` is the only unambiguous test for a directory
  *  (`shared/types.ts`'s `GateArtifact`). */
+/** The files in a reference directory that are audio. A guest's directory also holds the
+ *  transcript the showrunner wrote beside the take (`<guest-slug>.txt`, per the TTS script
+ *  prompt's convention), and listing that as a player offered a text file to play (Ryan,
+ *  2026-10-30). Exported for the test. */
+export const AUDIO_FILE = /\.(wav|mp3|flac|m4a|ogg|aac)$/i;
+
+/** The transcript file a take's name points at: `veleth-1.wav` and `veleth-2.wav` both belong to
+ *  `veleth.txt` — the candidate number is stripped with the extension. Exported for the test. */
+export function transcriptFor(audioName: string): string {
+  return `${audioName.replace(/\.[^.]+$/, "").replace(/-\d+$/, "")}.txt`;
+}
+
+/** The transcript under a take: what the voice is saying in the reference, so the operator hears
+ *  the words against the text while auditioning. */
+function Transcript({ url }: { url: string }) {
+  const file = useTextApi(url);
+  if (file.data === null) return null;
+  return <p className="quiet audio-transcript">{file.data.trim()}</p>;
+}
+
 function AudioArtifact({ artifact }: { artifact: GateArtifact }) {
   const listing = useApi<{ entries: DirEntry[] }>(artifact.listUrl ?? null);
   if (artifact.listUrl === undefined) return <AudioSeek src={artifact.url} label={artifact.label} />;
   if (listing.error !== null && listing.data === null) return <p className="error-line">{listing.error}</p>;
   if (listing.data === null) return <p className="quiet">reading the directory…</p>;
-  const files = listing.data.entries.filter((e) => !e.isDir).sort((a, b) => a.name.localeCompare(b.name));
-  if (files.length === 0) return <p className="quiet">nothing in this directory yet</p>;
+  const files = listing.data.entries.filter((e) => !e.isDir);
+  const takes = files.filter((e) => AUDIO_FILE.test(e.name)).sort((a, b) => a.name.localeCompare(b.name));
+  const transcripts = new Set(files.filter((e) => /\.txt$/i.test(e.name)).map((e) => e.name));
+  if (takes.length === 0) return <p className="quiet">no audio in this directory yet</p>;
   return (
     <div className="audio-list">
-      {files.map((entry) => (
-        <AudioSeek key={entry.name} src={`${artifact.url}/${encodeURIComponent(entry.name)}`} label={entry.name} />
-      ))}
+      {takes.map((entry) => {
+        const txt = transcriptFor(entry.name);
+        return (
+          <div key={entry.name}>
+            <AudioSeek src={`${artifact.url}/${encodeURIComponent(entry.name)}`} label={entry.name} />
+            {transcripts.has(txt) && <Transcript url={`${artifact.url}/${encodeURIComponent(txt)}`} />}
+          </div>
+        );
+      })}
     </div>
   );
 }
