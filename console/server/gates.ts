@@ -97,9 +97,11 @@ export async function gateArtifacts(ctx: ShowContext, episodeId: string, gateId:
     case "script-gate":
       return [file(ctx.key, episodeId, "markdown", `${ep}/script.md`)];
     case "casting-gate":
+      // The voices first: the decision at this gate is about the guest takes, and the manifest is
+      // what the takes are cast into (Ryan, 2026-10-30: "I want to jump RIGHT to the voices").
       return [
-        file(ctx.key, episodeId, "json", `${prod}/tts-script.json`),
         dir(ctx.key, episodeId, "audio", `${prod}/guest-refs`, "guest-refs/"),
+        file(ctx.key, episodeId, "json", `${prod}/tts-script.json`),
       ];
     case "audio-gate":
       return [file(ctx.key, episodeId, "audio", `${prod}/audio/${mixFilename(ctx.show, episodeId)}`)];

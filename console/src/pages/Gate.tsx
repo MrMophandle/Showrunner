@@ -83,7 +83,11 @@ function DiffArtifact({ url }: { url: string }) {
 /** A json or plain-text artifact: the tts script, the publish kit. Pretty-printed when it parses
  *  as JSON, shown as it came when it does not — a file that is nearly JSON is a file whose last
  *  line is the problem, and reformatting it would hide that. */
-function TextArtifact({ url, json }: { url: string; json: boolean }) {
+/** A json or plain-text artifact is reference, not the thing the gate asks about — the manifest at
+ *  the casting gate, the publish kit at the final gate — and several hundred lines of it above the
+ *  takes was what the operator had to scroll past to reach the voices (Ryan, 2026-10-30). It opens
+ *  collapsed, one click away, with its size in the summary so the click is informed. */
+function TextArtifact({ url, json, label }: { url: string; json: boolean; label: string }) {
   const file = useTextApi(url);
   if (file.error !== null && file.data === null) return <p className="error-line">{file.error}</p>;
   if (file.data === null) return <p className="quiet">reading…</p>;
@@ -91,7 +95,13 @@ function TextArtifact({ url, json }: { url: string; json: boolean }) {
   if (json) {
     try { text = JSON.stringify(JSON.parse(file.data), null, 2); } catch { /* shown as it came */ }
   }
-  return <pre className="pane mono">{text}</pre>;
+  const lines = text.split("\n").length;
+  return (
+    <details className="gate-message">
+      <summary>{label} — {lines} lines, collapsed</summary>
+      <pre className="pane mono">{text}</pre>
+    </details>
+  );
 }
 
 /** An audio artifact, which is either one file or a directory of them (`casting-gate`'s
@@ -325,7 +335,7 @@ export function Gate() {
             </div>
             {artifact.kind === "markdown" && <MarkdownArtifact url={artifact.url} version={fileVersions[artifact.path] ?? ""} />}
             {artifact.kind === "diff" && <DiffArtifact url={artifact.url} />}
-            {(artifact.kind === "json" || artifact.kind === "text") && <TextArtifact url={artifact.url} json={artifact.kind === "json"} />}
+            {(artifact.kind === "json" || artifact.kind === "text") && <TextArtifact url={artifact.url} json={artifact.kind === "json"} label={artifact.label} />}
             {artifact.kind === "audio" && <AudioArtifact artifact={artifact} />}
             {artifact.kind === "video" && (
               <video className="artifact-video" src={artifact.url} controls preload="metadata" />
