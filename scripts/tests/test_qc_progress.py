@@ -25,7 +25,12 @@ def restore_cwd():
 
 @pytest.fixture
 def no_spawn(monkeypatch):
-    """Fail loudly if a clean pass re-runs synthesis."""
+    """Fail loudly if a clean pass re-runs synthesis.
+
+    Installed over each script's `run_forwarding`, which is the one call that spawns the child
+    renderer; `subprocess.run` is not on that path any more (pace-qc still owns it for the
+    ffmpeg clamp its stubborn-segment path runs).
+    """
     def _forbidden(*args, **kwargs):
         raise AssertionError(f"a clean pass must not spawn anything: {args!r}")
     return _forbidden
@@ -62,7 +67,7 @@ def test_a_clean_pace_pass_ends_at_the_last_round(
     (audio / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
 
     pace = load_script("pace-qc.py")
-    monkeypatch.setattr(pace.subprocess, "run", no_spawn)
+    monkeypatch.setattr(pace, "run_forwarding", no_spawn)
     monkeypatch.setattr(pace.sys, "argv", ["pace-qc.py", "ep01", "--show-root", str(show_root)])
     pace.main()
 
@@ -78,7 +83,7 @@ def test_a_clean_truncation_pass_ends_at_the_last_round(
     _tts_script(show_root, [{"i": i, "speaker": "narrator", "text": "A line."} for i in (1, 2)])
 
     truncation = load_script("truncation-qc.py")
-    monkeypatch.setattr(truncation.subprocess, "run", no_spawn)
+    monkeypatch.setattr(truncation, "run_forwarding", no_spawn)
     monkeypatch.setattr(
         truncation.sys, "argv", ["truncation-qc.py", "ep01", "--show-root", str(show_root)]
     )
