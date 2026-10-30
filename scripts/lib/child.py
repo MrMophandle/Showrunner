@@ -19,7 +19,9 @@ PROGRESS_PREFIX = "::progress "
 def run_forwarding(argv: list[str]) -> None:
     """Spawn `argv`, print each stdout line that is not a `::progress` line as it arrives, and raise
     CalledProcessError on a non-zero exit. stderr is inherited, as before."""
-    proc = subprocess.Popen(argv, stdout=subprocess.PIPE, text=True, bufsize=1)
+    # errors="replace": a stray non-UTF-8 byte from the child becomes U+FFFD in the log rather
+    # than an UnicodeDecodeError that would fail the parent step (review of 2026-10-30).
+    proc = subprocess.Popen(argv, stdout=subprocess.PIPE, text=True, bufsize=1, errors="replace")
     assert proc.stdout is not None
     for line in proc.stdout:
         if line.startswith(PROGRESS_PREFIX):
