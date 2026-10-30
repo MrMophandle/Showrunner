@@ -76,8 +76,8 @@ describe("the gate view", () => {
   it("names the casting, audio and image artifacts of the four remaining gates", async () => {
     const casting = await parkedAt("casting-gate");
     expect((await gateView(casting.ctx, casting.store, "s02e01", "r1"))!.artifacts).toEqual([
-      { kind: "json", label: "tts-script.json", path: "Production/s02e01/tts-script.json", url: `${FILES}/Production/s02e01/tts-script.json` },
       { kind: "audio", label: "guest-refs/", path: "Production/s02e01/guest-refs", url: `${FILES}/Production/s02e01/guest-refs`, listUrl: `${FILES}/Production/s02e01/guest-refs` },
+      { kind: "json", label: "tts-script.json", path: "Production/s02e01/tts-script.json", url: `${FILES}/Production/s02e01/tts-script.json` },
     ]);
     casting.store.close();
 
