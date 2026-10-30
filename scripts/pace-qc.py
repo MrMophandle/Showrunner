@@ -12,6 +12,7 @@ import json, os, statistics, subprocess, sys
 from pathlib import Path
 
 from lib import showconfig as sc
+from lib.child import run_forwarding
 
 BAND = 0.15
 PASSES = 3
@@ -25,14 +26,16 @@ def resynth(ep: str) -> None:
       * the child is this interpreter and the script beside this file -- not `uv run` and not a
         show-relative path, because the engine runs a step with the SHOW root as the working
         directory, where this repository's scripts are not;
-      * its stdout is NOT redirected, so its ::progress lines and its per-segment prints reach the
-        engine's log instead of being swallowed;
+      * its stdout is piped to lib/child.run_forwarding, which prints every line of it as the
+        child writes it, so the child's per-segment prints still reach the engine's log in order
+        instead of being swallowed;
       * it is NOT given a new session, so it stays in the process group the engine spawned and
         kills on shutdown or timeout.
     The episode id travels as argv: no environment variable carries it any more.
+    The forwarder drops the child's `::progress` lines, because this step's progress is its own
+    rounds and the engine would otherwise record the renderer's segment count as this step's.
     """
-    subprocess.run([sys.executable, str(Path(__file__).with_name("tts-generate.py")), ep],
-                   check=True)
+    run_forwarding([sys.executable, str(Path(__file__).with_name("tts-generate.py")), ep])
 
 
 def main() -> None:
@@ -73,7 +76,8 @@ def main() -> None:
         med = statistics.median(r[1] for r in rows)
         outliers = [i for i, wpm in rows if abs(wpm - med) / med > BAND]
         print(f"round {rnd}: median {med:.0f} wpm, {len(outliers)} outliers beyond ±{int(BAND*100)}%")
-        sc.progress(rnd, PASSES, "rounds")
+        sc.progress(rnd, PASSES, "rounds",
+                    message=f"round {rnd}: {len(outliers)} segments re-rolled")
         if not outliers:
             # The rounds are over, however few it took: report the bar full before the result line
             # so a console never shows this step finishing at 1 of 3.

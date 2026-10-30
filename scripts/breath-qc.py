@@ -20,13 +20,14 @@ It does NOT time-stretch and does NOT touch pitch. It finds pauses the model
 ALREADY placed but clipped too short, and lengthens them -- so the breath lands on
 a boundary the model itself chose. Idempotent: re-running finds nothing to do.
 """
-import json, os, subprocess, sys
+import json, os, sys
 from pathlib import Path
 
 import numpy as np
 import soundfile as sf
 
 from lib import showconfig as sc
+from lib.child import run_forwarding
 
 MAX_RUN = 8.0        # longest acceptable unbroken speech stretch (median is ~5s)
 BREATH = 0.20        # a gap at/above this already reads as a breath
@@ -89,14 +90,17 @@ def resynth(ep: str) -> None:
       * the child is this interpreter and the script beside this file -- not `uv run` and not a
         show-relative path, because the engine runs a step with the SHOW root as the working
         directory, where this repository's scripts are not;
-      * its stdout is NOT redirected, so its ::progress lines and its per-segment prints reach the
-        engine's log instead of being swallowed;
+      * its stdout is piped to lib/child.run_forwarding, which prints every line of it as the
+        child writes it, so the child's per-segment prints still reach the engine's log in order
+        instead of being swallowed;
       * it is NOT given a new session, so it stays in the process group the engine spawned and
         kills on shutdown or timeout.
     The episode id travels as argv: no environment variable carries it any more.
+    The forwarder drops the child's `::progress` lines, because this step's progress is the
+    narrator segments it walks itself and the engine would otherwise record the renderer's
+    segment count as this step's.
     """
-    subprocess.run([sys.executable, str(Path(__file__).with_name("tts-generate.py")), ep],
-                   check=True)
+    run_forwarding([sys.executable, str(Path(__file__).with_name("tts-generate.py")), ep])
 
 
 def main():
