@@ -504,6 +504,18 @@ export interface FileRead { path: string; text: string; hash: string }
 /** The answer to a write: the hash of what is now on disk, which is the next write's `baseHash`. */
 export interface FileWritten { path: string; hash: string; bytes: number }
 
+/** One guest at the casting gate: the manifest's cast key (`name`), the slug the takes are named
+ *  by (`pim-2.wav` → `pim`), and the reference the manifest currently casts them from
+ *  (show-relative).
+ *
+ *  The slug is the engine's own `slugName` (`engine/src/needs.ts:57`) rather than a second rule
+ *  spelled out in the console, because that function is what names the takes on disk: the
+ *  `refs-ready` guard looks for a speaking guest's voice at `<guest-refs>/<slug>*.wav` by it, and
+ *  the tts-script prompt tells the agent the same convention. A guest written "the Warden" in the
+ *  cast therefore has takes named `warden-1.wav`, which a rule that kept the article would not
+ *  find. */
+export interface CastingGuest { name: string; slug: string; current: string }
+
 /** Everything the Gate page draws: the question the gate is asking, the files it is asking about,
  *  and the evidence the pipeline gathered before it asked.
  *
@@ -540,6 +552,13 @@ export interface GateView {
    *  ($19.4812 of review and revision)"), and they agree because both are read from the log through
    *  `roundExtras` (`engine/src/agent-step.ts`) rather than each counting for itself. */
   round?: { n: number; costUsd: number };
+  /** On `casting-gate` only: the guests the takes are for, so the page can draw a choice per
+   *  guest and Approve can carry it (Ryan, 2026-10-30). `dir` is the episode's guest-references
+   *  directory, show-relative, which every pick must lie inside — the show's own
+   *  `audio.guestRefsDir` with its `{episodeId}` substituted, or the engine's default
+   *  `<productionDir>/<episodeId>/guest-refs`. Absent at every other gate, and absent when the
+   *  manifest cannot be read, in which case the page lists the takes as before. */
+  casting?: { dir: string; guests: CastingGuest[] };
 }
 
 /** One prompt file an agent step ran, as the run recorded it and as it stands on disk now.

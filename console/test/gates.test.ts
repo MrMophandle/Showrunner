@@ -102,6 +102,38 @@ describe("the gate view", () => {
     image.store.close();
   });
 
+  it("at the casting gate, names each guest with the take the manifest casts them from", async () => {
+    const casting = await parkedAt("casting-gate");
+    await writeIn(casting.root, "Production/s02e01/tts-script.json", JSON.stringify({
+      episode: "s02e01", engine: "qwen3",
+      cast: {
+        narrator: { ref: "Production/voice-refs/narrator.wav", ref_text: "x" },
+        Vale: { ref: "Production/voice-refs/vale.wav", ref_text: "x" },
+        "Dockmaster Hale": { ref: "Production/s02e01/guest-refs/dockmaster-hale-1.wav", ref_text: "x", guest: true },
+        Pim: { ref: "Production/s02e01/guest-refs/pim-2.wav", ref_text: "x", guest: true },
+      },
+      segments: [],
+    }));
+    const view = (await gateView(casting.ctx, casting.store, "s02e01", "r1"))!;
+    expect(view.casting).toEqual({
+      dir: "Production/s02e01/guest-refs",
+      guests: [
+        { name: "Dockmaster Hale", slug: "dockmaster-hale", current: "Production/s02e01/guest-refs/dockmaster-hale-1.wav" },
+        { name: "Pim", slug: "pim", current: "Production/s02e01/guest-refs/pim-2.wav" },
+      ],
+    });
+    casting.store.close();
+  });
+
+  it("carries no casting block at another gate, or when the manifest is missing", async () => {
+    const script = await parkedAt("script-gate");
+    expect((await gateView(script.ctx, script.store, "s02e01", "r1"))!.casting).toBeUndefined();
+    script.store.close();
+    const casting = await parkedAt("casting-gate");
+    expect((await gateView(casting.ctx, casting.store, "s02e01", "r1"))!.casting).toBeUndefined();
+    casting.store.close();
+  });
+
   it("shows the verdicts of schema-bearing agent steps and nothing else that happens to carry a pass", async () => {
     const { ctx, store } = await parkedAt("script-gate", [
       // Schema-bearing agent steps: a reviewer and the canon review. These are verdicts.

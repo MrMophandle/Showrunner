@@ -13,7 +13,7 @@ import { ImportRefused, initScaffold, type GateChoice } from "@showrunner/tools"
 import type {
   EpisodeRow, EventBatch, FailedShow, FileRead, FileWritten, ShowInfo, ShowsList, SseMessage,
 } from "../shared/types.js";
-import { editableArtifact, serveArtifact, serveRunLog, writeAtomically } from "./artifacts.js";
+import { applyCastingPicks, editableArtifact, serveArtifact, serveRunLog, writeAtomically } from "./artifacts.js";
 import {
   answerBibleGate, bibleFile, bibleFilePath, bibleRows, collectingIO, finishBible, saveAnswers,
   startBibleRun, unapprovedBibleFiles, type BibleDeps,
@@ -798,7 +798,15 @@ export function createApp(
    *
    *  `expectedAttempt` is the attempt the Gate page read. The engine refuses an answer that names
    *  a different one, which is the whole protection against a tab left open across a rejection:
-   *  the showrunner would otherwise approve a message that a fix agent has already superseded. */
+   *  the showrunner would otherwise approve a message that a fix agent has already superseded.
+   *
+   *  **`picks` are written into the manifest before the gate is answered**, which is what makes a
+   *  bad pick refusable: the order is lock, write, answer, spawn, so a refused pick is a 400 with
+   *  the manifest unchanged and the gate still open at the same attempt, while a pick written
+   *  after the answer would race the worker this route then spawns for the manifest it reads.
+   *  Accepted at `casting-gate` only — a take per guest, show-relative — and the engine learns of
+   *  an accepted pick through `tts-generate`'s input hash rather than through anything appended
+   *  here (`applyCastingPicks`, `server/artifacts.ts`). */
   app.post("/api/shows/:show/episodes/:id/runs/:run/gate", async (c) => {
     const ctx = c.get("ctx");
     const checked = checkIds(c);
@@ -813,8 +821,25 @@ export function createApp(
     if (typeof approved !== "boolean") return c.json({ error: "approved must be true or false" }, 400);
     if (typeof notes !== "string") return c.json({ error: "notes must be a string" }, 400);
     if (expectedAttempt !== undefined && !Number.isInteger(expectedAttempt)) return c.json({ error: "expectedAttempt must be an integer" }, 400);
+    // The picks are checked for shape and for gate here, before the lock is read, because neither
+    // question needs the lock. The run's **open** gate is consulted and not just the body's
+    // `stepId`: a body naming `casting-gate` while the run is parked at another gate would have
+    // its manifest rewritten and only then be refused by `answerGate`.
+    const picks = body["picks"];
+    if (picks !== undefined) {
+      if (typeof picks !== "object" || picks === null || Array.isArray(picks)) return c.json({ error: "picks must be an object of guest name to take path" }, 400);
+      if (stepId !== "casting-gate") return c.json({ error: "picks are accepted only at casting-gate" }, 400);
+      const view = await gateView(ctx, c.get("store"), id, run);
+      if (view === undefined || view.stepId !== "casting-gate") return c.json({ error: "picks are accepted only at casting-gate" }, 400);
+    }
     const held = await readLock(ctx, id, run);
     if (held?.alive === true) return c.json({ error: `run ${run} is held by pid ${held.pid}` }, 409);
+    // After the lock (a live worker is the one process allowed to touch the manifest) and before
+    // the answer (which releases the run to the worker spawned below).
+    if (picks !== undefined && Object.keys(picks as object).length > 0) {
+      const applied = await applyCastingPicks(ctx, id, picks as Record<string, string>);
+      if (!applied.ok) return c.json({ error: applied.error }, 400);
+    }
     try {
       await answerGate(logOf(ctx, id, run), run, stepId, {
         approved, notes, by: ctx.operator,

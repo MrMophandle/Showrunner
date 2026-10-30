@@ -2,10 +2,10 @@ import path from "node:path";
 import { createReadStream } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { Readable } from "node:stream";
-import { readdir, rename, rm, stat, writeFile } from "node:fs/promises";
-import { EventLog, parseEpisodeId } from "@showrunner/engine";
+import { readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { EventLog, hashFile, parseEpisodeId } from "@showrunner/engine";
 import type { Context } from "hono";
-import { gateView } from "./gates.js";
+import { gateView, guestRefsDirOf } from "./gates.js";
 import type { RunStore } from "./runs.js";
 import type { ShowContext } from "./show.js";
 
@@ -263,4 +263,59 @@ export async function writeAtomically(abs: string, text: string): Promise<number
     throw err;
   }
   return Buffer.byteLength(text, "utf8");
+}
+
+/** Writes the casting gate's picks into the manifest: `cast[<guest>].ref = <take>`.
+ *
+ *  Every pick is checked before anything is written — the name must be a guest in the manifest,
+ *  the take must lie inside the episode's guest-reference directory (`guestRefsDirOf`, which
+ *  reads the show's `audio.guestRefsDir`), be audio, pass the artifact fence, and exist — so one
+ *  bad pick refuses the whole answer and the manifest on disk is untouched. Half a casting is a
+ *  cast list nobody chose, and a 400 naming one bad take says nothing about which of the others
+ *  landed; all-or-nothing makes the refusal mean "nothing happened, fix it and answer again".
+ *
+ *  The write is atomic (`writeAtomically`), so `tts-generate` never reads a half-written
+ *  manifest, and it is rewritten with `JSON.stringify(doc, null, 1)` — the same one-space indent
+ *  the Python steps that rewrite this file use (`scripts/pace-qc.py:89`,
+ *  `scripts/truncation-qc.py:180`, both `json.dump(doc, …, indent=1)`), so a pick does not
+ *  reformat the file and show up as a whole-file diff.
+ *
+ *  **Nothing is recorded in the run log for a pick.** The engine learns of the change the way it
+ *  learns of any edit to a declared input: `tts-generate` declares `tts-script.json` as its input
+ *  (`engine/src/pipelines/episode.ts:321`), and `runScriptStep` compares the fresh input hashes
+ *  with the last completion's (`engine/src/runner.ts:429-442`), so a picked manifest is not
+ *  served from `step_cached` and emits `input_changed` instead. The hash trail is the record; a
+ *  console-minted event would be a second claim about the same fact, able to disagree with the
+ *  file on disk. */
+export async function applyCastingPicks(
+  ctx: ShowContext, episodeId: string, picks: Record<string, string>,
+): Promise<{ ok: true; applied: Record<string, string> } | { ok: false; error: string }> {
+  const manifestRel = `${ctx.productionDir}/${episodeId}/tts-script.json`;
+  const manifestAbs = path.join(ctx.showRoot, manifestRel);
+  let parsed: unknown;
+  try { parsed = JSON.parse(await readFile(manifestAbs, "utf8")); } catch (err) {
+    return { ok: false, error: `${manifestRel} could not be read: ${(err as Error).message}` };
+  }
+  // Refused rather than coerced, because this object is what gets written back: a manifest that
+  // parsed to `null` or to an array would otherwise reach `JSON.stringify` and replace the file.
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    return { ok: false, error: `${manifestRel} is not a JSON object, so it has no cast to pick from` };
+  }
+  const doc = parsed as { cast?: Record<string, { ref?: unknown; guest?: unknown }> };
+  const cast = doc.cast ?? {};
+  const refsPrefix = `${guestRefsDirOf(ctx.show, episodeId)}/`;
+  const applied: Record<string, string> = {};
+  for (const [name, take] of Object.entries(picks)) {
+    const entry = cast[name];
+    if (entry === undefined || entry.guest !== true) return { ok: false, error: `${JSON.stringify(name)} is not a guest in ${manifestRel}` };
+    if (typeof take !== "string" || !take.startsWith(refsPrefix)) return { ok: false, error: `the take for ${name} must be a file under ${refsPrefix}` };
+    if (!/\.(wav|mp3|flac|m4a|ogg|aac)$/i.test(take)) return { ok: false, error: `the take for ${name} is not an audio file: ${take}` };
+    const fenced = resolveArtifactPath(ctx, episodeId, take);
+    if (!fenced.ok) return { ok: false, error: fenced.error };
+    if ((await hashFile(fenced.abs)) === null) return { ok: false, error: `the take for ${name} does not exist: ${take}` };
+    applied[name] = take;
+  }
+  for (const [name, take] of Object.entries(applied)) (cast[name] as { ref: string }).ref = take;
+  await writeAtomically(manifestAbs, JSON.stringify(doc, null, 1) + "\n");
+  return { ok: true, applied };
 }
