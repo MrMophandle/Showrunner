@@ -587,6 +587,15 @@ select { min-height: var(--tap); }
 .audio-seek-at { min-width: 3.5rem; }
 .audio-seek-input { width: 6rem; min-height: var(--tap); }
 
+/* One guest's candidate takes at the casting gate, as a choice: the fieldset is the group the
+   radios share, and its legend is the guest's name as the manifest's cast list spells it. The
+   label is a flex row with the tap target's height, because the radio and the file name are one
+   thing to hit on a phone — this gate is answered on a couch. */
+.cast-guest { border: 1px solid var(--border); border-radius: var(--radius); padding: 0.5rem 0.9rem; margin: 0.6rem 0; }
+.cast-guest > legend { font-weight: 600; padding: 0 0.3rem; }
+.cast-take { margin: 0.3rem 0; }
+.cast-take label { display: inline-flex; align-items: center; gap: 0.4rem; min-height: var(--tap); }
+
 /* ── markdown and diffs ───────────────────────────────────────────────────────────────────── */
 
 .md > *:first-child { margin-top: 0; }
