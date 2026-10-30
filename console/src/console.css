@@ -583,6 +583,7 @@ select { min-height: var(--tap); }
 .audio-seek-label { color: var(--text-dim); margin-bottom: 0.2rem; }
 .audio-seek audio { width: 100%; max-width: 44rem; }
 .audio-seek-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; margin-top: 0.3rem; }
+.audio-transcript { margin: 0.2rem 0 0.6rem; max-width: 44rem; font-style: italic; }
 .audio-seek-at { min-width: 3.5rem; }
 .audio-seek-input { width: 6rem; min-height: var(--tap); }
 
