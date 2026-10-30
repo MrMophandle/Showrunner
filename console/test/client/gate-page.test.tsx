@@ -501,6 +501,130 @@ describe("the casting gate's choice", () => {
     expect("picks" in body).toBe(false);
   });
 
+  /** The grouping rule, which is the engine's and not this page's: the `refs-ready` guard lowercases
+   *  every WAV in the directory and matches a guest's take with `startsWith(slug)`
+   *  (`engine/src/needs.ts:141,179`). So the page groups a take with the guest whose slug is the
+   *  **longest** slug the take's lowercased name starts with — any other rule would draw a choice
+   *  the guard does not see, and a take the operator picked would not be a take the pipeline counts
+   *  as that guest's. Three names the old transcript-stem rule dropped on the floor: `hallet2.wav`
+   *  (no hyphen before the number), `Hallet-1.wav` (capitalised) and `hallet_warm.wav` (a word where
+   *  a number was expected). */
+  it("groups every take the engine's guard would match, whatever the name after the slug", async () => {
+    refsListing.entries = [
+      { name: "hallet2.wav", size: 1, isDir: false },
+      { name: "Hallet-1.wav", size: 1, isDir: false },
+      { name: "hallet_warm.wav", size: 1, isDir: false },
+    ];
+    mount(castingView({
+      casting: { dir: REFS_PATH, guests: [{ name: "Hallet", slug: "hallet", current: `${REFS_PATH}/Hallet-1.wav` }] },
+    }));
+    const hallet = await screen.findByRole("group", { name: "Hallet" });
+
+    const radios = within(hallet).getAllByRole("radio") as HTMLInputElement[];
+    // Sorted by code unit on both sides: the fieldset's own order is `localeCompare`'s, which puts
+    // punctuation and digits where the platform's collation puts them, and that is not what this
+    // test is about.
+    expect(radios.map((r) => r.value).sort()).toEqual([
+      `${REFS_PATH}/Hallet-1.wav`, `${REFS_PATH}/hallet2.wav`, `${REFS_PATH}/hallet_warm.wav`,
+    ].sort());
+    // And the preselection is still path equality with the manifest's take, which here is the
+    // capitalised one.
+    expect(radios.filter((r) => r.checked).map((r) => r.value)).toEqual([`${REFS_PATH}/Hallet-1.wav`]);
+  });
+
+  it("gives a take to the longest slug it starts with, so a junior does not land in the senior's fieldset", async () => {
+    refsListing.entries = [
+      { name: "hale-1.wav", size: 1, isDir: false },
+      { name: "hale-junior-1.wav", size: 1, isDir: false },
+    ];
+    mount(castingView({
+      casting: {
+        dir: REFS_PATH,
+        guests: [
+          { name: "Hale", slug: "hale", current: `${REFS_PATH}/hale-1.wav` },
+          { name: "Hale Junior", slug: "hale-junior", current: `${REFS_PATH}/hale-junior-1.wav` },
+        ],
+      },
+    }));
+    const hale = await screen.findByRole("group", { name: "Hale" });
+    const junior = await screen.findByRole("group", { name: "Hale Junior" });
+
+    expect((within(hale).getAllByRole("radio") as HTMLInputElement[]).map((r) => r.value))
+      .toEqual([`${REFS_PATH}/hale-1.wav`]);
+    expect((within(junior).getAllByRole("radio") as HTMLInputElement[]).map((r) => r.value))
+      .toEqual([`${REFS_PATH}/hale-junior-1.wav`]);
+  });
+
+  /** The picks the page posts are exactly the takes it drew as radios, and nothing else (the fix
+   *  wave's F2). The manifest can cast a guest from a file this directory does not hold — a take
+   *  recorded for another episode, `Production/s01e07/guest-refs/hallet-1.wav` — and a page that
+   *  seeded its picks from the manifest would post that path, which the answer route then refuses
+   *  by the fence for a choice the operator never made. So no radio means no pick: the guest is
+   *  absent from the posted map and the manifest's own `ref` for them is left alone. */
+  it("posts a pick only for a guest whose cast take is one of the radios it drew", async () => {
+    const { fetchMock } = mount(castingView({
+      casting: {
+        dir: REFS_PATH,
+        guests: [
+          { name: "Pim", slug: "pim", current: `${REFS_PATH}/pim-1.wav` },
+          { name: "Hallet", slug: "hallet", current: "Production/s01e07/guest-refs/hallet-1.wav" },
+        ],
+      },
+    }));
+    await screen.findByRole("group", { name: "Pim" });
+
+    // The sentence beside Approve still names the manifest's take for the guest with no radio,
+    // through its `?? guest.current` fallback — what Approve does to that guest is nothing.
+    expect(screen.getByText("Approve casts Pim from pim-1.wav, Hallet from hallet-1.wav.")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /approve/i }));
+    await waitFor(() => { expect(postedBody(fetchMock)).not.toBeUndefined(); });
+    const body = postedBody(fetchMock)!;
+    expect(body["picks"]).toEqual({ Pim: `${REFS_PATH}/pim-1.wav` });
+    expect(body["approved"]).toBe(true);
+    // The stub answers the POST 200, as the route does for picks it accepts, and the page shows no
+    // refusal: the path the operator never chose was never sent to be refused.
+    expect(screen.queryByText(/must begin with/)).toBeNull();
+  });
+
+  it("says no take is named for a guest this directory holds none for, and draws no radio there", async () => {
+    mount(castingView({
+      casting: {
+        dir: REFS_PATH,
+        guests: [
+          { name: "Pim", slug: "pim", current: `${REFS_PATH}/pim-1.wav` },
+          { name: "Hallet", slug: "hallet", current: `${REFS_PATH}/hallet-1.wav` },
+        ],
+      },
+    }));
+    const hallet = await screen.findByRole("group", { name: "Hallet" });
+
+    expect(within(hallet).queryAllByRole("radio")).toHaveLength(0);
+    expect(within(hallet).getByText("no take in this directory is named for Hallet")).toBeInTheDocument();
+    // Pim's two are still the only radios on the page, so the empty fieldset took nothing from her.
+    expect(screen.getAllByRole("radio")).toHaveLength(2);
+  });
+
+  /** A reload is the one thing on this page that throws a choice away: it refetches the gate and
+   *  re-reads the casting from the manifest, so a take the operator picked and has not approved yet
+   *  is gone. It asks first, in the wording family of the edit link's own guard, and a no does
+   *  nothing at all — the radio the operator chose is still the radio that is checked. */
+  it("asks before a reload drops a take the operator picked, and keeps the choice on a no", async () => {
+    mount(castingView());
+    const pim = await screen.findByRole("group", { name: "Pim" });
+    fireEvent.click(within(pim).getByLabelText("pim-2.wav"));
+
+    // The reload button exists only once the run has written to its log since the gate was opened,
+    // which is what the notice banner is about.
+    deliver({ type: "run", show: "harbor", episodeId: "s02e01", runId: RUN_ID, offset: 512 });
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    fireEvent.click(screen.getByRole("button", { name: /reload the gate/i }));
+
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect((within(pim).getByLabelText("pim-2.wav") as HTMLInputElement).checked).toBe(true);
+    expect((within(pim).getByLabelText("pim-1.wav") as HTMLInputElement).checked).toBe(false);
+  });
+
   it("checks nothing and says so when the manifest casts a take this directory does not hold, and leaves a take no guest claims as a player", async () => {
     // Two cases the directory and the manifest can disagree about. The manifest's take is gone —
     // renamed, or recorded into another directory — so no radio can be preselected, and a page

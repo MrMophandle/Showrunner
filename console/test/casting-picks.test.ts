@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { gateView } from "../server/gates.js";
 import { appWith, makeShow, seedRun, writeIn, type SeedEvent } from "./helpers.js";
@@ -22,8 +22,12 @@ const REFS = "Production/s02e01/guest-refs";
  *
  *  `guestRefsPattern` writes `audio.guestRefsDir` into the show's config before the show is
  *  loaded, and the manifest and the files then go wherever that pattern names. Omitted, the show
- *  configures no `audio` block at all and the takes live in the engine's default directory. */
-async function parkedAtCasting(guestRefsPattern?: string) {
+ *  configures no `audio` block at all and the takes live in the engine's default directory.
+ *
+ *  `refText` is what every cast entry's `ref_text` says. It is a parameter for one test's sake: a
+ *  real manifest's `ref_text` is the line the voice read, which carries em dashes and curly quotes,
+ *  and how those bytes come back out of a pick is the subject of the json.dump test below. */
+async function parkedAtCasting(guestRefsPattern?: string, refText = "x") {
   const root = await makeShow();
   if (guestRefsPattern !== undefined) {
     const config = JSON.parse(await readFile(path.join(root, "showrunner.json"), "utf8")) as Record<string, unknown>;
@@ -38,9 +42,9 @@ async function parkedAtCasting(guestRefsPattern?: string) {
   await writeIn(root, MANIFEST, JSON.stringify({
     episode: "s02e01", engine: "qwen3",
     cast: {
-      narrator: { ref: "Production/voice-refs/narrator.wav", ref_text: "x" },
-      Pim: { ref: `${refs}/pim-1.wav`, ref_text: "x", guest: true },
-      Maeve: { ref: `${refs}/maeve-1.wav`, ref_text: "x", guest: true },
+      narrator: { ref: "Production/voice-refs/narrator.wav", ref_text: refText },
+      Pim: { ref: `${refs}/pim-1.wav`, ref_text: refText, guest: true },
+      Maeve: { ref: `${refs}/maeve-1.wav`, ref_text: refText, guest: true },
     },
     segments: [],
   }));
@@ -95,6 +99,97 @@ describe("picks on the casting gate's answer", () => {
     expect(retry.status).toBe(200);
     expect((await manifest(root)).cast["Pim"]?.ref).toBe(`${REFS}/pim-2.wav`);
     expect((await store.get("s02e01", "r1")).events.some((e) => e.kind === "gate_answered")).toBe(true);
+    store.close();
+  });
+
+  /** Two tabs on one gate, which is the one case where a written pick has to be taken back. The
+   *  first tab's approve closes the gate; the second tab, which has been open since before that,
+   *  posts its own approve with a pick. The route's pre-check cannot refuse it — the gate it reads
+   *  is the gate `answerGate` then reads, and a gate closed between the two reads is the race
+   *  itself — so the manifest is written and `answerGate` refuses the answer with "is not open".
+   *  Nothing downstream will ever read that answer: the run has moved past casting, so the picks
+   *  are an edit nobody asked for, and they are put back before the 409 is returned.
+   *
+   *  Told apart from the stale-attempt 409 (the test above), where the picks deliberately **stay**:
+   *  there the gate is still open at the step the pick is about and the operator answers again. */
+  it("puts the manifest back when the gate was answered by somebody else first, and says so", async () => {
+    const { root, app, store } = await parkedAtCasting();
+    const first = await answer(app, { stepId: "casting-gate", approved: true, expectedAttempt: 1 });
+    expect(first.status).toBe(200);
+
+    const second = await answer(app, { stepId: "casting-gate", approved: true, expectedAttempt: 1, picks: { Pim: `${REFS}/pim-2.wav` } });
+    expect(second.status).toBe(409);
+    const { error } = (await second.json()) as { error: string };
+    expect(error).toContain("is not open");
+    expect(error).toContain("the picks written for this answer were restored");
+    expect((await manifest(root)).cast["Pim"]?.ref).toBe(`${REFS}/pim-1.wav`);
+    store.close();
+  });
+
+  /** The bytes, not just the parse. `tts-script.json` is rewritten by two Python steps as well
+   *  (`scripts/pace-qc.py:89`, `scripts/truncation-qc.py:180`, both `json.dump(doc, f, indent=1)`),
+   *  and `json.dump` defaults to `ensure_ascii=True` and writes no trailing newline — so a console
+   *  that wrote the em dashes and curly quotes of `ref_text` as themselves, or added a newline,
+   *  would turn a one-line casting change into a whole-file diff the next time either step ran. */
+  it("writes the manifest the way json.dump does: non-ASCII escaped, and no trailing newline", async () => {
+    const line = "The harbour never did keep a secret — not one “worth” telling.";
+    const { root, app, store } = await parkedAtCasting(undefined, line);
+    const res = await answer(app, { stepId: "casting-gate", approved: true, expectedAttempt: 1, picks: { Pim: `${REFS}/pim-2.wav` } });
+    expect(res.status).toBe(200);
+
+    const text = await readFile(path.join(root, MANIFEST), "utf8");
+    expect(text).toContain("\\u2014");
+    expect(text).toContain("\\u201c");
+    expect(text).not.toContain("—");
+    expect(text).not.toContain("“");
+    expect(text.endsWith("\n")).toBe(false);
+    // One space of indent, as `indent=1` gives: the cast sits one space in, its entries two.
+    expect(text).toContain('\n "cast": {\n  "narrator": {');
+    // And nothing was lost by escaping it: the line reads back as the line that was written.
+    const parsed = JSON.parse(text) as { cast: Record<string, { ref: string; ref_text: string }> };
+    expect(parsed.cast["Pim"]?.ref_text).toBe(line);
+    expect(parsed.cast["Pim"]?.ref).toBe(`${REFS}/pim-2.wav`);
+    store.close();
+  });
+
+  /** An approve that confirms the manifest's own casting changes nothing, so it writes nothing. The
+   *  manifest is an input to `tts-generate`, which is cached on its content hash and not its mtime,
+   *  so a rewrite of identical content would cost nothing downstream — but the file the operator
+   *  reads would be reformatted and its timestamp moved for a decision that was "leave it as it
+   *  is", and the artifact-freshness checks an operator makes by eye are made on mtimes. */
+  it("writes nothing when every pick is the take the manifest already casts", async () => {
+    const { root, app, store } = await parkedAtCasting();
+    const file = path.join(root, MANIFEST);
+    const before = await readFile(file, "utf8");
+    const beforeStat = await stat(file);
+
+    const res = await answer(app, {
+      stepId: "casting-gate", approved: true, expectedAttempt: 1,
+      picks: { Pim: `${REFS}/pim-1.wav`, Maeve: `${REFS}/maeve-1.wav` },
+    });
+    expect(res.status).toBe(200);
+    // Byte for byte the fixture's own text, which is written with no indent at all: a rewrite would
+    // have reformatted it even though the casting is the same.
+    expect(await readFile(file, "utf8")).toBe(before);
+    expect((await stat(file)).mtimeMs).toBe(beforeStat.mtimeMs);
+    store.close();
+  });
+
+  /** A name in the directory that is not a file. The existence check used to be the engine's
+   *  `hashFile`, which returns null for a missing file and **throws** for anything else — so a
+   *  directory called `pim-3.wav` raised EISDIR out of the handler into `app.onError`, a 500
+   *  carrying a stack-trace fragment where a 400 and a sentence belong. */
+  it("refuses a take that is a directory with a plain 400", async () => {
+    const { root, app, store } = await parkedAtCasting();
+    await mkdir(path.join(root, REFS, "pim-3.wav"), { recursive: true });
+
+    const res = await answer(app, { stepId: "casting-gate", approved: true, expectedAttempt: 1, picks: { Pim: `${REFS}/pim-3.wav` } });
+    expect(res.status).toBe(400);
+    const { error } = (await res.json()) as { error: string };
+    expect(error).toContain(`${REFS}/pim-3.wav`);
+    expect(error).not.toContain("EISDIR");
+    expect(error).not.toContain(root);
+    expect((await manifest(root)).cast["Pim"]?.ref).toBe(`${REFS}/pim-1.wav`);
     store.close();
   });
 
