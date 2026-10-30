@@ -1,9 +1,10 @@
 import path from "node:path";
-import { stat } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import {
-  deriveRunState, describePipeline, episodePipeline, mixFilename, parseEpisodeId,
+  deriveRunState, describePipeline, episodePipeline, formatFilename, mixFilename, parseEpisodeId,
+  slugName, type ShowConfig,
 } from "@showrunner/engine";
-import type { GateArtifact, GateView } from "../shared/types.js";
+import type { CastingGuest, GateArtifact, GateView } from "../shared/types.js";
 import { roundOf, type RunStore } from "./runs.js";
 import type { ShowContext } from "./show.js";
 
@@ -96,13 +97,24 @@ export async function gateArtifacts(ctx: ShowContext, episodeId: string, gateId:
       return [file(ctx.key, episodeId, "markdown", `${ep}/outline.md`)];
     case "script-gate":
       return [file(ctx.key, episodeId, "markdown", `${ep}/script.md`)];
-    case "casting-gate":
+    case "casting-gate": {
       // The voices first: the decision at this gate is about the guest takes, and the manifest is
       // what the takes are cast into (Ryan, 2026-10-30: "I want to jump RIGHT to the voices").
+      //
+      // The directory is `guestRefsDirOf`'s and not a hardcoded `guest-refs`, so that **this
+      // artifact's `path` and the casting block's `dir` are one string for every show**: the page
+      // lists this artifact and sends `${artifact.path}/<take>` as the pick, which the answer
+      // route then checks against `guestRefsDirOf` again — two spellings here would list one
+      // directory and pick from another, and for a show that configures `audio.guestRefsDir`
+      // every pick would be refused by name. The label follows the directory for the same reason:
+      // a pane headed `guest-refs/` over the contents of `voices/` is the same disagreement in
+      // the one place the operator reads it.
+      const refs = guestRefsDirOf(ctx.show, episodeId);
       return [
-        dir(ctx.key, episodeId, "audio", `${prod}/guest-refs`, "guest-refs/"),
+        dir(ctx.key, episodeId, "audio", refs, `${path.posix.basename(refs)}/`),
         file(ctx.key, episodeId, "json", `${prod}/tts-script.json`),
       ];
+    }
     case "audio-gate":
       return [file(ctx.key, episodeId, "audio", `${prod}/audio/${mixFilename(ctx.show, episodeId)}`)];
     case "nano-banana-gate":
@@ -126,6 +138,57 @@ export async function gateArtifacts(ctx: ShowContext, episodeId: string, gateId:
     default:
       return [];
   }
+}
+
+/** One episode's guest-reference directory, show-relative: the show's `audio.guestRefsDir` with
+ *  its `{episodeId}` token substituted and any trailing slash trimmed, or
+ *  `<productionDir>/<episodeId>/guest-refs` when the key is absent. This is the engine's own rule
+ *  — `guestRefsDir` at `engine/src/needs.ts:85` — and it is the directory the `refs-ready` guard
+ *  globs an episode's guest takes from, so the gate must name the same one or it would offer
+ *  takes the pipeline will not look for.
+ *
+ *  Replicated rather than imported: `needs.ts`'s function is private to that module and this
+ *  change modifies no engine file. One line of the original is deliberately left out, its second
+ *  `checkGuestRefsDir` call — every `ShowConfig` the console holds came from `loadShowConfig`,
+ *  which already refuses a configured value that carries no `{episodeId}`, an empty one, and one
+ *  that is not a string. `formatFilename` still throws by name on an unknown token (`{epId}`)
+ *  exactly as it does for the engine, and the console already reaches that same throw through
+ *  `missingRefs` (`server/episodes.ts:47`), so a misconfigured show gains no new failure here.
+ *
+ *  **A configured directory outside the episode's own two trees can be named here and not picked
+ *  from.** The artifact fence serves `<episodesDir>/<id>/` and `<productionDir>/<id>/` and
+ *  nothing else (`resolveArtifactPath`, `server/artifacts.ts`), so a show whose guest references
+ *  sit at `Voices/<id>/guests` has its takes listed at the gate and every pick refused by the
+ *  fence. That is the fence's rule and not this function's: widening it would hand out a path
+ *  outside the episode, which is the one thing the artifact route exists to refuse. */
+export function guestRefsDirOf(show: ShowConfig, episodeId: string): string {
+  const configured = show.audio?.["guestRefsDir"];
+  if (typeof configured === "string") return formatFilename(configured, { episodeId }).replace(/\/+$/, "");
+  return `${show.productionDir ?? "Production"}/${episodeId}/guest-refs`;
+}
+
+/** The casting gate's guests from the episode's manifest, or undefined when there is no manifest
+ *  to read or it has no guests — the page then lists the takes without a choice, as it did before.
+ *
+ *  Read from the manifest rather than from the guest-refs listing, because the manifest is the
+ *  file a pick changes and the only place that says which cast names are guests: a directory of
+ *  WAVs names takes, not casting. An unreadable or unparseable manifest is undefined and not an
+ *  error, so a gate whose `tts-script.json` the agent has not written yet still draws. */
+export async function castingOf(ctx: ShowContext, episodeId: string): Promise<GateView["casting"]> {
+  const manifestRel = `${ctx.productionDir}/${episodeId}/tts-script.json`;
+  let parsed: unknown;
+  try { parsed = JSON.parse(await readFile(path.join(ctx.showRoot, manifestRel), "utf8")); } catch { return undefined; }
+  const cast = (parsed as { cast?: unknown })?.cast;
+  if (typeof cast !== "object" || cast === null) return undefined;
+  const guests: CastingGuest[] = [];
+  for (const [name, entry] of Object.entries(cast as Record<string, unknown>)) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const e = entry as { ref?: unknown; guest?: unknown };
+    if (e.guest !== true || typeof e.ref !== "string") continue;
+    guests.push({ name, slug: slugName(name), current: e.ref });
+  }
+  if (guests.length === 0) return undefined;
+  return { dir: guestRefsDirOf(ctx.show, episodeId), guests };
 }
 
 /** The open gate of one run as the Gate page draws it, or undefined when no gate is open — which
@@ -164,6 +227,10 @@ export async function gateView(ctx: ShowContext, store: RunStore, episodeId: str
   // gate no panel precedes, which is every gate here but `script-gate`.
   const round = roundOf(events);
 
+  // The casting gate alone carries its guests, so the answer can name a take per guest. Every
+  // other gate asks about one artifact and has nothing to choose between.
+  const casting = gate.stepId === "casting-gate" ? await castingOf(ctx, episodeId) : undefined;
+
   return {
     episodeId,
     runId,
@@ -176,5 +243,6 @@ export async function gateView(ctx: ShowContext, store: RunStore, episodeId: str
     rejections,
     ...(maxAttempts !== undefined ? { maxAttempts } : {}),
     ...(round !== undefined ? { round } : {}),
+    ...(casting !== undefined ? { casting } : {}),
   };
 }

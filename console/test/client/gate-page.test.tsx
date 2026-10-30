@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import type { GateView } from "../../shared/types.js";
 import { ConsoleContext, type ConsoleData } from "../../src/api.js";
@@ -95,6 +95,42 @@ function gateView(over: Partial<GateView> = {}): GateView {
   };
 }
 
+/** The casting gate's one directory artifact: the episode's guest-reference directory, which the
+ *  artifact route serves both as a listing and as the files beneath it — the same url twice, which
+ *  is what marks a directory (`shared/types.ts`'s `GateArtifact`). `REFS_PATH` is the
+ *  show-relative path the same artifact carries, and it is what a pick is built from: the page
+ *  sends `${REFS_PATH}/<take>`, never a url and never the casting block's `dir`. */
+const REFS_PATH = "Production/s02e01/guest-refs";
+const REFS_URL = `/api/shows/harbor/episodes/s02e01/files/${REFS_PATH}`;
+
+/** The directory as the listing route answers it: two takes for Pim, and the transcript she read
+ *  them from — a text file, which `AUDIO_FILE` keeps out of the takes and `transcriptFor` puts
+ *  under them.
+ *
+ *  Mutable for the reason `disk` is (below): one test adds a take that belongs to no guest in the
+ *  cast, which is the case the page draws as a player and not as a choice. Reset in `beforeEach`. */
+const REFS_ENTRIES = [
+  { name: "pim-1.wav", size: 1, isDir: false },
+  { name: "pim-2.wav", size: 1, isDir: false },
+  { name: "pim.txt", size: 1, isDir: false },
+];
+const refsListing = { entries: [...REFS_ENTRIES] };
+
+/** What `pim.txt` says, which the page reads under each of Pim's takes. */
+const PIM_TRANSCRIPT = "The harbour never did keep a secret.";
+
+/** The gate as `casting-gate` arrives: the guest-refs directory as its one artifact, and Task 1's
+ *  casting block naming one guest with the take the manifest currently casts her from. */
+function castingView(over: Partial<GateView> = {}): GateView {
+  return gateView({
+    stepId: "casting-gate",
+    message: "Casting ready: Production/s02e01/tts-script.json",
+    artifacts: [{ kind: "audio", label: "guest-refs/", path: REFS_PATH, url: REFS_URL, listUrl: REFS_URL }],
+    casting: { dir: REFS_PATH, guests: [{ name: "Pim", slug: "pim", current: `${REFS_PATH}/pim-1.wav` }] },
+    ...over,
+  });
+}
+
 /** jsdom has no `EventSource`; the page opens the console's channel on mount. The instance is
  *  kept so a test can hand the page a notice, the way `test/client/edit-page.test.tsx` does. */
 class FakeEventSource {
@@ -121,33 +157,58 @@ function deliver(message: unknown): void {
 const disk = { script: SCRIPT_LINE };
 
 /** The network, answered from the view under test: the gate route, the artifact as `disk` holds it,
- *  and 404 for anything this page should not be asking for. */
-function stubFetch(view: GateView): void {
-  vi.stubGlobal("fetch", vi.fn(async (input: unknown) => {
+ *  the guest-refs listing and one transcript, the answer's own POST, and 404 for anything this page
+ *  should not be asking for.
+ *
+ *  **The mock is returned** so a test can read what the page posted. The answer is the one thing
+ *  this page sends rather than reads, and the body it sends is the whole of what "Approve carries
+ *  the picks" means; `mount` hands the same object back, because `mount` is what installs the stub
+ *  and a second `stubFetch` call would replace the mock the page is actually calling.
+ *
+ *  The POST is matched on the method and not on a different url: the gate's answer route is the
+ *  same address as the gate's view (`server/app.ts`), so the method is the only thing that tells
+ *  the read from the write. It answers `{runId, pid}`, which is what the real route answers, and
+ *  the page then navigates away from the gate. */
+function stubFetch(view: GateView) {
+  const fetchMock = vi.fn(async (input: unknown, init?: RequestInit) => {
     const url = String(input);
+    if (url.endsWith("/gate") && init?.method === "POST") return new Response(JSON.stringify({ runId: RUN_ID, pid: 4242 }), { status: 200 });
     if (url.endsWith("/gate")) return new Response(JSON.stringify(view), { status: 200 });
     if (url === SCRIPT_URL) return new Response(disk.script, { status: 200 });
+    if (url === REFS_URL) return new Response(JSON.stringify({ entries: refsListing.entries }), { status: 200 });
+    if (url === `${REFS_URL}/pim.txt`) return new Response(PIM_TRANSCRIPT, { status: 200 });
     return new Response(JSON.stringify({ error: `no stub for ${url}` }), { status: 404 });
-  }));
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
+}
+
+/** The body of the answer the page posted, or undefined while it has posted nothing. */
+function postedBody(fetchMock: ReturnType<typeof stubFetch>): Record<string, unknown> | undefined {
+  const init = fetchMock.mock.calls.find((call) => call[1]?.method === "POST")?.[1];
+  return init === undefined ? undefined : (JSON.parse(String(init.body)) as Record<string, unknown>);
 }
 
 /** The page at its own route, with the show's writability as the layout would have resolved it. */
 function mount(view: GateView, console_: Partial<ConsoleData> = {}) {
-  stubFetch(view);
+  const fetchMock = stubFetch(view);
   const value: ConsoleData = {
     show: null, showError: null, canAct: true, readOnly: false,
     rows: null, rowsError: null, rowsLoading: false, refetchRows: () => {},
     ...console_,
   };
-  return render(
-    <ConsoleContext.Provider value={value}>
-      <MemoryRouter initialEntries={[`/shows/harbor/episodes/s02e01/runs/${RUN_ID}/gate`]}>
-        <Routes>
-          <Route path="/shows/:show/episodes/:id/runs/:run/gate" element={<Gate />} />
-        </Routes>
-      </MemoryRouter>
-    </ConsoleContext.Provider>,
-  );
+  return {
+    ...render(
+      <ConsoleContext.Provider value={value}>
+        <MemoryRouter initialEntries={[`/shows/harbor/episodes/s02e01/runs/${RUN_ID}/gate`]}>
+          <Routes>
+            <Route path="/shows/:show/episodes/:id/runs/:run/gate" element={<Gate />} />
+          </Routes>
+        </MemoryRouter>
+      </ConsoleContext.Provider>,
+    ),
+    fetchMock,
+  };
 }
 
 /** Where a string sits in the rendered page, so two of them can be put in order. A closed
@@ -161,6 +222,7 @@ function positionOf(container: HTMLElement, text: string): number {
 
 beforeEach(() => {
   disk.script = SCRIPT_LINE;
+  refsListing.entries = [...REFS_ENTRIES];
   vi.stubGlobal("EventSource", FakeEventSource);
 });
 
@@ -376,5 +438,211 @@ describe("the Gate page's order", () => {
     expect(confirm).toHaveBeenCalledTimes(1);
     expect(screen.getByLabelText("notes")).toHaveValue("scene 4 reads as two scenes — split it");
     expect(screen.getByText(SCRIPT_LINE)).toBeInTheDocument();
+  });
+});
+
+/** The casting gate as a choice (Ryan's ruling, 2026-10-30: "it was more 'listening to the
+ *  choices' and less 'pick a choice' kinda page").
+ *
+ *  What these tests are about is the one fact the gate had no way to carry before: **which take
+ *  the showrunner chose**. An approve note naming takes ("approved, hallet2 and veleth2") was read
+ *  by nothing, and the render that followed used whatever the manifest already said. So the page
+ *  draws a radio per take per guest and the answer carries the picks, which the server writes into
+ *  `tts-script.json` before the gate is answered (`test/casting-picks.test.ts`).
+ *
+ *  Every url here is the artifact's own (`url`, `listUrl`), and every pick is
+ *  `${artifact.path}/<take>`: the casting block's `dir` is a show-relative path the server does not
+ *  build a url from, and a page that concatenated it would be a second declaration of the artifact
+ *  route's shape (`server/gates.ts`'s `artifactUrl`). */
+describe("the casting gate's choice", () => {
+  it("at the casting gate, offers each guest's takes as a choice with the manifest's take preselected", async () => {
+    mount(castingView());
+    const pim = await screen.findByRole("group", { name: /Pim/ });
+
+    // The fieldset's radios are the guest's own takes, in the order the listing is sorted in, and
+    // their values are the show-relative paths a pick is made of — not urls.
+    const radios = within(pim).getAllByRole("radio");
+    expect(radios.map((r) => (r as HTMLInputElement).value)).toEqual([`${REFS_PATH}/pim-1.wav`, `${REFS_PATH}/pim-2.wav`]);
+    expect((radios[0] as HTMLInputElement).checked).toBe(true);
+    expect((radios[1] as HTMLInputElement).checked).toBe(false);
+    // `pim.txt` is a transcript and not a take: it is under both takes and is neither of them.
+    expect(await screen.findAllByText(PIM_TRANSCRIPT)).toHaveLength(2);
+  });
+
+  it("sends the picks with Approve", async () => {
+    const { fetchMock } = mount(castingView());
+    const pim = await screen.findByRole("group", { name: /Pim/ });
+    fireEvent.click(within(pim).getByLabelText("pim-2.wav"));
+
+    // What Approve is about to do, in words, beside the button: the sentence names the take and
+    // not the path, because the take's name is what the operator just listened to.
+    expect(screen.getByText("Approve casts Pim from pim-2.wav.")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /approve/i }));
+    await waitFor(() => { expect(postedBody(fetchMock)).not.toBeUndefined(); });
+    expect(postedBody(fetchMock)).toMatchObject({
+      approved: true,
+      expectedAttempt: 1,
+      picks: { Pim: `${REFS_PATH}/pim-2.wav` },
+    });
+  });
+
+  it("sends no picks with Reject", async () => {
+    // A rejection sends the manifest back to the casting fix agent, so writing a cast list into it
+    // on the way out would be editing the file the agent is about to be told is wrong.
+    const { fetchMock } = mount(castingView());
+    await screen.findByRole("group", { name: /Pim/ });
+    fireEvent.change(screen.getByLabelText("notes"), { target: { value: "none of these — record Pim again" } });
+    fireEvent.click(screen.getByRole("button", { name: /reject/i }));
+
+    await waitFor(() => { expect(postedBody(fetchMock)).not.toBeUndefined(); });
+    const body = postedBody(fetchMock)!;
+    expect(body["approved"]).toBe(false);
+    expect("picks" in body).toBe(false);
+  });
+
+  /** The grouping rule, which is the engine's and not this page's: the `refs-ready` guard lowercases
+   *  every WAV in the directory and matches a guest's take with `startsWith(slug)`
+   *  (`engine/src/needs.ts:141,179`). So the page groups a take with the guest whose slug is the
+   *  **longest** slug the take's lowercased name starts with — any other rule would draw a choice
+   *  the guard does not see, and a take the operator picked would not be a take the pipeline counts
+   *  as that guest's. Three names the old transcript-stem rule dropped on the floor: `hallet2.wav`
+   *  (no hyphen before the number), `Hallet-1.wav` (capitalised) and `hallet_warm.wav` (a word where
+   *  a number was expected). */
+  it("groups every take the engine's guard would match, whatever the name after the slug", async () => {
+    refsListing.entries = [
+      { name: "hallet2.wav", size: 1, isDir: false },
+      { name: "Hallet-1.wav", size: 1, isDir: false },
+      { name: "hallet_warm.wav", size: 1, isDir: false },
+    ];
+    mount(castingView({
+      casting: { dir: REFS_PATH, guests: [{ name: "Hallet", slug: "hallet", current: `${REFS_PATH}/Hallet-1.wav` }] },
+    }));
+    const hallet = await screen.findByRole("group", { name: "Hallet" });
+
+    const radios = within(hallet).getAllByRole("radio") as HTMLInputElement[];
+    // Sorted by code unit on both sides: the fieldset's own order is `localeCompare`'s, which puts
+    // punctuation and digits where the platform's collation puts them, and that is not what this
+    // test is about.
+    expect(radios.map((r) => r.value).sort()).toEqual([
+      `${REFS_PATH}/Hallet-1.wav`, `${REFS_PATH}/hallet2.wav`, `${REFS_PATH}/hallet_warm.wav`,
+    ].sort());
+    // And the preselection is still path equality with the manifest's take, which here is the
+    // capitalised one.
+    expect(radios.filter((r) => r.checked).map((r) => r.value)).toEqual([`${REFS_PATH}/Hallet-1.wav`]);
+  });
+
+  it("gives a take to the longest slug it starts with, so a junior does not land in the senior's fieldset", async () => {
+    refsListing.entries = [
+      { name: "hale-1.wav", size: 1, isDir: false },
+      { name: "hale-junior-1.wav", size: 1, isDir: false },
+    ];
+    mount(castingView({
+      casting: {
+        dir: REFS_PATH,
+        guests: [
+          { name: "Hale", slug: "hale", current: `${REFS_PATH}/hale-1.wav` },
+          { name: "Hale Junior", slug: "hale-junior", current: `${REFS_PATH}/hale-junior-1.wav` },
+        ],
+      },
+    }));
+    const hale = await screen.findByRole("group", { name: "Hale" });
+    const junior = await screen.findByRole("group", { name: "Hale Junior" });
+
+    expect((within(hale).getAllByRole("radio") as HTMLInputElement[]).map((r) => r.value))
+      .toEqual([`${REFS_PATH}/hale-1.wav`]);
+    expect((within(junior).getAllByRole("radio") as HTMLInputElement[]).map((r) => r.value))
+      .toEqual([`${REFS_PATH}/hale-junior-1.wav`]);
+  });
+
+  /** The picks the page posts are exactly the takes it drew as radios, and nothing else (the fix
+   *  wave's F2). The manifest can cast a guest from a file this directory does not hold — a take
+   *  recorded for another episode, `Production/s01e07/guest-refs/hallet-1.wav` — and a page that
+   *  seeded its picks from the manifest would post that path, which the answer route then refuses
+   *  by the fence for a choice the operator never made. So no radio means no pick: the guest is
+   *  absent from the posted map and the manifest's own `ref` for them is left alone. */
+  it("posts a pick only for a guest whose cast take is one of the radios it drew", async () => {
+    const { fetchMock } = mount(castingView({
+      casting: {
+        dir: REFS_PATH,
+        guests: [
+          { name: "Pim", slug: "pim", current: `${REFS_PATH}/pim-1.wav` },
+          { name: "Hallet", slug: "hallet", current: "Production/s01e07/guest-refs/hallet-1.wav" },
+        ],
+      },
+    }));
+    await screen.findByRole("group", { name: "Pim" });
+
+    // The sentence beside Approve still names the manifest's take for the guest with no radio,
+    // through its `?? guest.current` fallback — what Approve does to that guest is nothing.
+    expect(screen.getByText("Approve casts Pim from pim-1.wav, Hallet from hallet-1.wav.")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /approve/i }));
+    await waitFor(() => { expect(postedBody(fetchMock)).not.toBeUndefined(); });
+    const body = postedBody(fetchMock)!;
+    expect(body["picks"]).toEqual({ Pim: `${REFS_PATH}/pim-1.wav` });
+    expect(body["approved"]).toBe(true);
+    // The stub answers the POST 200, as the route does for picks it accepts, and the page shows no
+    // refusal: the path the operator never chose was never sent to be refused.
+    expect(screen.queryByText(/must begin with/)).toBeNull();
+  });
+
+  it("says no take is named for a guest this directory holds none for, and draws no radio there", async () => {
+    mount(castingView({
+      casting: {
+        dir: REFS_PATH,
+        guests: [
+          { name: "Pim", slug: "pim", current: `${REFS_PATH}/pim-1.wav` },
+          { name: "Hallet", slug: "hallet", current: `${REFS_PATH}/hallet-1.wav` },
+        ],
+      },
+    }));
+    const hallet = await screen.findByRole("group", { name: "Hallet" });
+
+    expect(within(hallet).queryAllByRole("radio")).toHaveLength(0);
+    expect(within(hallet).getByText("no take in this directory is named for Hallet")).toBeInTheDocument();
+    // Pim's two are still the only radios on the page, so the empty fieldset took nothing from her.
+    expect(screen.getAllByRole("radio")).toHaveLength(2);
+  });
+
+  /** A reload is the one thing on this page that throws a choice away: it refetches the gate and
+   *  re-reads the casting from the manifest, so a take the operator picked and has not approved yet
+   *  is gone. It asks first, in the wording family of the edit link's own guard, and a no does
+   *  nothing at all — the radio the operator chose is still the radio that is checked. */
+  it("asks before a reload drops a take the operator picked, and keeps the choice on a no", async () => {
+    mount(castingView());
+    const pim = await screen.findByRole("group", { name: "Pim" });
+    fireEvent.click(within(pim).getByLabelText("pim-2.wav"));
+
+    // The reload button exists only once the run has written to its log since the gate was opened,
+    // which is what the notice banner is about.
+    deliver({ type: "run", show: "harbor", episodeId: "s02e01", runId: RUN_ID, offset: 512 });
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    fireEvent.click(screen.getByRole("button", { name: /reload the gate/i }));
+
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect((within(pim).getByLabelText("pim-2.wav") as HTMLInputElement).checked).toBe(true);
+    expect((within(pim).getByLabelText("pim-1.wav") as HTMLInputElement).checked).toBe(false);
+  });
+
+  it("checks nothing and says so when the manifest casts a take this directory does not hold, and leaves a take no guest claims as a player", async () => {
+    // Two cases the directory and the manifest can disagree about. The manifest's take is gone —
+    // renamed, or recorded into another directory — so no radio can be preselected, and a page
+    // that silently checked the first take would invent a choice nobody made. And a take whose
+    // name matches no guest's slug belongs to nobody in this cast: it stays audible, outside every
+    // fieldset, with no radio to pick it.
+    refsListing.entries = [...REFS_ENTRIES, { name: "harbor-crowd.wav", size: 1, isDir: false }];
+    mount(castingView({
+      casting: { dir: REFS_PATH, guests: [{ name: "Pim", slug: "pim", current: `${REFS_PATH}/pim-7.wav` }] },
+    }));
+    const pim = await screen.findByRole("group", { name: /Pim/ });
+
+    const radios = within(pim).getAllByRole("radio");
+    expect(radios).toHaveLength(2);
+    expect(radios.some((r) => (r as HTMLInputElement).checked)).toBe(false);
+    expect(within(pim).getByText("the manifest casts pim-7.wav, which is not in this directory")).toBeInTheDocument();
+
+    expect(screen.getAllByRole("radio")).toHaveLength(2);
+    expect(screen.getByText("harbor-crowd.wav")).toBeInTheDocument();
   });
 });

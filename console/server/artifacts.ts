@@ -2,10 +2,10 @@ import path from "node:path";
 import { createReadStream } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { Readable } from "node:stream";
-import { readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { EventLog, parseEpisodeId } from "@showrunner/engine";
 import type { Context } from "hono";
-import { gateView } from "./gates.js";
+import { gateView, guestRefsDirOf } from "./gates.js";
 import type { RunStore } from "./runs.js";
 import type { ShowContext } from "./show.js";
 
@@ -263,4 +263,136 @@ export async function writeAtomically(abs: string, text: string): Promise<number
     throw err;
   }
   return Buffer.byteLength(text, "utf8");
+}
+
+/** One episode's TTS manifest, show-relative: the file a casting pick changes. */
+function manifestRelOf(ctx: ShowContext, episodeId: string): string {
+  return `${ctx.productionDir}/${episodeId}/tts-script.json`;
+}
+
+/** The manifest as `json.dump(doc, f, indent=1)` writes it, which is how every other writer of
+ *  this file writes it (`scripts/pace-qc.py:89`, `scripts/truncation-qc.py:180`).
+ *
+ *  Three properties have to match, and `JSON.stringify` gives only one of them by itself:
+ *
+ *  1. **One space of indent**, which `JSON.stringify(doc, null, 1)` is.
+ *  2. **Every character above U+007F written as a `\uXXXX` escape**, lowercase and four digits,
+ *     which is `json.dump`'s default (`ensure_ascii=True`). A JS string is a sequence of UTF-16
+ *     code units, so a character outside the BMP is already two units — an emoji is its surrogate
+ *     pair — and escaping each unit is exactly what Python emits for it, since JSON has no other
+ *     escape form. `JSON.stringify` writes such characters as themselves. **The match is per code
+ *     unit, which is why the pattern carries no `u` flag**: under `u` a surrogate pair is one code
+ *     point above U+FFFF, outside the class, and an emoji would be left as itself.
+ *  3. **No trailing newline**, which `json.dump` does not write and `writeFile` does not add.
+ *
+ *  The reason is the diff and nothing else: a manifest's `ref_text` is the line the voice read, so
+ *  it carries em dashes and curly quotes on nearly every entry. A console that wrote those bytes as
+ *  themselves, or added a newline, would turn the one-line change a pick makes into a whole-file
+ *  diff the next time either Python step rewrote the file — and the diff of a casting change is the
+ *  one place a reader can see which take was chosen. */
+function asPythonJson(doc: unknown): string {
+  return JSON.stringify(doc, null, 1).replace(
+    /[\u0080-\uffff]/g,
+    (unit) => `\\u${unit.charCodeAt(0).toString(16).padStart(4, "0")}`,
+  );
+}
+
+/** Writes the casting gate's picks into the manifest: `cast[<guest>].ref = <take>`.
+ *
+ *  Every pick is checked before anything is written — the name must be a guest in the manifest,
+ *  the take must lie inside the episode's guest-reference directory (`guestRefsDirOf`, which
+ *  reads the show's `audio.guestRefsDir`), be audio, pass the artifact fence, and be a file that
+ *  `stat` can see — so one bad pick refuses the whole answer and the manifest on disk is
+ *  untouched. Half a casting is a cast list nobody chose, and a 400 naming one bad take says
+ *  nothing about which of the others landed; all-or-nothing makes the refusal mean "nothing
+ *  happened, fix it and answer again".
+ *
+ *  **Existence is `stat().isFile()` and not a hash of the bytes.** The engine's `hashFile` returns
+ *  null for a missing file and throws for every other failure, so a directory named `pim-3.wav`
+ *  raised EISDIR out of this function and into `app.onError` — a 500 carrying a stack-trace
+ *  fragment where a 400 and a sentence belong. A path `stat` refuses (a parent the console may not
+ *  traverse, a dangling symlink) and a path that is not a regular file are both a plain refusal
+ *  here. Nothing is read: the console is choosing a reference for the pipeline to read, and the
+ *  bytes are `tts-generate`'s business.
+ *
+ *  **The manifest's own path goes through the fence too** (`resolveArtifactPath`), like every other
+ *  path this module touches, so the one function that knows which trees the console may read and
+ *  write is consulted for the file a pick rewrites and not only for the take it names.
+ *
+ *  **An unchanged casting writes nothing** (`wrote: false`). An approve that confirms what the
+ *  manifest already says is a decision to leave the file alone: `tts-generate` is cached on the
+ *  content hash and would not re-run either way, but the file the operator reads would have been
+ *  reformatted and its mtime moved for a change that was not made.
+ *
+ *  The write is atomic (`writeAtomically`), so `tts-generate` never reads a half-written manifest,
+ *  and its text is `asPythonJson`'s — `json.dump(doc, f, indent=1)`'s own bytes, for the reasons
+ *  given there. `before` is the text as this call found it, which is what the answer route writes
+ *  back when `answerGate` then refuses the answer because the gate is no longer open
+ *  (`server/app.ts`).
+ *
+ *  **Nothing is recorded in the run log for a pick.** The engine learns of the change the way it
+ *  learns of any edit to a declared input: `tts-generate` declares `tts-script.json` as its input
+ *  (`engine/src/pipelines/episode.ts:325`), and `runScriptStep` compares the fresh input hashes
+ *  with the last completion's (`engine/src/runner.ts:429-442`), so a picked manifest is not
+ *  served from `step_cached` and emits `input_changed` instead. The hash trail is the record; a
+ *  console-minted event would be a second claim about the same fact, able to disagree with the
+ *  file on disk. */
+export async function applyCastingPicks(
+  ctx: ShowContext, episodeId: string, picks: Record<string, string>,
+): Promise<
+  | { ok: true; applied: Record<string, string>; wrote: boolean; before: string }
+  | { ok: false; error: string }
+> {
+  const manifestRel = manifestRelOf(ctx, episodeId);
+  const manifest = resolveArtifactPath(ctx, episodeId, manifestRel);
+  if (!manifest.ok) return { ok: false, error: manifest.error };
+  let before: string;
+  let parsed: unknown;
+  try {
+    before = await readFile(manifest.abs, "utf8");
+    parsed = JSON.parse(before);
+  } catch (err) {
+    return { ok: false, error: `${manifestRel} could not be read: ${(err as Error).message}` };
+  }
+  // Refused rather than coerced, because this object is what gets written back: a manifest that
+  // parsed to `null` or to an array would otherwise reach `JSON.stringify` and replace the file.
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    return { ok: false, error: `${manifestRel} is not a JSON object, so it has no cast to pick from` };
+  }
+  const doc = parsed as { cast?: Record<string, { ref?: unknown; guest?: unknown }> };
+  const cast = doc.cast ?? {};
+  const refsPrefix = `${guestRefsDirOf(ctx.show, episodeId)}/`;
+  const applied: Record<string, string> = {};
+  for (const [name, take] of Object.entries(picks)) {
+    const entry = cast[name];
+    if (entry === undefined || entry.guest !== true) return { ok: false, error: `${JSON.stringify(name)} is not a guest in ${manifestRel}` };
+    if (typeof take !== "string" || !take.startsWith(refsPrefix)) return { ok: false, error: `the take for ${name} must be a file under ${refsPrefix}` };
+    if (!/\.(wav|mp3|flac|m4a|ogg|aac)$/i.test(take)) return { ok: false, error: `the take for ${name} is not an audio file: ${take}` };
+    const fenced = resolveArtifactPath(ctx, episodeId, take);
+    if (!fenced.ok) return { ok: false, error: fenced.error };
+    let info: Awaited<ReturnType<typeof stat>>;
+    try { info = await stat(fenced.abs); } catch { return { ok: false, error: `the take for ${name} does not exist: ${take}` }; }
+    if (!info.isFile()) return { ok: false, error: `the take for ${name} is not a file: ${take}` };
+    applied[name] = take;
+  }
+  if (Object.entries(applied).every(([name, take]) => cast[name]?.ref === take)) {
+    return { ok: true, applied, wrote: false, before };
+  }
+  for (const [name, take] of Object.entries(applied)) (cast[name] as { ref: string }).ref = take;
+  await writeAtomically(manifest.abs, asPythonJson(doc));
+  return { ok: true, applied, wrote: true, before };
+}
+
+/** Puts the episode's manifest back to the text `applyCastingPicks` found there, and says whether
+ *  it managed to. Called on the one path where a written pick has to be taken back: the gate was
+ *  answered by somebody else while this answer was being written, so the picks are an edit to a
+ *  casting that is already settled and nothing downstream will ever read this answer
+ *  (`server/app.ts`'s gate answer handler).
+ *
+ *  A boolean rather than a throw because the caller is already answering 409: a failed restore
+ *  must change the sentence that 409 carries, not replace it with a 500 that loses the refusal. */
+export async function restoreCastingManifest(ctx: ShowContext, episodeId: string, before: string): Promise<boolean> {
+  const manifest = resolveArtifactPath(ctx, episodeId, manifestRelOf(ctx, episodeId));
+  if (!manifest.ok) return false;
+  try { await writeAtomically(manifest.abs, before); return true; } catch { return false; }
 }

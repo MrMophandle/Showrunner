@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import type { GateArtifact, GateView } from "../../shared/types.js";
+import type { CastingGuest, GateArtifact, GateView } from "../../shared/types.js";
 import { ApiError, editHref, post, showHref, showPath, useApi, useConsole, useSSE, useShowKey, useTextApi, type DirEntry } from "../api.js";
 import { composeNotesWithFlags, gateSummaryLine, readOnlyLine } from "../projections.js";
 import { AudioSeek } from "../components/AudioSeek.js";
@@ -128,26 +128,167 @@ function Transcript({ url }: { url: string }) {
   return <p className="quiet audio-transcript">{file.data.trim()}</p>;
 }
 
-function AudioArtifact({ artifact }: { artifact: GateArtifact }) {
+/** Which guest a take belongs to: the guest whose slug is the **longest** slug the take's
+ *  lowercased name starts with, or undefined for a take no guest in this cast claims.
+ *
+ *  **This is the engine's rule and not a rule of this page's.** The `refs-ready` guard lowercases
+ *  every WAV in the guest-reference directory and matches a guest's takes with
+ *  `startsWith(slugName(name))` (`engine/src/needs.ts:141,179`), so a take this page grouped by any
+ *  other rule would be a choice the pipeline cannot see: the guard would go on reporting the guest
+ *  as unrecorded while the operator had just picked a take for them. It is why `hallet2.wav`,
+ *  `Hallet-1.wav` and `hallet_warm.wav` are all Hallet's — the guard counts all three.
+ *
+ *  **Longest match**, because nothing keeps one guest's slug from being a prefix of another's:
+ *  `hale-junior-1.wav` starts with both `hale` and `hale-junior`, and it is the junior's take. The
+ *  engine's guard has the same ambiguity and resolves it in the guest's favour both ways round (a
+ *  junior take satisfies the senior there), so the page shows the choice to the guest whose name is
+ *  actually in the filename. A guest whose slug is empty claims nothing, rather than claiming every
+ *  take by matching the empty prefix.
+ *
+ *  Exported for the test. */
+export function guestForTake(name: string, guests: readonly CastingGuest[]): CastingGuest | undefined {
+  const lower = name.toLowerCase();
+  let best: CastingGuest | undefined;
+  for (const guest of guests) {
+    if (guest.slug === "" || !lower.startsWith(guest.slug)) continue;
+    if (best === undefined || guest.slug.length > best.slug.length) best = guest;
+  }
+  return best;
+}
+
+/** The audio files of a directory listing, in the order the page draws them. */
+function takesIn(entries: DirEntry[]): DirEntry[] {
+  return entries.filter((e) => !e.isDir && AUDIO_FILE.test(e.name)).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** The last segment of a show-relative path — `pim-2.wav` out of
+ *  `Production/s02e01/guest-refs/pim-2.wav`. What the operator listened to is a take's name, so
+ *  that is what a sentence about a casting says; the whole path is what the answer carries. */
+function basename(showRelative: string): string {
+  return showRelative.slice(showRelative.lastIndexOf("/") + 1);
+}
+
+/** The guest-reference directory at the casting gate: **a choice, not a listening test** (Ryan's
+ *  ruling, 2026-10-30, "it was more 'listening to the choices' and less 'pick a choice' kinda
+ *  page"). Each guest gets a fieldset with a radio per take, the manifest's take preselected, and
+ *  Approve carries the picks into `tts-script.json` — the defect this closes is that an approve
+ *  note naming takes ("approved, hallet2 and veleth2") was read by nothing and the render that
+ *  followed used whatever the manifest already said.
+ *
+ *  **A take is grouped with a guest by the engine's own matching rule** (`guestForTake`): the guest
+ *  whose slug is the longest one the take's lowercased name starts with, which is how the
+ *  `refs-ready` guard decides whose take a WAV is (`engine/src/needs.ts:141,179`). A take that
+ *  starts with no guest's slug belongs to nobody in this cast: it is listed after the fieldsets
+ *  exactly as every take was listed before, audible and not pickable.
+ *
+ *  **This component is also what tells the page which take is already cast.** `picks` arrives empty
+ *  and the preselection is reported up through `onPick` with `fromManifest`, once per casting block
+ *  and only for a take this listing actually holds and this guest actually claims — so every path in
+ *  `picks` is a path drawn as a radio on this page. A guest the manifest casts from a file this
+ *  directory does not hold gets no report, no checked radio and a line saying so, and the answer
+ *  then carries no pick for them at all: Approve cannot be refused for a path the operator never
+ *  chose.
+ *
+ *  **Every url is the artifact's own and every pick value is `artifact.path`'s.** The casting
+ *  block's `dir` is a show-relative path the server hands over unfenced, and the one place that
+ *  knows the artifact route's shape is `artifactUrl` on the server (`server/gates.ts`) — so the
+ *  listing, the players and the transcripts are built from `artifact.url`/`artifact.listUrl`, and
+ *  a pick is `${artifact.path}/<take>`, which names the same file as the radio beside it. */
+function AudioArtifact({ artifact, casting, picks, onPick }: {
+  artifact: GateArtifact;
+  casting: GateView["casting"];
+  picks: Record<string, string>;
+  onPick: (guest: string, take: string, fromManifest?: boolean) => void;
+}) {
   const listing = useApi<{ entries: DirEntry[] }>(artifact.listUrl ?? null);
+  // Which casting block's preselection has already been reported, by object identity. Every fetch
+  // of the gate view parses a new object and every render between fetches passes the same one, so
+  // this reports once per *view* — a reload or the gate-moved refetch re-reads the manifest's
+  // casting and reports it again, and an operator's click in between is not undone.
+  const reported = useRef<GateView["casting"]>(undefined);
+  useEffect(() => {
+    const entries = listing.data?.entries;
+    if (casting === undefined || entries === undefined || reported.current === casting) return;
+    reported.current = casting;
+    const guests = casting.guests;
+    for (const guest of guests) {
+      const own = takesIn(entries).filter((e) => guestForTake(e.name, guests) === guest);
+      const cast = own.find((e) => `${artifact.path}/${e.name}` === guest.current);
+      if (cast !== undefined) onPick(guest.name, `${artifact.path}/${cast.name}`, true);
+    }
+  }, [artifact.path, casting, listing.data, onPick]);
   if (artifact.listUrl === undefined) return <AudioSeek src={artifact.url} label={artifact.label} />;
   if (listing.error !== null && listing.data === null) return <p className="error-line">{listing.error}</p>;
   if (listing.data === null) return <p className="quiet">reading the directory…</p>;
   const files = listing.data.entries.filter((e) => !e.isDir);
-  const takes = files.filter((e) => AUDIO_FILE.test(e.name)).sort((a, b) => a.name.localeCompare(b.name));
+  const takes = takesIn(listing.data.entries);
   const transcripts = new Set(files.filter((e) => /\.txt$/i.test(e.name)).map((e) => e.name));
   if (takes.length === 0) return <p className="quiet">no audio in this directory yet</p>;
+
+  /** One take as it sounds: the player and, under it, the words it was read from. The same two
+   *  elements inside a guest's fieldset and outside every fieldset, so a take nobody claims is
+   *  drawn exactly as it was before this page had a choice on it. */
+  function player(entry: DirEntry) {
+    const txt = transcriptFor(entry.name);
+    return (
+      <>
+        <AudioSeek src={`${artifact.url}/${encodeURIComponent(entry.name)}`} label={entry.name} />
+        {transcripts.has(txt) && <Transcript url={`${artifact.url}/${encodeURIComponent(txt)}`} />}
+      </>
+    );
+  }
+
+  const guests = casting?.guests ?? [];
+  const groups = guests.map((guest) => ({
+    guest,
+    own: takes.filter((e) => guestForTake(e.name, guests) === guest),
+  }));
+  const unclaimed = takes.filter((e) => guestForTake(e.name, guests) === undefined);
+
   return (
     <div className="audio-list">
-      {takes.map((entry) => {
-        const txt = transcriptFor(entry.name);
+      {groups.map(({ guest, own }) => {
+        // The preselection is path equality with what the manifest casts, and nothing else: a
+        // manifest naming a take that has been renamed or recorded elsewhere leaves every radio
+        // unchecked and says so, because checking the first take instead would invent a choice
+        // nobody made and Approve would then carry it.
+        const cast = own.some((e) => `${artifact.path}/${e.name}` === guest.current);
         return (
-          <div key={entry.name}>
-            <AudioSeek src={`${artifact.url}/${encodeURIComponent(entry.name)}`} label={entry.name} />
-            {transcripts.has(txt) && <Transcript url={`${artifact.url}/${encodeURIComponent(txt)}`} />}
-          </div>
+          <fieldset className="cast-guest" key={guest.name}>
+            <legend>{guest.name}</legend>
+            {!cast && <p className="quiet">the manifest casts {basename(guest.current)}, which is not in this directory</p>}
+            {own.length === 0 && <p className="quiet">no take in this directory is named for {guest.name}</p>}
+            {own.map((entry) => {
+              const take = `${artifact.path}/${entry.name}`;
+              // The radio group and the input ids are keyed on the **encoded cast name**, which is
+              // the manifest's own key and so unique across the cast, and not on the slug: two cast
+              // names can share a slug ("the Warden" and "Warden" are both `warden`, since
+              // `slugName` strips a leading "the"), and two fieldsets sharing one radio group would
+              // let a click in one uncheck the other's choice. Encoded because a cast name carries
+              // spaces and apostrophes, and these strings are an `id` and a `name` attribute.
+              const group = `pick-${encodeURIComponent(guest.name)}`;
+              const id = `${group}-${entry.name}`;
+              return (
+                <div className="cast-take" key={entry.name}>
+                  <label htmlFor={id}>
+                    <input
+                      id={id}
+                      type="radio"
+                      name={group}
+                      value={take}
+                      checked={picks[guest.name] === take}
+                      onChange={() => { onPick(guest.name, take); }}
+                    />
+                    {" "}{entry.name}
+                  </label>
+                  {player(entry)}
+                </div>
+              );
+            })}
+          </fieldset>
         );
       })}
+      {unclaimed.map((entry) => <div key={entry.name}>{player(entry)}</div>)}
     </div>
   );
 }
@@ -169,9 +310,32 @@ export function Gate() {
   // to. A ref and not state: nothing renders from it, and it must be current inside the same
   // handler that just set the notes.
   const composed = useRef("");
+  // Which take the showrunner has chosen for each guest at the casting gate, by the manifest's own
+  // cast name. Approve carries this map (see `answer`).
+  //
+  // **It starts empty and is filled only by the picker.** `AudioArtifact` reports the manifest's
+  // own casting up through the same `onPick` the radios call, once per view and only for a take it
+  // drew as a radio, so every path in here is a path that was on the screen. The page used to seed
+  // this map from `casting.guests[].current` instead, which posted a pick for a guest whose take
+  // the directory does not hold — a path the operator never chose, refused by the answer route's
+  // fence, and an Approve that failed for a choice nobody made (the whole-branch review of
+  // 2026-10-30). A guest with no reported take is absent from the map, and the answer then says
+  // nothing about them, which leaves their casting as the manifest has it.
+  const [picks, setPicks] = useState<Record<string, string>>({});
+  // The preselection as this page reported it, by cast name: what the manifest casts each guest
+  // from, where the directory holds that take. A ref and not state, for the reason `composed` is
+  // one — nothing renders from it, and `reload` reads it in the handler that would discard the
+  // picks. Written only by a report from the manifest, never by a click, so `picks` differing from
+  // it is exactly "the operator has chosen something".
+  const preselected = useRef<Record<string, string>>({});
   const [busy, setBusy] = useState<"approve" | "reject" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [moved, setMoved] = useState<string | null>(null);
+  // Whether the answer the gate-moved banner is about carried picks, so the banner can say what
+  // happened to them. The server writes an accepted pick before it answers, and keeps it when the
+  // answer is refused for a stale attempt (`server/app.ts`), so those takes are the manifest's
+  // casting now and the refetched view shows them.
+  const [movedPicks, setMovedPicks] = useState(false);
   const [gone, setGone] = useState<string | null>(null);
   const [changed, setChanged] = useState(false);
   // The hash each edited file is at, by show-relative path, as the `file` messages for this run
@@ -207,10 +371,31 @@ export function Gate() {
     setNotes((current) => (current === "" ? text : `${current.replace(/\s*$/, "")}\n${text}`));
   }
 
+  /** One guest's choice, from a radio or from the manifest's own casting as `AudioArtifact` found
+   *  it in the directory (`fromManifest`). Both arrive here because the radios are drawn from
+   *  `picks` alone; what the flag changes is only the record of what the manifest said, which is
+   *  what `reload` compares against to know whether a choice would be thrown away. */
+  function pick(guest: string, take: string, fromManifest = false): void {
+    if (fromManifest) preselected.current = { ...preselected.current, [guest]: take };
+    setPicks((current) => ({ ...current, [guest]: take }));
+  }
+
   function reload(): void {
+    // A reload refetches the gate and re-reads the casting from `tts-script.json`, so a take the
+    // operator has picked and not yet approved goes with it. It asks first, in the wording family
+    // of the edit link's guard below and for the same reason: the choice exists nowhere but this
+    // page until the answer is posted. A no does nothing at all.
+    const chosen = Object.keys(picks).some((guest) => picks[guest] !== preselected.current[guest]);
+    if (chosen && !window.confirm("You have picked takes the manifest does not cast. Drop those choices and reload the gate?")) return;
     setChanged(false);
     setMoved(null);
+    setMovedPicks(false);
     setError(null);
+    // Dropped together with the banner: the refetched view reports its own preselection again, and
+    // a pick left standing would survive a reload whose whole purpose is to show the gate as it now
+    // stands.
+    setPicks({});
+    preselected.current = {};
     gate.refetch();
   }
 
@@ -220,8 +405,17 @@ export function Gate() {
     setBusy(approved ? "approve" : "reject");
     setError(null);
     setMoved(null);
+    setMovedPicks(false);
+    // The picks ride on an approval and on nothing else. A rejection sends the manifest back to
+    // the casting fix agent, so writing a cast list into it on the way out would be editing the
+    // file the agent is about to be told is wrong. The server writes an accepted pick before it
+    // answers the gate, and refuses the whole answer for a bad one (`server/app.ts`).
+    const sent = approved && view.casting !== undefined ? picks : undefined;
     try {
-      await post(`${base}/gate`, { stepId: view.stepId, approved, notes, expectedAttempt: view.attempt });
+      await post(`${base}/gate`, {
+        stepId: view.stepId, approved, notes, expectedAttempt: view.attempt,
+        ...(sent !== undefined ? { picks: sent } : {}),
+      });
       navigate(runHref);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -232,6 +426,7 @@ export function Gate() {
         // message is the attempt that is now open.
         const which = /is open at attempt (\d+)/.exec(message)?.[1];
         setMoved(`the gate moved to attempt ${which ?? "a later one"} — read it again`);
+        setMovedPicks(sent !== undefined && Object.keys(sent).length > 0);
         setChanged(false);
         gate.refetch();
       } else if (status === 409 && message.includes("is not open")) {
@@ -287,6 +482,13 @@ export function Gate() {
         <div className="banner banner-amber">
           <strong>{moved}</strong>
           <span> Your answer was refused, not applied. What this page is showing you is attempt {view.attempt}.</span>
+          {/* The one part of a refused answer that **was** applied. The server writes an accepted
+              pick into the manifest before it answers the gate and keeps it when the answer is then
+              refused for a stale attempt, deliberately — the chosen take is a fact about the
+              casting rather than about this answer (`server/app.ts`). So the refetched casting below
+              is the casting the operator picked, and the banner says so rather than leaving them to
+              wonder whether the choice went with the refusal. */}
+          {movedPicks && <span> The takes you picked were written into the manifest before the refusal, and are shown below as the gate's casting.</span>}
         </div>
       )}
       {changed && moved === null && (
@@ -336,7 +538,14 @@ export function Gate() {
             {artifact.kind === "markdown" && <MarkdownArtifact url={artifact.url} version={fileVersions[artifact.path] ?? ""} />}
             {artifact.kind === "diff" && <DiffArtifact url={artifact.url} />}
             {(artifact.kind === "json" || artifact.kind === "text") && <TextArtifact url={artifact.url} json={artifact.kind === "json"} label={artifact.label} />}
-            {artifact.kind === "audio" && <AudioArtifact artifact={artifact} />}
+            {artifact.kind === "audio" && (
+              <AudioArtifact
+                artifact={artifact}
+                casting={view.casting}
+                picks={picks}
+                onPick={pick}
+              />
+            )}
             {artifact.kind === "video" && (
               <video className="artifact-video" src={artifact.url} controls preload="metadata" />
             )}
@@ -387,6 +596,21 @@ export function Gate() {
           placeholder="what is wrong, in the words the fix agent should act on. Required to reject; optional to approve."
           rows={4}
         />
+        {/* What Approve is about to do, in words, immediately above the button that does it: the
+            picks are radios several screens up by the time a directory of takes has been listened
+            to, and "approve" with no restatement of the casting would be answered from memory. The
+            take's name and not its path, because the name is what was listened to.
+
+            The `?? guest.current` fallback is what a guest with no entry in `picks` reads as, and
+            there is one case of that left: this directory holds no take the manifest casts them
+            from, so no radio was drawn and the answer carries no pick for them. The sentence then
+            names the manifest's own take, which is accurate — what Approve does to that guest's
+            casting is nothing. */}
+        {view.casting !== undefined && (
+          <p className="quiet">
+            Approve casts {view.casting.guests.map((guest) => `${guest.name} from ${basename(picks[guest.name] ?? guest.current)}`).join(", ")}.
+          </p>
+        )}
         <div className="action-row">
           {readOnly && <span className="action-reason">{readOnlyLine(showKey, "this gate is read here and answered where the show is writable")}</span>}
           {canAct && (

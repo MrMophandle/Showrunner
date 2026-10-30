@@ -13,7 +13,7 @@ import { ImportRefused, initScaffold, type GateChoice } from "@showrunner/tools"
 import type {
   EpisodeRow, EventBatch, FailedShow, FileRead, FileWritten, ShowInfo, ShowsList, SseMessage,
 } from "../shared/types.js";
-import { editableArtifact, serveArtifact, serveRunLog, writeAtomically } from "./artifacts.js";
+import { applyCastingPicks, editableArtifact, restoreCastingManifest, serveArtifact, serveRunLog, writeAtomically } from "./artifacts.js";
 import {
   answerBibleGate, bibleFile, bibleFilePath, bibleRows, collectingIO, finishBible, saveAnswers,
   startBibleRun, unapprovedBibleFiles, type BibleDeps,
@@ -798,7 +798,24 @@ export function createApp(
    *
    *  `expectedAttempt` is the attempt the Gate page read. The engine refuses an answer that names
    *  a different one, which is the whole protection against a tab left open across a rejection:
-   *  the showrunner would otherwise approve a message that a fix agent has already superseded. */
+   *  the showrunner would otherwise approve a message that a fix agent has already superseded.
+   *
+   *  **`picks` are written into the manifest before the gate is answered**, which is what makes a
+   *  bad pick refusable: the order is lock, write, answer, spawn, so a refused pick is a 400 with
+   *  the manifest unchanged and the gate still open at the same attempt, while a pick written
+   *  after the answer would race the worker this route then spawns for the manifest it reads.
+   *  **A pick the route accepted is not rolled back when the gate is merely at another attempt** —
+   *  a stale `expectedAttempt` answers 409 with the picked take already in the manifest, and the
+   *  gate stays open at the attempt it was open at, so the operator answers again and the choice
+   *  they already made still stands. **A gate that is no longer open at all is the other case, and
+   *  there the picks are written back**: two tabs on one gate, the first tab's approve having closed
+   *  it, means the run has moved past casting and nothing will ever read this answer — so the manifest
+   *  is restored and the 409 says so (`restoreCastingManifest`). That case cannot be refused before
+   *  the write, because the gate this handler reads is the gate `answerGate` reads a moment later and
+   *  the race is the gap between them.
+   *  Accepted at `casting-gate` only — a take per guest, show-relative — and the engine learns of
+   *  an accepted pick through `tts-generate`'s input hash rather than through anything appended
+   *  here (`applyCastingPicks`, `server/artifacts.ts`). */
   app.post("/api/shows/:show/episodes/:id/runs/:run/gate", async (c) => {
     const ctx = c.get("ctx");
     const checked = checkIds(c);
@@ -813,15 +830,54 @@ export function createApp(
     if (typeof approved !== "boolean") return c.json({ error: "approved must be true or false" }, 400);
     if (typeof notes !== "string") return c.json({ error: "notes must be a string" }, 400);
     if (expectedAttempt !== undefined && !Number.isInteger(expectedAttempt)) return c.json({ error: "expectedAttempt must be an integer" }, 400);
+    // The picks are checked for shape and for gate here, before the lock is read, because neither
+    // question needs the lock. The run's **open** gate is consulted and not just the body's
+    // `stepId`: a body naming `casting-gate` while the run is parked at another gate would have
+    // its manifest rewritten and only then be refused by `answerGate`.
+    //
+    // A run with **no** open gate is let through to `answerGate` rather than refused here, because
+    // that is the two-tab race and not a mistake the operator can be told about: the gate this
+    // read finds is the gate `answerGate` finds a moment later, so a gate that closes in between
+    // is exactly the case this check cannot see. `answerGate` refuses it ("is not open") and the
+    // manifest written on the way there is put back below.
+    const picks = body["picks"];
+    if (picks !== undefined) {
+      if (typeof picks !== "object" || picks === null || Array.isArray(picks)) return c.json({ error: "picks must be an object of guest name to take path" }, 400);
+      if (stepId !== "casting-gate") return c.json({ error: "picks are accepted only at casting-gate" }, 400);
+      const view = await gateView(ctx, c.get("store"), id, run);
+      if (view !== undefined && view.stepId !== "casting-gate") return c.json({ error: "picks are accepted only at casting-gate" }, 400);
+    }
     const held = await readLock(ctx, id, run);
     if (held?.alive === true) return c.json({ error: `run ${run} is held by pid ${held.pid}` }, 409);
+    // After the lock (a live worker is the one process allowed to touch the manifest) and before
+    // the answer (which releases the run to the worker spawned below). `written` is kept so the
+    // refusal below can undo it: the manifest as this request found it, and whether anything was
+    // written over it at all.
+    let written: { before: string; wrote: boolean } | undefined;
+    if (picks !== undefined && Object.keys(picks as object).length > 0) {
+      const applied = await applyCastingPicks(ctx, id, picks as Record<string, string>);
+      if (!applied.ok) return c.json({ error: applied.error }, 400);
+      written = { before: applied.before, wrote: applied.wrote };
+    }
     try {
       await answerGate(logOf(ctx, id, run), run, stepId, {
         approved, notes, by: ctx.operator,
         ...(typeof expectedAttempt === "number" ? { expectedAttempt } : {}),
       });
     } catch (err) {
-      return c.json({ error: (err as Error).message }, 409);
+      const message = (err as Error).message;
+      // The gate is gone, not merely at a later attempt: somebody else answered it while this
+      // answer was being written, so the picks belong to a decision that is already made and
+      // nothing downstream will read them. A stale attempt is the other case and keeps them.
+      if (written?.wrote === true && message.includes("is not open")) {
+        const restored = await restoreCastingManifest(ctx, id, written.before);
+        return c.json({
+          error: restored
+            ? `${message}; the picks written for this answer were restored`
+            : `${message}; the picks written for this answer could not be restored and are still in the manifest`,
+        }, 409);
+      }
+      return c.json({ error: message }, 409);
     }
     const { pid } = await spawnWorker(ctx, id, run);
     return c.json({ runId: run, pid });
