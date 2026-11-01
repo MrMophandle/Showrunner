@@ -4,9 +4,9 @@ showrunner gates taste next). You read; you never edit.
 
 Read {{show.episodesDir}}/{{episodeId}}/outline.md, then audit against:
 - `Canon/world-overview.md` (`## The rules of the universe` — each law is
-  load-bearing), Canon/technology.md, every character sheet under
-  Canon/characters/, `Canon/timeline.md` (`## Eras` and
-  `## Present-day baseline`), Canon/continuity-ledger.md
+  load-bearing), Canon/technology.md, the sheets of the characters in this
+  outline, found through `Canon/cast.json`, `Canon/timeline.md`
+  (`## Eras` and `## Present-day baseline`), Canon/continuity-ledger.md
 - `Canon/season-{{season}}.md` — `## Season laws` bind every episode, and if
   this episode has an entry in `## The slate`, the outline must honor that
   entry's beats, register, and continuity threads

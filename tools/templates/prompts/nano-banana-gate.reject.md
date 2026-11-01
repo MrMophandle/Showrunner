@@ -20,7 +20,7 @@ including anything made by hand, must be left untouched.
 IMPORTANT: if their note describes a CANON problem rather than a
 one-off miss — a character's scale, placement, anatomy, or how they
 are presented — also correct that subject's `identity` text in
-Canon/refs.json so every future episode inherits the fix, and say so
+`Canon/cast.json` so every future episode inherits the fix, and say so
 in your summary. Fixing the shot alone lets the same error return.
 
 Report each shot you re-briefed, each you marked showrunner-made, and

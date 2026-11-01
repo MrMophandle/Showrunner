@@ -22,7 +22,8 @@ iteration, novel-quality, for the ear.
    phrase. Those are SPENT; do not reuse them here.
 6. Identify the NEXT outline beat that has no scene yet.
 7. Read the canon files that scene depends on (characters, locations,
-   species, technology — as cited in the outline).
+   species, technology — as cited in the outline), the characters
+   through their `sheet` paths in `Canon/cast.json`.
 8. Write that ONE scene and append it to
    {{show.episodesDir}}/{{episodeId}}/script.md (create the file with the
    title header `# <Episode id> — "<Title>"` if it does not exist yet).

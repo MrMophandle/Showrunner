@@ -4,7 +4,7 @@ check found character briefs that describe a crowd without naming its
 members:
 {{results.populator-check}}
 The law: every person in a character-shot frame is NAMED and present in
-Canon/refs.json, or the headcount is capped to the named people. The
+`Canon/cast.json`, or the headcount is capped to the named people. The
 guard matches these substrings, from the show's own config:
 {{show.visual.collectivePopulatorBans}}
 For each brief the check names, rewrite it so it names every populator

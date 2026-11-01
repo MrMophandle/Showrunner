@@ -7,10 +7,9 @@ other reviewers; ignore them.
 1. {{show.episodesDir}}/{{episodeId}}/script.md and {{show.episodesDir}}/{{episodeId}}/outline.md
    — note especially the outline's `## Arc beats` section (if present):
    those are DECLARED, licensed deviations. Everything else must hold.
-2. Canon/characters/<Name>/<name>.md for EVERY named character in the
-   script (Glob Canon/characters/**/*.md — each character is a folder
-   holding its bible + reference images). For guests without a bible,
-   check the outline's description of them instead.
+2. `Canon/cast.json`, then the `sheet` of EVERY named character in the
+   script, read from the index — never Glob Canon/characters/. For a
+   guest with no sheet, check the outline's description of them instead.
 3. `## The primary cast` of `Canon/world-overview.md` — the stances it
    records are what each recurring character is for. Stance drift is the
    most damaging drift, and whatever that section says the cast's
@@ -49,8 +48,9 @@ Each issue must be one object with four fields:
 - `law` — the written law the finding is a defect against, cited as
   `<law file>:<section or line>`: the file, then the section heading or the
   line number inside it, so
-  Canon/world-overview.md:## The primary cast, or the character's own sheet
-  under Canon/characters/ with the line that contradicts them.
+  Canon/world-overview.md:## The primary cast, or the character's own
+  sheet, cited by its `sheet` path in `Canon/cast.json`, with the line
+  that contradicts them.
 - `line` — where the defect is in the script: the scene, and the line.
 - `text` — what is wrong, in one sentence.
 `pass` is true only when `issues` is empty.
