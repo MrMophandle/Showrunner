@@ -3,8 +3,8 @@
 # ///
 """design-visual: generate baseline candidate images for a visual-bible subject.
 
-The image parallel to design-voice.py. Given a subject key from the show's
-reference index (visual.refs), render N candidates from its `baseline_prompt` (a
+The image parallel to design-voice.py. Given a subject key from the show's cast
+index (Canon/cast.json), render N candidates from its `baseline_prompt` (a
 clean, legible character-sheet style — NOT the low-key episode look, because a
 reference must be readable; hero edits re-light it into scene later). The
 showrunner picks the one that IS the character by eye; the kept PNG is committed
@@ -23,9 +23,12 @@ Usage:
   design-visual.py all [count] [--show-root <path>]             # every unlocked subject
 
 Writes <visual.candidatesDir>/<key>-1.png .. -N.png and prints the paths.
-Locking is manual: copy the chosen candidate into <visual.castingPileDir>."""
-import json, os, shutil, subprocess, sys
+Locking is manual and has two halves: copy the chosen candidate into
+<visual.castingPileDir>, then set that subject's face.ref in the cast index to
+the path you copied it to."""
+import os, shutil, subprocess, sys
 
+from lib import castindex
 from lib import showconfig as sc
 
 QWEN_BINARY = "mflux-generate-qwen"     # high-adherence baseline model (Apache-2.0)
@@ -58,26 +61,32 @@ def main():
     key = arg[0]
     n = int(arg[1]) if len(arg) > 1 and arg[1].isdigit() else 3
 
-    bible_path = sc.path(cfg, "visual", "refs", root=root)
     cand_dir = sc.path(cfg, "visual", "candidatesDir", root=root)
     casting_dir = str(sc.value(cfg, "visual", "castingPileDir"))
     frame = list(sc.value(cfg, "visual", "shotFrame"))
 
-    bible = json.load(open(bible_path))
-    subjects = ([k for k in bible if not k.startswith("_")
-                 and not (bible[k].get("ref") and os.path.exists(bible[k]["ref"]))]
-                if key == "all" else [key])
-    if key != "all" and key not in bible:
-        sys.exit(f"design-visual: unknown subject {key!r}. Known: "
-                 f"{[k for k in bible if not k.startswith('_')]}")
+    # The cast index is the worklist: `all` designs every subject carrying a baseline prompt and no
+    # reference yet (castindex.unlocked), which is the set the index calls undesigned rather than a
+    # set inferred from what is on disk.
+    index = castindex.load(cfg, root)
+    cast = index["cast"]
+    subjects = castindex.unlocked(index) if key == "all" else [key]
+    if key != "all" and key not in cast:
+        sys.exit(f"design-visual: unknown subject {key!r}. Known: {sorted(cast)}")
+    # The index holds every cast member — locations, species and motifs among them — and only a
+    # subject with a baseline prompt can be rendered. Refuse by name rather than raising a KeyError
+    # three lines down, because a key that is in the index but undesignable is a likely typo.
+    if key != "all" and not isinstance(cast[key].get("baseline_prompt"), str):
+        sys.exit(f"design-visual: {key!r} has no baseline_prompt in {castindex.index_path(cfg)} — "
+                 f"write one there first (it is the brief these candidates are rendered from)")
 
     os.makedirs(cand_dir, exist_ok=True)
     qbin = find_bin(QWEN_BINARY)
     done, total = 0, len(subjects) * n
     for subj in subjects:
-        spec = bible[subj]
+        spec = cast[subj]
         prompt = spec["baseline_prompt"]
-        print(f"=== {subj} ({spec['kind']}) — {n} candidates ===")
+        print(f"=== {subj} ({spec.get('kind', '?')}) — {n} candidates ===")
         # deterministic per-subject base seed (Python's hash() is per-process
         # randomized, so derive a stable value from the characters instead)
         base_seed = sum(ord(c) * (idx + 1) for idx, c in enumerate(subj)) % 90000 + 1000
@@ -89,8 +98,12 @@ def main():
             done += 1
             sc.progress(done, total, "candidates")
             print(f"  CANDIDATE {out}")
+    # Locking is two acts, and the second is the one the engine reads: the file goes into the
+    # casting pile, and the entry's face.ref in the cast index is set to that path. A PNG copied
+    # into place and left out of the index is a face no generator will ever condition on.
     print(f"\nPick by eye, then lock:  cp {cand_dir}/<key>-<n>.png "
           f"{casting_dir}/<key>.png")
+    print(f"then set cast.<key>.face.ref to that path in {castindex.index_path(cfg)}")
 
 
 if __name__ == "__main__":
