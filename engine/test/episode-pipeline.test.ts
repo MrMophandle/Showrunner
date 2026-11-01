@@ -493,7 +493,7 @@ describe("the episode pipeline, walked", () => {
     // instance that has not been migrated onto `Canon/cast.json` used to clear `bible-ready`,
     // write a premise and an outline, pass two human gates, draft, and run the panel's seven
     // before the engine said the one thing it already knew at its second step. The guard carries
-    // the identical sentence the probe writes, from `NO_CAST_INDEX` in cast.ts, so an operator who
+    // the identical sentence the probe writes, from `noCastIndexLine` in cast.ts, so an operator who
     // reads it at either step is sent to the same command and the two can never drift.
     const root = await mkdtemp(path.join(tmpdir(), "show-"));
     const { executors, calls, w } = fakeExecutors(root);
