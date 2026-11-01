@@ -1,9 +1,20 @@
 import path from "node:path";
-import { readFile, readdir, stat } from "node:fs/promises";
-import { checkGuestRefsDir, formatFilename, resolveShowPath, type ShowConfig } from "./show-config.js";
+import { readFile, stat } from "node:fs/promises";
+import { resolveShowPath, type ShowConfig } from "./show-config.js";
+import { castIndexPath, castKey, loadCastIndex, slugName, voiceReady } from "./cast.js";
 import type { Needs } from "./stages.js";
 
-export interface CastEntry { name: string; tags: string[] }
+/** Re-exported rather than defined here: the rule moved to cast.ts with the index it slugs for
+ *  (Plan L1, 2026-10-31), and the name stays `slugName` from `needs.js` because the console reads
+ *  it (`console/server/gates.ts:5`) and `console/shared/types.ts:511` cites it. */
+export { slugName };
+
+/** One line of the outline's `## Cast` section: the name as the writer wrote it and the tags in
+ *  its parentheses. Named `OutlineCastEntry` rather than `CastEntry` since Plan L1 (2026-10-31),
+ *  because `CastEntry` now means an entry of `Canon/cast.json` (cast.ts) — one is a claim an
+ *  outline makes about who is in an episode, the other is the show's record of who is cast, and
+ *  `missingRefs` exists to compare the two. */
+export interface OutlineCastEntry { name: string; tags: string[] }
 
 /** The outline's `## Cast` section, split into the lines that parse and the lines that do not.
  *  The section is the pipeline's only knowledge of who is in an episode before a script exists,
@@ -30,8 +41,8 @@ export interface CastEntry { name: string; tags: string[] }
  *  never be `- <Name> (<tags>)`, so nothing that was an entry stops being one, and a cast list that
  *  a heading has interrupted is over whatever the heading's depth, so no line under some later
  *  subsection is read as cast. */
-export function parseCastSection(outline: string): { entries: CastEntry[]; malformed: string[] } {
-  const entries: CastEntry[] = [];
+export function parseCastSection(outline: string): { entries: OutlineCastEntry[]; malformed: string[] } {
+  const entries: OutlineCastEntry[] = [];
   const malformed: string[] = [];
   let inSection = false;
   for (const line of outline.split("\n")) {
@@ -52,58 +63,27 @@ async function readJson(p: string): Promise<unknown> {
 }
 function isRecord(v: unknown): v is Record<string, unknown> { return typeof v === "object" && v !== null && !Array.isArray(v); }
 
-/** "the Warden" → "warden"; "Dock Hand Pim" → "dock-hand-pim". The bible's keys are slugs and
- *  the voice cast's keys are display names, so both sides are normalised the same way. */
-export function slugName(name: string): string {
-  return name.trim().toLowerCase().replace(/^the[ -]/, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-}
-
 function dirs(show: ShowConfig) {
   return {
     episodes: show.episodesDir ?? "Episodes",
     production: show.productionDir ?? "Production",
-    voiceRefs: typeof show.audio?.["voiceRefsDir"] === "string" ? show.audio["voiceRefsDir"] : "Production/voice-refs",
-    visualRefs: typeof show.visual?.["refs"] === "string" ? show.visual["refs"] : "Canon/refs.json",
   };
 }
 
-/** One episode's guest-reference directory, show-relative: `audio.guestRefsDir` with its
- *  `{episodeId}` token replaced by the run's id, through the same `formatFilename` grammar the
- *  output filenames use, so a config that writes `{epId}` fails by name instead of leaving a brace
- *  in a path. A function rather than a field of `dirs()` because this is the only show path that is
- *  per-episode, and `dirs()` takes no id. Defaulted to `<productionDir>/<episodeId>/guest-refs` --
- *  the literal this probe hardcoded before Plan F -- rather than required, because a show that
- *  never casts a speaking guest should not have to name a directory it will never fill.
+/** One line per reference the outline's cast needs and the show does not have, every subject
+ *  looked up in the cast index the same way: a face for everybody on the page — a character, a
+ *  location, a ship — and for everybody the outline tags `speaks`, a voice that is LOCKED in the
+ *  index with its WAV on disk. Recurring and guest are not two paths any more (Plan L1,
+ *  2026-10-31): a guest used to pass on a WAV whose filename began with their slug sitting in the
+ *  episode's `guest-refs` directory, which is a candidate take and not a casting decision, so a
+ *  guest could reach synthesis with nobody having ruled on the voice and no face at all. Two
+ *  authoring slips are reported the same way, because a cast line this probe cannot read is a
+ *  subject it cannot check: a line inside the section that misses the grammar, and an entry whose
+ *  tags name none of `recurring`, `guest` or `location`.
  *
- *  Three configured values are refused by name instead of honoured, because each would make the
- *  probe below report a check it did not perform. The refusals and their wording live in
- *  `checkGuestRefsDir` (show-config.ts), which `loadShowConfig` also calls, so the refusal lands at
- *  config load for every config read from disk and the two layers cannot say different things. The
- *  call is kept here rather than dropped because this function takes a `ShowConfig` value and not a
- *  show root: a config assembled in memory never passed the loader, and `audio` is an
- *  index-signature bag that carries no evidence the key was checked. */
-function guestRefsDir(show: ShowConfig, episodeId: string): string {
-  checkGuestRefsDir(show.audio);
-  const configured = show.audio?.["guestRefsDir"];
-  if (typeof configured === "string") return stripTrailingSlash(formatFilename(configured, { episodeId }));
-  return path.posix.join(dirs(show).production, episodeId, "guest-refs");
-}
-
-/** `"Voices/s02e01/guests/"` → `"Voices/s02e01/guests"`. Every caller of a show directory builds
- *  its paths by concatenation (`${guests}/${slug}*.wav` in the refusal line below), and nothing
- *  downstream collapses a double slash, so a trailing slash in the config would otherwise reach a
- *  refusal message and a readdir as `Voices/s02e01/guests//`. Mirrors the same trim in
- *  scripts/lib/showconfig.py's production_dir. */
-function stripTrailingSlash(dir: string): string {
-  return dir.replace(/\/+$/, "");
-}
-
-/** One line per reference the outline's cast needs and the show does not have: a recurring
- *  subject without an entry or an image in the visual bible, a speaking recurring character
- *  whose voice is not LOCKED or whose WAV is absent, a speaking guest with no WAV under the
- *  episode's guest-refs. Two authoring slips are reported the same way, because a cast line this
- *  probe cannot read is a subject it cannot check: a line inside the section that misses the
- *  grammar, and an entry whose tags name none of `recurring`, `guest` or `location`.
+ *  A show with no index at all is the one case that reports a single line and stops looking, and
+ *  the line carries the command that builds it: there is one remedy, and a list of subjects that
+ *  nothing could have registered would bury it.
  *
  *  An outline with no readable `## Cast` section is refused rather than passed (Plan H's H-09), in
  *  both shapes: no `## Cast` heading at all, and a heading with nothing under it that
@@ -123,22 +103,9 @@ export async function missingRefs(showRoot: string, episodeId: string, show: Sho
   if (cast.length === 0 && malformed.length === 0) {
     return ['the outline has no readable ## Cast section (write one line per subject as "- <Name> (<tags>)")'];
   }
-
-  const biblePath = resolveShowPath(showRoot, d.visualRefs);
-  const bibleRaw = (await exists(biblePath)) ? await readJson(biblePath) : {};
-  const bible: Record<string, Record<string, unknown>> = {};
-  if (isRecord(bibleRaw)) for (const [k, v] of Object.entries(bibleRaw)) if (!k.startsWith("_") && isRecord(v)) bible[k] = v;
-
-  const voicesPath = path.join(resolveShowPath(showRoot, d.voiceRefs), "refs.json");
-  const voicesRaw = (await exists(voicesPath)) ? await readJson(voicesPath) : {};
-  const voices: Record<string, Record<string, unknown>> = {};
-  if (isRecord(voicesRaw) && isRecord(voicesRaw["cast"])) for (const [k, v] of Object.entries(voicesRaw["cast"])) if (isRecord(v)) voices[k] = v;
-
-  // One value for the directory the probe reads and the directory its refusal names, so the two
-  // can never disagree about where a guest WAV belongs.
-  const guests = guestRefsDir(show, episodeId);
-  const guestDir = resolveShowPath(showRoot, guests);
-  const guestWavs = (await exists(guestDir)) ? (await readdir(guestDir)).filter((f) => f.toLowerCase().endsWith(".wav")).map((f) => f.toLowerCase()) : [];
+  const indexRel = castIndexPath(show);
+  const index = await loadCastIndex(showRoot, show);
+  if (index === undefined) return [`no cast index at ${indexRel} — run scripts/cast-index-build.py --write`];
 
   const missing: string[] = [];
   for (const line of malformed) missing.push(`${line}: not in the \`- <Name> (<tags>)\` grammar`);
@@ -152,33 +119,20 @@ export async function missingRefs(showRoot: string, episodeId: string, show: Sho
       missing.push(`${entry.name}: tags name none of recurring, guest, location (got ${entry.tags.join(", ")})`);
       continue;
     }
-    if (tags.has("recurring") || tags.has("location")) {
-      const key = [slug, `the-${slug}`].find((k) => Object.prototype.hasOwnProperty.call(bible, k));
-      if (key === undefined) {
-        missing.push(`${entry.name}: no entry in ${d.visualRefs} (tried ${slug}, the-${slug})`);
-      } else {
-        const ref = bible[key]?.["ref"];
-        if (typeof ref !== "string" || !(await exists(resolveShowPath(showRoot, ref)))) {
-          missing.push(`${entry.name}: reference image missing at ${typeof ref === "string" ? ref : "(no ref)"} (${d.visualRefs} key ${key})`);
-        }
-      }
+    const key = castKey(index, entry.name);
+    const found = key === undefined ? undefined : index.cast[key];
+    if (found === undefined) { missing.push(`${entry.name}: no entry in ${indexRel} (tried ${slug}, the-${slug})`); continue; }
+    // A face: every subject on the page has one — a character, a location, a ship.
+    const faceRef = found.face?.ref;
+    if (typeof faceRef !== "string" || !(await exists(resolveShowPath(showRoot, faceRef)))) {
+      missing.push(`${entry.name}: reference image missing at ${typeof faceRef === "string" ? faceRef : "(no ref)"} (${indexRel} key ${key})`);
     }
-    if (tags.has("recurring") && speaks) {
-      const voiceKey = Object.keys(voices).find((k) => slugName(k) === slug);
-      const voice = voiceKey !== undefined ? voices[voiceKey] : undefined;
-      if (voice === undefined) {
-        missing.push(`${entry.name}: no voice in ${path.posix.join(d.voiceRefs, "refs.json")} cast`);
-      } else {
-        const status = typeof voice["status"] === "string" ? voice["status"] : "";
-        const ref = voice["ref"];
-        if (!status.includes("LOCKED")) missing.push(`${entry.name}: voice is not LOCKED in ${path.posix.join(d.voiceRefs, "refs.json")} (cast key ${voiceKey})`);
-        else if (typeof ref !== "string" || !(await exists(resolveShowPath(showRoot, ref)))) missing.push(`${entry.name}: voice WAV missing at ${typeof ref === "string" ? ref : "(no ref)"}`);
-      }
-    }
-    if (tags.has("guest") && speaks) {
-      if (!guestWavs.some((f) => f.startsWith(slug))) {
-        missing.push(`${entry.name}: no guest voice at ${guests}/${slug}*.wav`);
-      }
+    // A voice: every speaking subject has one, LOCKED, with its WAV on disk.
+    if (speaks) {
+      const v = found.voice;
+      if (v === undefined || v === null) missing.push(`${entry.name}: no voice in ${indexRel} (key ${key})`);
+      else if (!voiceReady(found)) missing.push(`${entry.name}: voice is not LOCKED in ${indexRel} (key ${key})`);
+      else if (typeof v.ref !== "string" || !(await exists(resolveShowPath(showRoot, v.ref)))) missing.push(`${entry.name}: voice WAV missing at ${typeof v.ref === "string" ? v.ref : "(no ref)"} (${indexRel} key ${key})`);
     }
   }
   return missing;

@@ -72,9 +72,9 @@ export function episodePipeline(opts: EpisodePipelineOptions): Pipeline {
   const renderDir = path.join(engineRoot, "render");
   const ep = `${episodesDir}/${episodeId}`;
   const prod = `${productionDir}/${episodeId}`;
-  const voiceRefsDir = str(show.audio?.["voiceRefsDir"], "Production/voice-refs");
+  const voiceRefsDir = str(show.audio?.["voiceRefsDir"], "Production/voice-refs"); void voiceRefsDir; // read by no step since Plan L1 (2026-10-31) took the tts-script input to the cast index; kept for Plan L2's casting steps, which write the WAVs into the directory — see the audio.voiceRefsDir row in show-config.ts
   const voiceRegistry = str(show.audio?.["voiceRegistry"], `${canonDir}/voice-registry.md`);
-  const visualRefs = str(show.visual?.["refs"], `${canonDir}/refs.json`);
+  const castIndex = str((show as { cast?: Record<string, unknown> }).cast?.["index"], `${canonDir}/cast.json`);
   const visualStyle = str(show.visual?.["style"], `${canonDir}/visual-style.md`);
   const castingPileDir = str(show.visual?.["castingPileDir"], `${canonDir}/characters`);
   const publishingGuide = str(show.publish?.["guide"], `${canonDir}/publishing-guide.md`);
@@ -314,7 +314,7 @@ export function episodePipeline(opts: EpisodePipelineOptions): Pipeline {
     {
       kind: "agent", id: "tts-script", dependsOn: ["refs-ready"], promptFile: "tts-script.md", model: "large",
       allowedTools: ["Read", "Write", "Glob", "Grep"], context: "fresh", timeoutMs: 90 * MIN, idleTimeoutMs: 30 * MIN,
-      inputs: [`${voiceRefsDir}/refs.json`, voiceRegistry, script, outline], outputs: [ttsScript],
+      inputs: [castIndex, voiceRegistry, script, outline], outputs: [ttsScript],
     },
     { kind: "script", id: "validate-manifest", dependsOn: ["tts-script"], argv: py("validate-manifest.py"), inputs: [ttsScript, voiceRegistry], timeoutMs: MIN },
     {
@@ -337,24 +337,24 @@ export function episodePipeline(opts: EpisodePipelineOptions): Pipeline {
       // lost by editing a dependency list — the mix is declared here as well as depended on.
       kind: "agent", id: "visual-direction", dependsOn: ["audio-gate"], promptFile: "visual-direction.md", model: "medium",
       allowedTools: ["Read", "Write", "Glob", "Grep"], context: "fresh", timeoutMs: 30 * MIN,
-      inputs: [visualStyle, visualRefs, script, outline, mix], outputs: [prompts],
+      inputs: [visualStyle, castIndex, script, outline, mix], outputs: [prompts],
     },
     { kind: "script", id: "populator-check", dependsOn: ["visual-direction"], argv: py("populator-check.py", "--report-only"), inputs: [prompts], timeoutMs: MIN },
     {
       kind: "agent", id: "visual-direction-fix", dependsOn: ["populator-check"], when: (ctx) => String(ctx.results["populator-check"] ?? "").startsWith("POPULATORS_BAD"),
       promptFile: "visual-direction-fix.md", model: "medium", allowedTools: ["Read", "Edit", "Write", "Glob", "Grep"], context: "fresh", timeoutMs: 15 * MIN,
-      inputs: [prompts, visualRefs], outputs: [prompts],
+      inputs: [prompts, castIndex], outputs: [prompts],
     },
     {
       kind: "script", id: "populator-check-final", dependsOn: ["visual-direction-fix"], when: (ctx) => String(ctx.results["populator-check"] ?? "").startsWith("POPULATORS_BAD"),
       argv: py("populator-check.py"), inputs: [prompts], timeoutMs: MIN,
     },
-    { kind: "script", id: "image-generate", dependsOn: ["populator-check-final", "audio-mix"], argv: py("image-generate.py"), inputs: [prompts, visualRefs], timeoutMs: 3 * HOUR },
-    { kind: "script", id: "nano-banana-generate", dependsOn: ["populator-check-final"], argv: py("nano-banana-generate.py"), inputs: [prompts, visualRefs], timeoutMs: 3 * HOUR },
+    { kind: "script", id: "image-generate", dependsOn: ["populator-check-final", "audio-mix"], argv: py("image-generate.py"), inputs: [prompts, castIndex], timeoutMs: 3 * HOUR },
+    { kind: "script", id: "nano-banana-generate", dependsOn: ["populator-check-final"], argv: py("nano-banana-generate.py"), inputs: [prompts, castIndex], timeoutMs: 3 * HOUR },
     { kind: "script", id: "image-sheet", dependsOn: ["nano-banana-generate", "image-generate"], argv: py("image-sheet.py"), inputs: [prompts], outputs: [imageSheet], timeoutMs: MIN },
     {
       kind: "gate", id: "nano-banana-gate", dependsOn: ["image-sheet"], messageFile: "nano-banana-gate.gate.md", maxAttempts: 10,
-      onReject: fixAgent("nano-banana-gate-fix", "nano-banana-gate.reject.md", "medium", ["Read", "Edit", "Write", "Glob", "Grep", "Bash"], [prompts, visualRefs]),
+      onReject: fixAgent("nano-banana-gate-fix", "nano-banana-gate.reject.md", "medium", ["Read", "Edit", "Write", "Glob", "Grep", "Bash"], [prompts, castIndex]),
       rerunOnReject: ["nano-banana-generate", "image-generate"],
     },
     {
@@ -384,10 +384,14 @@ export function episodePipeline(opts: EpisodePipelineOptions): Pipeline {
       onReject: fixAgent("image-gate-fix", "image-gate.reject.md", "medium", ["Read", "Edit", "Write", "Glob", "Grep", "Bash"], [prompts]),
       rerunOnReject: ["image-generate", "nano-banana-generate"],
     },
-    { kind: "script", id: "registry-append", dependsOn: ["image-gate"], argv: py("registry-append.py"), inputs: [prompts], timeoutMs: 2 * MIN },
-    { kind: "script", id: "image-sheet-final", dependsOn: ["registry-append"], argv: py("image-sheet.py"), inputs: [prompts], outputs: [imageSheet], timeoutMs: MIN },
+    // `registry-append` sat here, between the image gate and the final sheet, and copied every
+    // approved character still into that character's folder under the casting pile. It is gone
+    // (spec 2026-10-31 §1.2b): a character folder holds a sheet, one reference and at most three
+    // gallery images, the gallery is a list in the cast index rather than whatever the step had
+    // dropped on disk, and the step was the thing that grew the folders past the cap.
+    { kind: "script", id: "image-sheet-final", dependsOn: ["image-gate"], argv: py("image-sheet.py"), inputs: [prompts], outputs: [imageSheet], timeoutMs: MIN },
     commit("assets-commit", ["audio-gate", "image-sheet-final"], `${episodeId}: assets — manifest, shot list, image sheet, casting pile (assets phase)`,
-      [ttsScript, prompts, imageSheet, castingPileDir, visualRefs, runsDir]),
+      [ttsScript, prompts, imageSheet, castingPileDir, castIndex, runsDir]),
 
     // ── assemble phase ───────────────────────────────────────────────────────────────────────
     {

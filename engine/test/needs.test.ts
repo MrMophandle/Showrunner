@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { episodeNeeds, missingRefs, missingShowrunnerImages, parseCastSection } from "../src/needs.js";
@@ -10,25 +10,50 @@ import type { ShowConfig } from "../src/show-config.js";
  *  at NEEDS_REFS with no cast at all, so it has to say what to write and in what grammar. */
 const NO_CAST = 'the outline has no readable ## Cast section (write one line per subject as "- <Name> (<tags>)")';
 
+/** The probe's one line for a show that has no `Canon/cast.json` at all, asserted by text: it is
+ *  the whole report in that case, and the only thing standing between an unmigrated show and a
+ *  run that stops at NEEDS_REFS with no idea what to do about it, so it has to carry the command
+ *  that builds the index. */
+const NO_INDEX = "no cast index at Canon/cast.json — run scripts/cast-index-build.py --write";
+
+/** No `audio` and no `visual` group, which is the point: after Plan L1 (2026-10-31) the probe
+ *  reads `Canon/cast.json` and neither `Production/voice-refs/refs.json` nor `Canon/refs.json`,
+ *  and `cast.index` is defaulted, so a config naming no path at all exercises the real one. */
 const show: ShowConfig = {
   showName: "S", showSlug: "Show", promptsDir: "prompts",
   models: { medium: "m", large: "l", writer: "w" }, airMap: {}, output: { nasRoot: "/nas" },
-  audio: { voiceRefsDir: "Production/voice-refs" }, visual: { refs: "Canon/refs.json" },
 };
 
+/** The fixture show: one cast index and the files it points at. Six subjects, each of which is a
+ *  case the probe below asserts on — Vale complete (a face on disk and a LOCKED voice whose WAV is
+ *  on disk), the Warden a face and a voice that is still a CANDIDATE, Harbor a location with a
+ *  face, Ghost a face reference that names a file nobody made, Dock Hand Pim an entry filed under
+ *  the short key `pim` with a face and **no** voice, and Quiet Pim a face and no voice, which is
+ *  all a subject who does not speak needs. */
 async function show1() {
   const root = await mkdtemp(path.join(tmpdir(), "show-"));
   const w = async (rel: string, text: string) => { await mkdir(path.dirname(path.join(root, rel)), { recursive: true }); await writeFile(path.join(root, rel), text); };
-  await w("Canon/refs.json", JSON.stringify({
-    _doc: "meta", vale: { kind: "human", ref: "Canon/characters/Vale/ref.png" }, "the-warden": { kind: "character", ref: "Canon/characters/Warden/ref.png" },
-    harbor: { kind: "location", ref: "Canon/locations/harbor.png" }, ghost: { kind: "human", ref: "Canon/characters/Ghost/missing.png" },
+  await w("Canon/cast.json", JSON.stringify({
+    version: 1,
+    audio: { engine: "qwen3", model: "a-tts-model" },
+    cast: {
+      vale: {
+        name: "Vale", kind: "human", speaks: true, debut: "s01e01", face: { ref: "Canon/characters/Vale/ref.png", gallery: [] },
+        voice: { ref: "Production/voice-refs/vale.wav", ref_text: "x", direction: "d", status: "LOCKED (speed 1.1)" },
+      },
+      "the-warden": {
+        name: "the Warden", kind: "character", speaks: true, face: { ref: "Canon/characters/Warden/ref.png", gallery: [] },
+        voice: { ref: "Production/voice-refs/warden.wav", ref_text: "x", direction: "d", status: "CANDIDATE" },
+      },
+      harbor: { name: "Harbor", kind: "location", speaks: false, face: { ref: "Canon/locations/harbor.png", gallery: [] } },
+      ghost: { name: "Ghost", kind: "human", speaks: false, face: { ref: "Canon/characters/Ghost/missing.png", gallery: [] } },
+      pim: { name: "Dock Hand Pim", kind: "human", speaks: true, debut: "s02e01", face: { ref: "Canon/characters/Pim/ref.png", gallery: [] } },
+      "quiet-pim": { name: "Quiet Pim", kind: "human", speaks: false, face: { ref: "Canon/characters/QuietPim/ref.png", gallery: [] } },
+    },
   }));
   await w("Canon/characters/Vale/ref.png", "png"); await w("Canon/characters/Warden/ref.png", "png"); await w("Canon/locations/harbor.png", "png");
-  await w("Production/voice-refs/refs.json", JSON.stringify({ cast: {
-    narrator: { ref: "Production/voice-refs/n.wav", status: "LOCKED" }, Vale: { ref: "Production/voice-refs/vale.wav", status: "LOCKED (speed 1.1)" },
-    Warden: { ref: "Production/voice-refs/warden.wav", status: "CANDIDATE" },
-  } }));
-  await w("Production/voice-refs/n.wav", "wav"); await w("Production/voice-refs/vale.wav", "wav"); await w("Production/voice-refs/warden.wav", "wav");
+  await w("Canon/characters/Pim/ref.png", "png"); await w("Canon/characters/QuietPim/ref.png", "png");
+  await w("Production/voice-refs/vale.wav", "wav"); await w("Production/voice-refs/warden.wav", "wav");
   return { root, w };
 }
 
@@ -99,15 +124,29 @@ describe("missingRefs", () => {
     await w("Episodes/s02e01/outline.md", "## Cast\n- Vale (recurring, speaks)\n- Harbor (location)\n");
     expect(await missingRefs(root, "s02e01", show)).toEqual([]);
   });
-  it("names a missing image, an unlocked voice, an unregistered recurring subject, and a guest without a WAV", async () => {
+  it("names a missing image, an unlocked voice, a subject with no entry, and a speaking guest with no voice", async () => {
     const { root, w } = await show1();
+    // Every subject on the page is looked up in the index the same way, speaking or not, recurring
+    // or guest: the four findings below are one entry each. Quiet Pim is the fifth line and
+    // produces nothing, which is the proof that a guest who does not speak needs a face and no
+    // voice — and that a guest is no longer satisfied by a WAV someone dropped in a directory.
     await w("Episodes/s02e01/outline.md", "## Cast\n- Ghost (recurring)\n- the Warden (recurring, speaks)\n- Nobody (recurring)\n- Dock Hand Pim (guest, speaks)\n- Quiet Pim (guest)\n");
     expect(await missingRefs(root, "s02e01", show)).toEqual([
-      "Ghost: reference image missing at Canon/characters/Ghost/missing.png (Canon/refs.json key ghost)",
-      "the Warden: voice is not LOCKED in Production/voice-refs/refs.json (cast key Warden)",
-      "Nobody: no entry in Canon/refs.json (tried nobody, the-nobody)",
-      "Dock Hand Pim: no guest voice at Production/s02e01/guest-refs/dock-hand-pim*.wav",
+      "Ghost: reference image missing at Canon/characters/Ghost/missing.png (Canon/cast.json key ghost)",
+      "the Warden: voice is not LOCKED in Canon/cast.json (key the-warden)",
+      "Nobody: no entry in Canon/cast.json (tried nobody, the-nobody)",
+      "Dock Hand Pim: no voice in Canon/cast.json (key pim)",
     ]);
+  });
+
+  it("reports the one line that names the index and how to build it when the show has none", async () => {
+    // The unmigrated show, and the shape of a production outage: the engine that reads the index
+    // against an instance that has none stops every run here. The remedy is the whole report, so
+    // the operator reads the command rather than a list of subjects nothing could have registered.
+    const root = await mkdtemp(path.join(tmpdir(), "show-"));
+    const w = async (rel: string, text: string) => { await mkdir(path.dirname(path.join(root, rel)), { recursive: true }); await writeFile(path.join(root, rel), text); };
+    await w("Episodes/s02e01/outline.md", "## Cast\n- Vale (recurring, speaks)\n- Harbor (location)\n");
+    expect(await missingRefs(root, "s02e01", show)).toEqual([NO_INDEX]);
   });
   it("reports a cast line that misses the grammar instead of passing it silently", async () => {
     const { root, w } = await show1();
@@ -133,58 +172,42 @@ describe("missingRefs", () => {
     ]);
   });
 
-  it("reads the guest-reference directory from audio.guestRefsDir, substituting {episodeId}", async () => {
-    // Every other test here omits the key and so exercises the <productionDir>/<episodeId>/guest-refs
-    // default; this one is the only proof that a show which names the directory is obeyed, and that
-    // the refusal names the directory the probe actually read rather than the old literal.
-    const renamed: ShowConfig = { ...show, productionDir: "Prod", audio: { ...show.audio, guestRefsDir: "Voices/{episodeId}/guests" } };
+  it("honours the configured cast.index, and reports a voice WAV the index names and the show does not have", async () => {
+    // The key is read through castIndexPath, so a show that files its index somewhere else is
+    // obeyed and every message names the file the probe actually read.
     const { root, w } = await show1();
-    await w("Episodes/s02e01/outline.md", "## Cast\n- Dock Hand Pim (guest, speaks)\n");
-    await w("Voices/s02e01/guests/dock-hand-pim-1.wav", "wav");
-    expect(await missingRefs(root, "s02e01", renamed)).toEqual([]);
-    // The WAV that satisfies s02e01 is in s02e01's directory, so s02e02 is still missing one — and
-    // the line names Voices/s02e02/guests, not Prod/s02e02/guest-refs.
-    await w("Episodes/s02e02/outline.md", "## Cast\n- Dock Hand Pim (guest, speaks)\n");
-    expect(await missingRefs(root, "s02e02", renamed)).toEqual([
-      "Dock Hand Pim: no guest voice at Voices/s02e02/guests/dock-hand-pim*.wav",
+    const named: ShowConfig = { ...show, cast: { index: "Canon/people.json" } };
+    await w("Episodes/s02e01/outline.md", "## Cast\n- Vale (recurring, speaks)\n");
+    expect(await missingRefs(root, "s02e01", named)).toEqual([
+      "no cast index at Canon/people.json — run scripts/cast-index-build.py --write",
+    ]);
+    await w("Canon/people.json", JSON.stringify({
+      version: 1,
+      cast: {
+        vale: {
+          name: "Vale", kind: "human", speaks: true, face: { ref: "Canon/characters/Vale/ref.png", gallery: [] },
+          voice: { ref: "Production/voice-refs/gone.wav", ref_text: "x", direction: "d", status: "LOCKED" },
+        },
+      },
+    }));
+    // A LOCKED voice whose WAV is not on disk is its own finding: the index can say a character is
+    // cast while the file the synthesiser needs is missing, and that is the last of the three
+    // things a speaking subject owes.
+    expect(await missingRefs(root, "s02e01", named)).toEqual([
+      "Vale: voice WAV missing at Production/voice-refs/gone.wav (Canon/people.json key vale)",
     ]);
   });
 
-  it("refuses a configured guest-reference directory that names no {episodeId}, and an empty one", async () => {
-    // A show whose audio.guestRefsDir is one shared directory gets no guest check at all: the probe
-    // matches a WAV by slug prefix, so s02e01's dock-hand-pim-1.wav would satisfy s02e02's Dock Hand
-    // Pim and refs-ready would report "all references present" having proved nothing (SR-3). The
-    // refusal is the only thing standing between that config and a silent pass, so it is asserted
-    // by message as well as by type -- the message has to say the shared case is unsupported, or an
-    // author reads the throw as a bug rather than as a ruling.
+  it("finds a speaking guest's entry under the index's own key, and names the missing cast section", async () => {
     const { root, w } = await show1();
+    // "Dock Hand Pim" is how the outline names him and `pim` is how the index files him, which is
+    // the third lookup step in cast.ts: once the entry carries a LOCKED voice with its WAV on
+    // disk, a guest passes exactly as a recurring character does.
     await w("Episodes/s02e01/outline.md", "## Cast\n- Dock Hand Pim (guest, speaks)\n");
-    const shared: ShowConfig = { ...show, audio: { ...show.audio, guestRefsDir: "Production/guest-refs" } };
-    await expect(missingRefs(root, "s02e01", shared)).rejects.toThrow(/audio\.guestRefsDir "Production\/guest-refs" names no \{episodeId\}/);
-    await expect(missingRefs(root, "s02e01", shared)).rejects.toThrow(/one shared guest-references directory for every episode is not supported/);
-
-    // Absent is a default and present-but-empty is a mistake: the two must not collapse into the
-    // same silent <productionDir>/<episodeId>/guest-refs, or a show whose scaffolding left the
-    // field blank writes its guest WAVs into a directory it never named. scripts/lib/showconfig.py's
-    // production_dir refuses "" for productionDir by name for the same reason.
-    const blank: ShowConfig = { ...show, audio: { ...show.audio, guestRefsDir: "" } };
-    await expect(missingRefs(root, "s02e01", blank)).rejects.toThrow(/audio\.guestRefsDir is empty/);
-
-    // A trailing slash is honoured rather than refused, and trimmed, because nothing downstream
-    // collapses a double slash: without the trim the refusal below would name
-    // Voices/s02e01/guests//dock-hand-pim*.wav.
-    const slashed: ShowConfig = { ...show, audio: { ...show.audio, guestRefsDir: "Voices/{episodeId}/guests/" } };
-    expect(await missingRefs(root, "s02e01", slashed)).toEqual([
-      "Dock Hand Pim: no guest voice at Voices/s02e01/guests/dock-hand-pim*.wav",
-    ]);
-    await w("Voices/s02e01/guests/dock-hand-pim-1.wav", "wav");
-    expect(await missingRefs(root, "s02e01", slashed)).toEqual([]);
-  });
-
-  it("finds a guest voice by slug prefix, and names the missing cast section", async () => {
-    const { root, w } = await show1();
-    await w("Episodes/s02e01/outline.md", "## Cast\n- Dock Hand Pim (guest, speaks)\n");
-    await w("Production/s02e01/guest-refs/dock-hand-pim-1.wav", "wav");
+    const index = JSON.parse(await readFile(path.join(root, "Canon/cast.json"), "utf8")) as { cast: Record<string, Record<string, unknown>> };
+    index.cast["pim"] = { ...index.cast["pim"], voice: { ref: "Production/voice-refs/pim.wav", ref_text: "x", direction: "d", status: "LOCKED" } };
+    await w("Canon/cast.json", JSON.stringify(index));
+    await w("Production/voice-refs/pim.wav", "wav");
     expect(await missingRefs(root, "s02e01", show)).toEqual([]);
     // An outline with no `## Cast` heading at all. This used to return [] and pass refs-ready with
     // "all references present" having checked nothing (Plan H's H-09): the only thing between such

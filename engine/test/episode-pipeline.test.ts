@@ -14,7 +14,9 @@ export const show: ShowConfig = {
   models: { medium: "m", large: "l", writer: "w" }, airMap: { ep10: [1, 10] },
   output: { nasRoot: "/tmp/no-such-nas", mixFilename: "{slug} S{season:02d}E{episode:02d}.wav", videoFilename: "episode.mp4" },
   audio: { voiceRefsDir: "Production/voice-refs", voiceRegistry: "Canon/voice-registry.md" },
-  visual: { refs: "Canon/refs.json", style: "Canon/visual-style.md", castingPileDir: "Canon/characters" },
+  // No `visual.refs`: Plan L1 (2026-10-31) retired it from the engine, and the steps that read
+  // the reference registry read `Canon/cast.json` through the defaulted `cast.index` instead.
+  visual: { style: "Canon/visual-style.md", castingPileDir: "Canon/characters" },
   video: { compositionId: "Episode" },
   publish: { guide: "Canon/publishing-guide.md" },
 };
@@ -33,7 +35,7 @@ describe("episodePipeline", () => {
     expect(p.name).toBe(EPISODE_PIPELINE_NAME);
     expect(() => orderSteps(p)).not.toThrow();
     expect(() => validateStageMap(EPISODE_STAGE_MAP, p)).not.toThrow();
-    expect(p.steps).toHaveLength(68);
+    expect(p.steps).toHaveLength(67);
   });
 
   it("runs the review round in the order the reset depends on: hand edits, the revision, the panel's seven, the panel, the gate", () => {
@@ -128,10 +130,10 @@ describe("episodePipeline", () => {
     // overview — with every other test green. This test fails if a Canon/ input is added to any
     // step without a matching BIBLE_FILES row or config-named file.
     //
-    // Canon/refs.json is the one deliberate exemption: it is the reference registry, and its
-    // completeness is the NEEDS_REFS probe's report (missingRefs in needs.ts), not the bible's.
-    // A new exemption belongs here only with a reader that checks the file by name.
-    const NOT_THE_BIBLE = new Set(["Canon/refs.json"]);
+    // Canon/cast.json is the one deliberate exemption: it is the cast index, and its completeness
+    // is the NEEDS_REFS probe's report (missingRefs in needs.ts), not the bible's. A new exemption
+    // belongs here only with a reader that checks the file by name.
+    const NOT_THE_BIBLE = new Set(["Canon/cast.json"]);
     /** Every path any step declares as an input, including the nested steps a gate's `onReject`
      *  and a loop's `body` carry. No nested step declares an input today; walking them is what
      *  makes a future one count rather than slip past the guard. */
@@ -279,9 +281,17 @@ describe("the episode pipeline, walked", () => {
     const cfg: ShowConfig = { ...show, output: { ...show.output, nasRoot: nas } };
     const { executors, calls, w } = fakeExecutors(root, { failOnce: new Set(["tts-generate"]) });
     for (const f of BIBLE) await w(`Canon/${f}.md`, `${f}\n`);
-    await w("Canon/refs.json", JSON.stringify({ vale: { kind: "human", ref: "Canon/characters/Vale/ref.png" }, harbor: { kind: "location", ref: "Canon/locations/harbor.png" } }));
-    await w("Canon/characters/Vale/ref.png", "png"); await w("Canon/locations/harbor.png", "png");
-    await w("Production/voice-refs/refs.json", JSON.stringify({ cast: { Vale: { ref: "Production/voice-refs/vale.wav", status: "LOCKED" } } })); await w("Production/voice-refs/vale.wav", "wav");
+    await w("Canon/cast.json", JSON.stringify({
+      version: 1,
+      cast: {
+        vale: {
+          name: "Vale", kind: "human", speaks: true, face: { ref: "Canon/characters/Vale/ref.png", gallery: [] },
+          voice: { ref: "Production/voice-refs/vale.wav", ref_text: "x", direction: "d", status: "LOCKED" },
+        },
+        harbor: { name: "Harbor", kind: "location", speaks: false, face: { ref: "Canon/locations/harbor.png", gallery: [] } },
+      },
+    }));
+    await w("Canon/characters/Vale/ref.png", "png"); await w("Canon/locations/harbor.png", "png"); await w("Production/voice-refs/vale.wav", "wav");
     await w("Episodes/_TEMPLATE/outline.md", "template\n");
     await w("Episodes/s02e01/premise.md", "A week.\n");
     const pipeline = episodePipeline({ show: cfg, episodeId: "s02e01", engineRoot: "/engine" });
@@ -382,12 +392,14 @@ describe("the episode pipeline, walked", () => {
     expect(Object.values(state.steps).filter((s) => s === "bypassed").length).toBeGreaterThan(0);
   });
 
-  it("stops at NEEDS_REFS when the outline names a recurring subject the bible lacks, and continues once it exists", async () => {
+  it("stops at NEEDS_REFS when the outline names a subject the cast index lacks, and continues once it has one", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "show-"));
     const { executors, w } = fakeExecutors(root);
     for (const f of BIBLE) await w(`Canon/${f}.md`, `${f}\n`);
-    await w("Canon/refs.json", JSON.stringify({ harbor: { kind: "location", ref: "Canon/locations/harbor.png" } })); await w("Canon/locations/harbor.png", "png");
-    await w("Production/voice-refs/refs.json", JSON.stringify({ cast: {} }));
+    await w("Canon/cast.json", JSON.stringify({
+      version: 1, cast: { harbor: { name: "Harbor", kind: "location", speaks: false, face: { ref: "Canon/locations/harbor.png", gallery: [] } } },
+    }));
+    await w("Canon/locations/harbor.png", "png");
     await w("Episodes/_TEMPLATE/outline.md", "t\n"); await w("Episodes/s02e01/premise.md", "A week.\n");
     const pipeline = episodePipeline({ show, episodeId: "s02e01", engineRoot: "/engine" });
     const log = new EventLog(EventLog.logPath(root, "s02e01", "r1"));
@@ -397,11 +409,19 @@ describe("the episode pipeline, walked", () => {
     await go(); await answerGate(log, "r1", "script-gate", { approved: true });
     const r = await go();
     expect(r).toMatchObject({ status: "failed", stepId: "refs-ready" });
-    expect(r.status === "failed" && r.error).toMatch(/^NEEDS_REFS: Vale: no entry in Canon\/refs.json/);
+    expect(r.status === "failed" && r.error).toMatch(/^NEEDS_REFS: Vale: no entry in Canon\/cast.json/);
     expect(deriveStage(deriveRunState(await log.read()), EPISODE_STAGE_MAP, await episodeNeeds(root, "s02e01", show))).toBe("NEEDS_REFS");
-    await w("Canon/refs.json", JSON.stringify({ vale: { kind: "human", ref: "Canon/characters/Vale/ref.png" }, harbor: { kind: "location", ref: "Canon/locations/harbor.png" } }));
-    await w("Canon/characters/Vale/ref.png", "png");
-    await w("Production/voice-refs/refs.json", JSON.stringify({ cast: { Vale: { ref: "Production/voice-refs/vale.wav", status: "LOCKED" } } })); await w("Production/voice-refs/vale.wav", "wav");
+    await w("Canon/cast.json", JSON.stringify({
+      version: 1,
+      cast: {
+        vale: {
+          name: "Vale", kind: "human", speaks: true, face: { ref: "Canon/characters/Vale/ref.png", gallery: [] },
+          voice: { ref: "Production/voice-refs/vale.wav", ref_text: "x", direction: "d", status: "LOCKED" },
+        },
+        harbor: { name: "Harbor", kind: "location", speaks: false, face: { ref: "Canon/locations/harbor.png", gallery: [] } },
+      },
+    }));
+    await w("Canon/characters/Vale/ref.png", "png"); await w("Production/voice-refs/vale.wav", "wav");
     await resumeRun(log, "r1");
     expect(await go()).toMatchObject({ status: "waiting", gate: { stepId: "casting-gate" } });
   });

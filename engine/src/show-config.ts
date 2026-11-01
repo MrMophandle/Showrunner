@@ -35,6 +35,11 @@ export interface ShowConfig {
   agents?: { autoRetryWeeklyUtilizationMax: number };
   output: { nasMount?: string; nasRoot: string; finalFilename?: string; mixFilename?: string; videoFilename?: string };
   audio?: Record<string, unknown>;
+  /** The cast group, whose one key is `cast.index`: the show's record of who has a sheet, a face
+   *  and a voice (`Canon/cast.json` by default, read through `castIndexPath` in cast.ts). Carried
+   *  as a bag like `audio` and `visual` rather than typed, because the loader validates no key
+   *  inside it and `castIndexPath` answers for a config that names none. */
+  cast?: Record<string, unknown>;
   visual?: Record<string, unknown>;
   video?: Record<string, unknown>;
   publish?: Record<string, unknown>;
@@ -44,7 +49,7 @@ export interface ShowConfig {
  *  exists. `requiredBy: "both"` is one of the eight keys both loaders refuse to run without;
  *  `"engine"` and `"scripts"` name a reader that fails by name when the key is absent and no default
  *  applies; `"none"` is a key with a default on every reader. **No row is `"engine"` today** — the
- *  sixty-one rows are eight `both`, forty-three `scripts` and ten `none` — and the member is kept
+ *  sixty-two rows are eight `both`, forty-three `scripts` and eleven `none` — and the member is kept
  *  rather than dropped because the asymmetry is an accident of which reader grew first: the engine
  *  reads its own keys through optional accessors with fallbacks, and the first engine key that
  *  refuses a run by name belongs in this class rather than in a widened `"both"`. `readBy` names the readers in prose
@@ -70,8 +75,8 @@ export const SHOW_CONFIG_KEYS: readonly ShowConfigKey[] = [
   { path: "showSlug", requiredBy: "both", readBy: "engine/src/show-config.ts (mixFilename, below); scripts/audio-mix.py:30, scripts/build-timeline.py:62, scripts/finalize-video.py:139" },
   { path: "promptsDir", requiredBy: "both", readBy: "engine/src/agent-step.ts:148 (where every agent step finds its prompt); no script reads it, and the scripts' loader requires it" },
   { path: "canonDir", requiredBy: "scripts", default: "Canon", readBy: "engine/src/pipelines/episode.ts:60 (defaulted); scripts/canon-diff.py:64, scripts/finalize-video.py:166 (no default)" },
-  { path: "episodesDir", requiredBy: "scripts", default: "Episodes", readBy: "engine/src/pipelines/episode.ts:61, engine/src/needs.ts:45 (defaulted); scripts/publish-kit.py:98 (no default); scripts/canon-ledger.py:66 defaults it" },
-  { path: "productionDir", requiredBy: "none", default: "Production", readBy: "engine/src/pipelines/episode.ts (the productionDir local in episodePipeline — a symbol rather than a line, because this row carried :62 after the assignment had moved to :69 and nothing checks a readBy citation), engine/src/needs.ts:46 (both defaulted); every Python step that builds an episode path, through scripts/lib/showconfig.py's production_dir(cfg), which defaults to \"Production\" so the two loaders agree about a config that omits the key. requiredBy is \"none\" rather than \"scripts\" because the helper defaults where the two retired scripts (check_layout.py, season-status.py) read the key with none; buildShowConfig writes every row regardless of requiredBy, so init's output does not change" },
+  { path: "episodesDir", requiredBy: "scripts", default: "Episodes", readBy: "engine/src/pipelines/episode.ts:61, engine/src/needs.ts:63 (defaulted); scripts/publish-kit.py:98 (no default); scripts/canon-ledger.py:66 defaults it" },
+  { path: "productionDir", requiredBy: "none", default: "Production", readBy: "engine/src/pipelines/episode.ts (the productionDir local in episodePipeline — a symbol rather than a line, because this row carried :62 after the assignment had moved to :69 and nothing checks a readBy citation), engine/src/needs.ts:64 (both defaulted); every Python step that builds an episode path, through scripts/lib/showconfig.py's production_dir(cfg), which defaults to \"Production\" so the two loaders agree about a config that omits the key. requiredBy is \"none\" rather than \"scripts\" because the helper defaults where the two retired scripts (check_layout.py, season-status.py) read the key with none; buildShowConfig writes every row regardless of requiredBy, so init's output does not change" },
   { path: "models.small", requiredBy: "none", readBy: "nothing yet: engine/src/agent-step.ts:252 resolves a step's tier name through models, and no step declares the small tier" },
   { path: "models.medium", requiredBy: "both", readBy: "engine/src/agent-step.ts:251-252 (the tier seven steps declare); console/server/what-happened.ts:223" },
   { path: "models.large", requiredBy: "both", readBy: "engine/src/agent-step.ts:251-252 (the tier one step declares)" },
@@ -97,10 +102,10 @@ export const SHOW_CONFIG_KEYS: readonly ShowConfigKey[] = [
   { path: "audio.authoredPauseRangeSeconds", requiredBy: "scripts", readBy: "scripts/validate-manifest.py:72 (the [PAUSE n] range, read as a two-element list)" },
   { path: "audio.narratorSpeakerKey", requiredBy: "scripts", readBy: "scripts/audio-mix.py:50, scripts/breath-qc.py:109, scripts/pace-qc.py:46" },
   { path: "audio.mainCast", requiredBy: "scripts", readBy: "scripts/validate-manifest.py:73 (the speaker keys a manifest may use without a guest WAV)" },
-  { path: "audio.voiceRefsDir", requiredBy: "none", default: "Production/voice-refs", readBy: "engine/src/pipelines/episode.ts:67, engine/src/needs.ts:47 (both defaulted); no script site names it" },
-  { path: "audio.guestRefsDir", requiredBy: "none", default: "<productionDir>/<episodeId>/guest-refs", readBy: "engine/src/needs.ts (missingRefs: the directory one episode's guest-voice WAVs sit in, and the directory its refusal names). The value's literal `{episodeId}` placeholder is substituted with the run's episode id through formatFilename, which is why the key is written with the token rather than resolved: it is the one show path that is per-episode. **Validated at load**: `checkGuestRefsDir` below is called by `loadShowConfig` before it builds the config, and again by needs.ts's `missingRefs` as a second line of defence for a config no loader built. A configured value is refused by name in three cases: one carrying no `{episodeId}` (one shared directory for every episode would let one episode's guest WAV satisfy every other episode's guest of the same name, so the shared case is not supported), one that is the empty string (absent is this row's default, and an empty value is a mistake in showrunner.json rather than a request for the default), and one that is not a string at all. A trailing slash is trimmed" },
+  { path: "audio.voiceRefsDir", requiredBy: "none", default: "Production/voice-refs", readBy: "nothing at this commit, and no script site names it. **Plan L1 (2026-10-31) removed both readers**: the `tts-script` step's `<voiceRefsDir>/refs.json` input and engine/src/needs.ts's voice lookup both read the voice registry, which the cast index replaced — and the index names each voice's WAV by path, so no reader has to build one. engine/src/pipelines/episode.ts still resolves the key into a local (kept for Plan L2's casting steps, which write the WAVs into the directory); the directory itself is where a show's voice references live" },
+  { path: "audio.guestRefsDir", requiredBy: "none", default: "<productionDir>/<episodeId>/guest-refs", readBy: "the directory one episode's guest-voice WAVs sit in. **Plan L1 (2026-10-31) removed the engine's reader**: engine/src/needs.ts's `missingRefs` looked a speaking guest up by a WAV whose filename began with their slug in this directory, and now looks every guest up in cast.index like everybody else, so no engine step reads the key. It is still read by console/server/gates.ts:164 (`guestRefsDirOf`, which lists the directory at the casting gate and fences a pick to it) and still validated by `checkGuestRefsDir` below at config load; retiring the key is deferred to Plan L2. The value's literal `{episodeId}` placeholder is substituted with the run's episode id through formatFilename, which is why the key is written with the token rather than resolved: it is the one show path that is per-episode. **Validated at load**: `checkGuestRefsDir` below is called by `loadShowConfig` before it builds the config, and again by needs.ts's `missingRefs` as a second line of defence for a config no loader built. A configured value is refused by name in three cases: one carrying no `{episodeId}` (one shared directory for every episode would let one episode's guest WAV satisfy every other episode's guest of the same name, so the shared case is not supported), one that is the empty string (absent is this row's default, and an empty value is a mistake in showrunner.json rather than a request for the default), and one that is not a string at all. A trailing slash is trimmed" },
   { path: "audio.voiceRegistry", requiredBy: "scripts", default: "Canon/voice-registry.md", readBy: "engine/src/pipelines/episode.ts:68 (defaulted to <canonDir>/voice-registry.md); scripts/validate-manifest.py:74 (sc.path, no default)" },
-  { path: "visual.refs", requiredBy: "scripts", default: "Canon/refs.json", readBy: "engine/src/pipelines/episode.ts:69, engine/src/needs.ts:48 (defaulted); scripts/design-visual.py:61, scripts/image-generate.py:78, scripts/nano-banana-generate.py:423, scripts/registry-append.py:117 (sc.path, no default)" },
+  { path: "visual.refs", requiredBy: "scripts", default: "Canon/refs.json", readBy: "retired by Plan L1 (2026-10-31): the index replaced it; no engine reader remains — scripts/design-visual.py:61, scripts/image-generate.py:78, scripts/nano-banana-generate.py:423, scripts/registry-append.py:117 (sc.path, no default) still read it until Task 2 repoints them, which is why the row stays" },
   { path: "visual.style", requiredBy: "scripts", default: "Canon/visual-style.md", readBy: "engine/src/pipelines/episode.ts:70 (defaulted); scripts/image-sheet.py:72, scripts/nano-banana-generate.py:426, scripts/populator-check.py:69 (no default)" },
   { path: "visual.auditLaws", requiredBy: "scripts", readBy: "scripts/nano-banana-generate.py:425 (sc.path)" },
   { path: "visual.castingPileDir", requiredBy: "scripts", default: "Canon/characters", readBy: "engine/src/pipelines/episode.ts:71 (defaulted); scripts/design-visual.py:63, scripts/image-sheet.py:71, scripts/registry-append.py:118 (no default)" },
@@ -110,6 +115,7 @@ export const SHOW_CONFIG_KEYS: readonly ShowConfigKey[] = [
   { path: "visual.ambientPromptScaffold", requiredBy: "none", default: [], readBy: "scripts/image-sheet.py:70 (default=[])" },
   { path: "visual.styleConstants", requiredBy: "scripts", readBy: "scripts/nano-banana-generate.py:424" },
   { path: "visual.collectivePopulatorBans", requiredBy: "scripts", readBy: "scripts/nano-banana-generate.py:427, scripts/populator-check.py:68" },
+  { path: "cast.index", requiredBy: "none", default: "Canon/cast.json", readBy: "engine/src/cast.ts (castIndexPath), engine/src/needs.ts, engine/src/pipelines/episode.ts; scripts/lib/castindex.py" },
   { path: "video.fps", requiredBy: "scripts", readBy: "scripts/build-timeline.py:99, scripts/shot-sheet.py:45" },
   { path: "video.crossfadeSeconds", requiredBy: "scripts", readBy: "scripts/build-timeline.py:100, scripts/shot-sheet.py:46" },
   { path: "video.compositionId", requiredBy: "none", default: "Episode", readBy: "nothing yet (O-03)" },
@@ -291,7 +297,7 @@ export async function loadShowConfig(showRoot: string): Promise<ShowConfig> {
     if (v !== undefined) cfg[key] = v;
   }
   if (audio !== undefined) cfg.audio = audio;
-  for (const key of ["visual", "video", "publish"] as const) {
+  for (const key of ["cast", "visual", "video", "publish"] as const) {
     const v = optRec(parsed, key);
     if (v !== undefined) cfg[key] = v;
   }
