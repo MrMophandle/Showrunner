@@ -66,7 +66,7 @@ Rules:
 - **type == "character"** (Nano Banana, the showrunner) for ANY
   shot that contains a NAMED character (recurring cast OR guest OR a
   one-off named for this episode) OR ANY non-human creature (even a
-  nameless one in the background). Write a `brief` + `refs` (registry
+  nameless one in the background). Write a `brief` + `refs` (cast-index
   keys); DO NOT write a local `prompt`. **BUDGET 10-15 character shots per
   episode — this is a CEILING, not a target.** Ration to the beats that
   need a face or a creature; every extra shot is real money and real
