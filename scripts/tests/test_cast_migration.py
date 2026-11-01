@@ -176,7 +176,12 @@ def test_build_with_write_merges_the_two_registries_and_the_sheets(tmp_path):
     assert doc["audio"]["engine"] == "qwen3"
     assert doc["audio"]["model"] == VOICES["model"]
     assert doc["audio"]["note"] == VOICES["note"]
-    assert "notes_ear" not in doc["audio"]
+    # F12: the registry's top level is carried whole, minus `cast`. `notes_ear` is a real key of
+    # the instance's registry and was dropped by a build that copied three fields by name; the
+    # index is the one record now, so a note the registry held and the index did not would be lost
+    # when the registry is retired.
+    assert doc["audio"]["notes_ear"] == VOICES["notes_ear"]
+    assert "cast" not in doc["audio"]
     cast = doc["cast"]
     assert set(cast) == {"vale", "warden", "harbor", "ghost"}
     assert all(entry["debut"] == "s01e01" for entry in cast.values())
@@ -257,6 +262,54 @@ def test_build_preserves_a_debut_the_index_already_carries(tmp_path):
     again = json.loads(index.read_text(encoding="utf-8"))
     assert again["cast"]["warden"]["debut"] == "s01e07"
     assert again["cast"]["vale"]["debut"] == "s01e01"
+
+
+def test_build_keeps_a_hand_edited_kind_and_identity_and_fills_only_what_is_absent(tmp_path):
+    """F4: `kind`, `identity` and `baseline_prompt` are an author's fields once the index holds
+    them. The visual bible seeds them on the first build and fills a gap on any later one, and a
+    disagreement is reported rather than resolved in the bible's favour -- the casting stop writes
+    an identity and a baseline prompt into the index (spec 2026-10-31 §2.2), and a second build
+    that overwrote them from a registry the migration is retiring would undo a casting."""
+    root = fixture_show(tmp_path)
+    assert run(BUILD, root, "--write").returncode == 0
+    index = root / "Canon" / "cast.json"
+    doc = json.loads(index.read_text(encoding="utf-8"))
+    doc["cast"]["warden"]["kind"] = "creature"
+    doc["cast"]["warden"]["identity"] = "hand-written: a shape on the stair, never a face"
+    # A gap the bible can fill: vale's baseline prompt is deleted from the index.
+    del doc["cast"]["vale"]["baseline_prompt"]
+    index.write_text(json.dumps(doc, indent=2), encoding="utf-8")
+
+    r = run(BUILD, root, "--write")
+    assert r.returncode == 0, r.stdout
+    cast = json.loads(index.read_text(encoding="utf-8"))["cast"]
+    assert cast["warden"]["kind"] == "creature"
+    assert cast["warden"]["identity"] == "hand-written: a shape on the stair, never a face"
+    assert "kept from the index: warden.kind" in r.stdout
+    assert "kept from the index: warden.identity" in r.stdout
+    # Filled, because the index carried none: the bible is still a source, just not an authority.
+    assert cast["vale"]["baseline_prompt"] == BIBLE["vale"]["baseline_prompt"]
+    # And silent where the two agree: vale's identity came from this bible in the first place.
+    assert "kept from the index: vale.identity" not in r.stdout
+
+
+def test_build_names_audio_even_with_no_registry_and_warns_that_the_tts_script_will_refuse(tmp_path):
+    """F11: the TTS prompt copies the manifest's `engine` from the index's `audio.engine`, so an
+    index without one stops the manifest. The build says so at the moment it writes, and writes
+    `audio` as an empty object rather than omitting the key, so the field an author has to fill is
+    visible in the file rather than inferred from its absence."""
+    root = bare_show(tmp_path, "no-registry")
+    write(root / "Canon" / "refs.json", json.dumps({
+        "harbor": {"kind": "location", "ref": "Canon/locations/harbor.png", "identity": "the harbor"}}, indent=2))
+    png(root / "Canon" / "locations" / "harbor.png")
+
+    r = run(BUILD, root, "--write")
+    assert r.returncode == 0, r.stderr
+    assert "no audio.engine found — the TTS script will refuse until it is set" in r.stdout
+    doc = json.loads((root / "Canon" / "cast.json").read_text(encoding="utf-8"))
+    assert doc["audio"] == {}
+    # The dry run says it too: the dry run is where the merge is reviewed.
+    assert "no audio.engine found" in run(BUILD, root).stdout
 
 
 def test_build_keys_a_the_prefixed_bible_entry_as_the_bible_keyed_it(tmp_path):
@@ -417,6 +470,64 @@ def test_audit_retired_scan_writes_nothing_under_the_retired_tree(tmp_path):
     assert snapshot(retired) == before
 
 
+def test_audit_calls_a_take_cast_when_a_manifest_ref_names_it_whatever_the_slug(tmp_path):
+    """F3: a take is cast when a manifest cast entry's `ref` names the file. The slug of the
+    display name is only the fallback, for an entry that records no `ref` at all.
+
+    The case that forces it is a display name carrying a title: "Dock Hand Pim" slugs to
+    `dock-hand-pim` while her takes on disk are `pim-1.wav`, so the slug comparison called the
+    very file the manifest cast her from "a WAV no manifest casts" -- and the promotion list that
+    is read off this output would have offered a hand a take that was already the one in use.
+    """
+    root = fixture_show(tmp_path)
+    assert run(BUILD, root, "--write").returncode == 0
+    retired = tmp_path / "titled"
+    guests = retired / "Production" / "ep04" / "guest-refs"
+    guests.mkdir(parents=True)
+    for take in ("pim-1.wav", "pim-2.wav", "nobody-1.wav", "maeve-1.wav"):
+        (guests / take).write_bytes(b"RIFF")
+    write(retired / "Production" / "ep04" / "tts-script.json", json.dumps({
+        "engine": "qwen3",
+        "cast": {
+            # Cast by ref, and her slug matches none of her takes.
+            "Dock Hand Pim": {"guest": True, "ref": "Production/ep04/guest-refs/pim-1.wav",
+                              "ref_text": "Haul it in.", "direction": "young, hurried"},
+            # No ref recorded at all: the slug fallback is all there is, and it finds maeve-1.wav.
+            "Maeve": {"guest": True, "ref_text": "Tide's turning.", "direction": "dry"},
+        }}, indent=2))
+
+    r = run(AUDIT, root, "--retired", str(retired))
+    assert r.returncode == 0, r.stderr
+    orphans = "\n".join(section(r.stdout, "guest WAVs no retired manifest casts"))
+    assert "pim-1.wav" not in orphans, orphans      # the manifest's ref names it: it was cast
+    assert "pim-2.wav" in orphans, orphans          # a second take of hers that nothing cast
+    assert "nobody-1.wav" in orphans, orphans       # a WAV no manifest names in any way
+    assert "maeve-1.wav" not in orphans, orphans    # the fallback, for an entry with no ref
+
+
+def test_audit_skips_the_retired_repositorys_exercise_episodes_and_says_so(tmp_path):
+    """ep98 and ep99 are the engine's exercise fixtures and not episodes of the show. Their
+    guest-refs hold takes nobody cast and their manifests cast names nobody wrote, so scanning
+    them puts invented characters on a promotion list a hand reads."""
+    root = fixture_show(tmp_path)
+    assert run(BUILD, root, "--write").returncode == 0
+    retired = retired_tree(tmp_path)
+    for ep in ("ep98", "ep99"):
+        guests = retired / "Production" / ep / "guest-refs"
+        guests.mkdir(parents=True, exist_ok=True)
+        (guests / "exercise-1.wav").write_bytes(b"RIFF")
+        write(retired / "Production" / ep / "tts-script.json", json.dumps({
+            "cast": {"Exercise": {"guest": True, "ref": f"Production/{ep}/guest-refs/exercise-1.wav",
+                                  "ref_text": "x", "direction": "y"}}}, indent=2))
+
+    r = run(AUDIT, root, "--retired", str(retired))
+    assert r.returncode == 0, r.stderr
+    assert "skipped ep98, ep99 (the engine's exercise fixtures, not episodes)" in r.stdout
+    assert "Exercise" not in r.stdout
+    assert "exercise-1.wav" not in r.stdout
+    assert "scanned 1 episode manifest" in r.stdout   # ep03's, and no other
+
+
 def test_audit_says_what_to_run_when_there_is_no_index(tmp_path):
     root = bare_show(tmp_path, "unbuilt")
     r = run(AUDIT, root)
@@ -464,6 +575,14 @@ def moves(out: str) -> list[str]:
     return [line.strip() for line in out.splitlines() if line.strip().startswith("move ")]
 
 
+def archived(archive: Path) -> list[str]:
+    """Every file in one character's archive, as archive-relative posix paths and sorted, because
+    the archive mirrors the character folder's own layout (F18) and a set of basenames could not
+    tell `gallery/03.png` from a `03.png` moved up to the top level."""
+    return sorted(str(p.relative_to(archive)).replace("\\", "/")
+                  for p in archive.rglob("*") if p.is_file())
+
+
 def test_prune_dry_run_prints_the_moves_and_moves_nothing(tmp_path):
     root = prune_show(tmp_path)
     before = (root / "Canon" / "cast.json").read_bytes()
@@ -483,10 +602,12 @@ def test_prune_apply_moves_the_excess_out_of_canon_and_is_idempotent(tmp_path):
     r = run(PRUNE, root, "--apply")
     assert r.returncode == 0, r.stderr
 
-    # The archive is flat: a nested image keeps its basename, and a collision is suffixed.
+    # The archive mirrors the folder: an image keeps the path it had inside the character folder,
+    # so `gallery/03.png` is recognisable in the archive as the gallery image it was and not as a
+    # file called `03.png` beside four others (F18).
     archive = root / "Production" / "_archive" / "characters" / "Vale"
-    assert {p.name for p in archive.iterdir()} == {
-        "extra-1.png", "extra-2.png", "Vale Candidate.png", "ep01-02.png", "03.png"}
+    assert archived(archive) == [
+        "Vale Candidate.png", "extra-1.png", "extra-2.png", "gallery/03.png", "shots/ep01-02.png"]
     vale = root / "Canon" / "characters" / "Vale"
     assert sorted(str(p.relative_to(vale)) for p in vale.rglob("*") if p.is_file()) == [
         "gallery/01.png", "gallery/02.png", "reference.png", "vale.md"]
@@ -495,8 +616,8 @@ def test_prune_apply_moves_the_excess_out_of_canon_and_is_idempotent(tmp_path):
     assert again.returncode == 0, again.stderr
     assert moves(again.stdout) == []
     assert "nothing to move" in again.stdout
-    assert {p.name for p in archive.iterdir()} == {
-        "extra-1.png", "extra-2.png", "Vale Candidate.png", "ep01-02.png", "03.png"}
+    assert archived(archive) == [
+        "Vale Candidate.png", "extra-1.png", "extra-2.png", "gallery/03.png", "shots/ep01-02.png"]
 
 
 def test_prune_trims_an_index_gallery_of_four_to_three(tmp_path):
@@ -509,7 +630,7 @@ def test_prune_trims_an_index_gallery_of_four_to_three(tmp_path):
     assert sorted(str(p.relative_to(vale)) for p in vale.rglob("*") if p.is_file()) == [
         "gallery/01.png", "gallery/02.png", "gallery/03.png", "reference.png", "vale.md"]
     archive = root / "Production" / "_archive" / "characters" / "Vale"
-    assert {p.name for p in archive.iterdir()} == {"04.png", "extra-1.png"}
+    assert archived(archive) == ["extra-1.png", "gallery/04.png"]
     cast = json.loads((root / "Canon" / "cast.json").read_text(encoding="utf-8"))["cast"]
     assert cast["vale"]["face"]["gallery"] == gallery[:3]
 
@@ -554,12 +675,15 @@ def test_prune_refuses_a_keep_of_more_than_three_and_a_keep_it_cannot_find(tmp_p
 
 
 def test_prune_suffixes_a_name_collision_in_the_archive(tmp_path):
+    """A collision is suffixed in the directory the file lands in, which under F18 is the mirror of
+    the folder it came from: the archive already holds `extra-1.png` at its top level, so the one
+    moved there becomes `extra-1-2.png`, and `gallery/03.png` collides with nothing."""
     root = prune_show(tmp_path)
     png(root / "Production" / "_archive" / "characters" / "Vale" / "extra-1.png")
 
     r = run(PRUNE, root, "--apply")
     assert r.returncode == 0, r.stderr
     archive = root / "Production" / "_archive" / "characters" / "Vale"
-    assert {p.name for p in archive.iterdir()} == {
-        "extra-1.png", "extra-1-2.png", "extra-2.png", "Vale Candidate.png", "ep01-02.png",
-        "03.png"}
+    assert archived(archive) == [
+        "Vale Candidate.png", "extra-1-2.png", "extra-1.png", "extra-2.png", "gallery/03.png",
+        "shots/ep01-02.png"]

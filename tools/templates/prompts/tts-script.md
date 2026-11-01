@@ -130,6 +130,12 @@ cast "direction". Rules:
 - Segment "i" starts at 1, increments by 1, no gaps.
 
 ## Casting rules
+- **If the index's `audio.engine` is absent, write no manifest.** Say so
+  in your summary and stop: the manifest's "engine" field is copied from
+  it, and a manifest without one drives synthesis with no engine named.
+  Setting it is a hand edit to `Canon/cast.json` (or a re-run of
+  `scripts/cast-index-build.py --write` against a registry that has one),
+  not a value to choose here.
 - Every speaking character in the outline's `## Cast` has a LOCKED voice
   in `Canon/cast.json`; the refs-ready guard upstream stops the run
   otherwise. A speaker you cannot find in the index is a defect to

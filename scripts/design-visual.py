@@ -99,10 +99,13 @@ def main():
             sc.progress(done, total, "candidates")
             print(f"  CANDIDATE {out}")
     # Locking is two acts, and the second is the one the engine reads: the file goes into the
-    # casting pile, and the entry's face.ref in the cast index is set to that path. A PNG copied
-    # into place and left out of the index is a face no generator will ever condition on.
-    print(f"\nPick by eye, then lock:  cp {cand_dir}/<key>-<n>.png "
-          f"{casting_dir}/<key>.png")
+    # character's own folder as its reference, and the entry's face.ref in the cast index is set to
+    # that path. A PNG copied into place and left out of the index is a face no generator will ever
+    # condition on. The destination is the shape spec 2026-10-31 §1.2b rules for a character
+    # folder -- the sheet, one `reference.png`, and at most three gallery images -- so the path
+    # printed here is the path the prune leaves alone and the audit expects to find.
+    print("\nPick by eye, then lock (spec §1.2b: one reference.png per character folder):")
+    print(f"  cp {cand_dir}/<key>-<n>.png {casting_dir}/<Name>/reference.png")
     print(f"then set cast.<key>.face.ref to that path in {castindex.index_path(cfg)}")
 
 

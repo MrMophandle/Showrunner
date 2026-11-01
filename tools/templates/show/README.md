@@ -10,8 +10,8 @@ This repository is the show. Everything that makes {{show.showName}} what it is 
 | `Canon/` | The bible — the premise, the arc, the voice, the look, the laws, the ledger — plus one sheet per recurring character, species, location and faction. `Canon/README.md` is its index. |
 | `Episodes/` | One directory per episode: the premise, the locked beats, the outline, the script. `Episodes/_TEMPLATE/outline.md` is the format an outline must take. |
 | `Production/` | Everything generated: the TTS manifest, the audio, the images, the video timeline, the publish kit. Binaries are gitignored and regenerable; manifests are committed. `Production/setup/` holds the record of the bible interview. |
-| `Production/voice-refs/refs.json` | Every voice the pipeline can speak with. A character is castable once its entry's status contains LOCKED. |
-| `Canon/refs.json` | Every recurring subject's reference image. A subject is castable once its reference exists on disk. |
+| `Canon/cast.json` | **The cast index: the one record of who has a sheet, a face and a voice.** One entry per character, species, location and motif, keyed by the slug of its name. A subject is castable once its entry names a `face.ref` that is on disk, and a speaking character once its `voice.status` contains LOCKED. Every probe, script and prompt reads this file. |
+| `Canon/refs.json`, `Production/voice-refs/refs.json` | The two registries the index replaced. They are scaffolded for a new show and read once, by `scripts/cast-index-build.py`, which merges them into the index; nothing in the pipeline reads them. |
 | `prompts/` | Every agent prompt the pipeline runs, one file per step. These are yours to edit; the engine only reads them. See `prompts/README.md`. |
 | `.gitignore` | Derived from the directory names in `showrunner.json`, so generated binaries stay out of git. |
 
@@ -29,9 +29,16 @@ node console/dist/server/main.js --show <this directory> --engine-root <the engi
 
 Open it in a browser, find the episode, and press **Launch**.
 
-**4. Expect to stop at NEEDS_REFS.** The first run halts before it can make audio or images, because a new show has no cast on file. The run stops at `NEEDS_REFS` until **every speaking recurring character has a locked voice** in `Production/voice-refs/refs.json` and **every recurring subject has a reference image** in `Canon/refs.json`. The stop names exactly who is missing.
+**4. Expect to stop twice: once for the index, once for the cast.** A new show has no `Canon/cast.json`, and the run refuses at its second step — `bible-ready` — with the one command that builds one:
 
-Two scripts are how you clear it. Both belong to the engine and are run **from the engine repository**, because `uv run` reads the dependency block in the script's own file; `--show-root` is how you point them back at this show.
+```
+uv run scripts/cast-index-build.py --show-root <this directory>          # the merge, printed
+uv run scripts/cast-index-build.py --show-root <this directory> --write  # once you have read it
+```
+
+With the index in place the run goes on until it needs a face or a voice, and halts at `NEEDS_REFS` until **every subject the outline's `## Cast` names has a `face.ref` on disk** and **every one of them tagged `speaks` has a `voice` whose status contains LOCKED** — both in `Canon/cast.json`. The stop names exactly who is missing and what they are missing.
+
+Two scripts are how you clear that second stop. Both belong to the engine and are run **from the engine repository**, because `uv run` reads the dependency block in the script's own file; `--show-root` is how you point them back at this show.
 
 ```
 uv run scripts/design-voice.py --show-root <this directory> \
@@ -42,9 +49,9 @@ uv run scripts/design-voice.py --show-root <this directory> \
 uv run scripts/design-visual.py all --show-root <this directory>
 ```
 
-`design-voice.py` writes `<out>-1.wav`, `<out>-2.wav`, … and prints their paths — two candidates by default, `--candidates N` for more. Voice design is a fresh roll each time, so the WAV you keep *is* the voice: keep the one that is the character and add its entry to `Production/voice-refs/refs.json` by hand, with `LOCKED` in its `status` and its `ref` pointing at the WAV you kept.
+`design-voice.py` writes `<out>-1.wav`, `<out>-2.wav`, … and prints their paths — two candidates by default, `--candidates N` for more. Voice design is a fresh roll each time, so the WAV you keep *is* the voice: keep the one that is the character and write that character's `voice` block into `Canon/cast.json` by hand, with `LOCKED` in its `voice.status` and its `voice.ref` pointing at the WAV you kept.
 
-`design-visual.py` takes a subject key, or `all` for every subject in `Canon/refs.json` that has no reference image yet, and writes candidates into `Canon/_candidates/`. It renders from that subject's `baseline_prompt`, so add an entry per recurring subject to `Canon/refs.json` first — `all` has nothing to do until you have. It prints the `cp` command that locks the candidate you pick.
+`design-visual.py` takes a subject key, or `all` for every entry in `Canon/cast.json` that carries a `baseline_prompt` and no `face.ref` yet, and writes candidates into `Canon/_candidates/`. It renders from that entry's `baseline_prompt`, so add an entry per recurring subject to `Canon/cast.json` first — `all` has nothing to do until you have. It prints the `cp` command that locks the candidate you pick into `Canon/characters/<Name>/reference.png`, and the `face.ref` to set beside it.
 
 This stop is deliberate. A voice and a face are decisions a person makes by ear and by eye, and the pipeline will wait for you rather than invent them.
 

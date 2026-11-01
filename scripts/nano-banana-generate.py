@@ -93,13 +93,13 @@ def assemble_refs(shot: dict, bible: dict, max_images: int = MAX_IMAGES):
         stills.extend(entry.get("gallery", []))
 
     # Extract sheet paths and dedupe stills BY BASENAME, not full path.
-    # Two subjects' galleries can name the same photograph — a group still of
-    # both of them, filed under one basename in each of their folders — so the
-    # identical image reaches this loop at N different paths. Deduping by path
-    # lets all N copies survive, burning reference-image slots on N copies of
-    # one photo and displacing a genuinely distinct still of another subject —
-    # worse conditioning for the same $ cost. Keep the first occurrence,
-    # preserve order.
+    # Two entries' galleries may still name one file: a group still of both
+    # subjects is one photograph, and the cast index is edited by hand, so it
+    # can reach this loop twice — at the same path, or at two paths that end in
+    # the same basename. Deduping by path alone lets both copies survive,
+    # burning reference-image slots on one photo and displacing a genuinely
+    # distinct still of another subject — worse conditioning for the same $
+    # cost. Keep the first occurrence, preserve order.
     sheet_paths = [path for _, path in sheets]
     stills_deduped = []
     seen_stills = set()

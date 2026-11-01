@@ -9,8 +9,9 @@ READS (every source is optional; an absent one is reported and skipped):
   <visual.refs>                  the visual bible -- a flat map keyed by slug whose "_"-prefixed
                                  keys are meta, each entry carrying kind / ref / identity / locked
                                  and sometimes baseline_prompt
-  <audio.voiceRefsDir>/refs.json the voice registry -- engine / model / note at the top level and a
-                                 `cast` map keyed by DISPLAY NAME, not by slug
+  <audio.voiceRefsDir>/refs.json the voice registry -- a `cast` map keyed by DISPLAY NAME, not by
+                                 slug, under a top level whose every other key (engine, model,
+                                 note, any note the show added) becomes the index's `audio`
   <visual.castingPileDir>/<Name>/<name>.md   one sheet per character folder
   <cast.index>                   the index a previous run wrote, read as a fourth source so that a
                                  second run is a no-op and a hand-written debut survives it
@@ -31,7 +32,12 @@ take, episodes later, while a refusal costs one read of a short list.
 
 `debut` is s01e01 for every merged entry unless the entry already carries one. A visual entry whose
 `ref` is missing on disk is kept with its `face.ref` and reported, because the remedy is to restore
-the file, not to drop the face."""
+the file, not to drop the face.
+
+An index already on disk OWNS its `kind`, `identity` and `baseline_prompt`: the visual bible fills
+one only where the index has none, and a disagreement prints `kept from the index: <key>.<field>`
+rather than being resolved. `audio` is written even when it is empty, and a missing `audio.engine`
+is warned about by name, because the TTS script refuses to write a manifest without it."""
 
 import argparse
 import copy
@@ -178,7 +184,7 @@ def main():
         base = castindex.slug_name(text)
         return f"the-{base}" if f"the-{base}" in the_keys else base
 
-    merged, provenance, conflicts = {}, {}, []
+    merged, provenance, conflicts, kept = {}, {}, [], []
     voice_names, sheet_names = {}, {}
 
     def set_path(key, field, path, source):
@@ -208,12 +214,29 @@ def main():
             voice["ref"] = set_path(key, "voice.ref", voice["ref"], index_rel)
 
     # Source 2: the visual bible -- the kind, the identity, the baseline prompt and the face.
+    #
+    # The first three are the INDEX's once the index holds them: the bible seeds them on the first
+    # build and fills a gap on any later one, and it never overwrites. They are an author's fields
+    # -- the casting stop writes an identity and a baseline prompt into the index for a character
+    # it is designing (spec 2026-10-31 §2.2), and a hand corrects a kind the first build inferred
+    # -- so a second build that took the registry's word for them would undo a casting, silently,
+    # months after the registry stopped being the record. A disagreement is printed rather than
+    # resolved, because the remedy differs by case (fix the bible, or let it go stale) and this
+    # script does not get to choose. `face.ref` is not in this list: it is path-bearing, so a
+    # disagreement there is a CONFLICT and nothing is written at all.
     for literal, entry in sorted(bible_entries.items()):
         key = key_for(literal)
         out = merged.setdefault(key, {})
         for field in ("kind", "identity", "baseline_prompt"):
-            if isinstance(entry.get(field), str) and entry[field]:
-                out[field] = entry[field]
+            value = entry.get(field)
+            if not (isinstance(value, str) and value):
+                continue
+            held = out.get(field)
+            if isinstance(held, str) and held:
+                if held != value:
+                    kept.append(f"{key}.{field}")
+                continue
+            out[field] = value
         if isinstance(entry.get("ref"), str) and entry["ref"]:
             out.setdefault("face", {})["ref"] = set_path(key, "face.ref", entry["ref"], bible_rel)
         if isinstance(entry.get("locked"), str) and entry["locked"]:
@@ -297,6 +320,23 @@ def main():
         print(f"reference image missing on disk (face.ref kept): {line}")
     for line in inferred:
         print(f"kind inferred, no visual-bible entry: {line}")
+    for line in kept:
+        print(f"kept from the index: {line}")
+
+    # F11/F12: `audio` is the voice registry's top level, minus its `cast` map, over whatever the
+    # index already held. Every key is carried and not three by name, because the registry is being
+    # retired and a note it holds that the index does not would go with it (`notes_ear` is one on
+    # the first instance). An absent `engine` is called out by name: the TTS prompt copies it into
+    # the manifest's `engine` field and refuses to write a manifest without it, so this is the one
+    # field whose absence stops a later step rather than merely reading thin.
+    audio = {}
+    if isinstance((existing or {}).get("audio"), dict):
+        audio.update(copy.deepcopy(existing["audio"]))
+    for field, value in sorted((voices or {}).items()):
+        if field != "cast":
+            audio[field] = copy.deepcopy(value)
+    if not (isinstance(audio.get("engine"), str) and audio["engine"]):
+        print("no audio.engine found — the TTS script will refuse until it is set")
 
     if conflicts:
         print(f"nothing written: two sources disagree about a path. Fix the source that is wrong "
@@ -306,15 +346,7 @@ def main():
         print(f"dry run: nothing written — re-run with --write to write {index_rel}")
         return
 
-    audio = {}
-    if isinstance((existing or {}).get("audio"), dict):
-        audio.update(existing["audio"])
-    for field in ("engine", "model", "note"):
-        if isinstance((voices or {}).get(field), str) and voices[field]:
-            audio[field] = voices[field]
-    doc = {"version": 1}
-    if audio:
-        doc["audio"] = audio
+    doc = {"version": 1, "audio": audio}
     # Sorted by key: the index is read and edited by hand, and a stable order keeps a re-run's
     # diff to the facts that changed.
     doc["cast"] = {key: ordered(merged[key], FIELD_ORDER) for key in keys}

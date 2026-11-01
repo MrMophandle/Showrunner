@@ -8,7 +8,11 @@ Read (LIVE — these are the law and they grow):
   law those sections state applies to every prompt you write, and the
   scaffolding section is text your prompts must carry.
 - `Canon/cast.json` — the cast index: every character, structure and
-  location with a reference, its identity text and its gallery.
+  location, its identity text, its gallery, and whether it has a
+  reference image. **A key is usable in `refs` only when its entry has
+  a `face.ref`.** An entry without one is a subject nothing can be
+  conditioned on yet: shoot it as `ambient`, or as a character shot with
+  `source: "showrunner"` if the beat needs the face.
 - {{show.episodesDir}}/{{episodeId}}/script.md and its outline.
 
 Write {{show.productionDir}}/{{episodeId}}/images/prompts.json:
@@ -74,7 +78,9 @@ Rules:
   timed the node out. If a story genuinely needs more than 15, say so
   explicitly in your summary so the showrunner can rule on it. CHECK
   `Canon/cast.json` first — a "new" guest may already have a reference
-  sheet.
+  sheet, and a guest whose entry carries no `face.ref` has none to put
+  in `refs` at all (write the shot `source: "showrunner"`, or keep the
+  beat ambient).
 - **type == "ambient"** (local Z-Image) for environments, sets,
   vehicles, structures, objects, props, atmosphere — and AT MOST
   non-named HUMAN background extras (distant, faceless, generic). Its

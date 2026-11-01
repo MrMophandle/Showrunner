@@ -4,10 +4,12 @@ cast map reads this instead; nothing lists the characters directory.
 
 The engine's twin is engine/src/cast.ts, and the two must agree about three things or one side
 will look for a character the other has filed: the index's path (index_path / castIndexPath), the
-key a display name slugs to (slug_name / slugName), and the alternative key accepted on read
-(`the-<slug>`). tests/test_castindex.py pins the cases the port depends on, including the one that fixes
-the article rule's order (the_warden -> the-warden); nothing on the engine side tests the
-same list, so a change to slugName must be mirrored here by hand.
+key a display name slugs to (slug_name / slugName), and the three lookups a name is resolved
+through (key_of / castKey: the slug, `the-<slug>`, then an entry whose own `name` slugs to the
+slug). tests/test_castindex.py pins the cases the port depends on, including the one that fixes
+the article rule's order (the_warden -> the-warden) and the titled display name the third lookup
+exists for; nothing on the engine side tests the same list, so a change to slugName must be
+mirrored here by hand.
 """
 from __future__ import annotations
 import json
@@ -65,23 +67,37 @@ def load(cfg: dict, root: str) -> dict:
     return doc
 
 
-def entry(index: dict, name: str) -> dict | None:
-    """One cast entry by display name: the name's slug, then `the-<slug>`."""
-    slug = slug_name(name)
-    cast = index["cast"]
-    return cast.get(slug) or cast.get(f"the-{slug}")
-
-
 def key_of(index: dict, name: str) -> str | None:
-    """The key a name is filed under, for a message that has to send an author to a line of
-    Canon/cast.json rather than to the file."""
+    """The key one cast name is filed under, in three steps: the name's slug, then `the-<slug>`,
+    then the entry whose own `name` field slugs to the same thing.
+
+    The third step is what a display name carrying a title needs. An entry's key is whatever it
+    was filed under -- the migration writes `pim` -- while the script and the outline name the
+    character the way the audience hears it, "Dock Hand Pim", and neither `dock-hand-pim` nor
+    `the-dock-hand-pim` is a key. Without the scan a fully cast character reads as unregistered to
+    every caller here while the engine's `castKey` (engine/src/cast.ts) finds her, which is the
+    one thing the two sides of this port may not do: disagree about who is cast.
+
+    The key is returned rather than only the entry because every message a script writes about a
+    gap names it, and an author sent to Canon/cast.json has to be pointed at the line that is
+    there. `entry` below is this function plus the lookup, so the two cannot find different
+    entries for one name."""
     slug = slug_name(name)
     cast = index["cast"]
     if slug in cast:
         return slug
     if f"the-{slug}" in cast:
         return f"the-{slug}"
+    for key, e in cast.items():
+        if isinstance(e, dict) and isinstance(e.get("name"), str) and slug_name(e["name"]) == slug:
+            return key
     return None
+
+
+def entry(index: dict, name: str) -> dict | None:
+    """One cast entry by display name, through `key_of`'s three lookups."""
+    key = key_of(index, name)
+    return None if key is None else index["cast"][key]
 
 
 def _abs(root: str, rel: str) -> str:

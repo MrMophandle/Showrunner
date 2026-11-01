@@ -33,7 +33,9 @@ INDEX = {"version": 1, "cast": {
     # generator has to be a file.
     "vale": {"name": "Vale", "kind": "human", "speaks": True, "identity": "Vale", "face": {"ref": "Canon/characters/Vale/reference.png", "gallery": ["Canon/characters/Vale/gallery/01.png", "Canon/characters/Vale/gallery/gone.png"]}},
     "the-warden": {"name": "the Warden", "kind": "character", "speaks": False, "silent": True, "face": {"ref": "Canon/characters/Warden/reference.png", "gallery": []}},
-    "pim": {"name": "Pim", "kind": "human", "speaks": True, "baseline_prompt": "sheet", "face": {}},
+    # Keyed `pim` and named "Dock Hand Pim": the key is what the migration filed her under and the
+    # name is what the script calls her, which is the pair the third lookup exists for.
+    "pim": {"name": "Dock Hand Pim", "kind": "human", "speaks": True, "baseline_prompt": "sheet", "face": {}},
 }}
 
 
@@ -52,6 +54,27 @@ def test_load_entry_faces_and_unlocked(tmp_path):
     # generator as a path that does not resolve.
     assert faces["vale"]["gallery"] == [str(tmp_path / "Canon/characters/Vale/gallery/01.png")]
     assert castindex.unlocked(index) == ["pim"]
+
+
+def test_entry_and_key_of_find_an_entry_by_its_own_name(tmp_path):
+    """The third lookup (R-01, and F17 of the 2026-10-31 whole-branch review): the slug, then
+    `the-<slug>`, then the entry whose own `name` slugs to the slug.
+
+    An entry's key is whatever it was filed under -- the migration writes `pim` -- while the
+    outline and the script name the character the way the audience hears it, "Dock Hand Pim".
+    Neither `dock-hand-pim` nor `the-dock-hand-pim` is a key, so without the scan a fully cast
+    character reads as unregistered to every Python caller while the engine's `castKey`
+    (engine/src/cast.ts) finds her: the two sides of the port would disagree about who is cast.
+    """
+    cfg = _show(tmp_path, INDEX)
+    index = castindex.load(cfg, str(tmp_path))
+    assert castindex.key_of(index, "Dock Hand Pim") == "pim"
+    assert castindex.entry(index, "Dock Hand Pim")["baseline_prompt"] == "sheet"
+    # The first two lookups still answer first, and an unknown name is still unknown.
+    assert castindex.key_of(index, "Vale") == "vale"
+    assert castindex.key_of(index, "Warden") == "the-warden"
+    assert castindex.key_of(index, "Nobody") is None
+    assert castindex.entry(index, "Nobody") is None
 
 
 def test_faces_caps_a_gallery_at_three(tmp_path):

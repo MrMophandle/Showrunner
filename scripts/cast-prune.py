@@ -5,15 +5,19 @@
 
 Spec 2026-10-31 §1.2b and §4.4. A character folder holds the sheet, one reference image and at most
 three gallery images. Nothing else belongs there, and nothing is deleted here: the excess is moved
-to <productionDir>/_archive/characters/<Name>/, where a hand deletes it later if it wants to.
+to <productionDir>/_archive/characters/<Name>/, under the path it had inside the character folder,
+where a hand deletes it later if it wants to.
 
 READS:
   <cast.index>                              the cast index, for each entry's face.ref and gallery
   <visual.castingPileDir>/<Name>/           every image in the folder that holds that face
 
 WRITES, and only with --apply:
-  <productionDir>/_archive/characters/<Name>/<file>   every moved image (directories created, a
-                                                      name collision suffixed -2, then -3)
+  <productionDir>/_archive/characters/<Name>/<path inside the folder>   every moved image, under
+                                                      the path it had in the character folder
+                                                      ("gallery/02.png" stays "gallery/02.png");
+                                                      directories created, a name collision in the
+                                                      directory it lands in suffixed -2, then -3
   <cast.index>                              only the `face.gallery` lists it had to trim
 
 What stays, per entry: the file its `face.ref` names; the first three of its `gallery` entries that
@@ -214,12 +218,20 @@ def main():
 
         # One aligned block per folder: verb, the file as the folder holds it, and why.
         rows = [("keep", f, why) for f, why in keep_rows]
+        # The archive MIRRORS the character folder: a file keeps the path it had inside the folder,
+        # so `gallery/02.png` lands at `<archive>/<Name>/gallery/02.png`. Flattening to basenames
+        # threw away the one fact an archive is read for -- which of these was a gallery image,
+        # which was an episode still filed under `shots/`, which was a loose candidate at the top
+        # level -- and turned `gallery/02.png` into a `02.png` indistinguishable from any other.
+        # A collision is still suffixed, in the directory the file lands in.
         for f in plan_moves:
-            target = free_name(os.path.join(root, dest_dir), os.path.basename(f), taken)
-            rows.append(("move", f, f"→ {dest_dir}/{target}"))
+            sub = os.path.dirname(f)
+            dest_parent = f"{dest_dir}/{sub}" if sub else dest_dir
+            target = free_name(os.path.join(root, dest_parent), os.path.basename(f), taken)
+            rows.append(("move", f, f"→ {dest_parent}/{target}"))
             moves.append((os.path.join(plan["folder_abs"], f),
-                          os.path.join(root, dest_dir, target),
-                          f"{plan['folder_rel']}/{f} → {dest_dir}/{target}"))
+                          os.path.join(root, dest_parent, target),
+                          f"{plan['folder_rel']}/{f} → {dest_parent}/{target}"))
         rows += [("stay", f, "the sheet, left where it is" if f.lower().endswith(".md") else "not an image, left where it is") for f in others]
         width = max(len(f) for _verb, f, _why in rows)
         print()

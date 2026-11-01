@@ -10,6 +10,8 @@ READS:
                       files it names are on disk
   <retired>/Production/ep*/guest-refs/*.wav     with --retired: the retired repository's guest takes
   <retired>/Production/ep*/tts-script.json      with --retired: the manifests that cast them
+                      ep98 and ep99 are skipped: they are the engine's exercise fixtures and not
+                      episodes of the show, and the skip is printed in one line
 
 --retired IS READ-ONLY. The path is opened only for reading, no directory is created under it, no
 temporary file is written into it, and nothing in it is renamed, touched or removed. That is a
@@ -22,6 +24,11 @@ not-locked | silent | none), gallery count, sheet (ok | missing | none) -- then 
 with --retired, every guest the retired repository cast who has no entry in the index, with the
 episode (its retired id and its new one), the WAV and the reference line that was recorded for it.
 That list is what a later hand promotes from: this script does not promote anything.
+
+A retired WAV counts as CAST when some manifest cast entry's `ref` names that file -- the ref is
+the path synthesis read, so it is a record and not an inference. The slug of the display name is
+only the fallback, for a cast entry that recorded no `ref`: a name carrying a title ("Dock Hand
+Pim", takes `pim-1.wav`) slugs to nothing any of its own takes are called.
 
 Exit 0 whatever the gaps are. A gap is a fact to act on, not a failure of the audit.
 
@@ -40,6 +47,10 @@ from lib import showconfig as sc
 
 # A retired episode directory is epNN and the retired repository is season one, so epNN is s01eNN.
 RETIRED_EPISODE = re.compile(r"^ep(\d{2})$")
+# ep98 and ep99 are the engine's exercise fixtures and not episodes of the show: their guest-refs
+# hold takes nobody cast and their manifests cast names nobody wrote. Scanning them would put
+# invented characters on a promotion list a hand reads, so they are skipped and the skip is printed.
+EXERCISE_EPISODES = ("ep98", "ep99")
 # A take is <slug>-<n>.wav, sometimes with an -FX suffix on the end.
 TAKE_SUFFIX = re.compile(r"(?:-fx)?(?:-\d+)?$", re.IGNORECASE)
 
@@ -76,6 +87,13 @@ def new_id(episode_dir):
     return f"s01e{match.group(1)}" if match else episode_dir
 
 
+def norm_rel(path):
+    """One path as it is compared: forward slashes, normalised, no leading "./". A manifest writes
+    show-relative posix paths by hand and this script builds them with os.path.relpath, so the two
+    are made to agree here rather than at four call sites."""
+    return os.path.normpath(str(path).replace("\\", "/")).replace(os.sep, "/")
+
+
 def read_json(path):
     """A retired file, read-only. A manifest that does not parse is reported, not fixed."""
     with open(path, encoding="utf-8") as fh:
@@ -90,14 +108,36 @@ def audit_retired(retired, index, index_rel):
     """Everything the retired repository knows that the index does not. Writes nothing."""
     print()
     print(f"retired repository (read-only; nothing here is written): {retired}")
+    skipped = []
     takes = {}                               # (episode dir, slug) -> [relative wav paths]
     for wav in sorted(glob.glob(os.path.join(retired, "Production", "ep*", "guest-refs", "*.wav"))):
         episode = os.path.basename(os.path.dirname(os.path.dirname(wav)))
-        rel = os.path.relpath(wav, retired).replace(os.sep, "/")
+        if episode in EXERCISE_EPISODES:
+            continue
+        rel = norm_rel(os.path.relpath(wav, retired))
         takes.setdefault((episode, take_slug(os.path.basename(wav))), []).append(rel)
 
-    manifests = sorted(glob.glob(os.path.join(retired, "Production", "ep*", "tts-script.json")))
-    guests, cast_slugs = [], set()
+    manifests = []
+    for manifest in sorted(glob.glob(os.path.join(retired, "Production", "ep*", "tts-script.json"))):
+        if os.path.basename(os.path.dirname(manifest)) in EXERCISE_EPISODES:
+            skipped.append(os.path.basename(os.path.dirname(manifest)))
+            continue
+        manifests.append(manifest)
+    for ep in EXERCISE_EPISODES:                 # a fixture with takes and no manifest counts too
+        if ep not in skipped and os.path.isdir(os.path.join(retired, "Production", ep)):
+            skipped.append(ep)
+    if skipped:
+        print(f"skipped {', '.join(sorted(set(skipped)))} "
+              f"(the engine's exercise fixtures, not episodes)")
+
+    # Which takes a manifest cast, and how the question is answered. The `ref` is the path
+    # synthesis actually read, so a file it names IS the cast take whatever it is called; the slug
+    # of the display name is a guess from a filename and breaks on any name the takes are not
+    # literally spelled after -- "Dock Hand Pim" slugs to `dock-hand-pim` and her takes are
+    # `pim-1.wav`, so the slug rule called the very file the manifest cast her from an uncast
+    # candidate. The slug therefore stays only as the fallback, for a cast entry that recorded no
+    # `ref` at all, where there is nothing better to compare.
+    guests, cast_refs, slug_cast = [], set(), set()
     for manifest in manifests:
         episode = os.path.basename(os.path.dirname(manifest))
         doc = read_json(manifest)
@@ -105,10 +145,15 @@ def audit_retired(retired, index, index_rel):
         if not isinstance(cast, dict):
             continue
         for display, entry in cast.items():
-            if not isinstance(entry, dict) or entry.get("guest") is not True:
+            if not isinstance(entry, dict):
                 continue
-            cast_slugs.add((episode, castindex.slug_name(display)))
-            guests.append((episode, display, entry))
+            ref = entry.get("ref")
+            if isinstance(ref, str) and ref:
+                cast_refs.add(norm_rel(ref))
+            else:
+                slug_cast.add((episode, castindex.slug_name(display)))
+            if entry.get("guest") is True:
+                guests.append((episode, display, entry))
     print(f"scanned {plural(len(manifests), 'episode manifest')}: "
           f"{plural(sum(len(v) for v in takes.values()), 'guest WAV')}, "
           f"{plural(len(guests), 'guest cast entry', 'guest cast entries')}")
@@ -119,7 +164,7 @@ def audit_retired(retired, index, index_rel):
             continue                         # already filed centrally: not a gap
         slug = castindex.slug_name(display)
         found = takes.get((episode, slug), [])
-        ref = entry.get("ref") if isinstance(entry.get("ref"), str) else ""
+        ref = norm_rel(entry["ref"]) if isinstance(entry.get("ref"), str) and entry["ref"] else ""
         wav = ref if ref else (found[0] if found else "(no ref recorded)")
         if ref and not os.path.exists(os.path.join(retired, ref)):
             wav = f"{ref} (not on disk)"
@@ -136,8 +181,16 @@ def audit_retired(retired, index, index_rel):
     else:
         print(f"no guest in the retired repository is missing from {index_rel}")
 
-    orphans = [(episode, slug, files) for (episode, slug), files in sorted(takes.items())
-               if (episode, slug) not in cast_slugs and castindex.key_of(index, slug) is None]
+    orphans = []
+    for (episode, slug), files in sorted(takes.items()):
+        loose = [rel for rel in files if rel not in cast_refs]
+        if not loose:
+            continue                         # every take here is named by a manifest's ref
+        if (episode, slug) in slug_cast:
+            continue                         # the fallback: a cast entry with no ref, by slug
+        if castindex.key_of(index, slug) is not None:
+            continue                         # already filed centrally: not a gap
+        orphans.append((episode, slug, loose))
     print()
     if orphans:
         print("guest WAVs no retired manifest casts (candidate takes, nothing to promote yet):")
