@@ -5,8 +5,9 @@ cast map reads this instead; nothing lists the characters directory.
 The engine's twin is engine/src/cast.ts, and the two must agree about three things or one side
 will look for a character the other has filed: the index's path (index_path / castIndexPath), the
 key a display name slugs to (slug_name / slugName), and the alternative key accepted on read
-(`the-<slug>`). tests/test_castindex.py runs slug_name over the same cases engine/test/cast.test.ts
-runs slugName over, which is what keeps the port honest.
+(`the-<slug>`). tests/test_castindex.py pins the cases the port depends on, including the one that fixes
+the article rule's order (the_warden -> the-warden); nothing on the engine side tests the
+same list, so a change to slugName must be mirrored here by hand.
 """
 from __future__ import annotations
 import json
