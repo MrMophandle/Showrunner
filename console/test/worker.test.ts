@@ -11,6 +11,11 @@ async function show() {
   await w("showrunner.json", JSON.stringify({ showName: "Harbor Lights", showSlug: "HarborLights", promptsDir: "prompts", models: { medium: "m", large: "l", writer: "w" }, airMap: {}, output: { nasRoot: path.join(root, "nas") } }));
   for (const f of ["world-overview", "technology", "timeline", "continuity-ledger", "series-arc", "episode-formula", "story-craft", "style-guide", "season-2", "visual-style", "visual-audit-laws", "voice-registry", "publishing-guide", "pipeline-artifacts", "README"]) await w(`Canon/${f}.md`, `${f}\n`);
   await w("Canon/refs.json", "{}"); await w("Production/voice-refs/refs.json", JSON.stringify({ cast: {} }));
+  // The cast index, empty of cast: `bible-ready` refuses a show that has none at all since Plan L1
+  // (2026-10-31), two steps in, so a fixture without one never reaches the gate these tests are
+  // about. The outline the fake writer below writes carries an empty `## Cast`, so no subject is
+  // looked up in it either.
+  await w("Canon/cast.json", JSON.stringify({ version: 1, cast: {} }));
   await w("Episodes/_TEMPLATE/outline.md", "t\n"); await w("Episodes/s02e01/premise.md", "A week.\n");
   await w("prompts/outline-gate.gate.md", "Outline for {{episodeId}}");
   return { root, w };

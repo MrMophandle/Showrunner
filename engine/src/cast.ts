@@ -33,6 +33,18 @@ export function castIndexPath(show: ShowConfig): string {
   return path.posix.join(show.canonDir ?? "Canon", "cast.json");
 }
 
+/** The one sentence an absent index is reported with, wherever it is reported. Both of its
+ *  readers write this line and no other: `missingRefs`'s NEEDS_REFS report (`needs.ts`) and the
+ *  `bible-ready` guard, which refuses an unmigrated show two steps into the run
+ *  (`pipelines/episode.ts`). It is a function here rather than a literal at the two call sites
+ *  because the two sites are in different files and an operator who meets the refusal at either
+ *  step must be sent to the same command; a second spelling of it would be a second remedy for
+ *  one fact. The path is the caller's — always the value `castIndexPath` returned — so the file
+ *  the author is sent to edit is the file the engine looked for. */
+export function noCastIndexLine(indexRel: string): string {
+  return `no cast index at ${indexRel} — run scripts/cast-index-build.py --write`;
+}
+
 /** Undefined when the file is absent — the probe turns that into its one-line remedy — and an
  *  error, never a guess, when it is present and not an index.
  *

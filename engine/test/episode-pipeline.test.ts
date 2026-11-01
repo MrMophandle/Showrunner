@@ -163,6 +163,26 @@ describe("episodePipeline", () => {
     }
   });
 
+  it("hands the cast index to the writer and the reviewers: the canon spine, the draft loop and character-check", () => {
+    // F6 of the whole-branch review (2026-10-31). The spec's ingestion rule (§1.2a) is that every
+    // writing and reviewing prompt reads `Canon/cast.json` first and only the sheets in play after
+    // it, and the prompt templates do. A step that reads a file it does not declare is a step
+    // whose input hash cannot change when that file does (`hash.ts`), so a character cast between
+    // two attempts would be served from the script cache and read by a prompt that had already
+    // run — which is why the declaration and not the prompt is what this test measures.
+    //
+    // The index is exempt from the bible-ready cross-check above (`NOT_THE_BIBLE`): its
+    // completeness is the reference probe's report, not the bible's.
+    const by = new Map(p.steps.map((s) => [s.id, s]));
+    const inputsOf = (id: string): readonly string[] => by.get(id)?.inputs ?? [];
+    // The canon spine travels with the index, so every step that reads the spine declares both.
+    for (const id of ["outline", "canon-review-outline", "canon-review-script"]) {
+      expect(inputsOf(id), id).toContain("Canon/cast.json");
+    }
+    expect(inputsOf("draft")).toContain("Canon/cast.json");
+    expect(inputsOf("character-check")).toContain("Canon/cast.json");
+  });
+
   it("runs scripts through uv against the engine's scripts project, with the episode id first", () => {
     const ctx = { runId: "r", episodeId: "s02e01", showRoot: "/show", results: {} };
     const validate = p.steps.find((s) => s.id === "validate-manifest");
@@ -431,6 +451,9 @@ describe("the episode pipeline, walked", () => {
     const { executors, calls, w } = fakeExecutors(root, { reviewFailOnce: new Set(["canon-review-outline"]) });
     for (const f of BIBLE) await w(`Canon/${f}.md`, `${f}\n`);
     await w("Episodes/_TEMPLATE/outline.md", "t\n"); await w("Episodes/s02e01/premise.md", "A week.\n"); await w("Episodes/s02e02/premise.md", "Another.\n");
+    // An index, empty of cast: `bible-ready` refuses a show that has none at all (F7), and this
+    // test is about the canon review and not about the migration.
+    await w("Canon/cast.json", JSON.stringify({ version: 1, cast: {} }));
     const p1 = episodePipeline({ show, episodeId: "s02e01", engineRoot: "/engine" });
     const log1 = new EventLog(EventLog.logPath(root, "s02e01", "r1"));
     expect(await run({ pipeline: p1, ctx: { runId: "r1", episodeId: "s02e01", showRoot: root }, log: log1, executors, renderGateMessage: async (file, c) => `${file} for ${c.episodeId}` })).toMatchObject({ status: "waiting", gate: { stepId: "outline-gate" } });
@@ -448,6 +471,9 @@ describe("the episode pipeline, walked", () => {
     const { executors, w } = fakeExecutors(root);
     for (const f of BIBLE.filter((b) => b !== "style-guide")) await w(`Canon/${f}.md`, `${f}\n`);
     await w("Episodes/_TEMPLATE/outline.md", "t\n"); await w("Episodes/s02e01/premise.md", "A week.\n");
+    // The index is written: the guard checks the bible's files first and the index second, so this
+    // test measures the absent bible file and the test below measures the absent index.
+    await w("Canon/cast.json", JSON.stringify({ version: 1, cast: {} }));
     const pipeline = episodePipeline({ show, episodeId: "s02e01", engineRoot: "/engine" });
     const log = new EventLog(EventLog.logPath(root, "s02e01", "r1"));
     const go = () => run({ pipeline, ctx: { runId: "r1", episodeId: "s02e01", showRoot: root }, log, executors, renderGateMessage: async (file, c) => `${file} for ${c.episodeId}` });
@@ -457,6 +483,34 @@ describe("the episode pipeline, walked", () => {
     // The guard is the write phase's own list, so writing the file it named is the whole fix: the
     // run resumes through bible-ready and reaches the first gate.
     await w("Canon/style-guide.md", "style-guide\n");
+    await resumeRun(log, "r1");
+    expect(await go()).toMatchObject({ status: "waiting", gate: { stepId: "outline-gate" } });
+  });
+
+  it("fails at bible-ready when the show has no cast index, with the probe's own remedy line, before any agent runs", async () => {
+    // F7 of the whole-branch review (2026-10-31). `refs-ready` is the late guard — it runs after
+    // `write-commit` — and `missingRefs` reports nothing at all until an outline exists, so an
+    // instance that has not been migrated onto `Canon/cast.json` used to clear `bible-ready`,
+    // write a premise and an outline, pass two human gates, draft, and run the panel's seven
+    // before the engine said the one thing it already knew at its second step. The guard carries
+    // the identical sentence the probe writes, from `NO_CAST_INDEX` in cast.ts, so an operator who
+    // reads it at either step is sent to the same command and the two can never drift.
+    const root = await mkdtemp(path.join(tmpdir(), "show-"));
+    const { executors, calls, w } = fakeExecutors(root);
+    for (const f of BIBLE) await w(`Canon/${f}.md`, `${f}\n`);
+    await w("Episodes/_TEMPLATE/outline.md", "t\n"); await w("Episodes/s02e01/premise.md", "A week.\n");
+    const pipeline = episodePipeline({ show, episodeId: "s02e01", engineRoot: "/engine" });
+    const log = new EventLog(EventLog.logPath(root, "s02e01", "r1"));
+    const go = () => run({ pipeline, ctx: { runId: "r1", episodeId: "s02e01", showRoot: root }, log, executors, renderGateMessage: async (file, c) => `${file} for ${c.episodeId}` });
+    const r = await go();
+    expect(r).toMatchObject({ status: "failed", stepId: "bible-ready" });
+    expect(r.status === "failed" && r.error).toBe("no cast index at Canon/cast.json — run scripts/cast-index-build.py --write");
+    // Nothing was written and nothing was spent: the refusal is two steps in, before the premise
+    // guard and before the outline agent.
+    expect(calls).toEqual([]);
+    // Building the index is the whole fix, as the line says: the run resumes through bible-ready
+    // and reaches the first gate.
+    await w("Canon/cast.json", JSON.stringify({ version: 1, cast: {} }));
     await resumeRun(log, "r1");
     expect(await go()).toMatchObject({ status: "waiting", gate: { stepId: "outline-gate" } });
   });

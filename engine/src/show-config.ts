@@ -74,19 +74,19 @@ export const SHOW_CONFIG_KEYS: readonly ShowConfigKey[] = [
   { path: "showName", requiredBy: "both", readBy: "engine (the loader below); scripts/publish-kit.py:89, scripts/nano-banana-generate.py:427" },
   { path: "showSlug", requiredBy: "both", readBy: "engine/src/show-config.ts (mixFilename, below); scripts/audio-mix.py:30, scripts/build-timeline.py:62, scripts/finalize-video.py:139" },
   { path: "promptsDir", requiredBy: "both", readBy: "engine/src/agent-step.ts:148 (where every agent step finds its prompt); no script reads it, and the scripts' loader requires it" },
-  { path: "canonDir", requiredBy: "scripts", default: "Canon", readBy: "engine/src/pipelines/episode.ts:60 (defaulted); scripts/canon-diff.py:64, scripts/finalize-video.py:166 (no default)" },
-  { path: "episodesDir", requiredBy: "scripts", default: "Episodes", readBy: "engine/src/pipelines/episode.ts:61, engine/src/needs.ts:68 (defaulted); scripts/publish-kit.py:98 (no default); scripts/canon-ledger.py:66 defaults it" },
+  { path: "canonDir", requiredBy: "scripts", default: "Canon", readBy: "engine/src/pipelines/episode.ts:69 (defaulted); scripts/canon-diff.py:64, scripts/finalize-video.py:166 (no default)" },
+  { path: "episodesDir", requiredBy: "scripts", default: "Episodes", readBy: "engine/src/pipelines/episode.ts:70, engine/src/needs.ts:68 (defaulted); scripts/publish-kit.py:98 (no default); scripts/canon-ledger.py:66 defaults it" },
   { path: "productionDir", requiredBy: "none", default: "Production", readBy: "engine/src/pipelines/episode.ts (the productionDir local in episodePipeline — a symbol rather than a line, because this row carried :62 after the assignment had moved to :69 and nothing checks a readBy citation), engine/src/needs.ts:69 (both defaulted); every Python step that builds an episode path, through scripts/lib/showconfig.py's production_dir(cfg), which defaults to \"Production\" so the two loaders agree about a config that omits the key. requiredBy is \"none\" rather than \"scripts\" because the helper defaults where the two retired scripts (check_layout.py, season-status.py) read the key with none; buildShowConfig writes every row regardless of requiredBy, so init's output does not change" },
   { path: "models.small", requiredBy: "none", readBy: "nothing yet: engine/src/agent-step.ts:252 resolves a step's tier name through models, and no step declares the small tier" },
   { path: "models.medium", requiredBy: "both", readBy: "engine/src/agent-step.ts:251-252 (the tier seven steps declare); console/server/what-happened.ts:223" },
   { path: "models.large", requiredBy: "both", readBy: "engine/src/agent-step.ts:251-252 (the tier one step declares)" },
   { path: "models.writer", requiredBy: "both", readBy: "engine/src/agent-step.ts:251-252 (the tier four steps declare)" },
-  { path: "airMap", requiredBy: "both", readBy: "engine/src/show-config.ts (seasonOf, mixFilename), engine/src/pipelines/episode.ts:76; scripts/lib/showconfig.py (season_of)" },
+  { path: "airMap", requiredBy: "both", readBy: "engine/src/show-config.ts (seasonOf, mixFilename), engine/src/pipelines/episode.ts:85; scripts/lib/showconfig.py (season_of)" },
   { path: "output.nasMount", requiredBy: "scripts", readBy: "scripts/finalize-video.py:164 (sc.path, no default); the loader accepts it and no engine step reads it" },
   { path: "output.nasRoot", requiredBy: "both", readBy: "engine/src/pipelines/episode.ts:332 (the nas-mounted guard); scripts/finalize-video.py:165" },
   { path: "output.finalFilename", requiredBy: "scripts", readBy: "scripts/finalize-video.py:138" },
   { path: "output.mixFilename", requiredBy: "scripts", default: "{slug} S{season:02d}E{episode:02d}.wav", readBy: "engine/src/show-config.ts (DEFAULT_MIX_PATTERN, below — defaulted); scripts/audio-mix.py:29, scripts/build-timeline.py:61 (no default)" },
-  { path: "output.videoFilename", requiredBy: "scripts", default: "episode.mp4", readBy: "engine/src/pipelines/episode.ts:74 (defaulted); scripts/finalize-video.py:167, scripts/master-video.py:74 (no default)" },
+  { path: "output.videoFilename", requiredBy: "scripts", default: "episode.mp4", readBy: "engine/src/pipelines/episode.ts:83 (defaulted); scripts/finalize-video.py:167, scripts/master-video.py:74 (no default)" },
   { path: "audio.sampleRate", requiredBy: "scripts", readBy: "scripts/audio-mix.py:44, scripts/design-voice.py:29, scripts/pace-qc.py:47, scripts/tts-generate.py:73" },
   { path: "audio.loudness.i", requiredBy: "scripts", readBy: "scripts/audio-mix.py:51, scripts/master-video.py:70 (the integrated-loudness target)" },
   { path: "audio.loudness.tp", requiredBy: "scripts", readBy: "scripts/audio-mix.py:52, scripts/master-video.py:71 (the true-peak ceiling)" },
@@ -104,11 +104,11 @@ export const SHOW_CONFIG_KEYS: readonly ShowConfigKey[] = [
   { path: "audio.mainCast", requiredBy: "scripts", readBy: "scripts/validate-manifest.py:73 (the speaker keys a manifest may use without a guest WAV)" },
   { path: "audio.voiceRefsDir", requiredBy: "none", default: "Production/voice-refs", readBy: "nothing at this commit, and no script site names it. **Plan L1 (2026-10-31) removed both readers**: the `tts-script` step's `<voiceRefsDir>/refs.json` input and engine/src/needs.ts's voice lookup both read the voice registry, which the cast index replaced — and the index names each voice's WAV by path, so no reader has to build one. engine/src/pipelines/episode.ts still resolves the key into a local (kept for Plan L2's casting steps, which write the WAVs into the directory); the directory itself is where a show's voice references live" },
   { path: "audio.guestRefsDir", requiredBy: "none", default: "<productionDir>/<episodeId>/guest-refs", readBy: "the directory one episode's guest-voice WAVs sit in. **Plan L1 (2026-10-31) removed the engine's reader**: engine/src/needs.ts's `missingRefs` looked a speaking guest up by a WAV whose filename began with their slug in this directory, and now looks every guest up in cast.index like everybody else, so no engine step reads the key. It is still read by console/server/gates.ts:164 (`guestRefsDirOf`, which lists the directory at the casting gate and fences a pick to it) and still validated by `checkGuestRefsDir` below at config load; retiring the key is deferred to Plan L2. The value's literal `{episodeId}` placeholder is substituted with the run's episode id through formatFilename, which is why the key is written with the token rather than resolved: it is the one show path that is per-episode. **Validated at load**: `checkGuestRefsDir` below is called by `loadShowConfig` before it builds the config. A configured value is refused by name in three cases: one carrying no `{episodeId}` (one shared directory for every episode would let one episode's guest WAV satisfy every other episode's guest of the same name, so the shared case is not supported), one that is the empty string (absent is this row's default, and an empty value is a mistake in showrunner.json rather than a request for the default), and one that is not a string at all. A trailing slash is trimmed" },
-  { path: "audio.voiceRegistry", requiredBy: "scripts", default: "Canon/voice-registry.md", readBy: "engine/src/pipelines/episode.ts:68 (defaulted to <canonDir>/voice-registry.md); scripts/validate-manifest.py:74 (sc.path, no default)" },
+  { path: "audio.voiceRegistry", requiredBy: "scripts", default: "Canon/voice-registry.md", readBy: "engine/src/pipelines/episode.ts:77 (defaulted to <canonDir>/voice-registry.md); scripts/validate-manifest.py:74 (sc.path, no default)" },
   { path: "visual.refs", requiredBy: "none", default: "Canon/refs.json", readBy: "retired by Plan L1 (2026-10-31): the cast index replaced it; read by nothing. The row stays because tools/src/init/config.ts:114 still writes the key into a new show's config and tools/test/config.test.ts:51 asks for a row behind every key init writes; retiring both is Plan L2's. An instance whose config still carries the key is not refused for it — no loader validates it and no reader opens the file" },
-  { path: "visual.style", requiredBy: "scripts", default: "Canon/visual-style.md", readBy: "engine/src/pipelines/episode.ts:70 (defaulted); scripts/image-sheet.py:72, scripts/nano-banana-generate.py:425, scripts/populator-check.py:69 (no default)" },
+  { path: "visual.style", requiredBy: "scripts", default: "Canon/visual-style.md", readBy: "engine/src/pipelines/episode.ts:79 (defaulted); scripts/image-sheet.py:72, scripts/nano-banana-generate.py:425, scripts/populator-check.py:69 (no default)" },
   { path: "visual.auditLaws", requiredBy: "scripts", readBy: "scripts/nano-banana-generate.py:424 (sc.path)" },
-  { path: "visual.castingPileDir", requiredBy: "scripts", default: "Canon/characters", readBy: "engine/src/pipelines/episode.ts:79 (defaulted); scripts/design-visual.py:65, scripts/image-sheet.py:71 (no default)" },
+  { path: "visual.castingPileDir", requiredBy: "scripts", default: "Canon/characters", readBy: "engine/src/pipelines/episode.ts:80 (defaulted); scripts/design-visual.py:65, scripts/image-sheet.py:71 (no default)" },
   { path: "visual.candidatesDir", requiredBy: "scripts", readBy: "scripts/design-visual.py:64 (sc.path)" },
   { path: "visual.shotFrame", requiredBy: "scripts", readBy: "scripts/build-timeline.py:102, scripts/design-visual.py:66, scripts/image-generate.py:64 (the frame size, read as a list)" },
   { path: "visual.characterKinds", requiredBy: "none", readBy: "nothing since Plan L1 (2026-10-31) deleted scripts/registry-append.py, its only reader: the cast index carries each subject's `kind` on its own entry, so which kinds are castable is read off the index rather than matched against this list. The row stays for the same reason visual.refs's does — tools/src/init/config.ts:120 still writes the key" },
@@ -131,7 +131,7 @@ export const SHOW_CONFIG_KEYS: readonly ShowConfigKey[] = [
   { path: "publish.category", requiredBy: "scripts", readBy: "scripts/publish-kit.py:94" },
   { path: "publish.standingCopy.weekly", requiredBy: "scripts", readBy: "scripts/publish-kit.py:95" },
   { path: "publish.standingCopy.aiDisclosure", requiredBy: "scripts", readBy: "scripts/publish-kit.py:96" },
-  { path: "publish.guide", requiredBy: "scripts", default: "Canon/publishing-guide.md", readBy: "engine/src/pipelines/episode.ts:72 (defaulted); scripts/publish-kit.py:97 (no default)" },
+  { path: "publish.guide", requiredBy: "scripts", default: "Canon/publishing-guide.md", readBy: "engine/src/pipelines/episode.ts:81 (defaulted); scripts/publish-kit.py:97 (no default)" },
   { path: "agents.autoRetryWeeklyUtilizationMax", requiredBy: "none", default: DEFAULT_AUTO_RETRY_WEEKLY_UTILIZATION_MAX, readBy: "engine/src/agent-step.ts (the usage-limit rule: a five-hour plan limit whose seven-day utilization is strictly below this ceiling is waited out in the worker and retried once; at or above it the step fails and asks the operator to resume) and engine/src/runner.ts (a `panel` step's weekly stop: at or above this ceiling a red round does not start another one, and the step fails with the operator's sentence instead — the run's only stop, since a review round has no cap). No script reads it, and the loader materialises the default, so a config that names neither the group nor the key still answers the question" },
 ];
 
@@ -160,27 +160,34 @@ function optRec(obj: Record<string, unknown>, key: string): Record<string, unkno
   return v;
 }
 
-/** Refuses a configured `audio.guestRefsDir` by name, in the three shapes that would make the
- *  reference probe report a check it did not perform. Absent is the key's default and loads.
+/** Refuses a configured `audio.guestRefsDir` by name, in the three shapes that are a mistake in
+ *  `showrunner.json` rather than a choice. Absent is the key's default and loads.
  *
- *  Exported because it is called from two places that must never disagree about the wording.
- *  `loadShowConfig` below calls it so the refusal lands at load: a show whose config named one
- *  shared guest-references directory used to start the console cleanly and then make the whole
- *  Board answer 500 from inside the probe, with the reason reaching no operator (Plan H's H-14). Plan L1 (2026-10-31) removed the engine's only reader of the key; the loader still refuses a malformed value so a config that names the key by mistake fails by name. Validating in only one of the two would let a
- *  hand-built config pass `refs-ready` having proved nothing.
+ *  **What this function does, as of Plan L1 (2026-10-31), is validate the shape of a key the
+ *  engine no longer reads.** `missingRefs` used to look a speaking guest up by a WAV whose
+ *  filename began with their slug in this directory; it looks every guest up in `Canon/cast.json`
+ *  now, like everybody else, so no engine step reads the value. The one remaining reader is the
+ *  console's TTS-manifest picker (`console/server/gates.ts`'s `guestRefsDirOf`, which lists the
+ *  directory at the casting gate and fences a pick to it), and Plan L2 retires the key with the
+ *  guest-refs convention. The loader goes on calling this so that a config naming the key by
+ *  mistake fails at load, by name, with the dotted key in the message — the shape of refusal every
+ *  other key in this loader gets — rather than reaching the console as a directory nobody can pick
+ *  from. Exported so a caller holding a `ShowConfig` the loader never built can apply the same
+ *  refusal instead of a second reading of the key; `loadShowConfig` below is its only caller
+ *  today.
  *
  *  Why each shape is refused rather than honoured:
  *
- *  A value with no `{episodeId}` gives every episode one shared directory, and the probe matches a
- *  guest WAV by slug prefix (`guestWavs.some((f) => f.startsWith(slug))` in `missingRefs`), so one
- *  episode's `dock-hand-pim-1.wav` would satisfy every other episode's Dock Hand Pim and
- *  `refs-ready` would pass having proved nothing. A show that wants one shared guest-references
- *  directory is therefore not supported, and the refusal says so.
+ *  A value with no `{episodeId}` gives every episode one shared directory. One shared directory is
+ *  not a supported layout: the takes in it are named for the guest and not for the episode, so the
+ *  picker would offer an episode's gate every other episode's takes of the same name, and the
+ *  refusal says so. (Before Plan L1 the same value also made the reference probe pass having
+ *  proved nothing, which is the defect the check was written for, Plan H's H-14.)
  *
  *  An empty string is a mistake in `showrunner.json`, not a default: absent means "use
  *  `<productionDir>/<episodeId>/guest-refs`" and `""` means a scaffolding or templating step left
- *  the field blank, and collapsing the two would write an episode's guest WAVs into a directory the
- *  show never named. This matches scripts/lib/showconfig.py's `production_dir`, which refuses `""`
+ *  the field blank, and collapsing the two would point the picker at a directory the show never
+ *  named. This matches scripts/lib/showconfig.py's `production_dir`, which refuses `""`
  *  for `productionDir` by name for the same reason.
  *
  *  A value that is present and is not a string reached neither check before Plan H and silently
@@ -195,7 +202,7 @@ export function checkGuestRefsDir(audio: Record<string, unknown> | undefined): v
     throw new ShowConfigError(`${SHOW_CONFIG_FILE}: audio.guestRefsDir is empty — an empty value is a mistake, not a default: omit the key to get <productionDir>/<episodeId>/guest-refs`);
   }
   if (!configured.includes("{episodeId}")) {
-    throw new ShowConfigError(`${SHOW_CONFIG_FILE}: audio.guestRefsDir ${JSON.stringify(configured)} names no {episodeId} — one shared guest-references directory for every episode is not supported: the probe matches a guest WAV by slug prefix, so a shared directory would accept another episode's guest and pass refs-ready`);
+    throw new ShowConfigError(`${SHOW_CONFIG_FILE}: audio.guestRefsDir ${JSON.stringify(configured)} names no {episodeId} — one shared guest-references directory for every episode is not supported: a take in it is named for the guest and not for the episode, so the casting gate's picker would offer one episode's gate another episode's takes`);
   }
 }
 

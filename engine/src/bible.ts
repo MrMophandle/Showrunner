@@ -39,7 +39,7 @@ export const BIBLE_FILES: readonly BibleFile[] = [
   { key: "pipeline-artifacts", file: "Canon/pipeline-artifacts.md", mode: "default", purpose: "What the pipeline writes where, and the dialogue-attribution convention the audio step reads. The engine's facts." },
   { key: "readme", file: "Canon/README.md", mode: "default", purpose: "The index of the bible and the rules for writing to it. The house format." },
   { key: "continuity-ledger", file: "Canon/continuity-ledger.md", mode: "scaffold", purpose: "What happened, episode by episode. The pipeline writes it." },
-  { key: "voice-registry", file: "Canon/voice-registry.md", mode: "scaffold", purpose: "Prose about the voices; the source of truth is Production/voice-refs/refs.json." },
+  { key: "voice-registry", file: "Canon/voice-registry.md", mode: "scaffold", purpose: "Prose about the voices; the record is `Canon/cast.json`." },
 ];
 
 /** The `BIBLE_FILES` key whose row stands for a season file rather than for one fixed path. The

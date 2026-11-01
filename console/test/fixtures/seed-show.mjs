@@ -149,11 +149,40 @@ await writeIn(root, "showrunner.json", JSON.stringify({
 }, null, 2));
 
 for (const name of CANON) await writeIn(root, `Canon/${name}.md`, `# ${name}\n\nfixture canon for the walkthrough.\n`);
-// The two reference files the NEEDS_REFS probe reads, populated rather than empty. Every outline
-// below carries a `## Cast` section, because the probe refuses an outline it cannot read a cast
-// from (engine/src/needs.ts' missingRefs), and a cast line names a subject the probe then looks up:
-// with `{}` in these two files, every row on this Board would print "references missing" for
-// subjects whose runs the fixture's own logs record as checked and passed.
+// The cast index the NEEDS_REFS probe reads, populated rather than empty. Every outline below
+// carries a `## Cast` section, because the probe refuses an outline it cannot read a cast from
+// (engine/src/needs.ts' missingRefs), and a cast line names a subject the probe then looks up in
+// this file: without it every row on this Board would print "references missing" for subjects
+// whose runs the fixture's own logs record as checked and passed, and since Plan L1 (2026-10-31)
+// a launched run would stop two steps in at `bible-ready` with the build's remedy line.
+//
+// A face for all four and a LOCKED voice for the three who speak, which is what the probe asks of
+// a `## Cast` line tagged `speaks`. The PNGs and WAVs below are written because the probe checks
+// that the file the entry names is on disk.
+await writeIn(root, "Canon/cast.json", JSON.stringify({
+  version: 1,
+  audio: { engine: "qwen3", model: "fixture-tts" },
+  cast: {
+    vale: {
+      name: "Vale", kind: "human", speaks: true, debut: "s02e01",
+      face: { ref: "Canon/characters/Vale/ref.png", gallery: [] },
+      voice: { ref: "Production/voice-refs/vale.wav", ref_text: "Light's lit.", direction: "weathered", status: "LOCKED (speed 1.05)" },
+    },
+    "the-warden": {
+      name: "the Warden", kind: "human", speaks: true, debut: "s02e01",
+      face: { ref: "Canon/characters/Warden/ref.png", gallery: [] },
+      voice: { ref: "Production/voice-refs/warden.wav", ref_text: "You will not pass the stair.", direction: "flat, airless", status: "LOCKED" },
+    },
+    maeve: {
+      name: "Maeve", kind: "human", speaks: true, debut: "s02e02",
+      face: { ref: "Canon/characters/Maeve/ref.png", gallery: [] },
+      voice: { ref: "Production/voice-refs/maeve.wav", ref_text: "Tide's turning.", direction: "quick, dry", status: "LOCKED" },
+    },
+    harbor: { name: "Harbor", kind: "location", speaks: false, face: { ref: "Canon/locations/harbor.png", gallery: [] } },
+  },
+}, null, 2));
+// The two registries the index replaced, kept until Plan L2 retires them from the init scaffold:
+// a seeded show looks like a show an operator would have, and this is what one still carries.
 await writeIn(root, "Canon/refs.json", JSON.stringify({
   _doc: "the reference registry; a key is a slug and `ref` is the image the probe looks for on disk",
   vale: { kind: "human", ref: "Canon/characters/Vale/ref.png" },

@@ -356,7 +356,26 @@ describe("the init exercise: a whole show from init to its first NEEDS_IDEA", ()
     expect([bible.code, bible.stderr.trim()]).toEqual([0, ""]);
     expect(bible.stdout).toContain("carries every section a prompt reads by name");
 
-    // ── (d) the episode pipeline builds, and stops at NEEDS_IDEA ─────────────────────────────
+    // ── (d) the pipeline builds, refuses a show with no cast index, then stops at NEEDS_IDEA ─
+    // The scaffold writes no `Canon/cast.json`: the index is built from a show's own registries by
+    // `scripts/cast-index-build.py`, and scaffolding one is Plan L2's (Plan L1's R-03). Since F7
+    // of the 2026-10-31 whole-branch review, `bible-ready` refuses a show that has none — two
+    // steps in, before a premise is even looked for, because the alternative is an outline and a
+    // draft written for a show whose cast nothing records. The message is the one command that
+    // clears it, and it is the same sentence the reference probe writes.
+    const unmigrated = fakeEpisodeWork();
+    const refused = await episodeRun(root, show, "2030-04-02T08:00:00.000Z", unmigrated.executors);
+    expect(refused.result).toEqual({
+      status: "failed",
+      stepId: "bible-ready",
+      error: "no cast index at Canon/cast.json — run scripts/cast-index-build.py --write",
+    });
+    expect(unmigrated.ran).toEqual([]);
+
+    // What that command writes for a show with nothing cast yet. Every assertion below is about
+    // the show as it stands once the operator has run it.
+    await writeFile(path.join(root, "Canon", "cast.json"), `${JSON.stringify({ version: 1, cast: {} }, null, 2)}\n`, "utf8");
+
     const first = fakeEpisodeWork();
     const stopped = await episodeRun(root, show, "2030-04-02T09:00:00.000Z", first.executors);
     expect(stopped.result).toEqual({

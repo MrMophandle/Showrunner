@@ -1,12 +1,13 @@
 import path from "node:path";
 import { readFile, stat } from "node:fs/promises";
 import { resolveShowPath, type ShowConfig } from "./show-config.js";
-import { castIndexPath, castKey, loadCastIndex, slugName, voiceReady } from "./cast.js";
+import { castIndexPath, castKey, loadCastIndex, noCastIndexLine, slugName, voiceReady } from "./cast.js";
 import type { Needs } from "./stages.js";
 
 /** Re-exported rather than defined here: the rule moved to cast.ts with the index it slugs for
- *  (Plan L1, 2026-10-31), and the name stays `slugName` from `needs.js` because the console reads
- *  it (`console/server/gates.ts:5`) and `console/shared/types.ts:511` cites it. */
+ *  (Plan L1, 2026-10-31), and the name stays `slugName` from `needs.js` because that is the name
+ *  the console imports it under (`console/server/gates.ts:5`, through the package's barrel). The
+ *  console's own citations of the rule name `engine/src/cast.ts:23`, where it now lives. */
 export { slugName };
 
 /** One line of the outline's `## Cast` section: the name as the writer wrote it and the tags in
@@ -105,7 +106,7 @@ export async function missingRefs(showRoot: string, episodeId: string, show: Sho
   }
   const indexRel = castIndexPath(show);
   const index = await loadCastIndex(showRoot, show);
-  if (index === undefined) return [`no cast index at ${indexRel} — run scripts/cast-index-build.py --write`];
+  if (index === undefined) return [noCastIndexLine(indexRel)];
 
   const missing: string[] = [];
   for (const line of malformed) missing.push(`${line}: not in the \`- <Name> (<tags>)\` grammar`);

@@ -5,6 +5,7 @@ import { deriveRunState } from "../state.js";
 import { formatAired, parseEpisodeId } from "../ids.js";
 import { mixFilename, seasonOf, type ShowConfig } from "../show-config.js";
 import { missingBibleFiles } from "../bible.js";
+import { castIndexPath, loadCastIndex, noCastIndexLine } from "../cast.js";
 import { missingRefs, missingShowrunnerImages } from "../needs.js";
 import { handEdits } from "../provenance.js";
 import type { StageMap } from "../stages.js";
@@ -74,7 +75,7 @@ export function episodePipeline(opts: EpisodePipelineOptions): Pipeline {
   const prod = `${productionDir}/${episodeId}`;
   const voiceRefsDir = str(show.audio?.["voiceRefsDir"], "Production/voice-refs"); void voiceRefsDir; // read by no step since Plan L1 (2026-10-31) took the tts-script input to the cast index; kept for Plan L2's casting steps, which write the WAVs into the directory — see the audio.voiceRefsDir row in show-config.ts
   const voiceRegistry = str(show.audio?.["voiceRegistry"], `${canonDir}/voice-registry.md`);
-  const castIndex = str((show as { cast?: Record<string, unknown> }).cast?.["index"], `${canonDir}/cast.json`);
+  const castIndex = castIndexPath(show);   // `cast.index`, or <canonDir>/cast.json — one rule, in cast.ts
   const visualStyle = str(show.visual?.["style"], `${canonDir}/visual-style.md`);
   const castingPileDir = str(show.visual?.["castingPileDir"], `${canonDir}/characters`);
   const publishingGuide = str(show.publish?.["guide"], `${canonDir}/publishing-guide.md`);
@@ -83,9 +84,16 @@ export function episodePipeline(opts: EpisodePipelineOptions): Pipeline {
   let season: number | undefined;
   try { season = seasonOf(episodeId, show.airMap); } catch { season = undefined; }
 
+  // The bible every writing and reviewing step reads, the cast index among it. The index is in the
+  // spine because the ingestion rule (spec 2026-10-31 §1.2a) makes it the first file those prompts
+  // open — who exists, and where their sheet is — and a prompt's input must be declared or the
+  // step's hash cannot change when a character is cast between two attempts. It is the one
+  // `Canon/` input `bible-ready`'s cross-check exempts (`episode-pipeline.test.ts`'s
+  // NOT_THE_BIBLE): its completeness is the reference probe's report, not the bible's.
   const canonSpine = [
     `${canonDir}/world-overview.md`, `${canonDir}/technology.md`, `${canonDir}/timeline.md`, `${canonDir}/continuity-ledger.md`,
     `${canonDir}/series-arc.md`, `${canonDir}/episode-formula.md`, `${canonDir}/story-craft.md`, `${canonDir}/style-guide.md`,
+    castIndex,
     ...(season !== undefined ? [`${canonDir}/season-${season}.md`] : []),
   ];
   const outline = `${ep}/outline.md`;
@@ -176,9 +184,21 @@ export function episodePipeline(opts: EpisodePipelineOptions): Pipeline {
       // by the same `season` the canon spine above uses, so the guard can never demand a file the
       // `outline` step would not have declared. Sections prompts read by name are bible-check's
       // (tools/), not this guard's.
+      //
+      // **It also refuses a show that has no cast index** (F7 of the 2026-10-31 whole-branch
+      // review). `refs-ready` is the late guard — it runs after `write-commit` — and `missingRefs`
+      // reports nothing at all until an outline exists, so a show that has not been migrated onto
+      // `Canon/cast.json` would spend the outline agent, two human gates, the draft loop and the
+      // panel's seven before meeting a refusal the engine could make two steps in. The sentence is
+      // `noCastIndexLine`'s, which is the probe's own, so the remedy is one command wherever it is
+      // met. An index that is present and malformed throws out of `loadCastIndex` and the runner
+      // records `guard threw: …`: a file somebody has to look at is not a file to build over.
       check: async (ctx) => {
         const missing = await missingBibleFiles(ctx.showRoot, show, season);
         if (missing.length > 0) return { pass: false, message: `BIBLE_INCOMPLETE: ${missing.join(", ")}` };
+        if ((await loadCastIndex(ctx.showRoot, show)) === undefined) {
+          return { pass: false, message: noCastIndexLine(castIndex) };
+        }
         return { pass: true, message: "bible complete" };
       },
     } satisfies GuardStep,
@@ -219,7 +239,7 @@ export function episodePipeline(opts: EpisodePipelineOptions): Pipeline {
     },
     {
       kind: "loop", id: "draft", dependsOn: ["outline-gate"], until: "DRAFT_COMPLETE", maxIterations: 15,
-      inputs: [outline, `${canonDir}/style-guide.md`, `${canonDir}/story-craft.md`], outputs: [script],
+      inputs: [outline, castIndex, `${canonDir}/style-guide.md`, `${canonDir}/story-craft.md`], outputs: [script],
       body: { kind: "agent", id: "draft-body", promptFile: "draft.md", model: "writer", allowedTools: ["Read", "Write", "Edit", "Glob", "Grep"], context: "fresh", idleTimeoutMs: 15 * MIN },
       // Spec §6.7: progress derived from disk — scene headers written against beats planned.
       progress: async (ctx) => {
@@ -272,7 +292,7 @@ export function episodePipeline(opts: EpisodePipelineOptions): Pipeline {
     ledger("canon-ledger-script", "canon-review-script", "script"),
     reviewer("tone-check", [`${canonDir}/style-guide.md`, script]),
     reviewer("flow-check", [`${canonDir}/episode-formula.md`, `${canonDir}/style-guide.md`, script, outline]),
-    reviewer("character-check", [script, outline, `${canonDir}/world-overview.md`, `${canonDir}/style-guide.md`]),
+    reviewer("character-check", [script, outline, castIndex, `${canonDir}/world-overview.md`, `${canonDir}/style-guide.md`]),
     reviewer("structure-check", [`${canonDir}/story-craft.md`, `${canonDir}/episode-formula.md`, outline, script]),
     reviewer("environment-check", [script, outline, `${canonDir}/technology.md`]),
     reviewer("repetition-check", [`${canonDir}/style-guide.md`, script]),
