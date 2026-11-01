@@ -170,7 +170,7 @@ def main():
     for done, plan in enumerate(plans, start=1):
         files = folder_files(plan["folder_abs"])
         images = [f for f in files if os.path.splitext(f)[1].lower() in IMAGE_EXTS]
-        others = [f for f in files if f not in images and not f.lower().endswith(".md")]
+        others = [f for f in files if f not in images]   # the sheet included: it is reported as staying
         dest_dir = f"{archive_rel}/{plan['folder']}"
 
         keep_rows = [(plan["ref_in_folder"], "face.ref")]
@@ -220,7 +220,7 @@ def main():
             moves.append((os.path.join(plan["folder_abs"], f),
                           os.path.join(root, dest_dir, target),
                           f"{plan['folder_rel']}/{f} → {dest_dir}/{target}"))
-        rows += [("stay", f, "not an image, left where it is") for f in others]
+        rows += [("stay", f, "the sheet, left where it is" if f.lower().endswith(".md") else "not an image, left where it is") for f in others]
         width = max(len(f) for _verb, f, _why in rows)
         print()
         print(f"{plan['name']} (key {plan['key']}) — {plan['folder_rel']}")
