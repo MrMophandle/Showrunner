@@ -178,7 +178,7 @@ def main() -> None:
         A("**Description it was made from:**")
         A("")
         A("```text")
-        A(" ".join((s.get("brief") or s.get("prompt") or "(none)").split()))
+        A(" ".join((s.get("brief") or "(none)").split()))
         A("```")
         A("")
 
