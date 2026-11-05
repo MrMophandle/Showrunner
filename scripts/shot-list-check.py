@@ -4,9 +4,15 @@
 """shot-list-check: the law of the shot list (spec 2026-11-04 §2.5).
 
 One establishing shot per scene header of the script, ids `s<n>-establishing` in header order,
-`scene` equal to the header; an establishing brief names no character of the cast index, no
-creature and no species; a character shot has refs, each a cast-index key with a reference image
-on disk; no shot carries the deleted renderer's `prompt`/`seed` keys.
+`scene` equal to the header; a character shot has refs, each a cast-index key with a reference
+image on disk; no shot carries the deleted renderer's `prompt`/`seed` keys.
+
+An establishing brief names no PERSON of the cast index — no entry of kind `character`, `human`,
+`creature` or `species` — and it MAY name the place it establishes, because an establishing shot
+of a harbor has to be allowed to say "Harbor" (spec 2026-11-04 §2.5 rule 2, as amended on
+2026-11-04 after this script's review). A place the brief names that has a reference image on disk must also be in
+the shot's `refs`, so the render conditions on that place's own look rather than inventing one;
+`refs` on an establishing shot may hold nothing but such places.
 
 It took over on 2026-11-04 from the guard spec 2026-11-04 §2.5 says it replaces, and keeps that
 guard's result contract: `--report-only` prints the reasons and ends with
@@ -25,6 +31,9 @@ from lib import showconfig as sc
 DIRTY = 2
 HEADER = re.compile(r"^## +(.+?)\s*$", re.M)
 LOCAL_KEYS = ("prompt", "seed")
+# The kinds an establishing brief may not name, and that an establishing `refs` may not hold; every
+# other kind is a place (spec 2026-11-04 §2.5 rule 2, as amended on 2026-11-04).
+PERSON_KINDS = ("character", "human", "creature", "species")
 
 
 def scene_headers(script: str) -> list[str]:
@@ -45,6 +54,17 @@ def names_in(brief: str, index: dict) -> list[tuple[str, str, str]]:
         if _word_pattern(name).search(brief) or _word_pattern(key.replace("-", " ")).search(brief):
             hits.append((name, key, str(entry.get("kind", ""))))
     return hits
+
+
+def _face_on_disk(entry: dict | None, root: str) -> bool:
+    """True when the entry names a `face.ref` and that file is on disk — the one thing a ref is for.
+
+    An entry can outlive the image it names, so the file is checked and not just the field; both
+    the establishing branch and the character branch ask this question, and they must agree.
+    """
+    face = (entry or {}).get("face") or {}
+    ref_path = face.get("ref") if isinstance(face, dict) else None
+    return isinstance(ref_path, str) and os.path.exists(os.path.join(root, ref_path))
 
 
 def check(script: str, shots: list[dict], index: dict, root: str, on_judged=None) -> list[tuple[str, str]]:
@@ -72,11 +92,25 @@ def check(script: str, shots: list[dict], index: dict, root: str, on_judged=None
             bad.append((sid, f"{sid}: the script has no scene {scene}"))
         if s.get("type") == "establishing":
             establishing_by_scene.setdefault(scene, []).append(s)
-            if "refs" in s:
-                bad.append((sid, f"{sid}: an establishing shot carries no refs"))
+            ref_keys = [str(r) for r in s.get("refs", [])] if isinstance(s.get("refs"), list) else []
             for name, key, kind in names_in(str(s.get("brief", "")), index):
-                what = f"names {name} (species, cast key {key})" if kind == "species" else f"names {name} (cast key {key})"
-                bad.append((sid, f"{sid}: {what}"))
+                if kind in PERSON_KINDS:
+                    what = f"names {name} (species, cast key {key})" if kind == "species" else f"names {name} (cast key {key})"
+                    bad.append((sid, f"{sid}: {what}"))
+                elif _face_on_disk(index["cast"].get(key), root) and key not in ref_keys:
+                    # A place with a reference image is a place the show has already decided the
+                    # look of; naming it without the ref asks the model to invent a second one.
+                    bad.append((sid, f"{sid}: names {name} ({kind}, cast key {key}) — "
+                                     f"add it to refs so the render conditions on its reference"))
+            for ref in ref_keys:
+                entry = index["cast"].get(ref)
+                kind = str((entry or {}).get("kind", ""))
+                if entry is None:
+                    bad.append((sid, f"{sid}: ref {ref} is not a cast-index key"))
+                elif kind in PERSON_KINDS:
+                    bad.append((sid, f"{sid}: ref {ref} is a {kind} — a person never appears in an establishing shot"))
+                elif not _face_on_disk(entry, root):
+                    bad.append((sid, f"{sid}: ref {ref} has no reference image (cast the face, or set source to showrunner)"))
         else:
             refs = s.get("refs")
             if not isinstance(refs, list) or not refs:
@@ -84,11 +118,9 @@ def check(script: str, shots: list[dict], index: dict, root: str, on_judged=None
             else:
                 for ref in refs:
                     entry = index["cast"].get(str(ref))
-                    face = (entry or {}).get("face") or {}
-                    ref_path = face.get("ref") if isinstance(face, dict) else None
                     if entry is None:
                         bad.append((sid, f"{sid}: ref {ref} is not a cast-index key"))
-                    elif not isinstance(ref_path, str) or not os.path.exists(os.path.join(root, ref_path)):
+                    elif not _face_on_disk(entry, root):
                         bad.append((sid, f"{sid}: ref {ref} has no reference image (cast the face, or set source to showrunner)"))
         if on_judged is not None:
             on_judged(pos, len(shots))
