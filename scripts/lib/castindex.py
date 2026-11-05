@@ -106,7 +106,7 @@ def _abs(root: str, rel: str) -> str:
 
 def faces(index: dict, root: str) -> dict:
     """{key: {"ref", "identity", "gallery", "kind", "name"}} for every entry whose reference image
-    exists — the shape image-generate and nano-banana-generate condition on.
+    exists — the shape nano-banana-generate conditions on.
 
     Two filters live here rather than in the callers. An entry whose `ref` names a file that is
     not on disk is left out altogether, so a half-cast subject reads to a generator exactly as an

@@ -49,8 +49,7 @@
     "shotFrame": [1024, 576],
     "characterKinds": ["human", "creature", "ship"],
     "ambientPromptScaffold": ["lamp room glass, ", "grey sea horizon, "],
-    "styleConstants": "overcast coastal realism, hand-held framing, no text, no watermark.",
-    "collectivePopulatorBans": ["the crew", "a crowd", "background figures"]
+    "styleConstants": "overcast coastal realism, hand-held framing, no text, no watermark."
   },
   "video": {
     "fps": 30,

@@ -9,8 +9,8 @@ requires-python = ">=3.11"
 #   google-genai   nano-banana-generate.py
 #   kokoro-onnx    tts-generate.py (the legacy kokoro engine)
 #   mlx-audio      tts-generate.py, design-voice.py
-#   numpy          audio-mix.py, breath-qc.py, design-voice.py, image-qc.py, truncation-qc.py, tts-generate.py
-#   pillow         image-qc.py, nano-banana-generate.py
+#   numpy          audio-mix.py, breath-qc.py, design-voice.py, truncation-qc.py, tts-generate.py
+#   pillow         lib/nanobanana.py, and nano-banana-generate.py through it
 #   soundfile      audio-mix.py, breath-qc.py, design-voice.py, pace-qc.py, truncation-qc.py, tts-generate.py
 dependencies = [
     "google-genai",
