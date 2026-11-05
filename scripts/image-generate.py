@@ -7,13 +7,13 @@ TWO paths, chosen per shot (the tiered "hero routing" ruled 2026-07-19):
   * AMBIENT (default): Z-Image-Turbo, seeded, ~2.4 min/img. Establishing wides,
     backgrounds, one-off subjects, suited figures at distance.
   * HERO: a shot tagged "hero": ["<subject-key>", ...] is conditioned on the
-    locked baseline reference(s) for those subjects (the show's visual.refs
-    index) via Qwen-Image-Edit (Apache-2.0, commercial-safe;
+    locked baseline reference(s) for those subjects (the show's cast index,
+    Canon/cast.json) via Qwen-Image-Edit (Apache-2.0, commercial-safe;
     ~11 min/img, 38 GB peak). This carries a recurring character's/ship's IDENTITY
     across shots instead of re-rolling a fresh look each time.
 
 A hero shot whose baseline is NOT yet locked falls back to the ambient path with a
-warning, so the pipeline works before the bible is complete.
+warning, so the pipeline works before every subject in the index has a face.
 
 Idempotent: skips shots whose PNG already exists (delete a PNG to re-roll it).
 
@@ -23,6 +23,7 @@ line says `[MISSING — drop the file here]` until he has.
 Usage: image-generate.py <episode> [--show-root <path>]"""
 import json, os, shutil, subprocess, sys
 
+from lib import castindex
 from lib import showconfig as sc
 
 Z_BINARY   = "mflux-generate-z-image-turbo"    # ambient workhorse
@@ -35,16 +36,6 @@ def find_bin(name: str) -> str:
         if cand and os.path.exists(cand):
             return cand
     sys.exit(f"image-generate: {name} not found on PATH")
-
-def load_bible(path: str) -> dict:
-    """The show's reference index (visual.refs); an absent file means nothing is locked yet."""
-    if not os.path.exists(path):
-        return {}
-    d = json.load(open(path))
-    # skip metadata keys (_doc, _ruled); only subjects whose ref exists are "locked"
-    return {k: v for k, v in d.items()
-            if not k.startswith("_") and isinstance(v, dict)
-            and v.get("ref") and os.path.exists(v["ref"])}
 
 def hero_refs(shot, bible):
     """Return (ref_paths, missing_keys) for a shot's hero subjects."""
@@ -69,14 +60,18 @@ def main() -> None:
     if not ep:
         sys.exit("image-generate: episode id missing "
                  "(usage: image-generate.py <episode> [--show-root <path>])")
-    # The show says where its reference index lives and what shape a frame is; a shot may still
-    # override the frame per image.
+    # The show says what shape a frame is; a shot may still override the frame per image.
     frame = list(sc.value(cfg, "visual", "shotFrame"))
     prod = sc.production_dir(cfg)
     base = f"{prod}/{ep}/images"
     doc = json.load(open(f"{base}/prompts.json"))
     shots = doc["shots"]
-    bible = load_bible(sc.path(cfg, "visual", "refs", root=root))
+    # Who has a locked face, from the cast index: castindex.faces returns only the entries whose
+    # reference image is on disk, so a hero subject that is half-cast reads here exactly as an
+    # uncast one does and the shot falls back to ambient with a warning. An absent index is a
+    # refusal, not an empty map — the engine's refs-ready guard stops a run before this step when
+    # the index is missing, so reaching it without one means the show has not been migrated.
+    bible = castindex.faces(castindex.load(cfg, root), root)
 
     z_bin = find_bin(Z_BINARY)
     edit_bin = None                      # resolve lazily; only if a hero shot needs it

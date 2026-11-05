@@ -508,12 +508,12 @@ export interface FileWritten { path: string; hash: string; bytes: number }
  *  by (`pim-2.wav` → `pim`), and the reference the manifest currently casts them from
  *  (show-relative).
  *
- *  The slug is the engine's own `slugName` (`engine/src/needs.ts:57`) rather than a second rule
- *  spelled out in the console, because that function is what names the takes on disk: the
- *  `refs-ready` guard looks for a speaking guest's voice at `<guest-refs>/<slug>*.wav` by it, and
- *  the tts-script prompt tells the agent the same convention. A guest written "the Warden" in the
- *  cast therefore has takes named `warden-1.wav`, which a rule that kept the article would not
- *  find. */
+ *  The slug is the engine's own `slugName` (`engine/src/cast.ts:23`) rather than a second rule
+ *  spelled out in the console, because that function is the key a cast name is filed under in
+ *  `Canon/cast.json`: `castKey` looks a subject up by it, so the slug the console shows is the
+ *  slug the engine's record is keyed by, and the candidate takes on disk are named by the same
+ *  rule. A guest written "the Warden" in the cast is filed as `warden` and has takes named
+ *  `warden-1.wav`, which a rule that kept the article would find in neither place. */
 export interface CastingGuest { name: string; slug: string; current: string }
 
 /** Everything the Gate page draws: the question the gate is asking, the files it is asking about,

@@ -21,7 +21,7 @@
 <!-- Q: Are there words an image generator will misread in your world? List each ambiguous word with the phrasing to use instead — for Harbor Lights: "light" means a lighthouse lamp, so a prompt says "lamp room" and never "light". -->
 
 ## The casting registry
-<!-- Q: Which recurring subjects — people, creatures, vessels, places — must look the same in every episode? List them: each needs a locked reference image in `Canon/refs.json`, and a run stops at NEEDS_REFS until every one of them has it. -->
+<!-- Q: Which recurring subjects — people, creatures, vessels, places — must look the same in every episode? List them: each needs an entry in `Canon/cast.json` — the cast index, which is the record of every face and voice — naming a reference image that is on disk, and a run stops at NEEDS_REFS until every one of them has it. The index is built from a new show's registries by `scripts/cast-index-build.py --write`. -->
 
 ## Negation law
 <!-- Q: A negative prompt is weak: an image generator often draws the thing you forbid. State the rule you want the prompt writers to follow — usually, name what should be in the frame instead of what should not. -->

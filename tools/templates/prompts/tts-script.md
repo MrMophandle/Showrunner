@@ -4,27 +4,28 @@ NOT modify the prose script — the manifest carries the TTS-normalized
 text.
 
 ## Read first
-1. Production/voice-refs/refs.json — the LOCKED Qwen3 cast: per
-   character, the reference WAV path, its exact transcript (ref_text),
-   the base acting direction, registers, and fx chain. Copy these
-   verbatim; never invent or alter them.
+1. `Canon/cast.json` — the cast index. For every speaker in the script,
+   take the cast entry's voice block (ref, ref_text, direction, fx,
+   speed) verbatim; the manifest's "engine" is the index's audio.engine.
+   Never invent or alter a voice.
 2. `## Script dialogue attribution` of `Canon/pipeline-artifacts.md` — the
    square-bracket marks the script carries and what each one means. That
    section is the law for READING them; this prompt is the law for what
    they do to the manifest.
-3. Canon/voice-registry.md — the prose about the voices: guest-design
-   rules, delivery-direction craft, and the pronunciation findings.
+3. Canon/voice-registry.md — the prose about the voices: the
+   delivery-direction craft and the pronunciation findings.
 4. {{show.episodesDir}}/{{episodeId}}/script.md — the approved episode.
 5. {{show.episodesDir}}/{{episodeId}}/outline.md — for guest-character context.
 
 ## Produce {{show.productionDir}}/{{episodeId}}/tts-script.json (Write tool)
-Exact shape (ENGINE IS ALWAYS "qwen3" for new episodes):
+Exact shape:
 {
   "episode": "{{episodeId}}",
-  "engine": "qwen3",
+  "engine": "<the index's audio.engine>",
   "cast": { "<speaker>": {"ref": "path.wav", "ref_text": "transcript of that WAV",
               "direction": "base acting direction", "fx": "..." or null,
-              "speed": 1.12 (only if refs.json sets one), "guest": true (guests only)} },
+              "speed": 1.12 (only if the cast entry sets one),
+              "guest": true (when the entry's debut is this episode)} },
   "segments": [ {"i": 1, "speaker": "...", "text": "...", "gap_before": 0.0,
                  "delivery": "per-line acting direction (optional)",
                  "fx_override": null or "..."} ]
@@ -43,10 +44,10 @@ cast "direction". Rules:
   but urgent now, the words coming fast and clipped."
 - 8–18 words. Concrete performance verbs ("barely above a whisper",
   "voice cracking on the last word") beat abstract moods ("sad").
-- Named registers ARE deliveries: where refs.json carries a character's
-  registers as exact strings (a calm default and a frightened one, say),
-  use the register string VERBATIM as the delivery on the lines it fits,
-  judging per segment from context.
+- Named registers ARE deliveries: where a character's entry in
+  `Canon/cast.json` carries registers as exact strings (a calm default
+  and a frightened one, say), use the register string VERBATIM as the
+  delivery on the lines it fits, judging per segment from context.
 - Character invariants override drama: a character whose sheet says she
   stays flat in a crisis stays flat (that IS her performance); one who
   delivers wit and grief in the same tone keeps the tone; one who never
@@ -74,7 +75,7 @@ cast "direction". Rules:
   words inside a tagged paragraph ("she said", any action beat) still
   belong to the narrator as their own segments, exactly per the rule
   above. The tag answers only "who speaks the quotes." A tag naming
-  someone absent from Canon/voice-registry.md is a HARD ERROR — stop and
+  someone absent from `Canon/cast.json` is a HARD ERROR — stop and
   report it, never guess a voice.
 
   **2. `[BEAT]` and `[PAUSE n]` — author-designed pauses.** These are
@@ -129,29 +130,17 @@ cast "direction". Rules:
 - Segment "i" starts at 1, increments by 1, no gaps.
 
 ## Casting rules
-- Locked cast: copy ref/ref_text/direction/fx/speed EXACTLY from
-  Production/voice-refs/refs.json. Never re-design a locked voice.
-- Guests are DESIGNED, not pool-picked. For each guest:
-  1. Write a voice-design description from the outline's character
-     notes (age, warmth, register, pace — e.g. Quill: "the warmest,
-     most likable voice in the show").
-  2. Pick that guest's most characteristic line from the script.
-  3. The voice itself was designed by the showrunner before this step ran
-     (the pipeline stops at NEEDS_REFS until it exists) and lives at
-     {{show.audio.guestRefsDir}}/<guest-slug>*.wav, in which `{episodeId}`
-     stands for {{episodeId}} and the slug is the guest's name lowercased
-     with hyphens ("Harbormaster Quill" → harbormaster-quill). Do not run
-     design-voice.py.
-  4. Cast entry: ref = that WAV, ref_text = the exact line it renders (the
-     showrunner recorded it beside the WAV as <guest-slug>.txt if he wrote
-     one; else transcribe the line from the script), direction = your
-     description, guest = true. Name each guest and its WAV in your
-     casting-gate summary.
-  - A guest who must sound like a kind of voice the locked cast already
-    holds: design a DIFFERENT one from that cast member's and give it a
-    distinct fx chain (never the cast member's exact chain).
-    Radio/comms voices get a band-limit chain.
-- A character whose refs.json entry sets fx to null keeps fx null. Her
+- **If the index's `audio.engine` is absent, write no manifest.** Say so
+  in your summary and stop: the manifest's "engine" field is copied from
+  it, and a manifest without one drives synthesis with no engine named.
+  Setting it is a hand edit to `Canon/cast.json` (or a re-run of
+  `scripts/cast-index-build.py --write` against a registry that has one),
+  not a value to choose here.
+- Every speaking character in the outline's `## Cast` has a LOCKED voice
+  in `Canon/cast.json`; the refs-ready guard upstream stops the run
+  otherwise. A speaker you cannot find in the index is a defect to
+  report in your summary, never a voice to design here.
+- A character whose cast entry sets fx to null keeps fx null. Her
   registers are DELIVERIES (see above), not fx chains. fx_override
   remains available for physical spaces only (enclosed comms, a PA) per
   scene context.
@@ -186,6 +175,7 @@ cast "direction". Rules:
 - Numbers/units: spell out anything a screen reader would garble
   ("1 g" -> "one gee").
 
-End your response with: the cast list (locked + guests with chosen
-voices), any NEW heteronyms you disambiguated, and segment count.
+End your response with: the cast list (every speaker and the voice the
+index gave it, guests marked), any NEW heteronyms you disambiguated, and
+segment count.
 The casting gate shows this response to the showrunner.

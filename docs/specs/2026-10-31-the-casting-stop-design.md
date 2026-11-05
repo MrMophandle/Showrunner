@@ -1,0 +1,79 @@
+# The Casting Stop — design
+
+> Status: **draft for Ryan's review**, written 2026-10-31 from the conversation of 2026-10-30/31. Engine repository `Showrunner`; the show-side files it names live in the show instance (`Episodes/`, `Canon/`, `Production/`, `prompts/`). Every ruling below is Ryan's unless marked as a proposal.
+
+## 0 · What it does (one sentence)
+
+When an episode's outline names a speaking character who has no filed voice or face, the pipeline stops once, before any rendering, at a casting gate in the console where candidate takes and candidate reference sheets are shown side by side per character; the showrunner picks one of each, and the picks are filed centrally the way the main cast is filed, so every later episode inherits them.
+
+## 1 · The cast database (Ryan-ruled 2026-10-31)
+
+**1.1 The rule.** A character who **speaks** on the page gets a voice and a face, filed centrally from their first episode. A character who is **seen but silent** gets a face and an explicit "no voice" mark. A character who is only ever off screen — named, never heard, never shown — gets nothing. The outline's `## Cast` section already carries the fact that decides this: `- <Name> (<recurring|guest>, speaks)`; the absence of `speaks` is silence.
+
+**1.2 Storage of record: one master file (Ryan-ruled 2026-10-31).** The casting facts live in **one index at the top of the canon, `Canon/cast.json`**, and nowhere else: one entry per character, keyed by the engine's `slugName` of the cast name — `name`, `kind`, `speaks`, `debut`, `sheet` (the path of the character's markdown sheet), `face` (`{ ref, gallery: [] }`), `voice` (`{ ref, ref_text, direction, fx, speed }` or `null`, with `silent: true` for a seen-but-silent character so "no voice" is a fact and not a gap), `status`, `locked`. The two files that hold these facts today — the voice registry's `Production/voice-refs/refs.json` and the visual bible's `Canon/refs.json` — are **retired by the migration (§4)**, and every reader is pointed at the index: in the engine `bible.ts`, `needs.ts`, `pipelines/episode.ts`, `show-config.ts`; in the scripts `design-visual.py`, `image-generate.py`, `nano-banana-generate.py`, `registry-append.py`, `validate-manifest.py`; in the prompt templates `tts-script.md`, `visual-direction.md`, `visual-direction-fix.md`, `nano-banana-gate.reject.md`. Species, locations, ships and motifs (the non-character subjects of the visual bible: `elyth`, `coalvane`, `dead-light`, `relic`, `cricket`) move into the same index under their `kind`, so one file answers "what do we have a reference for".
+
+**Why one file.** Ryan: "I don't want to burn through tokens as we scan an ever growing directory looking for a character reference." The index is a few hundred bytes per character — thirty characters are under 10 KB — and it is the only thing an agent reads to learn who exists and where their files are. Nothing lists `Canon/characters/`.
+
+**1.2a The ingestion rule (binding).** No agent globs or lists `Canon/characters/`. The outline, draft, revise and reviewer prompts read `Canon/cast.json` first and then open **only the sheets of the characters in play** — the premise's cast at outline time, the scene's cast at draft time, the script's named characters at review time. The prompts that today say "read every sheet under Canon/characters/" (`outline.md`, `character-check.md`, `canon-review-*.md`) are rewritten to that rule by the plan. The reviewers' `Glob Canon/characters/**/*.md` goes.
+
+**1.2b The character folder (Ryan-ruled 2026-10-31).** `Canon/characters/<Name>/` holds exactly: the sheet `<name>.md`; the reference `reference.png` — **one image showing the character head-on, at 45°, and in profile** (a turnaround sheet; the baseline prompt asks for exactly that layout); and `gallery/` with **at most three** clear single images of the character. Nothing else: no episode shots, no candidate files, no duplicates. Today the folders hold 167 images and 946 MB, 150 of them across the five crew folders (Trent 35, Sable 31, Sarn 31, Opha 29, Remo 24), from an earlier instruction to keep every image; the migration prunes them (§4.4) and the casting stop never adds beyond the cap. The two gallery images for a new character are rendered by `casting-file` from the chosen reference with the local edit model (the same Qwen-Image-Edit `image-generate.py` uses for hero shots) — **proposal**: two single shots, a portrait and a full-length, so a writer or an image auditor has a clear look without a render.
+
+**1.3 Consequence for the TTS stage.** Guests stop being a separate convention. The TTS script prompt copies every cast entry — recurring or guest — from the index (`voice.ref`, `voice.ref_text`, `voice.direction`, `voice.fx`, `voice.speed`), and the per-episode `guest-refs/` directory, the hand-run `design-voice.py`, and "Do not run design-voice.py" leave the prompt. `audio.guestRefsDir` stays in the config for the two steps that read it until §4's migration retires it; the casting gate's voice picker (PR #122) stays, as a re-pick of a filed voice.
+
+**1.4 The Cast page.** The console's bible rail gains a page, `Cast`: one row per character from the index — name, kind, debut, voice (locked / none / silent), face (locked / none), gallery count, and the gap when one side is missing. It reads `Canon/cast.json` through the bible's existing file route; it writes nothing. It is the standardised view Ryan asked for; the index is the database.
+
+## 2 · The casting stop
+
+**2.1 Where.** In the episode pipeline, between `write-commit` and `refs-ready` (`engine/src/pipelines/episode.ts`): after the script is approved and committed, so the brief agent has the character's real lines, and before the TTS script, which is the first step that needs the files. `refs-ready` stays as the final guard and should never fire NEEDS_REFS again for a speaking character; if it does, the stop has a bug.
+
+**2.2 Steps.** Four, all bypassed (`when`) on an episode whose cast is already filed:
+
+1. `casting-needs` — a guard. Computes the list of speaking cast entries lacking a voice or a face (the same probe `missingRefs` makes today, split into "needs voice" and "needs face"), writes it as its result, and bypasses everything below when the list is empty.
+2. `casting-brief` — an agent (`model: medium`, tools Read/Write/Glob/Grep, prompt `casting-brief.md`). For each needed character it writes one brief into `<productionDir>/<episodeId>/casting/briefs.json`: the voice direction and the reference line (the character's most characteristic line in the script, which becomes `ref_text`), and the identity with a baseline image prompt in the visual bible's own words. It also writes the **unlocked** index entry (`kind`, `identity`, `baseline_prompt`, no `face.ref`), which is what `design-visual.py` reads once it is pointed at the index. It writes nothing for a character that needs only one of the two.
+3. `casting-design` — a script (`casting-design.py`). For each brief it runs the existing designers: `design-voice.py` for `audio.castingTakes` takes (default 2) and `design-visual.py` for `visual.castingSheets` sheets (default 3), into `<productionDir>/<episodeId>/casting/<slug>/` as `voice-<n>.wav` with the reference line beside them as `voice.txt`, and `face-<n>.png`. Idempotent: a candidate file that exists is kept. Progress is per character.
+4. `casting-gate` — a gate (`casting-gate.gate.md`, `maxAttempts` 10). Its artifacts are the casting directory (kind `casting`, new) and `briefs.json`. Its answer carries `picks`.
+
+After an approve: `casting-file` — a script (`casting-file.py`). Reads `<casting>/picks.json` (written by the console on approve, §3.1) and files each pick: the voice WAV copied to `<voiceRefsDir>/<slug>.wav` and the index entry's `voice` completed (`ref`, `ref_text` from `voice.txt`, `direction` from the brief, `fx`/`speed` if the brief set them); the chosen sheet copied to `Canon/characters/<Name>/reference.png` and two gallery images rendered from it (§1.2b); `status: "LOCKED"`, `debut`, `locked` set. Then `refs-ready` runs and passes. The filing is a pipeline step and not the console's gate answer, so the engine is the one writer of the index and the console stays a reader plus one small file.
+
+**2.3 Reject.** `casting-gate-fix` (agent, tools incl. Bash) reads the notes, folds them into the named characters' briefs (and, for a canon problem, the bible's `identity`), deletes those characters' candidates, and `casting-design` re-runs for what is missing (`rerunOnReject: ["casting-design"]`), then the gate reopens. A note naming no character re-rolls nothing and reopens the gate with the same candidates.
+
+**2.4 What a filed character costs later.** Nothing. The next episode's `casting-needs` finds the voice and the face and bypasses the stop. A recurring guest is simply a cast entry with `guest: true` and an older `debut`.
+
+## 3 · The console
+
+**3.1 The gate page.** A `casting` artifact renders one fieldset per character from `briefs.json`: the takes as radios with a player and the transcript under each (the audio pane from PR #118/#122), the sheets as radios with the image shown (a new image-choice pane), and the brief's text shown beneath, editable through the gate editor (PR #116) since `briefs.json` is not markdown — the brief is rendered from json into the editor as a text form, or `briefs.json` is edited in place; **proposal: in place, as text, the same editor with a json mode**. Approve requires a voice pick and a face pick for every character that needs them (the button says what is missing otherwise), writes `<casting>/picks.json` through the fenced file route of PR #116 (extended to json under the casting directory), and answers the gate. Reject carries notes only.
+
+**3.2 The Cast page.** §1.4. Route `/shows/:show/bible/cast`, read-only, sortable by debut.
+
+**3.3 Nothing else moves.** The TTS-manifest picker (PR #122), the editor (PR #116), the Board and the Run page are unchanged.
+
+## 4 · The migration (one-time, show-side)
+
+**4.1 The index.** A script (`cast-index-build.py`, in the engine's `scripts/`, run by hand once) builds `Canon/cast.json` from the two registries and the sheets under `Canon/characters/`: every voice entry, every visual-bible subject, every sheet, merged by slug, with `debut` back-filled from the episode each was first used in where the logs say and `s01e01` otherwise. It prints the merge and refuses to write when two sources disagree about a path, so the first run is a review.
+
+**4.2 The audit.** `cast-audit.py` reads the index and, given `--retired <path>`, the retired repository's six `Production/ep*/guest-refs/` directories (read only), and prints every character known anywhere with voice / face / source, and the gaps. Today's gaps, from the 2026-10-31 inventory: faces with no central voice — Ansa, Mardo, Marle, Wella, Vrask, the two Iss-kar extras, Hallet (now filed); twenty-six Season 1 guest voices never promoted, among them those five.
+
+**4.3 The promotion.** Under Ryan's eye, the Season 1 guest WAVs for characters who have a face are copied into `Production/voice-refs/` with index entries (`debut` from the episode they came from, `ref_text` from the manifest that cast them); one-off voices with no face and no return are listed, not promoted. Veleth gets a face through the casting stop's first real run, since he was voice-only on 2026-10-30.
+
+**4.4 The prune (Ryan-ruled 2026-10-31).** Every character folder is brought to the §1.2b shape: the sheet, one `reference.png`, at most three gallery images. For the five crew folders that means choosing the reference (the locked reference sheet each already has) and up to three clear images, and **moving** the rest — about 880 MB — out of `Canon/` to `Production/_archive/characters/<Name>/`, where Ryan deletes them when he is ready; nothing is deleted by the migration. A crew member whose locked reference is not a three-view turnaround is listed by the audit for a design pass at Ryan's choosing; the pipeline does not require the turnaround of the existing crew, only of new characters.
+
+**4.5 What is retired.** `Production/voice-refs/refs.json` and `Canon/refs.json` (after every reader in §1.2 is repointed and the index is verified against them), `audio.guestRefsDir`, the `guest-refs/` convention in the TTS prompt, the "read every sheet" lines in the prompts, and the hand steps `design-voice.py`/`design-visual.py` as operator actions (the scripts stay, called by `casting-design.py`).
+
+## 5 · What this does not do
+
+- It does not cast a character the outline failed to name, and it does not re-cast a filed one; a re-pick of a voice is the TTS gate's picker, and a re-pick of a face is a hand step until it is asked for.
+- It does not generate the hero shots — the image stage after the image-prompt check is unchanged, including its reliance on the Google image model and Ryan's credits.
+- It does not build a voice or a face for a location, a ship or a species; those stay bible entries written by hand.
+
+## 6 · Open points, to be settled in the plan
+
+- `casting-design.py`'s runtime: a voice take is ~1 min and a sheet ~3–5 min on the local models; two new characters are ~15 min. The step reports progress per character so the Board says what it is doing.
+- Whether `briefs.json` is edited in place through the editor (json mode) or shown read-only with reject-to-change. Proposal: in place.
+- The exact fields the Cast page sorts by.
+
+## 7 · Change log
+
+- **2026-10-31 — created.** From Ryan's rulings of 2026-10-30/31: every speaking character is filed like the main cast, voice and face together, through a gate in the console; seen-but-silent characters carry an explicit no-voice mark; off-screen characters get nothing; the existing registries are standardised by an audit and a promotion of the Season 1 guest voices.
+- **2026-10-31 — storage ruled.** One master index `Canon/cast.json` replaces the two registries (lean ingestion: no agent lists `Canon/characters/`; the index is read first and only the sheets in play after it); a character folder holds the sheet, one three-view `reference.png` and at most three gallery images; the migration prunes the crew folders (167 images, 946 MB today) by moving the rest out of `Canon/`.
+- **2026-11-01 — Plan L1 landed.** The index (`Canon/cast.json`), the readers in the engine, the scripts and the prompts, the ingestion rule, and the three migration tools; the show's migration follows on the instance. `docs/plans/2026-10-31-the-cast-index.md` and its deferred record.
+- **2026-11-01 — faces are nano-banana's, and candidates are briefs (Ryan-ruled).** Two corrections to §2's `casting-design` step, from the first two hand-cast characters (Hallet, Veleth) on the show. (1) **Character reference images are generated by nano-banana (`gemini-3-pro-image`), never by Qwen-Image.** `design-visual.py`'s Qwen path is retired for characters; the `casting-design` script of Plan L2 renders face candidates through the same Gemini client `nano-banana-generate.py` uses, at that step's real-money price (one call per candidate). A reference already locked from a Qwen render (Hallet, 2026-10-31) is regenerated and re-picked before its next episode renders. (2) **N face candidates are N distinct briefs, not N seeds of one brief.** Hallet's and Veleth's three Qwen candidates were one design in three poses, because the designer varied only the seed of a single `baseline_prompt`; a high-adherence model then returns the same character. The `casting-brief` agent therefore writes `visual.castingSheets` distinct visual briefs per character (each a different reading within the sheet's and the species' canon), and `casting-design` renders one candidate per brief. The same holds for voices, where `design-voice.py` already varies the instruction per take.

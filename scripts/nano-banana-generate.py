@@ -4,15 +4,15 @@
 """nano-banana-generate: character shots via the Gemini API (Nano Banana Pro).
 
 For each type:"character" shot in Production/<ep>/images/prompts.json missing
-its PNG: condition on the subject's locked reference sheet + the 2 newest
-approved pile stills (the show's visual.castingPileDir), generate at 2K 16:9,
-vision-audit via Claude headless, retry with corrective notes (<=3 attempts). A
+its PNG: condition on the reference and the gallery (at most three) named by the
+subject's entry in the cast index, generate at 2K 16:9, vision-audit via Claude
+headless, retry with corrective notes (<=3 attempts). A
 shot whose PNG exists is skipped — a hand-made shot always wins (delete a PNG or
 use --only to re-roll). A shot whose `source` is `showrunner` is never generated;
 the showrunner drops it in.
 
 Everything that makes a frame THIS show's frame comes from the show's config and
-canon, never from this file: the reference index (visual.refs), the photographic
+canon, never from this file: the cast index (Canon/cast.json), the photographic
 look (visual.styleConstants), the audit laws (the file at visual.auditLaws), the
 style authority cited in a refusal (visual.style), and the banned collective
 phrases (visual.collectivePopulatorBans, read by lib/populators.py).
@@ -23,6 +23,7 @@ Usage:
 """
 import base64, json, os, re, subprocess, sys, tempfile, time
 
+from lib import castindex
 from lib import populators
 from lib import showconfig as sc
 
@@ -36,8 +37,10 @@ IMAGE_SIZE = "2K"                      # response_format: uppercase K per docs
 OUTPUT_MIME = "image/jpeg"
 MAX_ATTEMPTS = 3                       # audit-failure retries per shot
 MAX_CALLS = 60                         # hard cost cap per run (~$8)
-STILLS_PER_SUBJECT = 2                 # newest pile stills fed per character
 MAX_IMAGES = 8                         # total reference images per API call
+# How many stills a subject contributes is not a constant here any more: the cast index names a
+# subject's gallery and lib/castindex.py caps it at three (spec 2026-10-31 §1.2a). Nothing in this
+# script lists a character folder, so nothing here decides which stills are the newest.
 
 # The show's photographic look is visual.styleConstants in showrunner.json, appended to every
 # brief by compose_prompt. One standing warning for whoever edits that key: do NOT put
@@ -58,18 +61,12 @@ def normalize_key(ref: str) -> str:
     return re.split(r"[\s(]", ref.strip(), 1)[0].lower()
 
 
-def load_bible(path: str) -> dict:
-    """The show's reference index (visual.refs), minus its own metadata keys."""
-    d = json.load(open(path))
-    return {k: v for k, v in d.items() if not k.startswith("_")}
-
-
-def _pile_stills(sheet_path: str) -> list[str]:
-    """Newest-first approved stills from the character's folder (sheet excluded)."""
-    folder = os.path.dirname(sheet_path)
-    pngs = [os.path.join(folder, f) for f in os.listdir(folder)
-            if f.endswith(".png") and os.path.join(folder, f) != sheet_path]
-    return sorted(pngs, key=os.path.getmtime, reverse=True)[:STILLS_PER_SUBJECT]
+def load_bible(cfg: dict, root: str) -> dict:
+    """Who has a locked face, from the show's cast index: {key: {"ref", "identity", "gallery",
+    "kind", "name"}} for every entry whose reference image is on disk, with each gallery filtered
+    to files that exist and capped at three. It stays a named function, rather than the one
+    castindex call it now wraps, because it is the seam the tests replace."""
+    return castindex.faces(castindex.load(cfg, root), root)
 
 
 def assemble_refs(shot: dict, bible: dict, max_images: int = MAX_IMAGES):
@@ -91,15 +88,18 @@ def assemble_refs(shot: dict, bible: dict, max_images: int = MAX_IMAGES):
         sheets.append((key, entry["ref"]))
         identities.append(f"{key.upper()} (must match the attached reference "
                           f"images): {entry['identity']}")
-        stills.extend(_pile_stills(entry["ref"]))
+        # The subject's stills are the ones its cast-index entry names, already filtered to files
+        # on disk and capped at three by lib/castindex.py. The folder they sit in is never listed.
+        stills.extend(entry.get("gallery", []))
 
     # Extract sheet paths and dedupe stills BY BASENAME, not full path.
-    # registry-append fans one group shot out into every ref'd character's
-    # folder, so the identical still lives at N different paths (one per
-    # subject). Deduping by path lets all N copies survive here, burning
-    # reference-image slots on N copies of one photo and displacing a
-    # genuinely distinct still of another subject — worse conditioning for
-    # the same $ cost. Keep the first occurrence, preserve order.
+    # Two entries' galleries may still name one file: a group still of both
+    # subjects is one photograph, and the cast index is edited by hand, so it
+    # can reach this loop twice — at the same path, or at two paths that end in
+    # the same basename. Deduping by path alone lets both copies survive,
+    # burning reference-image slots on one photo and displacing a genuinely
+    # distinct still of another subject — worse conditioning for the same $
+    # cost. Keep the first occurrence, preserve order.
     sheet_paths = [path for _, path in sheets]
     stills_deduped = []
     seen_stills = set()
@@ -417,10 +417,9 @@ def exit_code_for(tag: str) -> int:
 def run(ep, cfg, root, only=None, notes="", no_audit=False):
     """Generate every missing character shot for one episode. `cfg` is the show's config and
     `root` its absolute directory, from which every show path in the config is resolved."""
-    # Everything the SHOW decides about a frame, read once: where its reference index lives, how
-    # its photography reads, which laws the audit applies, which document a refusal cites, and
-    # which collective phrases are banned in a brief.
-    bible_path = sc.path(cfg, "visual", "refs", root=root)
+    # Everything the SHOW decides about a frame, read once: how its photography reads, which laws
+    # the audit applies, which document a refusal cites, and which collective phrases are banned in
+    # a brief. Who is in the cast is the index's to say, read through load_bible below.
     style_constants = str(sc.value(cfg, "visual", "styleConstants"))
     audit_laws = load_audit_laws(sc.path(cfg, "visual", "auditLaws", root=root))
     style_path = str(sc.value(cfg, "visual", "style"))
@@ -430,7 +429,7 @@ def run(ep, cfg, root, only=None, notes="", no_audit=False):
 
     base = f"{prod}/{ep}/images"
     doc = json.load(open(f"{base}/prompts.json"))
-    bible = load_bible(bible_path)
+    bible = load_bible(cfg, root)
     # A character shot whose `source` is "showrunner" is the showrunner's to make by hand, so it
     # never enters `shots`: no API call is spent on it, no audit judges it, and it takes no result
     # row. The engine's `showrunner-images` guard is what holds the line until its PNG is on disk.

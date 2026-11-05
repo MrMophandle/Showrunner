@@ -14,7 +14,9 @@ export const show: ShowConfig = {
   models: { medium: "m", large: "l", writer: "w" }, airMap: { ep10: [1, 10] },
   output: { nasRoot: "/tmp/no-such-nas", mixFilename: "{slug} S{season:02d}E{episode:02d}.wav", videoFilename: "episode.mp4" },
   audio: { voiceRefsDir: "Production/voice-refs", voiceRegistry: "Canon/voice-registry.md" },
-  visual: { refs: "Canon/refs.json", style: "Canon/visual-style.md", castingPileDir: "Canon/characters" },
+  // No `visual.refs`: Plan L1 (2026-10-31) retired it from the engine, and the steps that read
+  // the reference registry read `Canon/cast.json` through the defaulted `cast.index` instead.
+  visual: { style: "Canon/visual-style.md", castingPileDir: "Canon/characters" },
   video: { compositionId: "Episode" },
   publish: { guide: "Canon/publishing-guide.md" },
 };
@@ -33,7 +35,7 @@ describe("episodePipeline", () => {
     expect(p.name).toBe(EPISODE_PIPELINE_NAME);
     expect(() => orderSteps(p)).not.toThrow();
     expect(() => validateStageMap(EPISODE_STAGE_MAP, p)).not.toThrow();
-    expect(p.steps).toHaveLength(68);
+    expect(p.steps).toHaveLength(67);
   });
 
   it("runs the review round in the order the reset depends on: hand edits, the revision, the panel's seven, the panel, the gate", () => {
@@ -128,10 +130,10 @@ describe("episodePipeline", () => {
     // overview — with every other test green. This test fails if a Canon/ input is added to any
     // step without a matching BIBLE_FILES row or config-named file.
     //
-    // Canon/refs.json is the one deliberate exemption: it is the reference registry, and its
-    // completeness is the NEEDS_REFS probe's report (missingRefs in needs.ts), not the bible's.
-    // A new exemption belongs here only with a reader that checks the file by name.
-    const NOT_THE_BIBLE = new Set(["Canon/refs.json"]);
+    // Canon/cast.json is the one deliberate exemption: it is the cast index, and its completeness
+    // is the NEEDS_REFS probe's report (missingRefs in needs.ts), not the bible's. A new exemption
+    // belongs here only with a reader that checks the file by name.
+    const NOT_THE_BIBLE = new Set(["Canon/cast.json"]);
     /** Every path any step declares as an input, including the nested steps a gate's `onReject`
      *  and a loop's `body` carry. No nested step declares an input today; walking them is what
      *  makes a future one count rather than slip past the guard. */
@@ -159,6 +161,26 @@ describe("episodePipeline", () => {
       expect(guarded.has("Canon/season-2.md"), episodeId).toBe(season === 2);
       expect([...guarded].some((f) => f.startsWith("Canon/season-")), episodeId).toBe(season === 2);
     }
+  });
+
+  it("hands the cast index to the writer and the reviewers: the canon spine, the draft loop and character-check", () => {
+    // F6 of the whole-branch review (2026-10-31). The spec's ingestion rule (§1.2a) is that every
+    // writing and reviewing prompt reads `Canon/cast.json` first and only the sheets in play after
+    // it, and the prompt templates do. A step that reads a file it does not declare is a step
+    // whose input hash cannot change when that file does (`hash.ts`), so a character cast between
+    // two attempts would be served from the script cache and read by a prompt that had already
+    // run — which is why the declaration and not the prompt is what this test measures.
+    //
+    // The index is exempt from the bible-ready cross-check above (`NOT_THE_BIBLE`): its
+    // completeness is the reference probe's report, not the bible's.
+    const by = new Map(p.steps.map((s) => [s.id, s]));
+    const inputsOf = (id: string): readonly string[] => by.get(id)?.inputs ?? [];
+    // The canon spine travels with the index, so every step that reads the spine declares both.
+    for (const id of ["outline", "canon-review-outline", "canon-review-script"]) {
+      expect(inputsOf(id), id).toContain("Canon/cast.json");
+    }
+    expect(inputsOf("draft")).toContain("Canon/cast.json");
+    expect(inputsOf("character-check")).toContain("Canon/cast.json");
   });
 
   it("runs scripts through uv against the engine's scripts project, with the episode id first", () => {
@@ -279,9 +301,17 @@ describe("the episode pipeline, walked", () => {
     const cfg: ShowConfig = { ...show, output: { ...show.output, nasRoot: nas } };
     const { executors, calls, w } = fakeExecutors(root, { failOnce: new Set(["tts-generate"]) });
     for (const f of BIBLE) await w(`Canon/${f}.md`, `${f}\n`);
-    await w("Canon/refs.json", JSON.stringify({ vale: { kind: "human", ref: "Canon/characters/Vale/ref.png" }, harbor: { kind: "location", ref: "Canon/locations/harbor.png" } }));
-    await w("Canon/characters/Vale/ref.png", "png"); await w("Canon/locations/harbor.png", "png");
-    await w("Production/voice-refs/refs.json", JSON.stringify({ cast: { Vale: { ref: "Production/voice-refs/vale.wav", status: "LOCKED" } } })); await w("Production/voice-refs/vale.wav", "wav");
+    await w("Canon/cast.json", JSON.stringify({
+      version: 1,
+      cast: {
+        vale: {
+          name: "Vale", kind: "human", speaks: true, face: { ref: "Canon/characters/Vale/ref.png", gallery: [] },
+          voice: { ref: "Production/voice-refs/vale.wav", ref_text: "x", direction: "d", status: "LOCKED" },
+        },
+        harbor: { name: "Harbor", kind: "location", speaks: false, face: { ref: "Canon/locations/harbor.png", gallery: [] } },
+      },
+    }));
+    await w("Canon/characters/Vale/ref.png", "png"); await w("Canon/locations/harbor.png", "png"); await w("Production/voice-refs/vale.wav", "wav");
     await w("Episodes/_TEMPLATE/outline.md", "template\n");
     await w("Episodes/s02e01/premise.md", "A week.\n");
     const pipeline = episodePipeline({ show: cfg, episodeId: "s02e01", engineRoot: "/engine" });
@@ -382,12 +412,14 @@ describe("the episode pipeline, walked", () => {
     expect(Object.values(state.steps).filter((s) => s === "bypassed").length).toBeGreaterThan(0);
   });
 
-  it("stops at NEEDS_REFS when the outline names a recurring subject the bible lacks, and continues once it exists", async () => {
+  it("stops at NEEDS_REFS when the outline names a subject the cast index lacks, and continues once it has one", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "show-"));
     const { executors, w } = fakeExecutors(root);
     for (const f of BIBLE) await w(`Canon/${f}.md`, `${f}\n`);
-    await w("Canon/refs.json", JSON.stringify({ harbor: { kind: "location", ref: "Canon/locations/harbor.png" } })); await w("Canon/locations/harbor.png", "png");
-    await w("Production/voice-refs/refs.json", JSON.stringify({ cast: {} }));
+    await w("Canon/cast.json", JSON.stringify({
+      version: 1, cast: { harbor: { name: "Harbor", kind: "location", speaks: false, face: { ref: "Canon/locations/harbor.png", gallery: [] } } },
+    }));
+    await w("Canon/locations/harbor.png", "png");
     await w("Episodes/_TEMPLATE/outline.md", "t\n"); await w("Episodes/s02e01/premise.md", "A week.\n");
     const pipeline = episodePipeline({ show, episodeId: "s02e01", engineRoot: "/engine" });
     const log = new EventLog(EventLog.logPath(root, "s02e01", "r1"));
@@ -397,11 +429,19 @@ describe("the episode pipeline, walked", () => {
     await go(); await answerGate(log, "r1", "script-gate", { approved: true });
     const r = await go();
     expect(r).toMatchObject({ status: "failed", stepId: "refs-ready" });
-    expect(r.status === "failed" && r.error).toMatch(/^NEEDS_REFS: Vale: no entry in Canon\/refs.json/);
+    expect(r.status === "failed" && r.error).toMatch(/^NEEDS_REFS: Vale: no entry in Canon\/cast.json/);
     expect(deriveStage(deriveRunState(await log.read()), EPISODE_STAGE_MAP, await episodeNeeds(root, "s02e01", show))).toBe("NEEDS_REFS");
-    await w("Canon/refs.json", JSON.stringify({ vale: { kind: "human", ref: "Canon/characters/Vale/ref.png" }, harbor: { kind: "location", ref: "Canon/locations/harbor.png" } }));
-    await w("Canon/characters/Vale/ref.png", "png");
-    await w("Production/voice-refs/refs.json", JSON.stringify({ cast: { Vale: { ref: "Production/voice-refs/vale.wav", status: "LOCKED" } } })); await w("Production/voice-refs/vale.wav", "wav");
+    await w("Canon/cast.json", JSON.stringify({
+      version: 1,
+      cast: {
+        vale: {
+          name: "Vale", kind: "human", speaks: true, face: { ref: "Canon/characters/Vale/ref.png", gallery: [] },
+          voice: { ref: "Production/voice-refs/vale.wav", ref_text: "x", direction: "d", status: "LOCKED" },
+        },
+        harbor: { name: "Harbor", kind: "location", speaks: false, face: { ref: "Canon/locations/harbor.png", gallery: [] } },
+      },
+    }));
+    await w("Canon/characters/Vale/ref.png", "png"); await w("Production/voice-refs/vale.wav", "wav");
     await resumeRun(log, "r1");
     expect(await go()).toMatchObject({ status: "waiting", gate: { stepId: "casting-gate" } });
   });
@@ -411,6 +451,9 @@ describe("the episode pipeline, walked", () => {
     const { executors, calls, w } = fakeExecutors(root, { reviewFailOnce: new Set(["canon-review-outline"]) });
     for (const f of BIBLE) await w(`Canon/${f}.md`, `${f}\n`);
     await w("Episodes/_TEMPLATE/outline.md", "t\n"); await w("Episodes/s02e01/premise.md", "A week.\n"); await w("Episodes/s02e02/premise.md", "Another.\n");
+    // An index, empty of cast: `bible-ready` refuses a show that has none at all (F7), and this
+    // test is about the canon review and not about the migration.
+    await w("Canon/cast.json", JSON.stringify({ version: 1, cast: {} }));
     const p1 = episodePipeline({ show, episodeId: "s02e01", engineRoot: "/engine" });
     const log1 = new EventLog(EventLog.logPath(root, "s02e01", "r1"));
     expect(await run({ pipeline: p1, ctx: { runId: "r1", episodeId: "s02e01", showRoot: root }, log: log1, executors, renderGateMessage: async (file, c) => `${file} for ${c.episodeId}` })).toMatchObject({ status: "waiting", gate: { stepId: "outline-gate" } });
@@ -428,6 +471,9 @@ describe("the episode pipeline, walked", () => {
     const { executors, w } = fakeExecutors(root);
     for (const f of BIBLE.filter((b) => b !== "style-guide")) await w(`Canon/${f}.md`, `${f}\n`);
     await w("Episodes/_TEMPLATE/outline.md", "t\n"); await w("Episodes/s02e01/premise.md", "A week.\n");
+    // The index is written: the guard checks the bible's files first and the index second, so this
+    // test measures the absent bible file and the test below measures the absent index.
+    await w("Canon/cast.json", JSON.stringify({ version: 1, cast: {} }));
     const pipeline = episodePipeline({ show, episodeId: "s02e01", engineRoot: "/engine" });
     const log = new EventLog(EventLog.logPath(root, "s02e01", "r1"));
     const go = () => run({ pipeline, ctx: { runId: "r1", episodeId: "s02e01", showRoot: root }, log, executors, renderGateMessage: async (file, c) => `${file} for ${c.episodeId}` });
@@ -437,6 +483,34 @@ describe("the episode pipeline, walked", () => {
     // The guard is the write phase's own list, so writing the file it named is the whole fix: the
     // run resumes through bible-ready and reaches the first gate.
     await w("Canon/style-guide.md", "style-guide\n");
+    await resumeRun(log, "r1");
+    expect(await go()).toMatchObject({ status: "waiting", gate: { stepId: "outline-gate" } });
+  });
+
+  it("fails at bible-ready when the show has no cast index, with the probe's own remedy line, before any agent runs", async () => {
+    // F7 of the whole-branch review (2026-10-31). `refs-ready` is the late guard — it runs after
+    // `write-commit` — and `missingRefs` reports nothing at all until an outline exists, so an
+    // instance that has not been migrated onto `Canon/cast.json` used to clear `bible-ready`,
+    // write a premise and an outline, pass two human gates, draft, and run the panel's seven
+    // before the engine said the one thing it already knew at its second step. The guard carries
+    // the identical sentence the probe writes, from `noCastIndexLine` in cast.ts, so an operator who
+    // reads it at either step is sent to the same command and the two can never drift.
+    const root = await mkdtemp(path.join(tmpdir(), "show-"));
+    const { executors, calls, w } = fakeExecutors(root);
+    for (const f of BIBLE) await w(`Canon/${f}.md`, `${f}\n`);
+    await w("Episodes/_TEMPLATE/outline.md", "t\n"); await w("Episodes/s02e01/premise.md", "A week.\n");
+    const pipeline = episodePipeline({ show, episodeId: "s02e01", engineRoot: "/engine" });
+    const log = new EventLog(EventLog.logPath(root, "s02e01", "r1"));
+    const go = () => run({ pipeline, ctx: { runId: "r1", episodeId: "s02e01", showRoot: root }, log, executors, renderGateMessage: async (file, c) => `${file} for ${c.episodeId}` });
+    const r = await go();
+    expect(r).toMatchObject({ status: "failed", stepId: "bible-ready" });
+    expect(r.status === "failed" && r.error).toBe("no cast index at Canon/cast.json — run scripts/cast-index-build.py --write");
+    // Nothing was written and nothing was spent: the refusal is two steps in, before the premise
+    // guard and before the outline agent.
+    expect(calls).toEqual([]);
+    // Building the index is the whole fix, as the line says: the run resumes through bible-ready
+    // and reaches the first gate.
+    await w("Canon/cast.json", JSON.stringify({ version: 1, cast: {} }));
     await resumeRun(log, "r1");
     expect(await go()).toMatchObject({ status: "waiting", gate: { stepId: "outline-gate" } });
   });

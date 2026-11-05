@@ -8,15 +8,17 @@ declares (including its `## New canon proposed` and `## Arc beats` sections)
 is not a discrepancy when the script executes it. Then audit against ALL of:
 - `Canon/world-overview.md` (especially `## The rules of the universe` —
   each is load-bearing)
-- Canon/technology.md, every character sheet under Canon/characters/,
-  Canon/timeline.md
+- Canon/technology.md, the sheets of the characters in this script, found
+  through `Canon/cast.json`, Canon/timeline.md
 - Canon/continuity-ledger.md (open threads — contradictions AND silent
   drops both count)
-- Every character/species/location/faction file for entities appearing
-  in the script (Glob Canon/**/*.md and read what's relevant)
+- Read the species, location and faction files the script names
+  (Canon/species/, Canon/locations/, Canon/factions/) — Glob those three
+  directories only. The characters' sheets come from `Canon/cast.json`,
+  the bullet above.
 
-Flag: contradictions of canon facts, characters acting against their
-sheets under Canon/characters/, technology reaching past what
+Flag: contradictions of canon facts, characters acting against the
+sheets `Canon/cast.json` points to, technology reaching past what
 `## The tiers` of `Canon/technology.md` allows, timeline impossibilities, NEW
 canon-worthy facts the script invents that conflict with existing entries,
 and a script that departs from the approved outline's beats.

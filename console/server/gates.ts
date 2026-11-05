@@ -109,6 +109,14 @@ export async function gateArtifacts(ctx: ShowContext, episodeId: string, gateId:
       // every pick would be refused by name. The label follows the directory for the same reason:
       // a pane headed `guest-refs/` over the contents of `voices/` is the same disagreement in
       // the one place the operator reads it.
+      //
+      // The artifact is declared whether or not the directory exists. Since Plan L1 (2026-10-31)
+      // filed every voice in `Canon/cast.json`, an episode whose speakers are all filed has no
+      // candidate takes at all and the listing route answers 404 — which the page draws as one
+      // quiet line rather than an error pane (`AudioArtifact`, `src/pages/Gate.tsx`, F1 of the
+      // whole-branch review). Testing for the directory here instead would drop the pane, and the
+      // gate would then differ in shape between two episodes for a reason the operator cannot
+      // see; one sentence saying where the voices came from is the more honest empty state.
       const refs = guestRefsDirOf(ctx.show, episodeId);
       return [
         dir(ctx.key, episodeId, "audio", refs, `${path.posix.basename(refs)}/`),
@@ -142,18 +150,23 @@ export async function gateArtifacts(ctx: ShowContext, episodeId: string, gateId:
 
 /** One episode's guest-reference directory, show-relative: the show's `audio.guestRefsDir` with
  *  its `{episodeId}` token substituted and any trailing slash trimmed, or
- *  `<productionDir>/<episodeId>/guest-refs` when the key is absent. This is the engine's own rule
- *  — `guestRefsDir` at `engine/src/needs.ts:85` — and it is the directory the `refs-ready` guard
- *  globs an episode's guest takes from, so the gate must name the same one or it would offer
- *  takes the pipeline will not look for.
+ *  `<productionDir>/<episodeId>/guest-refs` when the key is absent.
  *
- *  Replicated rather than imported: `needs.ts`'s function is private to that module and this
- *  change modifies no engine file. One line of the original is deliberately left out, its second
- *  `checkGuestRefsDir` call — every `ShowConfig` the console holds came from `loadShowConfig`,
- *  which already refuses a configured value that carries no `{episodeId}`, an empty one, and one
- *  that is not a string. `formatFilename` still throws by name on an unknown token (`{epId}`)
- *  exactly as it does for the engine, and the console already reaches that same throw through
- *  `missingRefs` (`server/episodes.ts:47`), so a misconfigured show gains no new failure here.
+ *  **This is the only implementation of the rule.** The engine had one — `guestRefsDir` in
+ *  `needs.ts`, which the `refs-ready` guard globbed a speaking guest's takes from — and Plan L1
+ *  (2026-10-31) deleted it with the guest probe: the probe reads `Canon/cast.json` now, so no
+ *  engine step resolves this key. What is left is this function and its one caller, the
+ *  TTS-manifest picker at the casting gate, which lists the directory and fences a pick to it.
+ *  Plan L2 moves that picker to `Production/<episodeId>/casting/<slug>/` and retires the key with
+ *  the guest-refs convention; until then this is where the rule lives, which is why it is
+ *  exported and documented here rather than treated as a copy of something.
+ *
+ *  `checkGuestRefsDir` is deliberately not called: every `ShowConfig` the console holds came from
+ *  `loadShowConfig`, which already refuses a configured value that carries no `{episodeId}`, an
+ *  empty one, and one that is not a string. `formatFilename` still throws by name on an unknown
+ *  token (`{epId}`) exactly as it does for the engine, and the console already reaches that same
+ *  throw through `missingRefs` (`server/episodes.ts:47`), so a misconfigured show gains no new
+ *  failure here.
  *
  *  **A configured directory outside the episode's own two trees can be named here and not picked
  *  from.** The artifact fence serves `<episodesDir>/<id>/` and `<productionDir>/<id>/` and

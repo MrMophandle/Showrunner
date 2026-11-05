@@ -131,19 +131,20 @@ function Transcript({ url }: { url: string }) {
 /** Which guest a take belongs to: the guest whose slug is the **longest** slug the take's
  *  lowercased name starts with, or undefined for a take no guest in this cast claims.
  *
- *  **This is the engine's rule and not a rule of this page's.** The `refs-ready` guard lowercases
- *  every WAV in the guest-reference directory and matches a guest's takes with
- *  `startsWith(slugName(name))` (`engine/src/needs.ts:141,179`), so a take this page grouped by any
- *  other rule would be a choice the pipeline cannot see: the guard would go on reporting the guest
- *  as unrecorded while the operator had just picked a take for them. It is why `hallet2.wav`,
- *  `Hallet-1.wav` and `hallet_warm.wav` are all Hallet's — the guard counts all three.
+ *  **The slug is the engine's `slugName`** (`engine/src/cast.ts:23`), which is the key a cast name
+ *  is filed under in `Canon/cast.json`, and it is also how the takes on disk are named: a guest
+ *  written "the Warden" has `warden-1.wav`, which a rule that kept the article would not find. The
+ *  matching itself is **this picker's rule and no longer the engine's**: the `refs-ready` guard
+ *  matched a guest's WAVs by slug prefix in the guest-reference directory until Plan L1
+ *  (2026-10-31) took the probe to the cast index, and the directory is now a pile of candidate
+ *  takes rather than a thing the pipeline reads. The prefix rule stays because the files in it are
+ *  still named for the guest, and it is why `hallet2.wav`, `Hallet-1.wav` and `hallet_warm.wav` are
+ *  all Hallet's.
  *
  *  **Longest match**, because nothing keeps one guest's slug from being a prefix of another's:
- *  `hale-junior-1.wav` starts with both `hale` and `hale-junior`, and it is the junior's take. The
- *  engine's guard has the same ambiguity and resolves it in the guest's favour both ways round (a
- *  junior take satisfies the senior there), so the page shows the choice to the guest whose name is
- *  actually in the filename. A guest whose slug is empty claims nothing, rather than claiming every
- *  take by matching the empty prefix.
+ *  `hale-junior-1.wav` starts with both `hale` and `hale-junior`, and it is the junior's take, so
+ *  the page shows the choice to the guest whose name is actually in the filename. A guest whose
+ *  slug is empty claims nothing, rather than claiming every take by matching the empty prefix.
  *
  *  Exported for the test. */
 export function guestForTake(name: string, guests: readonly CastingGuest[]): CastingGuest | undefined {
@@ -175,11 +176,18 @@ function basename(showRelative: string): string {
  *  note naming takes ("approved, hallet2 and veleth2") was read by nothing and the render that
  *  followed used whatever the manifest already said.
  *
- *  **A take is grouped with a guest by the engine's own matching rule** (`guestForTake`): the guest
- *  whose slug is the longest one the take's lowercased name starts with, which is how the
- *  `refs-ready` guard decides whose take a WAV is (`engine/src/needs.ts:141,179`). A take that
- *  starts with no guest's slug belongs to nobody in this cast: it is listed after the fieldsets
- *  exactly as every take was listed before, audible and not pickable.
+ *  **A take is grouped with a guest by `guestForTake`**: the guest whose slug is the longest one
+ *  the take's lowercased name starts with, the slug being `slugName`'s (`engine/src/cast.ts:23`).
+ *  A take that starts with no guest's slug belongs to nobody in this cast: it is listed after the
+ *  fieldsets exactly as every take was listed before, audible and not pickable.
+ *
+ *  **A directory that is not there is the migrated case, not a fault.** Since Plan L1
+ *  (2026-10-31) every voice is filed in `Canon/cast.json` from the character's first episode, so
+ *  an episode all of whose speakers are filed has no candidate takes and the listing route
+ *  answers 404. That gets one quiet line and no fieldsets — an error pane on the page the
+ *  operator answers a gate from would read as a broken run, and there is nothing to choose here:
+ *  Approve answers the gate and says nothing about casting (F1 of the 2026-10-31 whole-branch
+ *  review). The re-pick of a filed voice moves to `Production/<ep>/casting/<slug>/` in Plan L2.
  *
  *  **This component is also what tells the page which take is already cast.** `picks` arrives empty
  *  and the preselection is reported up through `onPick` with `fromManifest`, once per casting block
@@ -218,6 +226,11 @@ function AudioArtifact({ artifact, casting, picks, onPick }: {
     }
   }, [artifact.path, casting, listing.data, onPick]);
   if (artifact.listUrl === undefined) return <AudioSeek src={artifact.url} label={artifact.label} />;
+  // 404 is "no such directory", which for an episode whose speakers are all filed in the cast
+  // index is the ordinary answer and not an error (see this component's header). Any other failure
+  // — a 500, a fence refusal, a dead server — is still an error pane, because those are faults an
+  // operator has to see.
+  if (listing.status === 404) return <p className="quiet">no candidate takes for this episode — the voices come from Canon/cast.json</p>;
   if (listing.error !== null && listing.data === null) return <p className="error-line">{listing.error}</p>;
   if (listing.data === null) return <p className="quiet">reading the directory…</p>;
   const files = listing.data.entries.filter((e) => !e.isDir);
@@ -410,7 +423,10 @@ export function Gate() {
     // the casting fix agent, so writing a cast list into it on the way out would be editing the
     // file the agent is about to be told is wrong. The server writes an accepted pick before it
     // answers the gate, and refuses the whole answer for a bad one (`server/app.ts`).
-    const sent = approved && view.casting !== undefined ? picks : undefined;
+    // An empty map is sent as no `picks` key at all, which is the gate with no candidate takes to
+    // offer (F1): the manifest keeps the voices the cast index gave it, and the answer route is
+    // handed nothing to accept or refuse rather than an empty instruction.
+    const sent = approved && view.casting !== undefined && Object.keys(picks).length > 0 ? picks : undefined;
     try {
       await post(`${base}/gate`, {
         stepId: view.stepId, approved, notes, expectedAttempt: view.attempt,

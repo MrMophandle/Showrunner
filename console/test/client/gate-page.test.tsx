@@ -114,7 +114,11 @@ const REFS_ENTRIES = [
   { name: "pim-2.wav", size: 1, isDir: false },
   { name: "pim.txt", size: 1, isDir: false },
 ];
-const refsListing = { entries: [...REFS_ENTRIES] };
+/** The listing as the route answers it, and the status it answers with. `status` is mutable for
+ *  the reason `entries` is: one test asks for the 404 the route gives for a directory that is not
+ *  there, which is the ordinary case for an episode whose guests are all filed in the cast index
+ *  (F1 of the 2026-10-31 whole-branch review). Reset in `beforeEach`. */
+const refsListing = { entries: [...REFS_ENTRIES], status: 200 };
 
 /** What `pim.txt` says, which the page reads under each of Pim's takes. */
 const PIM_TRANSCRIPT = "The harbour never did keep a secret.";
@@ -175,7 +179,11 @@ function stubFetch(view: GateView) {
     if (url.endsWith("/gate") && init?.method === "POST") return new Response(JSON.stringify({ runId: RUN_ID, pid: 4242 }), { status: 200 });
     if (url.endsWith("/gate")) return new Response(JSON.stringify(view), { status: 200 });
     if (url === SCRIPT_URL) return new Response(disk.script, { status: 200 });
-    if (url === REFS_URL) return new Response(JSON.stringify({ entries: refsListing.entries }), { status: 200 });
+    if (url === REFS_URL) {
+      return refsListing.status === 200
+        ? new Response(JSON.stringify({ entries: refsListing.entries }), { status: 200 })
+        : new Response(JSON.stringify({ error: `${REFS_PATH}: no such directory` }), { status: refsListing.status });
+    }
     if (url === `${REFS_URL}/pim.txt`) return new Response(PIM_TRANSCRIPT, { status: 200 });
     return new Response(JSON.stringify({ error: `no stub for ${url}` }), { status: 404 });
   });
@@ -223,6 +231,7 @@ function positionOf(container: HTMLElement, text: string): number {
 beforeEach(() => {
   disk.script = SCRIPT_LINE;
   refsListing.entries = [...REFS_ENTRIES];
+  refsListing.status = 200;
   vi.stubGlobal("EventSource", FakeEventSource);
 });
 
@@ -455,6 +464,29 @@ describe("the Gate page's order", () => {
  *  build a url from, and a page that concatenated it would be a second declaration of the artifact
  *  route's shape (`server/gates.ts`'s `artifactUrl`). */
 describe("the casting gate's choice", () => {
+  it("says the voices come from the index when there is no take directory, draws no choice, and approves with no picks", async () => {
+    // F1 of the 2026-10-31 whole-branch review. Plan L1 made `Canon/cast.json` the record of every
+    // voice — a guest is filed centrally from their first episode — so an episode whose speakers
+    // are all filed has no guest-reference directory at all and the listing route answers 404.
+    // That is not an error, and the pane used to draw it as one: a red line about a directory
+    // whose absence is the normal, migrated case, on the one page the operator answers a gate
+    // from. One quiet sentence instead, no fieldsets, and nothing for Approve to carry.
+    refsListing.status = 404;
+    const { fetchMock, container } = mount(castingView());
+    expect(await screen.findByText("no candidate takes for this episode — the voices come from Canon/cast.json")).toBeInTheDocument();
+    expect(container.querySelector(".error-line")).toBeNull();
+    expect(screen.queryByRole("group", { name: /Pim/ })).toBeNull();
+    expect(screen.queryAllByRole("radio")).toHaveLength(0);
+
+    // Approve answers the gate and says nothing about casting: there was no choice to report, so
+    // the manifest keeps the voices the index gave it.
+    fireEvent.click(screen.getByRole("button", { name: /approve/i }));
+    await waitFor(() => { expect(postedBody(fetchMock)).not.toBeUndefined(); });
+    const body = postedBody(fetchMock)!;
+    expect(body["approved"]).toBe(true);
+    expect("picks" in body).toBe(false);
+  });
+
   it("at the casting gate, offers each guest's takes as a choice with the manifest's take preselected", async () => {
     mount(castingView());
     const pim = await screen.findByRole("group", { name: /Pim/ });
@@ -501,12 +533,12 @@ describe("the casting gate's choice", () => {
     expect("picks" in body).toBe(false);
   });
 
-  /** The grouping rule, which is the engine's and not this page's: the `refs-ready` guard lowercases
-   *  every WAV in the directory and matches a guest's take with `startsWith(slug)`
-   *  (`engine/src/needs.ts:141,179`). So the page groups a take with the guest whose slug is the
-   *  **longest** slug the take's lowercased name starts with — any other rule would draw a choice
-   *  the guard does not see, and a take the operator picked would not be a take the pipeline counts
-   *  as that guest's. Three names the old transcript-stem rule dropped on the floor: `hallet2.wav`
+  /** The grouping rule: a take goes to the guest whose slug is the **longest** slug its lowercased
+   *  name starts with, the slug being `slugName`'s (`engine/src/cast.ts:23`). It was the
+   *  `refs-ready` guard's rule until Plan L1 (2026-10-31) took the probe to `Canon/cast.json`, and
+   *  it is now this picker's alone — the takes on disk are still named for the guest, and a page
+   *  that grouped them any other way would offer a choice between files that are not the guest's.
+   *  Three names the old transcript-stem rule dropped on the floor: `hallet2.wav`
    *  (no hyphen before the number), `Hallet-1.wav` (capitalised) and `hallet_warm.wav` (a word where
    *  a number was expected). */
   it("groups every take the engine's guard would match, whatever the name after the slug", async () => {

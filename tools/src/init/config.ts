@@ -104,6 +104,12 @@ export function buildShowConfig(id: ShowIdentity, cast: string[]): Record<string
       guestRefsDir: "Production/{episodeId}/guest-refs",
       voiceRegistry: "Canon/voice-registry.md",
     },
+    // The one key of the cast group: where the show keeps its record of who has a sheet, a face
+    // and a voice. Written explicitly though it is the engine's own default, so an author reading
+    // `showrunner.json` finds the file by name. `init` writes the key and no index: a new show's
+    // `Canon/cast.json` is built by `scripts/cast-index-build.py` (the scaffold that writes an
+    // empty one is deferred to Plan L2), and the reference probe's one line says so.
+    cast: { index: "Canon/cast.json" },
     visual: {
       refs: "Canon/refs.json",
       style: "Canon/visual-style.md",

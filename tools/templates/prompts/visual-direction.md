@@ -7,8 +7,12 @@ Read (LIVE — these are the law and they grow):
   `## Composition rules`, and `## Mandatory prompt scaffolding`. Every
   law those sections state applies to every prompt you write, and the
   scaffolding section is text your prompts must carry.
-- Canon/refs.json — the Nano-Banana bible (recurring
-  characters/structures/locations with locked reference sheets).
+- `Canon/cast.json` — the cast index: every character, structure and
+  location, its identity text, its gallery, and whether it has a
+  reference image. **A key is usable in `refs` only when its entry has
+  a `face.ref`.** An entry without one is a subject nothing can be
+  conditioned on yet: shoot it as `ambient`, or as a character shot with
+  `source: "showrunner"` if the beat needs the face.
 - {{show.episodesDir}}/{{episodeId}}/script.md and its outline.
 
 Write {{show.productionDir}}/{{episodeId}}/images/prompts.json:
@@ -19,7 +23,7 @@ Write {{show.productionDir}}/{{episodeId}}/images/prompts.json:
      "prompt": "<full local prompt, all laws applied>",
      "seed": <int>, "width": 1024, "height": 576},
     {"id": "s05-...", "scene": "<header>", "type": "character", "source": "pipeline",
-     "refs": ["<registry keys — the reference sheets carry the likeness>"],
+     "refs": ["<cast-index keys — the reference sheets carry the likeness>"],
      "brief": "<a SHOT-focused Nano-Banana brief the showrunner pastes.
        Describe the MOMENT — action, framing, setting, mood — and
        NAME the character(s); do NOT re-describe their anatomy/appearance (the
@@ -66,14 +70,17 @@ Rules:
 - **type == "character"** (Nano Banana, the showrunner) for ANY
   shot that contains a NAMED character (recurring cast OR guest OR a
   one-off named for this episode) OR ANY non-human creature (even a
-  nameless one in the background). Write a `brief` + `refs` (registry
+  nameless one in the background). Write a `brief` + `refs` (cast-index
   keys); DO NOT write a local `prompt`. **BUDGET 10-15 character shots per
   episode — this is a CEILING, not a target.** Ration to the beats that
   need a face or a creature; every extra shot is real money and real
   wall-clock (~5.5 min each, more with audit retries), and going over has
   timed the node out. If a story genuinely needs more than 15, say so
   explicitly in your summary so the showrunner can rule on it. CHECK
-  Canon/refs.json first — a "new" guest may already have a reference sheet.
+  `Canon/cast.json` first — a "new" guest may already have a reference
+  sheet, and a guest whose entry carries no `face.ref` has none to put
+  in `refs` at all (write the shot `source: "showrunner"`, or keep the
+  beat ambient).
 - **type == "ambient"** (local Z-Image) for environments, sets,
   vehicles, structures, objects, props, atmosphere — and AT MOST
   non-named HUMAN background extras (distant, faceless, generic). Its
@@ -86,7 +93,7 @@ Rules:
 - **A structure or vehicle that carries the show's identity is
   identity-cast.** When the thing HERSELF is the subject — a hero
   exterior, an identity moment, her silhouette carrying the frame — she
-  is `type: "character"` with `refs: ["<her registry key>"]`, exactly
+  is `type: "character"` with `refs: ["<her cast-index key>"]`, exactly
   like a named cast member: her locked sheet + growing pile carry her
   identity so she stops drifting shot to shot. Incidental or distant
   presence inside an environment (distant lights along the coast, the

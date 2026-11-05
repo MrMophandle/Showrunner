@@ -46,7 +46,8 @@ export async function writeIn(root: string, rel: string, text: string): Promise<
 
 /** A temporary show repository: the config, every bible file the `bible-ready` guard requires of
  *  a season-2 episode (the canon spine the agent steps declare, plus the audit laws, the pipeline
- *  artifacts and the index), the two reference files the needs probes read, the outline template, the gate message
+ *  artifacts and the bible's README), the cast index the probe and `bible-ready` read, the two
+ *  registries it replaced, the outline template, the gate message
  *  files, and one episode (s02e01) with a premise and an empty runs directory. The runs
  *  directory exists so `RunStore.watch()` has something to watch at once rather than waiting for
  *  its poll to notice. Returns the show root. */
@@ -60,6 +61,11 @@ export async function makeShow(): Promise<string> {
   for (const f of ["world-overview", "technology", "timeline", "continuity-ledger", "series-arc", "episode-formula", "story-craft", "style-guide", "season-2", "visual-style", "visual-audit-laws", "voice-registry", "publishing-guide", "pipeline-artifacts", "README"]) {
     await writeIn(root, `Canon/${f}.md`, `${f}\n`);
   }
+  // The cast index first: it is what the reference probe reads and what `bible-ready` requires of
+  // every show since Plan L1 (2026-10-31). The two files under it are the registries the index
+  // replaced, kept because this show is also the fixture for the bible route's "refs.json is not a
+  // bible key" case (test/bible.test.ts) and Plan L2 retires them from the scaffold.
+  await writeIn(root, "Canon/cast.json", JSON.stringify({ version: 1, cast: {} }));
   await writeIn(root, "Canon/refs.json", "{}");
   await writeIn(root, "Production/voice-refs/refs.json", JSON.stringify({ cast: {} }));
   await writeIn(root, "Episodes/_TEMPLATE/outline.md", "# Template\n");

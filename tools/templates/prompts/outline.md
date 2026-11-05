@@ -18,8 +18,11 @@ The premise for this episode is in {{show.episodesDir}}/{{episodeId}}/premise.md
 - `Canon/season-{{season}}.md` — `## Season laws` bind every episode of the season
 - Canon/species/ , Canon/locations/ , Canon/factions/
   (read every file relevant to the premise; use Glob to list them)
-- Read every sheet under Canon/characters/, and Canon/technology.md wherever
-  the premise touches what is and is not possible in this world
+- `Canon/cast.json`, the cast index, and then ONLY the sheets (each
+  entry's `sheet`) of the characters the premise names or the slate's
+  entry needs. Never list Canon/characters/.
+- Canon/technology.md wherever the premise touches what is and is not
+  possible in this world
 
 ## Exemplar
 {{show.episodesDir}}/_TEMPLATE/outline.md is the format. Read it, and write every one

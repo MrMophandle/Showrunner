@@ -1,4 +1,4 @@
-import json, os, shutil, time
+import json, os, shutil
 from conftest import FIXTURES_DIR, load_script
 from lib import populators
 
@@ -31,17 +31,21 @@ def _find(brief):
 
 
 def _show(tmp_path):
-    """Write the fixture show's config and audit-laws file into a temp root; -> (cfg, root).
+    """Write the fixture show's config, audit-laws file and an empty cast index into a temp root;
+    -> (cfg, root).
 
-    run() reads visual.refs, visual.styleConstants, visual.auditLaws, visual.style and
-    visual.collectivePopulatorBans through the config, so a test that calls run() needs a real
-    show root rather than a bare directory.
+    run() reads visual.styleConstants, visual.auditLaws, visual.style and
+    visual.collectivePopulatorBans through the config and the cast at Canon/cast.json, so a test
+    that calls run() needs a real show root rather than a bare directory. The index written here is
+    empty because every run() test replaces load_bible with its own cast; what the file has to be
+    is present and well-formed, so that a test which does NOT replace the seam fails on the cast
+    rather than on a missing file.
     """
     shutil.copy(FIXTURES_DIR / "showrunner.json", tmp_path / "showrunner.json")
     canon = tmp_path / "Canon"
     canon.mkdir(exist_ok=True)
     (canon / "visual-audit-laws.md").write_text(LAWS)
-    (canon / "refs.json").write_text(json.dumps({}))
+    (canon / "cast.json").write_text(json.dumps({"version": 1, "cast": {}}))
     return json.loads((tmp_path / "showrunner.json").read_text()), str(tmp_path)
 
 def test_normalize_key():
@@ -50,20 +54,26 @@ def test_normalize_key():
     assert nbg.normalize_key("  Maeve ") == "maeve"
 
 def _mk_bible(tmp_path):
+    """One subject in the shape lib/castindex.py's `faces` returns: a reference, a two-entry
+    gallery, and a third still that is on disk but NOT in the gallery.
+
+    That third file is the point of the fixture. The generator used to list the character's folder
+    and take the two newest PNGs by mtime; since Plan L1 (2026-10-31) it takes the gallery the
+    subject's cast-index entry names (spec §1.2a), so a still sitting in the folder and absent from
+    the index must never reach a prompt. The gallery is written newest-first, which is the order the
+    index records and therefore the order the stills reach the API in.
+    """
     (tmp_path / "Canon/characters/Maeve").mkdir(parents=True)
     sheet = tmp_path / "Canon/characters/Maeve/Maeve Reference.png"
     sheet.write_bytes(b"png")
-    old = tmp_path / "Canon/characters/Maeve/ep03-a.png"; old.write_bytes(b"a")
+    unlisted = tmp_path / "Canon/characters/Maeve/ep03-a.png"; unlisted.write_bytes(b"a")
     mid = tmp_path / "Canon/characters/Maeve/ep04-b.png"; mid.write_bytes(b"b")
     new = tmp_path / "Canon/characters/Maeve/ep04-c.png"; new.write_bytes(b"c")
-    now = time.time()
-    os.utime(old, (now - 300, now - 300)); os.utime(mid, (now - 200, now - 200))
-    os.utime(new, (now - 100, now - 100))
-    bible = {"maeve": {"identity": "Maeve, ~28, fresh-faced", "kind": "human",
-                       "ref": str(sheet)}}
+    bible = {"maeve": {"ref": str(sheet), "identity": "Maeve, ~28, fresh-faced",
+                       "gallery": [str(new), str(mid)], "kind": "human", "name": "Maeve"}}
     return bible
 
-def test_assemble_refs_sheet_plus_two_newest(tmp_path):
+def test_assemble_refs_sheet_plus_the_entrys_gallery(tmp_path):
     bible = _mk_bible(tmp_path)
     shot = {"id": "s1-x", "refs": ["Maeve"], "brief": "b"}
     imgs, ids, missing = nbg.assemble_refs(shot, bible)
@@ -71,6 +81,9 @@ def test_assemble_refs_sheet_plus_two_newest(tmp_path):
     assert imgs[0].endswith("Maeve Reference.png")          # sheet first
     assert [os.path.basename(p) for p in imgs[1:]] == ["ep04-c.png", "ep04-b.png"]
     assert ids == ["MAEVE (must match the attached reference images): Maeve, ~28, fresh-faced"]
+    # ep03-a.png is in Maeve's folder and not in her gallery, so nothing may have found it: the
+    # folder is not listed any more, and the index is the only source of stills (spec §1.2a).
+    assert "ep03-a.png" not in [os.path.basename(p) for p in imgs]
 
 def test_assemble_refs_missing_key_flags_and_continues(tmp_path):
     bible = _mk_bible(tmp_path)
@@ -83,12 +96,13 @@ def test_assemble_refs_caps_at_8_dropping_stills_not_sheets(tmp_path):
     for i in range(4):                    # 4 subjects × (1 sheet + 2 stills) = 12
         d = tmp_path / f"Canon/characters/C{i}"; d.mkdir(parents=True)
         s = d / f"C{i} Reference.png"; s.write_bytes(b"s")
-        # Basenames unique per subject (real casting piles never share a
-        # filename across different characters' folders) — the I3 fix dedupes
-        # stills by basename, so identical names here would collide and this
-        # test would stop exercising the cap logic it's actually for.
+        # Basenames unique per subject (real galleries never share a filename
+        # across different characters' folders) — the I3 fix dedupes stills by
+        # basename, so identical names here would collide and this test would
+        # stop exercising the cap logic it's actually for.
         (d / f"ep03-p{i}.png").write_bytes(b"p"); (d / f"ep04-q{i}.png").write_bytes(b"q")
-        bible[f"c{i}"] = {"identity": f"c{i}", "kind": "human", "ref": str(s)}
+        bible[f"c{i}"] = {"ref": str(s), "identity": f"c{i}", "kind": "human", "name": f"C{i}",
+                          "gallery": [str(d / f"ep04-q{i}.png"), str(d / f"ep03-p{i}.png")]}
     shot = {"id": "s1-x", "refs": [f"c{i}" for i in range(4)], "brief": "b"}
     imgs, ids, missing = nbg.assemble_refs(shot, bible)
     assert len(imgs) == 8
@@ -116,7 +130,8 @@ def test_assemble_refs_caps_at_8_with_many_sheets_prints_warning(tmp_path, capsy
     for i in range(9):                    # 9 subjects × 1 sheet = 9 sheets (exceeds cap)
         d = tmp_path / f"Canon/characters/C{i}"; d.mkdir(parents=True)
         s = d / f"C{i} Reference.png"; s.write_bytes(b"s")
-        bible[f"c{i}"] = {"identity": f"c{i}", "kind": "human", "ref": str(s)}
+        bible[f"c{i}"] = {"ref": str(s), "identity": f"c{i}", "gallery": [], "kind": "human",
+                          "name": f"C{i}"}
     shot = {"id": "s1-shot-id", "refs": [f"c{i}" for i in range(9)], "brief": "b"}
     imgs, ids, missing = nbg.assemble_refs(shot, bible)
     assert len(imgs) == 8, f"Expected 8 images, got {len(imgs)}"
@@ -138,20 +153,19 @@ def test_assemble_refs_dedupes_by_normalized_key(tmp_path):
     assert ids[0] == "MAEVE (must match the attached reference images): Maeve, ~28, fresh-faced"
 
 def test_assemble_refs_dedupes_stills_by_basename_across_folders(tmp_path):
-    """I3 regression: registry-append fans one group shot out into every
-    ref'd character's folder, so the SAME still (identical bytes) lives at a
-    different path per subject. A future shot ref'ing two of those subjects
-    must not let that one photo occupy two reference-image slots — that
-    displaces a genuinely distinct still and wastes conditioning budget for
-    no benefit."""
+    """I3 regression: two subjects' galleries can name the SAME photograph — a group still of both
+    of them, filed under one basename in each of their folders — so that one image reaches
+    assemble_refs at a different path per subject. A shot ref'ing both subjects must not let that
+    one photo occupy two reference-image slots: it displaces a genuinely distinct still and wastes
+    conditioning budget for no benefit."""
     bible = {}
     for name in ("kestrel", "maeve"):
         d = tmp_path / f"Canon/characters/{name.title()}"; d.mkdir(parents=True)
         sheet = d / f"{name.title()} Reference.png"; sheet.write_bytes(b"s")
-        # The SAME group shot, fanned out into both folders under the same
-        # basename — exactly what registry-append produces.
+        # The SAME group shot, in both folders under the same basename.
         (d / "ep04-s04-cabin-tension-crew.png").write_bytes(b"group-shot")
-        bible[name] = {"identity": name, "kind": "human", "ref": str(sheet)}
+        bible[name] = {"ref": str(sheet), "identity": name, "kind": "human", "name": name.title(),
+                       "gallery": [str(d / "ep04-s04-cabin-tension-crew.png")]}
     shot = {"id": "s1-x", "refs": ["kestrel", "maeve"], "brief": "b"}
     imgs, ids, missing = nbg.assemble_refs(shot, bible)
     assert missing == []
@@ -373,14 +387,14 @@ def _mk_episode(tmp_path, bible_dirs=True):
         {"id": "s4-ghost", "type": "character", "refs": ["nobody"], "brief": "g"}]}
     (ep / "prompts.json").write_text(json.dumps(prompts))
     (ep / "s3-done.png").write_bytes(b"handmade")
-    bible = {"pell": {"identity": "dog-sized grub", "kind": "creature",
-                      "ref": str(sheet)}}
+    bible = {"pell": {"ref": str(sheet), "identity": "dog-sized grub", "gallery": [],
+                      "kind": "creature", "name": "Pell"}}
     return ep, bible
 
 def test_run_states_and_partial(tmp_path, monkeypatch, capsys):
     ep, bible = _mk_episode(tmp_path)
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(nbg, "load_bible", lambda path="x": bible)
+    monkeypatch.setattr(nbg, "load_bible", lambda cfg=None, root=None: bible)
     monkeypatch.setattr(nbg, "generate_image",
         lambda p, i, o, c: (open(o, "wb").write(b"g") and None) or "ok")
     monkeypatch.setattr(nbg, "audit_image", lambda s, p, laws, name: (True, ""))
@@ -395,7 +409,7 @@ def test_run_states_and_partial(tmp_path, monkeypatch, capsys):
 def test_run_retry_then_failed_audit_keeps_last(tmp_path, monkeypatch, capsys):
     ep, bible = _mk_episode(tmp_path)
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(nbg, "load_bible", lambda path="x": bible)
+    monkeypatch.setattr(nbg, "load_bible", lambda cfg=None, root=None: bible)
     prompts_seen = []
     def gen(p, i, o, c):
         prompts_seen.append(p); open(o, "wb").write(b"bad"); return "ok"
@@ -414,7 +428,7 @@ def test_run_prints_audit_rejection_notes_as_they_happen(tmp_path, monkeypatch, 
     canon law was failing. Each rejected attempt must print its note live."""
     ep, bible = _mk_episode(tmp_path)
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(nbg, "load_bible", lambda path="x": bible)
+    monkeypatch.setattr(nbg, "load_bible", lambda cfg=None, root=None: bible)
     monkeypatch.setattr(nbg, "generate_image",
         lambda p, i, o, c: (open(o, "wb").write(b"bad") and None) or "ok")
     monkeypatch.setattr(nbg, "audit_image", lambda s, p, laws, name: (False, "three arms on Bryn"))
@@ -426,7 +440,7 @@ def test_run_prints_audit_rejection_notes_as_they_happen(tmp_path, monkeypatch, 
 def test_only_deletes_and_regenerates_named_shot(tmp_path, monkeypatch, capsys):
     ep, bible = _mk_episode(tmp_path)
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(nbg, "load_bible", lambda path="x": bible)
+    monkeypatch.setattr(nbg, "load_bible", lambda cfg=None, root=None: bible)
     monkeypatch.setattr(nbg, "generate_image",
         lambda p, i, o, c: (open(o, "wb").write(b"new") and None) or "ok")
     monkeypatch.setattr(nbg, "audit_image", lambda s, p, laws, name: (True, ""))
@@ -446,7 +460,7 @@ def test_only_deletes_and_regenerates_named_shot(tmp_path, monkeypatch, capsys):
 def test_refused_is_terminal_no_retry(tmp_path, monkeypatch, capsys):
     ep, bible = _mk_episode(tmp_path)
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(nbg, "load_bible", lambda path="x": bible)
+    monkeypatch.setattr(nbg, "load_bible", lambda cfg=None, root=None: bible)
     n = {"gen": 0}
     def gen(p, i, o, c): n["gen"] += 1; return "refused"
     monkeypatch.setattr(nbg, "generate_image", gen)
@@ -460,7 +474,7 @@ def test_only_backup_restored_on_generation_failure(tmp_path, monkeypatch, capsy
     the backup must be gone, and the reported state must say so."""
     ep, bible = _mk_episode(tmp_path)
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(nbg, "load_bible", lambda path="x": bible)
+    monkeypatch.setattr(nbg, "load_bible", lambda cfg=None, root=None: bible)
     monkeypatch.setattr(nbg, "generate_image",
         lambda p, i, o, c: (open(o, "wb").write(b"new-but-bad") and None) or "ok")
     monkeypatch.setattr(nbg, "audit_image", lambda s, p, laws, name: (False, "three arms"))
@@ -482,7 +496,7 @@ def test_cost_cap_systemexit_mid_run_prints_summary_and_restores_backup(tmp_path
     import pytest
     ep, bible = _mk_episode(tmp_path)
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(nbg, "load_bible", lambda path="x": bible)
+    monkeypatch.setattr(nbg, "load_bible", lambda cfg=None, root=None: bible)
     calls = {"n": 0}
     def gen(p, i, o, c):
         calls["n"] += 1
@@ -508,7 +522,7 @@ def test_notes_merged_with_audit_feedback_across_retries(tmp_path, monkeypatch, 
     merged with (not replaced by) the audit's corrective feedback."""
     ep, bible = _mk_episode(tmp_path)
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(nbg, "load_bible", lambda path="x": bible)
+    monkeypatch.setattr(nbg, "load_bible", lambda cfg=None, root=None: bible)
     prompts_seen = []
     def gen(p, i, o, c):
         prompts_seen.append(p); open(o, "wb").write(b"bad"); return "ok"
@@ -528,7 +542,7 @@ def test_only_unknown_id_exits_without_touching_files(tmp_path, monkeypatch):
     import pytest
     ep, bible = _mk_episode(tmp_path)
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(nbg, "load_bible", lambda path="x": bible)
+    monkeypatch.setattr(nbg, "load_bible", lambda cfg=None, root=None: bible)
     done_before = (tmp_path / "Production/ep99/images/s3-done.png").read_bytes()
     with pytest.raises(SystemExit) as exc:
         nbg.run("ep99", *_show(tmp_path), only=["s2-pell", "nope-not-a-shot"], notes="", no_audit=False)
@@ -547,7 +561,7 @@ def test_only_refuses_to_clobber_a_pre_existing_backup(tmp_path, monkeypatch):
     import pytest
     ep, bible = _mk_episode(tmp_path)
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(nbg, "load_bible", lambda path="x": bible)
+    monkeypatch.setattr(nbg, "load_bible", lambda cfg=None, root=None: bible)
     png = tmp_path / "Production/ep99/images/s3-done.png"
     bak = tmp_path / "Production/ep99/images/.s3-done.png.bak"
     bak.write_bytes(b"true-original-from-a-killed-run")
@@ -567,7 +581,7 @@ def test_error_state_is_reported_distinctly_and_run_continues(tmp_path, monkeypa
     next shot."""
     ep, bible = _mk_episode(tmp_path)
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(nbg, "load_bible", lambda path="x": bible)
+    monkeypatch.setattr(nbg, "load_bible", lambda cfg=None, root=None: bible)
     n = {"gen": 0}
     def gen(p, i, o, c):
         n["gen"] += 1
@@ -593,7 +607,7 @@ def test_run_no_audit_end_to_end_skips_the_audit_safety_net(tmp_path, monkeypatc
     that disables the paid-output safety net."""
     ep, bible = _mk_episode(tmp_path)
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(nbg, "load_bible", lambda path="x": bible)
+    monkeypatch.setattr(nbg, "load_bible", lambda cfg=None, root=None: bible)
     monkeypatch.setattr(nbg, "generate_image",
         lambda p, i, o, c: (open(o, "wb").write(b"unaudited-bytes") and None) or "ok")
     audit_calls = {"n": 0}
@@ -617,7 +631,7 @@ def test_plain_run_leaves_existing_png_byte_for_byte_untouched(tmp_path, monkeyp
     never even invoked for that shot."""
     ep, bible = _mk_episode(tmp_path)
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(nbg, "load_bible", lambda path="x": bible)
+    monkeypatch.setattr(nbg, "load_bible", lambda cfg=None, root=None: bible)
     png = tmp_path / "Production/ep99/images/s3-done.png"
     before_bytes = png.read_bytes()
     before_mtime_ns = png.stat().st_mtime_ns
@@ -642,7 +656,7 @@ def test_nano_ok_bare_when_nothing_to_do(tmp_path, monkeypatch, capsys):
     'NANO_OK 0/0'."""
     ep, bible = _mk_episode(tmp_path)
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(nbg, "load_bible", lambda path="x": bible)
+    monkeypatch.setattr(nbg, "load_bible", lambda cfg=None, root=None: bible)
     (ep / "s2-pell.png").write_bytes(b"already-there")
     (ep / "s4-ghost.png").write_bytes(b"already-there-too")
     rc = nbg.run("ep99", *_show(tmp_path), only=None, notes="", no_audit=False)
@@ -870,7 +884,7 @@ def test_run_fails_preflight_before_backup_or_api_call(tmp_path, monkeypatch, ca
             s["brief"] = "PELL still, while the crew works on around her, unaware."
     doc_path.write_text(json.dumps(doc))
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(nbg, "load_bible", lambda path="x": bible)
+    monkeypatch.setattr(nbg, "load_bible", lambda cfg=None, root=None: bible)
     calls = {"n": 0}
     monkeypatch.setattr(nbg, "generate_image",
         lambda p, i, o, c: calls.__setitem__("n", calls["n"] + 1) or "ok")
@@ -925,7 +939,8 @@ def _mk_handmade_episode(tmp_path):
         {"id": "s2-hand", "type": "character", "refs": ["pell"], "brief": "PELL again.",
          "source": "showrunner"},
         {"id": "s3-amb", "type": "ambient", "prompt": "x", "seed": 1}]}))
-    return ep, {"pell": {"identity": "dog-sized grub", "kind": "creature", "ref": str(sheet)}}
+    return ep, {"pell": {"ref": str(sheet), "identity": "dog-sized grub", "gallery": [],
+                         "kind": "creature", "name": "Pell"}}
 
 
 def test_a_showrunner_made_shot_is_never_generated(tmp_path, monkeypatch, capsys):
@@ -934,7 +949,7 @@ def test_a_showrunner_made_shot_is_never_generated(tmp_path, monkeypatch, capsys
     and the `showrunner-images` guard holds the line until he has."""
     ep, bible = _mk_handmade_episode(tmp_path)
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(nbg, "load_bible", lambda path="x": bible)
+    monkeypatch.setattr(nbg, "load_bible", lambda cfg=None, root=None: bible)
     generated = []
     def gen(p, i, o, c):
         generated.append(o); open(o, "wb").write(b"g"); return "ok"
@@ -955,7 +970,7 @@ def test_the_run_says_how_many_showrunner_made_shots_it_left_alone(tmp_path, mon
     other was somebody else's to make, or the operator counts a missing file as a failure."""
     ep, bible = _mk_handmade_episode(tmp_path)
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(nbg, "load_bible", lambda path="x": bible)
+    monkeypatch.setattr(nbg, "load_bible", lambda cfg=None, root=None: bible)
     monkeypatch.setattr(nbg, "generate_image",
         lambda p, i, o, c: (open(o, "wb").write(b"g") and None) or "ok")
     monkeypatch.setattr(nbg, "audit_image", lambda s, p, laws, name: (True, ""))
@@ -969,7 +984,7 @@ def test_a_shot_with_no_source_field_is_still_generated(tmp_path, monkeypatch, c
     its character shots generated."""
     ep, bible = _mk_episode(tmp_path)
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(nbg, "load_bible", lambda path="x": bible)
+    monkeypatch.setattr(nbg, "load_bible", lambda cfg=None, root=None: bible)
     monkeypatch.setattr(nbg, "generate_image",
         lambda p, i, o, c: (open(o, "wb").write(b"g") and None) or "ok")
     monkeypatch.setattr(nbg, "audit_image", lambda s, p, laws, name: (True, ""))
@@ -984,7 +999,7 @@ def test_only_cannot_name_a_showrunner_made_shot(tmp_path, monkeypatch):
     is an unknown id rather than a silent no-op that reports success having done nothing."""
     ep, bible = _mk_handmade_episode(tmp_path)
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(nbg, "load_bible", lambda path="x": bible)
+    monkeypatch.setattr(nbg, "load_bible", lambda cfg=None, root=None: bible)
     try:
         nbg.run("ep98", *_show(tmp_path), only=["s2-hand"], notes="", no_audit=False)
         assert False, "expected SystemExit for an id that is not a generated shot"

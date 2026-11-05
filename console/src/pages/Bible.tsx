@@ -202,8 +202,9 @@ function TroublePanel(
  *  which is what this panel says instead of offering a form the server would refuse.
  *
  *  `continuity-ledger` is written by the propose step as episodes are made, and `voice-registry` is
- *  prose beside `Production/voice-refs/refs.json`, which is the source of truth for the voices. Both
- *  rows read `pending` for the life of the show, because nothing ever writes a setup log for them. */
+ *  prose about the voices: the record is `Canon/cast.json`, the cast index (spec 2026-10-31 §1.2).
+ *  Both rows read `pending` for the life of the show, because nothing ever writes a setup log for
+ *  them. */
 function ScaffoldPanel({ view, rawUrl }: { view: BibleFileView; rawUrl: string }) {
   const [raw, setRaw] = useState(false);
   return (
