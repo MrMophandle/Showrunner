@@ -12,6 +12,12 @@ establishing brief may not name a person — an entry of kind `character`, `huma
 `species` — but it may name a place, and a place that has a reference image must also appear in the
 shot's `refs` so the render conditions on that image.
 
+Rules 1 and 3 were amended on 2026-11-04 after the whole-branch review (spec 2026-11-04 §2.1 and
+§2.5 rules 1 and 3). Rule 1: each scene header owes one shot under the id `s<n>-establishing`, of
+type `establishing`, naming that header, and a further shot in that scene under another id is
+Ryan's to add and is of either type. Rule 3: a shot whose `source` is `showrunner` is made by hand,
+so its refs are checked for being cast-index keys and never for a `face.ref` on disk.
+
 The show root is built on `tests/fixtures/showrunner.json` (the conftest `show_root` fixture) rather
 than on a config written here, because `lib/showconfig.py:54-63` requires showSlug, promptsDir,
 models.medium/large/writer, airMap and output.nasRoot of every config it loads; a hand-written
@@ -87,12 +93,28 @@ def test_a_missing_scene_is_bad(show):
     assert "SCENE TWO — THE QUAY: no establishing shot (expected s2-establishing)" in r.stderr
 
 
-def test_two_shots_for_one_scene_and_a_scene_the_script_lacks_are_bad(show):
-    write(show, [shot(1), shot(2), shot(2), {**shot(3), "id": "s4-establishing", "scene": "SCENE FOUR — NOWHERE"}])
+def test_a_second_establishing_shot_is_ok_and_a_scene_the_script_lacks_is_bad(show):
+    """Rule 1 as amended 2026-11-04: scene 2 may carry a second `establishing` shot under another
+    id, because an added shot of a place has to be legal and `establishing` is its type (spec
+    2026-11-04 §2.1). A shot whose `scene` the script lacks is BAD as it always was."""
+    write(show, [shot(1), shot(2), {**shot(2), "id": "s2-the-quay-from-the-rail"}, shot(3)])
+    r = run(show)
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip().splitlines()[-1] == "SHOTS_OK 4 shots"
+
+    write(show, [shot(1), shot(2), shot(3), {**shot(3), "id": "s4-establishing", "scene": "SCENE FOUR — NOWHERE"}])
     r = run(show)
     assert r.returncode == 2
-    assert "s2-establishing: a second establishing shot for SCENE TWO — THE QUAY" in r.stderr
     assert "s4-establishing: the script has no scene SCENE FOUR — NOWHERE" in r.stderr
+
+
+def test_the_engines_shot_must_be_of_type_establishing(show):
+    """The per-header check reads the id `s<n>-establishing`: a shot carrying that id is the
+    engine's shot of that header, whatever its `type` field says (rule 1)."""
+    write(show, [shot(1), {**shot(2), "type": "character", "refs": ["vale"]}, shot(3)])
+    r = run(show)
+    assert r.returncode == 2
+    assert "s2-establishing: the engine's shot of SCENE TWO — THE QUAY must be type establishing" in r.stderr
 
 
 def test_a_cast_name_or_a_species_in_an_establishing_brief_is_bad(show):
@@ -123,6 +145,30 @@ def test_a_character_shot_needs_refs_with_a_face_on_disk(show):
     extra["refs"] = []
     write(show, [shot(1), shot(2), extra, shot(3)])
     assert "s2-vale-at-the-rail: a character shot with no refs" in run(show).stderr
+
+
+def test_a_showrunner_made_shot_is_not_face_checked(show):
+    """Rule 3 as amended 2026-11-04: Ryan makes a `showrunner` shot by hand and nothing renders it,
+    so its refs are checked for being cast-index keys only. The Warden has no reference image, and
+    before the amendment this list printed a remedy ("set source to showrunner") that was already
+    satisfied."""
+    extra = {"id": "s2-the-warden-at-the-rail", "scene": "SCENE TWO — THE QUAY", "type": "character",
+             "source": "showrunner", "brief": "the Warden at the rail", "refs": ["the-warden"],
+             "width": 1024, "height": 576}
+    write(show, [shot(1), shot(2), extra, shot(3)])
+    r = run(show)
+    assert r.returncode == 0, r.stderr
+
+    extra["refs"] = ["nowhere"]
+    write(show, [shot(1), shot(2), extra, shot(3)])
+    r = run(show)
+    assert r.returncode == 2
+    assert "s2-the-warden-at-the-rail: ref nowhere is not a cast-index key" in r.stderr
+
+    # The exemption is the face check and nothing else: a person in an establishing shot's refs is
+    # BAD whoever made the shot (rule 2).
+    write(show, [shot(1, source="showrunner", refs=["vale"]), shot(2), shot(3)])
+    assert "s1-establishing: ref vale is a human — a person never appears in an establishing shot" in run(show).stderr
 
 
 # ── rule 2 as amended 2026-11-04: a person is forbidden, a place is allowed and goes in refs ──

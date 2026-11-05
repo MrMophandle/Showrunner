@@ -5,9 +5,11 @@
 
 For each shot in Production/<ep>/images/prompts.json whose `source` is "pipeline" and whose PNG is
 missing: compose the prompt, render it through lib/nanobanana.py at 2K 16:9, vision-audit via
-Claude headless, retry with corrective notes (<=3 attempts). An `establishing` shot names no refs,
-so it is rendered from its brief alone — the brief plus the show's style constants, with no
-reference images attached. A `character` shot is rendered conditioned on the reference and the
+Claude headless, retry with corrective notes (<=3 attempts). An `establishing` shot carries no refs
+unless they name a place, and then that place's reference and gallery condition the render as a
+character's do; an establishing shot with no refs is rendered from its brief alone — the brief plus
+the show's style constants, with no reference images attached (spec 2026-11-04 §2.2, §3.2, as
+amended on 2026-11-04). A `character` shot is rendered conditioned on the reference and the
 gallery (at most three) named by each of its refs' entries in the cast index. A shot whose PNG
 exists is skipped — a hand-made shot always wins (delete a PNG or use --only to re-roll). A shot
 whose `source` is `showrunner` is never generated; the showrunner drops it in.
@@ -59,8 +61,11 @@ def assemble_refs(shot: dict, bible: dict, max_images: int = nb.MAX_IMAGES):
     """-> (image_paths, identity_lines, missing_keys). Sheets first; stills
     dropped (never sheets) to respect max_images. Dedupes by normalized key.
 
-    A shot with no `refs` — every `establishing` shot is one (spec 2026-11-04 §2.2) — returns
-    three empty lists, which is what makes its render a text-only call."""
+    A shot with no `refs` returns three empty lists, which is what makes its render a text-only
+    call. An `establishing` shot carries no refs unless they name a place, and then the place's
+    reference and gallery condition the render exactly as a character's do — the cast index's
+    `faces` is kind-agnostic, so a `location` or `ship` entry with a `face.ref` on disk resolves
+    here like any other (spec 2026-11-04 §2.2 and §3.2, as amended on 2026-11-04)."""
     seen_keys = set()
     sheets, stills, identities, missing, dropped_sheets = [], [], [], [], []
 
@@ -117,8 +122,11 @@ def compose_prompt(shot: dict, identity_lines: list[str], style_constants: str,
                    notes: str = "") -> str:
     """The brief the model is given: who is in frame, what happens, and the show's look.
 
-    `identity_lines` is empty for a shot with no refs, so an `establishing` shot's prompt is its
-    brief followed by the show's style constants and nothing else (spec 2026-11-04 §3.2)."""
+    `identity_lines` is empty for a shot with no refs, so such a shot's prompt is its brief
+    followed by the show's style constants and nothing else. An `establishing` shot carries no refs
+    unless they name a place, and then the place's identity line is prepended and its reference
+    image attached, so the place's own look conditions the render (spec 2026-11-04 §2.2 and §3.2,
+    as amended on 2026-11-04)."""
     parts = list(identity_lines) + [shot["brief"], style_constants]
     if notes:
         parts.append(f"PREVIOUS ATTEMPT REJECTED: {notes}. Fix exactly this.")
@@ -206,11 +214,14 @@ def audit_image(shot, png_path, audit_laws: str, show_name: str):
 def exit_code_for(tag: str) -> int:
     """The process exit code for a run's NANO_* tag.
 
-    NANO_PARTIAL exits 0, not 1. The tag is this step's RESULT, and the nano-banana gate after it
-    shows the partial batch to the showrunner, who decides whether it is good enough; a non-zero
-    exit would fail the step first and the gate would never open to ask. This is the rule the
-    bash node that preceded the engine enforced with `grep -qE 'NANO_(OK|PARTIAL)'` over the
-    captured output — a run that printed no tag at all is the only failure.
+    NANO_PARTIAL exits 0, not 1. The tag is this step's RESULT, and a partial render is a result
+    and not a failure. The step after this one is the vision audit (`image-audit-1`), which judges
+    the PNGs on disk; after the audit loop and the sheet, `image-gate` shows the sheet and the
+    rendered batch to the showrunner, who decides whether the batch is good enough (spec
+    2026-11-04 §4). Both read the files rather than this tag, and a non-zero exit would fail the
+    step before either of them ran. This is the rule the bash node that preceded the engine
+    enforced with `grep -qE 'NANO_(OK|PARTIAL)'` over the captured output — a run that printed no
+    tag at all is the only failure.
     """
     return 0 if tag in ("NANO_OK", "NANO_PARTIAL") else 1
 

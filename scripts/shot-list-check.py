@@ -3,9 +3,13 @@
 # ///
 """shot-list-check: the law of the shot list (spec 2026-11-04 §2.5).
 
-One establishing shot per scene header of the script, ids `s<n>-establishing` in header order,
-`scene` equal to the header; a character shot has refs, each a cast-index key with a reference
-image on disk; no shot carries the deleted renderer's `prompt`/`seed` keys.
+For every scene header of the script, the shot `s<n>-establishing` exists, is of type
+`establishing` and names that header (rule 1). A further shot in a scene, of either type, is
+allowed under any other id: Ryan adds shots to a scene and the lint does not refuse them (spec
+2026-11-04 §2.1 and §2.5 rule 1, as amended on 2026-11-04 after the whole-branch review). A
+character shot has refs, each a cast-index key, and each key's entry has a reference image on disk
+unless the shot's `source` is `showrunner` — a shot Ryan makes by hand is never face-checked (rule
+3, amended the same day). No shot carries the deleted renderer's `prompt`/`seed` keys.
 
 An establishing brief names no PERSON of the cast index — no entry of kind `character`, `human`,
 `creature` or `species` — and it MAY name the place it establishes, because an establishing shot
@@ -72,9 +76,16 @@ def check(script: str, shots: list[dict], index: dict, root: str, on_judged=None
     headers = scene_headers(script)
     bad: list[tuple[str, str]] = []
     seen_ids: set[str] = set()
-    establishing_by_scene: dict[str, list[dict]] = {}
     for pos, s in enumerate(shots, 1):
         sid = str(s.get("id", "?"))
+        # Rule 3 as amended 2026-11-04 (spec 2026-11-04 §2.5): a shot whose `source` is
+        # `showrunner` is Ryan's to make by hand, and nothing in the pipeline renders it — the
+        # renderer skips it by source (nano-banana-generate.py) and the sheet waits for its PNG.
+        # Its refs are still checked for being cast-index keys, because the sheet and a later
+        # reader resolve them, but a `face.ref` on disk is a demand only a render can have, so
+        # asking for one here printed a remedy ("set source to showrunner") that could not be
+        # followed.
+        by_hand = s.get("source") == "showrunner"
         if sid in seen_ids:
             bad.append((sid, f"{sid}: duplicate id"))
         seen_ids.add(sid)
@@ -91,7 +102,6 @@ def check(script: str, shots: list[dict], index: dict, root: str, on_judged=None
         if scene not in headers:
             bad.append((sid, f"{sid}: the script has no scene {scene}"))
         if s.get("type") == "establishing":
-            establishing_by_scene.setdefault(scene, []).append(s)
             ref_keys = [str(r) for r in s.get("refs", [])] if isinstance(s.get("refs"), list) else []
             for name, key, kind in names_in(str(s.get("brief", "")), index):
                 if kind in PERSON_KINDS:
@@ -109,7 +119,7 @@ def check(script: str, shots: list[dict], index: dict, root: str, on_judged=None
                     bad.append((sid, f"{sid}: ref {ref} is not a cast-index key"))
                 elif kind in PERSON_KINDS:
                     bad.append((sid, f"{sid}: ref {ref} is a {kind} — a person never appears in an establishing shot"))
-                elif not _face_on_disk(entry, root):
+                elif not by_hand and not _face_on_disk(entry, root):
                     bad.append((sid, f"{sid}: ref {ref} has no reference image (cast the face, or set source to showrunner)"))
         else:
             refs = s.get("refs")
@@ -120,21 +130,27 @@ def check(script: str, shots: list[dict], index: dict, root: str, on_judged=None
                     entry = index["cast"].get(str(ref))
                     if entry is None:
                         bad.append((sid, f"{sid}: ref {ref} is not a cast-index key"))
-                    elif not _face_on_disk(entry, root):
+                    elif not by_hand and not _face_on_disk(entry, root):
                         bad.append((sid, f"{sid}: ref {ref} has no reference image (cast the face, or set source to showrunner)"))
         if on_judged is not None:
             on_judged(pos, len(shots))
+    # Rule 1 (spec 2026-11-04 §2.5, as amended on 2026-11-04 after the whole-branch review): the
+    # engine owes each header one shot, under the id `s<n>-establishing`, of type `establishing`,
+    # naming that header. Shots under other ids are Ryan's additions (§2.1, §2.4) and are judged
+    # only by the rules above — a second `establishing` shot in a scene is legal, and the lint has
+    # no reason for it.
+    by_id: dict[str, dict] = {}
+    for s in shots:
+        by_id.setdefault(str(s.get("id", "?")), s)
     for n, header in enumerate(headers, 1):
         expected = f"s{n}-establishing"
-        got = establishing_by_scene.get(header, [])
-        if not got:
+        engine_shot = by_id.get(expected)
+        if engine_shot is None or str(engine_shot.get("scene", "")) != header:
+            # Either no shot carries the engine's id for this header, or the shot that carries it
+            # names another scene; either way this header has no establishing shot of its own.
             bad.append((expected, f"{header}: no establishing shot (expected {expected})"))
-            continue
-        first, *rest = got
-        if str(first.get("id")) != expected:
-            bad.append((str(first.get("id")), f"{first.get('id')}: the establishing shot of {header} is {expected}"))
-        for extra in rest:
-            bad.append((str(extra.get("id")), f"{extra.get('id')}: a second establishing shot for {header}"))
+        elif engine_shot.get("type") != "establishing":
+            bad.append((expected, f"{expected}: the engine's shot of {header} must be type establishing"))
     return bad
 
 

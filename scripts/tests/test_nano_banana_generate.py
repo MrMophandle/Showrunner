@@ -378,8 +378,10 @@ def _mk_episode(tmp_path, bible_dirs=True):
     sheet = canon / "Pell Reference.png"; sheet.write_bytes(b"s")
     prompts = {"episode": "ep99", "shots": [
         # The first shot was an environment shot with a `prompt` and a `seed` until 2026-11-04,
-        # when the local renderer was deleted: every shot carries a `brief` now, and an
-        # `establishing` shot names no refs (spec 2026-11-04 §2.2).
+        # when the local renderer was deleted: every shot carries a `brief` now. This establishing
+        # shot names no refs, so it renders from its brief alone; an establishing shot may name a
+        # place in `refs`, and then the place's reference and gallery condition the render as a
+        # character's do (spec 2026-11-04 §2.2 and §3.2, as amended on 2026-11-04).
         {"id": "s1-establishing", "scene": "COLD OPEN", "type": "establishing",
          "source": "pipeline", "brief": "the quay at dawn"},
         {"id": "s2-pell", "type": "character", "refs": ["pell"], "brief": "PELL still."},
@@ -406,8 +408,10 @@ def test_run_states_and_partial(tmp_path, monkeypatch, capsys):
     # pipeline owns, of any type (spec 2026-11-04 §3.2). Before that it was character-only and
     # this tally read 1/2.
     assert "s1-establishing  OK" in out
-    # NANO_PARTIAL exits 0: the tag is the step's result and the nano-banana gate shows the
-    # partial batch to the showrunner, who decides. A non-zero exit would fail the step first.
+    # NANO_PARTIAL exits 0: the tag is the step's result, and a partial render is a result and not
+    # a failure. `image-audit-1` judges the PNGs on disk next and `image-gate` shows the batch to
+    # the showrunner after the audit loop and the sheet; a non-zero exit would fail the step before
+    # either of them ran (spec 2026-11-04 §4).
     assert "NANO_PARTIAL 2/3" in out and rc == 0   # ghost counts, s3 skip doesn't
 
 def test_run_retry_then_failed_audit_keeps_last(tmp_path, monkeypatch, capsys):
