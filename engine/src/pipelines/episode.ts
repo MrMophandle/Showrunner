@@ -375,7 +375,9 @@ export function episodePipeline(opts: EpisodePipelineOptions): Pipeline {
       allowedTools: ["Read", "Write", "Glob", "Grep"], context: "fresh", timeoutMs: 30 * MIN,
       inputs: [visualStyle, castIndex, script, outline, mix], outputs: [prompts],
     },
-    { kind: "script", id: "shot-list-check", dependsOn: ["visual-direction"], argv: py("shot-list-check.py", "--report-only"), inputs: [prompts, castIndex], timeoutMs: MIN },
+    // The script is an input of both lint steps: the lint reads its scene headers, so a script
+    // edited between two attempts must miss the cache (an undeclared input never enters the hash).
+    { kind: "script", id: "shot-list-check", dependsOn: ["visual-direction"], argv: py("shot-list-check.py", "--report-only"), inputs: [script, prompts, castIndex], timeoutMs: MIN },
     {
       kind: "agent", id: "visual-direction-fix", dependsOn: ["shot-list-check"], when: (ctx) => String(ctx.results["shot-list-check"] ?? "").startsWith("SHOTS_BAD"),
       promptFile: "visual-direction-fix.md", model: "medium", allowedTools: ["Read", "Edit", "Write", "Glob", "Grep"], context: "fresh", timeoutMs: 15 * MIN,
@@ -383,7 +385,7 @@ export function episodePipeline(opts: EpisodePipelineOptions): Pipeline {
     },
     {
       kind: "script", id: "shot-list-check-final", dependsOn: ["visual-direction-fix"], when: (ctx) => String(ctx.results["shot-list-check"] ?? "").startsWith("SHOTS_BAD"),
-      argv: py("shot-list-check.py"), inputs: [prompts, castIndex], timeoutMs: MIN,
+      argv: py("shot-list-check.py"), inputs: [script, prompts, castIndex], timeoutMs: MIN,
     },
     { kind: "script", id: "nano-banana-generate", dependsOn: ["shot-list-check-final"], argv: py("nano-banana-generate.py"), inputs: [prompts, castIndex], timeoutMs: 3 * HOUR },
     imageAudit(1, ["nano-banana-generate"]),

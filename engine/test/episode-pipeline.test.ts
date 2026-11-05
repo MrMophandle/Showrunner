@@ -120,6 +120,14 @@ describe("episodePipeline", () => {
     expect(by.get("assemble-commit")?.dependsOn).toEqual(["finalize", "publish-kit"]);
   });
 
+  it("both lint steps declare the script as an input, so an edited script misses the cache", () => {
+    for (const id of ["shot-list-check", "shot-list-check-final"]) {
+      const step = p.steps.find((s) => s.id === id);
+      expect(step?.kind).toBe("script");
+      expect((step as { inputs?: string[] }).inputs).toContain(`${show.episodesDir ?? "Episodes"}/s02e01/script.md`);
+    }
+  });
+
   it("the image stage is lint, render, audit loop, sheet, one gate, guard", () => {
     // Spec 2026-11-04 §4's table as declaration order: the fifteen steps from the visual director
     // to the final sheet. The console's run view and its gate handlers name these ids, so the
