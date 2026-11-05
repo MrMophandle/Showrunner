@@ -30,6 +30,7 @@ Companion to `docs/plans/2026-11-04-the-establishing-shot.md` (spec `docs/specs/
 - **`scripts/image-qc.py`**, an advisory histogram screen the pipeline never called, is deleted with the local renderer; its measured history (a low-key show's first cut read as too dark; a mean-brightness gate failed correct space shots) lives only in git now.
 - **Ryan's Qwen-Image model caches** under `~/.cache/huggingface/hub/` (`models--Qwen--Qwen-Image`, `models--Qwen--Qwen-Image-Edit-2509`) are his to delete; nothing in the engine reads them after this plan.
 - **The show's cast index files Cricket under kind `motif`** (seen in the 2026-11-01 build table). Cricket is a character; under R-06 a `motif` entry is a non-person kind, so a brief naming Cricket would pass the lint and the renderer would draw him uncast. The show-side migration (Task 7) sets the kind to `character`.
+- **`console/test/runs.test.ts:39` flaked once** during the fix wave's re-review (a `setTimeout`-based `waitFor` poll in the run store's filesystem-watch tests) and passed on every rerun; the file was last touched before this plan. Cost: a red suite on a loaded machine until the poll is made deterministic.
 
 ## Process notes
 
