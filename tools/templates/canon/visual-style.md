@@ -17,6 +17,9 @@
 ## Mandatory prompt scaffolding
 <!-- Q: What words must appear in every single image prompt, whatever the shot is? List them — the medium, the lens, the light, the standing bans — and they are prepended to every prompt the pipeline writes. -->
 
+## The establishing shot
+<!-- Q: The engine makes one image per scene — a wide view that sets the listener in the place at that scene's hour and light, with no person of the cast (no character, creature or species) and no legible text in it; the place itself may be named and, when it has a reference image, the render matches it. What does an establishing shot of your world always carry (the materials, the weather, the scale of its structures), and what must it never show? -->
+
 ## Prompt vocabulary
 <!-- Q: Are there words an image generator will misread in your world? List each ambiguous word with the phrasing to use instead — for Harbor Lights: "light" means a lighthouse lamp, so a prompt says "lamp room" and never "light". -->
 
@@ -30,3 +33,4 @@
 <!-- Q: What images come back, episode after episode? List them, so that an episode can reach for one on purpose rather than by accident. -->
 
 ## Per-episode counts
+<!-- Q: One establishing shot per scene is the engine's count; any shot beyond it is the showrunner's to add at the image gate. Is there a scene kind in your show that never gets one (a black-screen cold open, a title card)? Say so here. -->

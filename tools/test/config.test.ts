@@ -103,9 +103,18 @@ describe("buildShowConfig: the values derived from the identity", () => {
   it("leaves the keys a new show cannot know empty rather than inheriting another show's", () => {
     expect(at(config, "publish.playlistUrl")).toBe("");
     expect(at(config, "publish.tags")).toBe("");
-    expect(at(config, "visual.ambientPromptScaffold")).toEqual([]);
     expect(at(config, "visual.styleConstants")).toBe("no text, no watermark, no signature.");
     expect(at(config, "airMap")).toEqual({});
+  });
+
+  it("writes the visual block the hosted renderer reads and no key of the retired local one", () => {
+    // The key set rather than three absences, and deliberately: naming the retired keys here
+    // would make this file the one hit of the repository-wide grep that holds the renderer
+    // retired, and an exact set also refuses a fourth key added to the scaffold with no
+    // SHOW_CONFIG_KEYS row behind it. Every name below is a row of engine/src/show-config.ts.
+    expect(Object.keys(at(config, "visual") as Record<string, unknown>).sort()).toEqual([
+      "auditLaws", "candidatesDir", "castingPileDir", "refs", "shotFrame", "style", "styleConstants",
+    ]);
   });
 });
 
