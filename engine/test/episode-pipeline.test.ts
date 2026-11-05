@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { episodePipeline, EPISODE_STAGE_MAP, EPISODE_PIPELINE_NAME } from "../src/pipelines/episode.js";
@@ -35,7 +35,7 @@ describe("episodePipeline", () => {
     expect(p.name).toBe(EPISODE_PIPELINE_NAME);
     expect(() => orderSteps(p)).not.toThrow();
     expect(() => validateStageMap(EPISODE_STAGE_MAP, p)).not.toThrow();
-    expect(p.steps).toHaveLength(67);
+    expect(p.steps).toHaveLength(65);
   });
 
   it("runs the review round in the order the reset depends on: hand edits, the revision, the panel's seven, the panel, the gate", () => {
@@ -75,13 +75,16 @@ describe("episodePipeline", () => {
     })).toBe(true);
   });
 
-  it("has the eight gates in run order, each opening its DRAFT_ stage", () => {
+  it("has the seven gates in run order, each opening its DRAFT_ stage", () => {
     const gates = orderSteps(p).filter((s) => s.kind === "gate").map((s) => s.id);
-    expect(gates).toEqual(["outline-gate", "script-gate", "casting-gate", "audio-gate", "nano-banana-gate", "image-gate", "final-gate", "canon-gate"]);
+    // Seven and not eight since spec 2026-11-04 §4: the gate that approved the first paid shots
+    // before more were spent is retired, because every image is a paid shot now and one gate
+    // approves the set.
+    expect(gates).toEqual(["outline-gate", "script-gate", "casting-gate", "audio-gate", "image-gate", "final-gate", "canon-gate"]);
     expect(Object.keys(EPISODE_STAGE_MAP.gates).sort()).toEqual([...gates].sort());
   });
 
-  it("keys each stage to the step that reaches it: the real map's eight gates, eight approved rows and final, exhaustively", () => {
+  it("keys each stage to the step that reaches it: the real map's seven gates, eight approved rows and final, exhaustively", () => {
     // The stage map is the Board's only source for "how far along is this episode", and the only
     // automated check on it is validateStageMap, which refuses a key naming no step and a value of
     // the wrong kind -- never a value keyed to the wrong step. Before this test, five of the eight
@@ -95,7 +98,7 @@ describe("episodePipeline", () => {
     // for the derivation tests, not a second copy of this one to keep in step -- see its comment.
     expect(EPISODE_STAGE_MAP.gates).toEqual({
       "outline-gate": "DRAFT_OUTLINE", "script-gate": "DRAFT_SCRIPT", "casting-gate": "DRAFT_CASTING", "audio-gate": "DRAFT_AUDIO",
-      "nano-banana-gate": "DRAFT_IMAGES", "image-gate": "DRAFT_IMAGES", "final-gate": "DRAFT_ASSEMBLY", "canon-gate": "DRAFT_CANON",
+      "image-gate": "DRAFT_IMAGES", "final-gate": "DRAFT_ASSEMBLY", "canon-gate": "DRAFT_CANON",
     });
     expect(EPISODE_STAGE_MAP.approved).toEqual({
       "outline-gate": "OUTLINE", "script-gate": "SCRIPT", "casting-gate": "CASTING", "audio-gate": "AUDIO",
@@ -103,8 +106,9 @@ describe("episodePipeline", () => {
     });
     expect(EPISODE_STAGE_MAP.final).toBe("COMPLETE");
     // IMAGES is reached when the image sheet is final, not when the image gate is answered: the
-    // gate's approval opens the sheet's last step. The two are three steps apart and the pair is
-    // the one divergence stages.test.ts's synthetic map carries, so it is named here by value.
+    // gate's approval opens the guard that waits for the showrunner's own shots and then the
+    // sheet's last step. The two are two steps apart and the pair is the one divergence
+    // stages.test.ts's synthetic map carries, so it is named here by value.
     expect(EPISODE_STAGE_MAP.approved["image-gate"]).toBeUndefined();
   });
 
@@ -114,6 +118,44 @@ describe("episodePipeline", () => {
     expect(by.get("visual-direction")?.inputs).toContain("Production/s02e01/audio/HarborLight S02E01.wav");
     expect(by.get("canon-baseline")?.dependsOn).toEqual(["assemble-commit"]);
     expect(by.get("assemble-commit")?.dependsOn).toEqual(["finalize", "publish-kit"]);
+  });
+
+  it("the image stage is lint, render, audit loop, sheet, one gate, guard", () => {
+    // Spec 2026-11-04 §4's table as declaration order: the fifteen steps from the visual director
+    // to the final sheet. The console's run view and its gate handlers name these ids, so the
+    // order is pinned rather than inferred — `shot-list-check` is the lint the stage runs since
+    // spec 2026-11-04 §2.5, the renderer the engine ran on the showrunner's own hardware has no
+    // step any more (§3), and the gate that approved the first paid shots is retired (§4).
+    const ids = p.steps.map((s) => s.id);
+    const first = ids.indexOf("visual-direction");
+    expect(ids.slice(first, first + 15)).toEqual([
+      "visual-direction", "shot-list-check", "visual-direction-fix", "shot-list-check-final", "nano-banana-generate",
+      "image-audit-1", "image-regenerate-1", "image-audit-2", "image-regenerate-2", "image-audit-3",
+      "image-audit-verdict", "image-sheet", "image-gate", "showrunner-images", "image-sheet-final",
+    ]);
+    const by = new Map(p.steps.map((s) => [s.id, s]));
+    expect(by.get("nano-banana-generate")?.dependsOn).toEqual(["shot-list-check-final"]);
+    // The guard that waits for a shot the showrunner makes by hand sits *after* the gate, because
+    // the gate's rejection note is what makes a shot his (spec 2026-11-04 §2.4, §4.1).
+    expect(by.get("showrunner-images")?.dependsOn).toEqual(["image-gate"]);
+    expect(by.get("image-sheet-final")?.dependsOn).toEqual(["showrunner-images"]);
+    const gate = by.get("image-gate");
+    expect(gate?.kind).toBe("gate");
+    expect(gate?.kind === "gate" && gate.rerunOnReject).toEqual(["nano-banana-generate"]);
+    expect(gate?.kind === "gate" && gate.onReject?.id).toBe("image-gate-fix");
+    // Every image in the stage is rendered by nano-banana (spec 2026-11-04 §3.2). The assertion is
+    // the exhaustive set of Python the stage runs rather than the absence of one script's name, so
+    // a step that reached for any other renderer — the retired one included — fails here.
+    const ctx = { runId: "r", episodeId: "s02e01", showRoot: "/show", results: {} };
+    const scriptName = (id: string): string | undefined => {
+      const s = by.get(id);
+      return s?.kind === "script" ? path.basename(s.argv(ctx)[5] ?? "") : undefined;
+    };
+    expect(ids.slice(first, first + 15).map(scriptName)).toEqual([
+      undefined, "shot-list-check.py", undefined, "shot-list-check.py", "nano-banana-generate.py",
+      undefined, "nano-banana-generate.py", undefined, "nano-banana-generate.py", undefined,
+      undefined, "image-sheet.py", undefined, undefined, "image-sheet.py",
+    ]);
   });
 
   it("never declares a directory as an input or output, and names the mix by the show's pattern", () => {
@@ -215,20 +257,23 @@ export function fakeExecutors(root: string, knobs: { failOnce?: Set<string>; rev
   const exists = async (rel: string) => { try { await readFile(path.join(root, rel)); return true; } catch { return false; } };
   const calls: string[] = [];
   const results: Record<string, string> = {
-    "validate-manifest": "MANIFEST_OK 120 segments, 2 guests", "audio-mix": "MIX_OK 1500.0s -14.0 LUFS", "populator-check": "POPULATORS_OK 3 briefs",
+    "validate-manifest": "MANIFEST_OK 120 segments, 2 guests", "audio-mix": "MIX_OK 1500.0s -14.0 LUFS", "shot-list-check": "SHOTS_OK 3 shots",
     "nano-banana-generate": "NANO_OK 1/1", "build-timeline": "TIMELINE_OK 3 shots", "master": "MASTER_OK episode-mastered.mp4",
-    "canon-baseline": "NO_CHANGES", "canon-diff": "CHANGED 2 files, 30 lines", "image-sheet": "SHEET_OK", "image-sheet-final": "SHEET_OK",
+    "canon-baseline": "NO_CHANGES", "canon-diff": "CHANGED 2 files, 30 lines",
+    "image-sheet": "SHEET_OK 3 shots (0 by hand, 0 missing)", "image-sheet-final": "SHEET_OK 3 shots (1 by hand, 0 missing)",
   };
   const script: Executors["script"] = async (step: ScriptStep, ctx) => {
     calls.push(step.id);
     if (knobs.failOnce?.delete(step.id)) return { ok: false, error: `${step.id} failed once` };
     const argv = step.argv(ctx);
     const name = path.basename(argv[5] ?? argv[0] ?? "");
-    if (name === "image-generate.py" || name === "nano-banana-generate.py") {
-      const doc = JSON.parse(await readFile(path.join(root, `Production/${ctx.episodeId}/images/prompts.json`), "utf8")) as { shots: { id: string; type: string; source?: string }[] };
+    if (name === "nano-banana-generate.py") {
+      // The one renderer, as Task 1 left it (spec 2026-11-04 §3.2): every shot whose `source` is
+      // not `showrunner`, whatever its `type`, and never a shot whose PNG is already on disk — so
+      // a re-run after the audit or the gate deleted PNGs renders exactly the deleted ones.
+      const doc = JSON.parse(await readFile(path.join(root, `Production/${ctx.episodeId}/images/prompts.json`), "utf8")) as { shots: { id: string; source?: string }[] };
       for (const s of doc.shots) {
-        const mine = name === "image-generate.py" ? s.type === "ambient" : s.type === "character";
-        if (mine && s.source !== "showrunner" && !(await exists(`Production/${ctx.episodeId}/images/${s.id}.png`))) await w(`Production/${ctx.episodeId}/images/${s.id}.png`, "png");
+        if (s.source !== "showrunner" && !(await exists(`Production/${ctx.episodeId}/images/${s.id}.png`))) await w(`Production/${ctx.episodeId}/images/${s.id}.png`, "png");
       }
     }
     // Declared outputs are rewritten on every call, as the QC passes rewrite the manifest in
@@ -266,21 +311,33 @@ export function fakeExecutors(root: string, knobs: { failOnce?: Set<string>; rev
       case "publish-copy": await w(`Episodes/${ep}/publish.json`, JSON.stringify({ logline: "A week." })); return { ok: true, text: "A week.", toolCalls: 1 };
       case "tts-script": await w(`Production/${ep}/tts-script.json`, "{}"); return { ok: true, text: "cast: Vale; guests: none", toolCalls: 3 };
       case "visual-direction":
+        // One establishing shot per scene header, each carrying a `brief` and neither `prompt` nor
+        // `seed` (spec 2026-11-04 §2.1, §2.2); the three headers are the three `## SCENE <n>` the
+        // draft fake writes. s02's brief names its place, so the place's cast key is in `refs` —
+        // which is the lint's rule (§2.5 rule 2) and not something the engine reads.
         await w(`Production/${ep}/images/prompts.json`, JSON.stringify({ episode: ep, shots: [
-          { id: "s01-wide", scene: "COLD OPEN", type: "ambient", prompt: "p", seed: 1 }, { id: "s02-vale", scene: "SCENE 2", type: "character", refs: ["vale"], brief: "b", seed: 2 },
-          { id: "s03-hand", scene: "SCENE 3", type: "character", refs: ["vale"], brief: "b", seed: 3, source: "showrunner" },
+          { id: "s01-establishing", scene: "SCENE 1", type: "establishing", source: "pipeline", brief: "the dock at first light", width: 1024, height: 576 },
+          { id: "s02-establishing", scene: "SCENE 2", type: "establishing", source: "pipeline", brief: "Harbor from the gantry, rain", refs: ["harbor"], width: 1024, height: 576 },
+          { id: "s03-establishing", scene: "SCENE 3", type: "establishing", source: "pipeline", brief: "the office at the night watch", width: 1024, height: 576 },
         ] }));
         return { ok: true, text: "3 shots", toolCalls: 2 };
       case "image-audit-1": case "image-audit-2": case "image-audit-3":
         return { ok: true, text: "", toolCalls: 4, verdict: { pass: true, verdict: "IMAGES_CLEAN", fixed: [], flagged: [], summary: "all clean" } };
       case "image-gate-fix": {
-        // What image-gate.reject.md orders: rewrite the shot's prompt and bump its seed. The file
-        // has to stay valid JSON — the generators parse it — and it has to change, or the two
-        // generators would be served from cache on the restarted pass.
+        // What image-gate.reject.md orders (spec 2026-11-04 §4.1): the note is folded into the
+        // named shot's `brief` and that shot's PNG is deleted so the renderer re-rolls it, and a
+        // note saying the showrunner will make a shot himself sets that shot's `source` to
+        // `showrunner` instead of re-rolling it. The file has to stay valid JSON — the renderer
+        // parses it — and it has to change, or the renderer would be served from the script cache
+        // on the restarted pass.
         const rel = `Production/${ep}/images/prompts.json`;
-        const doc = JSON.parse(await readFile(path.join(root, rel), "utf8")) as { shots: { seed: number; prompt?: string }[] };
+        const doc = JSON.parse(await readFile(path.join(root, rel), "utf8")) as { shots: { id: string; brief: string; source?: string }[] };
+        const note = String(ctx.results["image-gate:rejection"] ?? "");
+        const png = (id: string) => path.join(root, `Production/${ep}/images/${id}.png`);
         const first = doc.shots[0];
-        if (first) { first.seed += 1; first.prompt = `reworked: ${String(ctx.results["image-gate:rejection"] ?? "")}`; }
+        if (first) { first.brief = `reworked: ${note}`; await rm(png(first.id), { force: true }); }
+        const byHand = doc.shots.find((s) => note.includes(`${s.id} myself`));
+        if (byHand) { byHand.source = "showrunner"; await rm(png(byHand.id), { force: true }); }
         await w(rel, JSON.stringify(doc));
         return { ok: true, text: "image-gate-fix done", toolCalls: 2 };
       }
@@ -295,7 +352,7 @@ export function fakeExecutors(root: string, knobs: { failOnce?: Set<string>; rev
 }
 
 describe("the episode pipeline, walked", () => {
-  it("premise → eight gates → COMPLETE, with the stage right at every stop, a script rejection re-running the panel, an audio rejection re-running synthesis, a failure resumed, and NEEDS_IMAGES while a showrunner shot is missing", async () => {
+  it("premise → seven gates → COMPLETE, with the stage right at every stop, a script rejection re-running the panel, an audio rejection re-running synthesis, a failure resumed, and NEEDS_IMAGES while a showrunner shot is missing", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "show-"));
     const nas = await mkdtemp(path.join(tmpdir(), "nas-"));
     const cfg: ShowConfig = { ...show, output: { ...show.output, nasRoot: nas } };
@@ -369,33 +426,43 @@ describe("the episode pipeline, walked", () => {
     expect(calls.slice(beforeAudio)).toEqual(["audio-gate-fix", "tts-generate", "truncation-qc", "pace-qc", "breath-qc", "audio-mix"]);
     await answer("audio-gate", true);
 
-    // images: the showrunner shot is missing, so NEEDS_IMAGES shows and the guard after the gate stops the line
-    expect(await go()).toMatchObject({ status: "waiting", gate: { stepId: "nano-banana-gate", attempt: 1 } });
-    expect(await stage()).toBe("NEEDS_IMAGES");
-    await answer("nano-banana-gate", true);
-    expect(await go()).toMatchObject({ status: "failed", stepId: "showrunner-images" });
-    await w("Production/s02e01/images/s03-hand.png", "png");
-    expect(await stage()).toBe("AUDIO");
-    await resumeRun(log, "r1");
+    // images: one gate, reached through the lint, the render and one clean audit (spec 2026-11-04
+    // §4). Every shot `visual-direction` wrote is the pipeline's, so nothing is waiting on the
+    // showrunner's hand and the gate's own stage shows.
     expect(await go()).toMatchObject({ status: "waiting", gate: { stepId: "image-gate", attempt: 1 } });
     expect(await stage()).toBe("DRAFT_IMAGES");
     expect(calls.filter((c) => c.startsWith("image-audit-"))).toEqual(["image-audit-1"]); // rounds 2 and 3 bypassed after a clean audit
-    // an image-gate rejection: the fix agent runs first, then every image step between the two
-    // gates is reset — but not the already-approved nano-banana-gate inside the closure. A reset
-    // gate re-runs on its recorded approval and emits no event, so the projection would report an
-    // approved gate as never reached for the rest of the run.
+    expect(calls).not.toContain("visual-direction-fix"); // the lint said SHOTS_OK, so its fix loop was bypassed
+    // An image-gate rejection naming two shots: the fix agent runs first, and `rerunOnReject`'s
+    // single name resets its whole dependency closure — the renderer, the audit loop and the sheet
+    // — so the gate reopens on a re-rendered set. The renderer re-renders only s01-establishing,
+    // whose PNG the fix agent deleted; s03-establishing is the showrunner's own shot now, and
+    // nothing renders a shot of his.
     const beforeImages = calls.length;
-    await answer("image-gate", false, "shot 1 is muddy");
+    await answer("image-gate", false, "s01-establishing is muddy; I'll make s03-establishing myself");
     expect(await go()).toMatchObject({ status: "waiting", gate: { stepId: "image-gate", attempt: 2 } });
-    expect(calls.slice(beforeImages)[0]).toBe("image-gate-fix");
+    expect(calls.slice(beforeImages)).toEqual(["image-gate-fix", "nano-banana-generate", "image-audit-1", "image-sheet"]);
     const afterImageReject = await log.read();
     const resetByImageGate = (id: string) => afterImageReject.some((e) => e.kind === "step_reset" && e.stepId === id && e.payload["by"] === "image-gate");
-    for (const id of ["image-generate", "nano-banana-generate", "image-sheet", "showrunner-images", "image-audit-1", "image-audit-verdict"]) {
+    // image-regenerate-1 is in the list because a bypassed step has a status too: the reset is the
+    // closure of nano-banana-generate's dependents, not the one step the gate names.
+    for (const id of ["nano-banana-generate", "image-audit-1", "image-regenerate-1", "image-audit-verdict", "image-sheet"]) {
       expect(resetByImageGate(id), id).toBe(true);
     }
-    expect(afterImageReject.some((e) => e.kind === "step_reset" && e.stepId === "nano-banana-gate")).toBe(false);
-    expect(deriveRunState(afterImageReject).steps["nano-banana-gate"]).toBe("completed");
+    // No gate is reset, this one included: a reset gate re-runs on its recorded approval and emits
+    // no event, so the projection would report an answered gate as never reached.
+    expect(afterImageReject.filter((e) => e.kind === "step_reset").map((e) => e.stepId)).not.toContain("image-gate");
+    // The rejection made s03-establishing the showrunner's own shot and deleted its PNG, so the
+    // Board reads NEEDS_IMAGES while the gate waits, and the guard after the gate stops the line
+    // until the file is on disk (spec 2026-11-04 §2.4).
+    expect(await stage()).toBe("NEEDS_IMAGES");
     await answer("image-gate", true);
+    const stopped = await go();
+    expect(stopped).toMatchObject({ status: "failed", stepId: "showrunner-images" });
+    expect(stopped.status === "failed" && stopped.error).toMatch(/^NEEDS_IMAGES: drop in s03-establishing/);
+    await w("Production/s02e01/images/s03-establishing.png", "png");
+    expect(await stage()).toBe("AUDIO");
+    await resumeRun(log, "r1");
 
     expect(await go()).toMatchObject({ status: "waiting", gate: { stepId: "final-gate", attempt: 1 } });
     expect(await stage()).toBe("DRAFT_ASSEMBLY");
