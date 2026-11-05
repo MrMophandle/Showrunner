@@ -34,10 +34,10 @@ Dead Light is a story channel, not a visual one. s02e01's shot list under the ol
 
 - `type` is `establishing` or `character`. The engine writes only `establishing`. A `character` shot exists only because Ryan asked for it (§2.4).
 - `source` is `pipeline` (nano-banana renders it) or `showrunner` (Ryan makes it by hand and drops the PNG in; nothing renders it and the `showrunner-images` guard waits for the file).
-- `refs` is required on a `character` shot and forbidden on an `establishing` shot. Each ref is a cast-index key whose entry has a `face.ref` on disk.
+- `refs` is required on a `character` shot. On an `establishing` shot it is allowed only for entries of a place kind (`location`, `ship`, or any kind that is not a person: not `character`, `human`, `creature`, `species`), and it is required for every such entry the brief names that has a reference image, so the render conditions on the place's own look (ruled 2026-11-04, after Task 2's review: an establishing shot of Coalvane must be allowed to say Coalvane). Each ref is a cast-index key whose entry has a `face.ref` on disk.
 - `width`/`height` default to `visual.shotFrame`.
 
-**2.3 The establishing brief.** A wide view that sets the listener in the place: where it is, the hour and the light, the weather or atmosphere, the scale cues (a gantry, a hull, a table) and the one or two objects the scene turns on. It names **no character of the cast, no creature, no species**, and asks for no legible text. Human figures, if the place needs them, are distant and faceless. Positive description only (the show's negation law stands). The style constants (`visual.styleConstants`) are appended by the renderer, not written into the brief.
+**2.3 The establishing brief.** A wide view that sets the listener in the place: where it is, the hour and the light, the weather or atmosphere, the scale cues (a gantry, a hull, a table) and the one or two objects the scene turns on. It names **no person of the cast — no entry of kind `character`, `human`, `creature` or `species`** — and asks for no legible text. It may name the place itself (an entry of kind `location` or `ship`), and when that entry has a reference image its key goes in `refs`. Human figures, if the place needs them, are distant and faceless. Positive description only (the show's negation law stands). The style constants (`visual.styleConstants`) are appended by the renderer, not written into the brief.
 
 **2.4 Adding more to a scene.** Ryan adds a shot in one of two ways, and both are the existing mechanism:
 
@@ -49,7 +49,7 @@ A console affordance for this (a form on the image gate) is not built here (§11
 **2.5 The lint: `shot-list-check.py`.** Replaces `populator-check.py`. Reads the script and `prompts.json`, prints a table and one tag, `SHOTS_OK` (exit 0) or `SHOTS_BAD` (exit 2 with `--report-only` printing the reasons and exiting 0, the same contract `populator-check` had, so the fix loop can read the tag from the step's result). Rules, each with a one-line reason naming the shot:
 
 1. One `establishing` shot per scene header, ids `s<n>-establishing` in header order; a scene with none, a shot for a scene the script lacks, or two for one scene is BAD.
-2. An `establishing` brief names no cast-index entry (whole-word match on the entry's `name` and key, `the` stripped) and no entry of kind `species`.
+2. An `establishing` brief names no cast-index entry of a person kind — `character`, `human`, `creature`, `species` — (whole-word match on the entry's `name` and key, `the` stripped). It may name an entry of any other kind; when that entry has a `face.ref`, its key must be in the shot's `refs` (reason: "names Harbor (location, cast key harbor) — add it to refs so the render conditions on its reference"). A ref on an establishing shot that is a person kind is BAD.
 3. A `character` shot has at least one ref; every ref is a cast-index key whose `face.ref` exists on disk. The reason names the key and the remedy ("cast the face, or set source to showrunner").
 4. Every shot: unique `id`, `scene` equal to a header, `type` in {establishing, character}, `source` in {pipeline, showrunner}, non-empty `brief`.
 5. The keys `prompt` and `seed` are absent ("the local renderer is gone; write a brief").
@@ -131,3 +131,4 @@ Nothing in steps 1–3 spends money; step 5 spends about twelve calls.
 ## 12 · Change log
 
 - **2026-11-04 — created.** From Ryan's two rulings of 2026-11-04 and the design approved in chat the same day.
+- **2026-11-04 — the place may be named.** After Task 2's review: rule 2 forbids person kinds only (`character`, `human`, `creature`, `species`); a location or ship may be named in an establishing brief and, when it has a reference image, is listed in `refs` so the render conditions on it. §2.2, §2.3, §2.5 amended.
