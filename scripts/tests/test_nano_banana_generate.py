@@ -380,7 +380,7 @@ def _mk_episode(tmp_path, bible_dirs=True):
     canon = tmp_path / "Canon/characters/Pell"; canon.mkdir(parents=True)
     sheet = canon / "Pell Reference.png"; sheet.write_bytes(b"s")
     prompts = {"episode": "ep99", "shots": [
-        # The first shot was a type:"ambient" shot with a `prompt` and a `seed` until 2026-11-04,
+        # The first shot was an environment shot with a `prompt` and a `seed` until 2026-11-04,
         # when the local renderer was deleted: every shot carries a `brief` now, and an
         # `establishing` shot names no refs (spec 2026-11-04 §2.2).
         {"id": "s1-establishing", "scene": "COLD OPEN", "type": "establishing",

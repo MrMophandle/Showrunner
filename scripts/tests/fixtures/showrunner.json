@@ -48,7 +48,6 @@
     "candidatesDir": "Canon/_candidates",
     "shotFrame": [1024, 576],
     "characterKinds": ["human", "creature", "ship"],
-    "ambientPromptScaffold": ["lamp room glass, ", "grey sea horizon, "],
     "styleConstants": "overcast coastal realism, hand-held framing, no text, no watermark."
   },
   "video": {

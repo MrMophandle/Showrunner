@@ -37,7 +37,7 @@ def episode(show_root: Path) -> Path:
     ]}))
     (base / "images").mkdir(parents=True)
     (base / "images" / "prompts.json").write_text(json.dumps({"shots": [
-        {"id": "s01-lamp", "type": "ambient", "prompt": "lamp room glass, a cracked lens"},
+        {"id": "s01-lamp", "type": "establishing", "brief": "the lamp room, a cracked lens"},
         {"id": "s01-stair", "type": "character", "refs": ["Maeve"],
          "brief": "MAEVE on the stair."},
     ]}))

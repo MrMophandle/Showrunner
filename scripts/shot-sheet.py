@@ -139,7 +139,7 @@ def main() -> None:
     A(f"# {ep} — shot sheet (placement + descriptions)")
     A("")
     A(f"**{len(placed)} stills** across {len(scene_indices)} scenes · runtime {ts(total_s)} · "
-      f"{n_ch} character shots (Nano Banana) · {len(placed) - n_ch} ambient (local engine)")
+      f"{n_ch} character shots · {len(placed) - n_ch} establishing shots")
     A("")
     A("Times are computed the same way the renderer computes them: scene starts are matched")
     A("from the script's own opening words, then a scene's stills are spread evenly across it.")
@@ -160,7 +160,7 @@ def main() -> None:
             last_scene = p["scene"]
         png = f"{base}/images/{s['id']}.png"
         have = "on disk" if os.path.exists(png) else "**MISSING**"
-        kind = "character (Nano Banana)" if s.get("type") == "character" else "ambient (local engine)"
+        kind = "character" if s.get("type") == "character" else "establishing"
         A(f"### `{s['id']}`")
         A("")
         A(f"**On screen {ts(p['start'])} – {ts(p['end'])}**  ({p['end'] - p['start']:.0f}s) · {kind} · {have}  ")
