@@ -51,7 +51,7 @@ describe("the read routes", () => {
     expect(res.status).toBe(200);
     const view = await res.json() as RunView;
     expect(view).toMatchObject({ episodeId: "s02e01", runId: "r1", pipeline: { name: "episode" } });
-    expect(view.steps.length).toBe(67);
+    expect(view.steps.length).toBe(65);
     expect(view.offset).toBeGreaterThan(0);
     expect((await app.request("/api/shows/show/episodes/s02e01/runs/bad.id")).status).toBe(400);
     store.close();
@@ -437,14 +437,14 @@ describe("the actions", () => {
     // And the view of the run inside that same window is a 200 with every step pending, which is
     // the case the run route's 404 must not take with it: the 404 is for a log that is **not
     // there** (ruling H-08), and the launch's `wx` write is what puts one there before the worker
-    // exists. `toMatchObject` on the first row rather than on all 67, and the count of pending
+    // exists. `toMatchObject` on the first row rather than on all 65, and the count of pending
     // rows, because the worker is detached and may have completed a step by the time this runs —
     // the assertion is that the view is the pipeline, not that the pipeline has not moved.
     const inWindow = await app.request(`/api/shows/show/episodes/s02e01/runs/${body.runId}`);
     expect(inWindow.status).toBe(200);
     const windowView = await inWindow.json() as RunView;
     expect(windowView).toMatchObject({ episodeId: "s02e01", runId: body.runId, pipeline: { name: "episode" } });
-    expect(windowView.steps.length).toBe(67);
+    expect(windowView.steps.length).toBe(65);
     expect(windowView.steps.filter((s) => s.status === "pending").length).toBeGreaterThan(60);
 
     await waitFor(async () => (await logText(root, body.runId)).includes("run_started"), 2000);

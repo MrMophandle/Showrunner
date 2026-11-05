@@ -4,7 +4,7 @@ import { appWith, makeShow, seedRun, writeIn, type SeedEvent } from "./helpers.j
 
 /** The prefix every artifact url of episode s02e01 carries, **including the show key**, because
  *  every api route lives under `/api/shows/:show/` and the gate view hands the client urls that
- *  are already complete. The gate view's job is to name the file each of the eight gates refers
+ *  are already complete. The gate view's job is to name the file each of the seven gates refers
  *  to, as a url under the episode's own two trees, so these tests are mostly a table check: the
  *  gate id in, the artifact list out. */
 const FILES = "/api/shows/show/episodes/s02e01/files";
@@ -73,7 +73,7 @@ describe("the gate view", () => {
     store.close();
   });
 
-  it("names the casting, audio and image artifacts of the four remaining gates", async () => {
+  it("names the casting, audio and image artifacts of the three remaining gates", async () => {
     const casting = await parkedAt("casting-gate");
     expect((await gateView(casting.ctx, casting.store, "s02e01", "r1"))!.artifacts).toEqual([
       { kind: "audio", label: "guest-refs/", path: "Production/s02e01/guest-refs", url: `${FILES}/Production/s02e01/guest-refs`, listUrl: `${FILES}/Production/s02e01/guest-refs` },
@@ -87,16 +87,10 @@ describe("the gate view", () => {
     ]);
     audio.store.close();
 
-    const nano = await parkedAt("nano-banana-gate");
-    expect((await gateView(nano.ctx, nano.store, "s02e01", "r1"))!.artifacts).toEqual([
-      { kind: "images", label: "images/", path: "Production/s02e01/images", url: `${FILES}/Production/s02e01/images`, listUrl: `${FILES}/Production/s02e01/images` },
-      { kind: "markdown", label: "IMAGE-SHEET.md", path: "Production/s02e01/images/IMAGE-SHEET.md", url: `${FILES}/Production/s02e01/images/IMAGE-SHEET.md` },
-    ]);
-    nano.store.close();
-
     const image = await parkedAt("image-gate");
     expect((await gateView(image.ctx, image.store, "s02e01", "r1"))!.artifacts).toEqual([
       { kind: "images", label: "images/", path: "Production/s02e01/images", url: `${FILES}/Production/s02e01/images`, listUrl: `${FILES}/Production/s02e01/images` },
+      { kind: "markdown", label: "IMAGE-SHEET.md", path: "Production/s02e01/images/IMAGE-SHEET.md", url: `${FILES}/Production/s02e01/images/IMAGE-SHEET.md` },
     ]);
     expect((await gateView(image.ctx, image.store, "s02e01", "r1"))!.maxAttempts).toBe(5);
     image.store.close();

@@ -11,7 +11,7 @@ import type { ShowContext } from "./show.js";
 /** The gate view: what the showrunner is being asked, and the file the question is about.
  *
  *  A gate's message is prose the pipeline rendered, and prose alone is not a decision — "approve
- *  the outline" means nothing without the outline. So every one of the eight gates is mapped here
+ *  the outline" means nothing without the outline. So every one of the seven gates is mapped here
  *  to the artifacts it refers to, as urls the artifact route serves. The table is the only place
  *  in the console that knows which file a gate is about, and it is keyed on the gate's step id so
  *  a pipeline that renames a gate loses its artifacts loudly (an empty list) rather than silently
@@ -125,13 +125,11 @@ export async function gateArtifacts(ctx: ShowContext, episodeId: string, gateId:
     }
     case "audio-gate":
       return [file(ctx.key, episodeId, "audio", `${prod}/audio/${mixFilename(ctx.show, episodeId)}`)];
-    case "nano-banana-gate":
+    case "image-gate":
       return [
         dir(ctx.key, episodeId, "images", `${prod}/images`, "images/"),
         file(ctx.key, episodeId, "markdown", `${prod}/images/IMAGE-SHEET.md`),
       ];
-    case "image-gate":
-      return [dir(ctx.key, episodeId, "images", `${prod}/images`, "images/")];
     case "final-gate": {
       const mastered = `${prod}/video/episode-mastered.mp4`;
       const rendered = `${prod}/video/${ctx.show.output.videoFilename ?? "episode.mp4"}`;

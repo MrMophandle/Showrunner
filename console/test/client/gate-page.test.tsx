@@ -17,7 +17,7 @@ import { Gate } from "../../src/pages/Gate.js";
  *  the ruled order and whether the `details` starts closed.
  *
  *  **The four stubs, and why each is needed.** This is the first test in the suite to mount a page
- *  rather than a component, so it is the first to pay for a page's ambient dependencies:
+ *  rather than a component, so it is the first to pay for a page's surrounding dependencies:
  *
  *  - `fetch` is stubbed and keyed on the url, because the page reads two things over the network —
  *    the gate view as JSON and the artifact's text — through `getJson` and `getText` (`src/api.ts`),
