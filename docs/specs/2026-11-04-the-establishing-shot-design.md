@@ -17,17 +17,17 @@ Dead Light is a story channel, not a visual one. s02e01's shot list under the ol
 
 ## 2 · The shot list
 
-**2.1 One shot per scene.** `Production/<episodeId>/images/prompts.json` holds exactly one `establishing` shot for every scene header in the script (`## COLD OPEN`, then `## SCENE <N> — <name>` in order), with the id `s<n>-establishing`, where `<n>` is the scene's ordinal (the cold open is 1). No count rule, no budget, no weighting: the script's scenes are the count.
+**2.1 One shot per scene.** `Production/<episodeId>/images/prompts.json` holds, for every scene header in the script (`## COLD OPEN`, then `## SCENE <N> — <name>` in order), exactly one shot with the id `s<n>-establishing`, where `<n>` is the scene's ordinal (the cold open is 1), of type `establishing`. That is the engine's shot. Ryan may add further shots to a scene (§2.4), of either type, under other ids (`s<n>-<slug>`); the timeline then shares the scene's time across them. No count rule, no budget, no weighting: the script's scenes are the engine's count. (Amended 2026-11-04 after the whole-branch review: a place-only extra shot has to be legal, and `establishing` is its type.)
 
 **2.2 The shape.** The local renderer's fields (`prompt`, `seed`) are gone; every shot carries a `brief`.
 
 ```json
 { "episode": "s02e01",
   "shots": [
-    { "id": "s01-establishing", "scene": "COLD OPEN", "type": "establishing", "source": "pipeline",
+    { "id": "s1-establishing", "scene": "COLD OPEN", "type": "establishing", "source": "pipeline",
       "brief": "<the place at this scene's hour and light, in positive description>",
       "width": 1024, "height": 576 },
-    { "id": "s04-sarn-at-the-board", "scene": "SCENE FOUR — THE ARGUMENT WORSENS", "type": "character",
+    { "id": "s4-sarn-at-the-board", "scene": "SCENE FOUR — THE ARGUMENT WORSENS", "type": "character",
       "source": "showrunner", "brief": "<what the shot shows>", "refs": ["sarn"], "width": 1024, "height": 576 }
   ] }
 ```
@@ -48,9 +48,9 @@ A console affordance for this (a form on the image gate) is not built here (§11
 
 **2.5 The lint: `shot-list-check.py`.** Replaces `populator-check.py`. Reads the script and `prompts.json`, prints a table and one tag, `SHOTS_OK` (exit 0) or `SHOTS_BAD` (exit 2 with `--report-only` printing the reasons and exiting 0, the same contract `populator-check` had, so the fix loop can read the tag from the step's result). Rules, each with a one-line reason naming the shot:
 
-1. One `establishing` shot per scene header, ids `s<n>-establishing` in header order; a scene with none, a shot for a scene the script lacks, or two for one scene is BAD.
+1. For every scene header, the shot `s<n>-establishing` exists, is of type `establishing`, and names that header; a scene without it, or a shot whose `scene` the script lacks, is BAD. A further shot in a scene, of either type, is allowed under any other id (§2.1, §2.4).
 2. An `establishing` brief names no cast-index entry of a person kind — `character`, `human`, `creature`, `species` — (whole-word match on the entry's `name` and key, `the` stripped). It may name an entry of any other kind; when that entry has a `face.ref`, its key must be in the shot's `refs` (reason: "names Harbor (location, cast key harbor) — add it to refs so the render conditions on its reference"). A ref on an establishing shot that is a person kind is BAD.
-3. A `character` shot has at least one ref; every ref is a cast-index key whose `face.ref` exists on disk. The reason names the key and the remedy ("cast the face, or set source to showrunner").
+3. A `character` shot with `source: "pipeline"` has at least one ref, and every ref is a cast-index key whose `face.ref` exists on disk; the reason names the key and the remedy ("cast the face, or set source to showrunner"). A shot with `source: "showrunner"` is Ryan's to make by hand: its refs are checked for being cast-index keys only, never for a face on disk (amended 2026-11-04: the remedy has to be followable).
 4. Every shot: unique `id`, `scene` equal to a header, `type` in {establishing, character}, `source` in {pipeline, showrunner}, non-empty `brief`.
 5. The keys `prompt` and `seed` are absent ("the local renderer is gone; write a brief").
 
@@ -60,7 +60,7 @@ The loop keeps the populator loop's shape: `shot-list-check` (report-only) → `
 
 **3.1 `scripts/lib/nanobanana.py`.** The Gemini client lifted out of `nano-banana-generate.py` so two callers share it: the key check and its setup text, the client, reference-image encoding, the API call with its retry and client-error classification, the JPEG-to-PNG workaround, the refusal diagnostic, the atomic write, the key redaction, and the one-line remedy for HTTP 402 ("Google AI Studio credits are depleted — top up at https://ai.studio/projects"). No behaviour changes in the move.
 
-**3.2 `nano-banana-generate.py` renders every pipeline shot.** The filter `type == "character"` goes: every shot with `source: "pipeline"` and no PNG on disk is rendered. An `establishing` shot's prompt is its brief plus the style constants, with no reference images. A `character` shot's prompt is the identity lines for its refs plus the brief plus the style constants, conditioned on each ref's reference image and gallery, as today. `--only <id,id>` re-rolls named shots. Result tags unchanged: `NANO_OK n/n` or `NANO_PARTIAL k/n` (both exit 0; the gate and the audit read the files). Progress is per shot.
+**3.2 `nano-banana-generate.py` renders every pipeline shot.** The filter `type == "character"` goes: every shot with `source: "pipeline"` and no PNG on disk is rendered. An `establishing` shot's prompt is its brief plus the style constants; it carries no reference images unless its `refs` name a place (§2.2), in which case the place's reference and gallery condition the render as a character shot's do. A `character` shot's prompt is the identity lines for its refs plus the brief plus the style constants, conditioned on each ref's reference image and gallery, as today. `--only <id,id>` re-rolls named shots. Result tags unchanged: `NANO_OK n/n` or `NANO_PARTIAL k/n` (both exit 0; the gate and the audit read the files). Progress is per shot.
 
 **3.3 `design-visual.py` renders faces by nano-banana from briefs.** `design-visual.py <key> --briefs <file> [--show-root <path>]`: the file holds N briefs (a JSON list of strings); one nano-banana call per brief, text only, into `<visual.candidatesDir>/<key>-<n>.png`; the script prints the lock path as it does today. The Qwen-Image path and the per-subject seed are deleted. `baseline_prompt` in the index stays as the brief author's starting point, not as the prompt.
 
@@ -86,9 +86,9 @@ Steps, in order, from the audio gate:
 | `showrunner-images` | guard | every `source: "showrunner"` shot has its PNG |
 | `image-sheet-final` | script | the sheet as approved |
 
-Removed: `populator-check`, `populator-check-final`, `image-generate`, `nano-banana-gate` and its fix agent. The audit's re-rolls go through nano-banana (each re-roll is a paid call; the loop is capped at two re-roll rounds, as today). The timeline builder is unchanged: a scene's one shot holds across the scene.
+Removed: `populator-check`, `populator-check-final`, `image-generate`, `nano-banana-gate` and its fix agent. The three renderer steps (`nano-banana-generate`, `image-regenerate-1`, `image-regenerate-2`) are never served from the step cache: the renderer is idempotent (a shot whose PNG exists is skipped), and a cached completion would leave a PNG the audit deleted unrendered when the shot list had not changed (amended 2026-11-04 after the whole-branch review; `ScriptStep.cache: "never"`). The audit's re-rolls go through nano-banana (each re-roll is a paid call; the loop is capped at two re-roll rounds, as today). The timeline builder is unchanged: a scene's one shot holds across the scene.
 
-**4.1 The image gate.** Message: the sheet's path, the auditor's last summary, and the rule for notes. Approve, or reject with notes naming shots: "s03-establishing: too bright, it is the night watch" re-rolls that shot with the note folded into its brief; "scene four: add Sarn at the board, refs sarn" adds a character shot; "I'll make s07 myself" sets that shot's `source` to `showrunner`. The fix agent (`image-gate-fix`, `image-gate.reject.md`) edits `prompts.json` and deletes the PNGs to re-roll; `rerunOnReject` is `["nano-banana-generate"]`, so the audit loop runs again on the regenerated set. `maxAttempts` 5, as today.
+**4.1 The image gate.** Message: the sheet's path, the auditor's last summary, and the rule for notes. Approve, or reject with notes naming shots: "s3-establishing: too bright, it is the night watch" re-rolls that shot with the note folded into its brief; "scene four: add Sarn at the board, refs sarn" adds a character shot; "I'll make s7 myself" sets that shot's `source` to `showrunner`. The fix agent (`image-gate-fix`, `image-gate.reject.md`) edits `prompts.json` and deletes the PNGs to re-roll; `rerunOnReject` is `["nano-banana-generate"]`, so the audit loop runs again on the regenerated set. `maxAttempts` 5, as today.
 
 ## 5 · Config
 
@@ -132,3 +132,4 @@ Nothing in steps 1–3 spends money; step 5 spends about twelve calls.
 
 - **2026-11-04 — created.** From Ryan's two rulings of 2026-11-04 and the design approved in chat the same day.
 - **2026-11-04 — the place may be named.** After Task 2's review: rule 2 forbids person kinds only (`character`, `human`, `creature`, `species`); a location or ship may be named in an establishing brief and, when it has a reference image, is listed in `refs` so the render conditions on it. §2.2, §2.3, §2.5 amended.
+- **2026-11-04 — after the whole-branch review.** §2.1 and §2.5 rule 1: the engine's shot is `s<n>-establishing`; Ryan's added shots may be of either type under other ids. §2.5 rule 3: a showrunner-made shot is not face-checked. §3.2: an establishing shot with place refs conditions on them. §4: the renderer steps opt out of the step cache. Example ids unpadded (`s1-`, `s4-`), the lint's form.
