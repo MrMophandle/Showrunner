@@ -176,12 +176,9 @@ def test_assemble_refs_dedupes_stills_by_basename_across_folders(tmp_path):
     assert len(imgs) == 3, f"expected 3 images (2 sheets + 1 deduped still), got {len(imgs)}"
 
 
-def test_generate_image_writes_png_and_counts(tmp_path, monkeypatch):
-    out = tmp_path / "shot.png"
-    monkeypatch.setattr(nb, "api_call", lambda prompt, imgs: ("ok", b"PNGBYTES"))
-    counter = {"calls": 0}
-    ret = nb.generate_image("p", [], str(out), counter)
-    assert ret == "ok" and out.read_bytes() == b"PNGBYTES" and counter["calls"] == 1
+# The happy path of nb.generate_image — a PNG written, one call counted — is pinned once, in
+# tests/test_nanobanana.py:27, the library's own suite. The tests below stay here because the
+# renderer is what their failure modes cost: a refusal, a retry, the cost cap, a redacted key.
 
 def test_generate_image_refusal_no_file(tmp_path, monkeypatch):
     out = tmp_path / "shot.png"
