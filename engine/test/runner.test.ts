@@ -188,6 +188,46 @@ describe("run", () => {
     expect((await log2.read()).some((e) => e.kind === "step_cached")).toBe(false);
   });
 
+  it("never serves a `cache: \"never\"` script step from a prior completion, and still caches a plain one", async () => {
+    // Spec 2026-11-04 §4's renderer steps: `nano-banana-generate` and the two regenerates declare
+    // `cache: "never"` because the PNGs they write are nobody's declared outputs, so a completion
+    // served from the hashes would leave a PNG the vision audit deleted unrendered. The step beside
+    // it in this pipeline declares no opt-out, so one run proves both halves of the rule.
+    const root = await show();
+    await writeFile(path.join(root, "in.txt"), "v1");
+    const runs: Record<string, number> = { uncached: 0, plain: 0 };
+    const execs: Executors = {
+      script: async (step, ctx) => {
+        runs[step.id] = (runs[step.id] ?? 0) + 1;
+        await writeFile(path.join(ctx.showRoot, `out-${step.id}.txt`), "same");
+        return { ok: true };
+      },
+      agent: async () => ({ ok: true, text: "", toolCalls: 0 }),
+    };
+    const uncached: ScriptStep = { kind: "script", id: "uncached", inputs: ["in.txt"], outputs: ["out-uncached.txt"], cache: "never", argv: () => ["true"] };
+    const plain: ScriptStep = { kind: "script", id: "plain", inputs: ["in.txt"], outputs: ["out-plain.txt"], argv: () => ["true"] };
+    const p: Pipeline = { name: "p", steps: [uncached, plain] };
+    const ctx = { runId: "r1", episodeId: "s02e01", showRoot: root };
+
+    const log1 = new EventLog(EventLog.logPath(root, "s02e01", "r1"));
+    expect(await run({ pipeline: p, ctx, log: log1, executors: execs })).toEqual({ status: "completed" });
+    expect(runs).toEqual({ uncached: 1, plain: 1 });
+
+    // A new run id with every declared input and output unchanged on disk: the plain step is served
+    // from the first run's hashes and the opted-out step executes a second time.
+    const log2 = new EventLog(EventLog.logPath(root, "s02e01", "r2"));
+    expect(await run({ pipeline: p, ctx: { ...ctx, runId: "r2" }, log: log2, executors: execs, priorLogs: [log1] })).toEqual({ status: "completed" });
+    expect(runs).toEqual({ uncached: 2, plain: 1 });
+
+    const ev2 = await log2.read();
+    expect(ev2.filter((e) => e.kind === "step_cached").map((e) => e.stepId)).toEqual(["plain"]);
+    // The opt-out skips the cache lookup, not the hashing: step_started still carries the input
+    // hashes, and input_changed is never logged for a step the runner never compared.
+    expect(ev2.some((e) => e.kind === "input_changed")).toBe(false);
+    const started = ev2.find((e) => e.kind === "step_started" && e.stepId === "uncached");
+    expect(started?.payload["inputHashes"]).toEqual({ "in.txt": expect.any(String) });
+  });
+
   it("bypasses a step whose `when` is false, and still runs its dependents", async () => {
     const root = await show();
     const calls: string[] = [];

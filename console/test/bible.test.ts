@@ -104,8 +104,11 @@ describe("the Bible view", () => {
     expect(list.every((r) => r.state === "pending")).toBe(true);
     expect(list.every((r) => r.answered === 0)).toBe(true);
     expect(list.every((r) => r.runId === undefined)).toBe(true);
-    // The question counts the inventory measured, and the three modes.
-    expect(list.map((r) => r.questions)).toEqual([9, 5, 5, 0, 8, 5, 3, 3, 9, 1, 4, 0, 0, 0, 0]);
+    // The question counts the inventory measured, and the three modes. The ninth is
+    // `visual-style`, whose template gained two questions with the establishing shot
+    // (`tools/templates/canon/visual-style.md`, spec 2026-11-04 §6): the new
+    // `## The establishing shot` section, and one under `## Per-episode counts`.
+    expect(list.map((r) => r.questions)).toEqual([9, 5, 5, 0, 8, 5, 3, 3, 11, 1, 4, 0, 0, 0, 0]);
     expect(list.filter((r) => r.mode === "scaffold").map((r) => r.key)).toEqual(["continuity-ledger", "voice-registry"]);
     expect(list[0]).toMatchObject({ key: "world-overview", file: "Canon/world-overview.md", mode: "interview" });
     expect(list[0]?.purpose).toContain("The premise");

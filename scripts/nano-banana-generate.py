@@ -1,46 +1,40 @@
 # /// script
 # dependencies = ["google-genai", "pillow"]
 # ///
-"""nano-banana-generate: character shots via the Gemini API (Nano Banana Pro).
+"""nano-banana-generate: every pipeline shot of an episode, via the Gemini API (Nano Banana Pro).
 
-For each type:"character" shot in Production/<ep>/images/prompts.json missing
-its PNG: condition on the reference and the gallery (at most three) named by the
-subject's entry in the cast index, generate at 2K 16:9, vision-audit via Claude
-headless, retry with corrective notes (<=3 attempts). A
-shot whose PNG exists is skipped — a hand-made shot always wins (delete a PNG or
-use --only to re-roll). A shot whose `source` is `showrunner` is never generated;
-the showrunner drops it in.
+For each shot in Production/<ep>/images/prompts.json whose `source` is "pipeline" and whose PNG is
+missing: compose the prompt, render it through lib/nanobanana.py at 2K 16:9, vision-audit via
+Claude headless, retry with corrective notes (<=3 attempts). An `establishing` shot carries no refs
+unless they name a place, and then that place's reference and gallery condition the render as a
+character's do; an establishing shot with no refs is rendered from its brief alone — the brief plus
+the show's style constants, with no reference images attached (spec 2026-11-04 §2.2, §3.2, as
+amended on 2026-11-04). A `character` shot is rendered conditioned on the reference and the
+gallery (at most three) named by each of its refs' entries in the cast index. A shot whose PNG
+exists is skipped — a hand-made shot always wins (delete a PNG or use --only to re-roll). A shot
+whose `source` is `showrunner` is never generated; the showrunner drops it in.
 
-Everything that makes a frame THIS show's frame comes from the show's config and
-canon, never from this file: the cast index (Canon/cast.json), the photographic
-look (visual.styleConstants), the audit laws (the file at visual.auditLaws), the
-style authority cited in a refusal (visual.style), and the banned collective
-phrases (visual.collectivePopulatorBans, read by lib/populators.py).
+Everything that makes a frame THIS show's frame comes from the show's config and canon, never from
+this file: the cast index (Canon/cast.json), the photographic look (visual.styleConstants) and the
+audit laws (the file at visual.auditLaws). The Gemini client itself — the key check, the call, the
+retry policy, the atomic write — is lib/nanobanana.py, shared with design-visual.py since
+2026-11-04 (spec 2026-11-04 §3.1).
 
 Usage:
   nano-banana-generate.py <episode> [--only id,id] [--notes "text"] [--no-audit]
                                     [--show-root <path>]
 """
-import base64, json, os, re, subprocess, sys, tempfile, time
+import json, os, re, subprocess, sys
 
 from lib import castindex
-from lib import populators
+from lib import nanobanana as nb
 from lib import showconfig as sc
 
-MODEL = "gemini-3-pro-image"          # Nano Banana Pro (verified live docs, Task 2)
-ASPECT_RATIO = "16:9"                  # response_format: cinematic frame
-IMAGE_SIZE = "2K"                      # response_format: uppercase K per docs
-# The docs list image/png as valid, but the live validator rejects it with a
-# hard 400 naming image/jpeg as the ONLY supported value (ep04 pilot,
-# 2026-07-27). The API is ground truth. We request JPEG and transcode to PNG on
-# the way out — see _jpeg_to_png. Do not "fix" this back to image/png.
-OUTPUT_MIME = "image/jpeg"
 MAX_ATTEMPTS = 3                       # audit-failure retries per shot
-MAX_CALLS = 60                         # hard cost cap per run (~$8)
-MAX_IMAGES = 8                         # total reference images per API call
 # How many stills a subject contributes is not a constant here any more: the cast index names a
 # subject's gallery and lib/castindex.py caps it at three (spec 2026-10-31 §1.2a). Nothing in this
-# script lists a character folder, so nothing here decides which stills are the newest.
+# script lists a character folder, so nothing here decides which stills are the newest. The cap on
+# reference images per call (nb.MAX_IMAGES) belongs to the client, not to this script.
 
 # The show's photographic look is visual.styleConstants in showrunner.json, appended to every
 # brief by compose_prompt. One standing warning for whoever edits that key: do NOT put
@@ -48,12 +42,6 @@ MAX_IMAGES = 8                         # total reference images per API call
 # response_format.aspect_ratio, and saying "cinematic frame" in the prompt made the model PAINT
 # letterbox bars into the picture as a style choice (ep04 pilot: 24px top / 189px bottom baked
 # in). A full-bleed sentence is what belongs there instead.
-
-KEY_SETUP = """GEMINI_API_KEY is not set. One-time setup (5 min):
-  1. https://aistudio.google.com/apikey -> Create API key (enable billing on the
-     project: paid tier = no visible watermark + real rate limits).
-  2. Add to ~/.zshenv:  export GEMINI_API_KEY="<key>"
-  3. Open a new terminal (or `source ~/.zshenv`) and re-run."""
 
 
 def normalize_key(ref: str) -> str:
@@ -69,9 +57,15 @@ def load_bible(cfg: dict, root: str) -> dict:
     return castindex.faces(castindex.load(cfg, root), root)
 
 
-def assemble_refs(shot: dict, bible: dict, max_images: int = MAX_IMAGES):
+def assemble_refs(shot: dict, bible: dict, max_images: int = nb.MAX_IMAGES):
     """-> (image_paths, identity_lines, missing_keys). Sheets first; stills
-    dropped (never sheets) to respect max_images. Dedupes by normalized key."""
+    dropped (never sheets) to respect max_images. Dedupes by normalized key.
+
+    A shot with no `refs` returns three empty lists, which is what makes its render a text-only
+    call. An `establishing` shot carries no refs unless they name a place, and then the place's
+    reference and gallery condition the render exactly as a character's do — the cast index's
+    `faces` is kind-agnostic, so a `location` or `ship` entry with a `face.ref` on disk resolves
+    here like any other (spec 2026-11-04 §2.2 and §3.2, as amended on 2026-11-04)."""
     seen_keys = set()
     sheets, stills, identities, missing, dropped_sheets = [], [], [], [], []
 
@@ -126,179 +120,17 @@ def assemble_refs(shot: dict, bible: dict, max_images: int = MAX_IMAGES):
 
 def compose_prompt(shot: dict, identity_lines: list[str], style_constants: str,
                    notes: str = "") -> str:
-    """The brief the model is given: who is in frame, what happens, and the show's look."""
+    """The brief the model is given: who is in frame, what happens, and the show's look.
+
+    `identity_lines` is empty for a shot with no refs, so such a shot's prompt is its brief
+    followed by the show's style constants and nothing else. An `establishing` shot carries no refs
+    unless they name a place, and then the place's identity line is prepended and its reference
+    image attached, so the place's own look conditions the render (spec 2026-11-04 §2.2 and §3.2,
+    as amended on 2026-11-04)."""
     parts = list(identity_lines) + [shot["brief"], style_constants]
     if notes:
         parts.append(f"PREVIOUS ATTEMPT REJECTED: {notes}. Fix exactly this.")
     return "\n\n".join(parts)
-
-
-def _redact(text) -> str:
-    """Strip the API key out of anything we return, print or log.
-
-    Some Google transports carry the key as a ?key= query param, so an
-    exception's str() can embed it — and these strings get printed by the
-    orchestrator. Never let one reach a log."""
-    s = str(text)
-    key = os.environ.get("GEMINI_API_KEY")
-    return s.replace(key, "<redacted>") if key else s
-
-
-def _client():
-    if not os.environ.get("GEMINI_API_KEY"):
-        sys.exit(KEY_SETUP)
-    from google import genai
-    return genai.Client()                        # reads GEMINI_API_KEY
-
-
-def _encode_refs(image_paths: list[str]) -> list[dict]:
-    """Read + b64-encode the reference images. Local I/O only — NO network.
-
-    Kept out of _api_call so a local failure (a ref deleted between assembly
-    and generation) can't burn a call against the cost cap."""
-    parts = []
-    for p in image_paths:
-        with open(p, "rb") as f:
-            parts.append({"type": "image",
-                          "data": base64.b64encode(f.read()).decode(),
-                          "mime_type": "image/png"})
-    return parts
-
-
-def _jpeg_to_png(data: bytes) -> bytes:
-    """Transcode the API's JPEG output to PNG bytes.
-
-    The model will only emit image/jpeg, but the entire pipeline addresses a
-    shot as <shot-id>.png — prompts.json ids, image-audit, registry-append,
-    build-timeline, the Remotion render, IMAGE-SHEET.md. Converting at this one
-    boundary keeps every consumer unchanged. No extra quality loss: the server
-    already did the only lossy step."""
-    from io import BytesIO
-    from PIL import Image
-    buf = BytesIO()
-    Image.open(BytesIO(data)).convert("RGB").save(buf, format="PNG")
-    return buf.getvalue()
-
-
-# Deterministic failures: the request itself is wrong, so every retry produces
-# the identical 4xx while still billing a call against MAX_CALLS.
-CLIENT_ERROR_TOKENS = ("invalid_request", "invalid_argument", "permission_denied",
-                       "unauthenticated", "not_found", "api key not valid")
-
-
-def _is_client_error(exc) -> bool:
-    """True for a deterministic 4xx (malformed request / auth / not found).
-
-    Retrying one can never succeed: the ep04 pilot burned 3 of 60 budgeted
-    calls re-sending the same rejected payload. 5xx and raw network faults are
-    NOT client errors — those keep their exponential-backoff retries."""
-    for attr in ("status_code", "code", "status"):
-        v = getattr(exc, attr, None)
-        if isinstance(v, int) and 400 <= v < 500:
-            return True
-    v = getattr(getattr(exc, "response", None), "status_code", None)
-    if isinstance(v, int) and 400 <= v < 500:
-        return True
-    s = str(exc).lower()
-    if re.search(r"error code: 4\d\d\b", s):
-        return True
-    return any(tok in s for tok in CLIENT_ERROR_TOKENS)
-
-
-def _refusal_diagnostic(interaction) -> str:
-    """One line describing an output-less response, so the first live run can
-    confirm the real safety-block shape (the docs never showed one). Shape
-    only — type + attribute names, never the payload."""
-    attrs = ", ".join(sorted(a for a in dir(interaction)
-                             if not a.startswith("_")))
-    return _redact(f"REFUSED (no output_image): response type="
-                   f"{type(interaction).__name__} attrs=[{attrs}]")
-
-
-def _write_atomic(out_path: str, data: bytes) -> None:
-    """Write via temp file + os.replace so out_path only ever exists complete.
-
-    The pipeline skips any shot whose PNG exists; a half-written file would be
-    silently treated as finished and could ship in an episode."""
-    folder = os.path.dirname(os.path.abspath(out_path))
-    fd, tmp = tempfile.mkstemp(dir=folder, prefix=".nbg-", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "wb") as f:
-            f.write(data)
-        os.chmod(tmp, 0o644)                     # mkstemp makes 0600; os.replace
-                                                 # keeps it. Every other image in
-                                                 # the folder is 0644 — match it.
-        os.replace(tmp, out_path)                # atomic within a filesystem
-    except Exception:
-        try:
-            os.unlink(tmp)                       # never leave a stray temp
-        except OSError:
-            pass
-        raise
-
-
-def _api_call(prompt: str, image_parts: list[dict]):
-    """One Gemini call. -> ('ok', png_bytes) | ('refused', None).
-
-    Requests JPEG (the only mime_type this model accepts) and returns PNG bytes
-    so callers — and the files on disk — stay PNG throughout.
-
-    Takes ALREADY-ENCODED image parts (see _encode_refs) so this function is
-    purely network. Raises on transport errors (caller retries). EXACT call
-    shape per the Interactions API documented at
-    https://ai.google.dev/gemini-api/docs/image-generation (verified Task 2,
-    Step 1) — adjust here only.
-    """
-    client = _client()
-    content = [{"type": "text", "text": prompt}] + list(image_parts)
-    interaction = client.interactions.create(
-        model=MODEL,
-        input=content,
-        response_format={"type": "image", "mime_type": OUTPUT_MIME,
-                         "aspect_ratio": ASPECT_RATIO, "image_size": IMAGE_SIZE},
-    )
-    img = getattr(interaction, "output_image", None)
-    if img is None or not getattr(img, "data", None):
-        print(_refusal_diagnostic(interaction))  # safety decline / empty output
-        return ("refused", None)
-    return ("ok", _jpeg_to_png(base64.b64decode(img.data)))
-
-
-def generate_image(prompt, image_paths, out_path, call_counter):
-    """-> 'ok' | 'refused' | 'error:<msg>'. Writes out_path only on 'ok'."""
-    if call_counter["calls"] >= MAX_CALLS:
-        sys.exit(f"COST CAP: {MAX_CALLS} API calls reached — aborting. "
-                 f"Re-run to continue (idempotent).")
-    try:
-        image_parts = _encode_refs(image_paths)   # local: must not bill a call
-    except Exception as e:
-        return f"error:{_redact(e)}"
-
-    last = None
-    for attempt in range(3):                      # transport retries
-        try:
-            call_counter["calls"] += 1            # an API call is now happening
-            status, data = _api_call(prompt, image_parts)
-        except SystemExit:
-            raise
-        except Exception as e:                    # network/5xx/etc
-            last = e
-            if _is_client_error(e):               # 4xx: identical every time
-                return f"error:{_redact(e)}"      # fail fast, bill exactly one
-            time.sleep(2 ** attempt)
-            continue
-        if status == "refused":
-            return "refused"
-        # The paid call already succeeded — that's billed no matter what
-        # happens next. A LOCAL write failure (full/read-only volume) can't
-        # possibly turn out differently on retry, so it must not re-enter this
-        # loop and bill two more calls for the same zero output.
-        try:
-            _write_atomic(out_path, data)
-        except Exception as e:
-            return f"error:{_redact(e)}"
-        return "ok"
-    return f"error:{_redact(last)}"
 
 
 def load_audit_laws(path: str) -> str:
@@ -379,67 +211,48 @@ def audit_image(shot, png_path, audit_laws: str, show_name: str):
     return (bool(v.get("pass")), str(v.get("notes", "")))
 
 
-def check_no_collective_populators(shots: list[dict], phrases, style_path: str) -> None:
-    """Pre-flight law enforcement (showrunner-ruled after one shot's extras incident):
-    a brief with a collective populator ("the crew", "a few figures", ...)
-    makes the model invent uncredited extras — wrong headcount, and once a
-    real-world flag patch on an invented figure. This must run BEFORE the
-    .bak backup step and before any API call: nothing generated, nothing
-    backed up, nothing spent, on ANY violation in the in-scope shot list.
-
-    The banned phrases are the show's (visual.collectivePopulatorBans) and the
-    authority named in the refusal is the show's style document (visual.style);
-    the grammar that reads them lives in lib/populators.py."""
-    found = populators.violations(shots, phrases)
-    if not found:
-        return
-    sys.exit(
-        "COLLECTIVE POPULATOR(S) in character brief(s) — refusing to spend "
-        f"({style_path}, visual.collectivePopulatorBans):\n"
-        + "\n".join(populators.report_lines(found)) + "\n"
-        "Every person in frame must be named and present in refs — "
-        "name them or cap the headcount, then re-run."
-    )
-
-
 def exit_code_for(tag: str) -> int:
     """The process exit code for a run's NANO_* tag.
 
-    NANO_PARTIAL exits 0, not 1. The tag is this step's RESULT, and the nano-banana gate after it
-    shows the partial batch to the showrunner, who decides whether it is good enough; a non-zero
-    exit would fail the step first and the gate would never open to ask. This is the rule the
-    bash node that preceded the engine enforced with `grep -qE 'NANO_(OK|PARTIAL)'` over the
-    captured output — a run that printed no tag at all is the only failure.
+    NANO_PARTIAL exits 0, not 1. The tag is this step's RESULT, and a partial render is a result
+    and not a failure. The step after this one is the vision audit (`image-audit-1`), which judges
+    the PNGs on disk; after the audit loop and the sheet, `image-gate` shows the sheet and the
+    rendered batch to the showrunner, who decides whether the batch is good enough (spec
+    2026-11-04 §4). Both read the files rather than this tag, and a non-zero exit would fail the
+    step before either of them ran. This is the rule the bash node that preceded the engine
+    enforced with `grep -qE 'NANO_(OK|PARTIAL)'` over the captured output — a run that printed no
+    tag at all is the only failure.
     """
     return 0 if tag in ("NANO_OK", "NANO_PARTIAL") else 1
 
 
 def run(ep, cfg, root, only=None, notes="", no_audit=False):
-    """Generate every missing character shot for one episode. `cfg` is the show's config and
-    `root` its absolute directory, from which every show path in the config is resolved."""
-    # Everything the SHOW decides about a frame, read once: how its photography reads, which laws
-    # the audit applies, which document a refusal cites, and which collective phrases are banned in
-    # a brief. Who is in the cast is the index's to say, read through load_bible below.
+    """Generate every missing pipeline shot for one episode, of any type. `cfg` is the show's
+    config and `root` its absolute directory, from which every show path in the config is
+    resolved."""
+    # Everything the SHOW decides about a frame, read once: how its photography reads and which
+    # laws the audit applies. Who is in the cast is the index's to say, read through load_bible
+    # below.
     style_constants = str(sc.value(cfg, "visual", "styleConstants"))
     audit_laws = load_audit_laws(sc.path(cfg, "visual", "auditLaws", root=root))
-    style_path = str(sc.value(cfg, "visual", "style"))
-    bans = list(sc.value(cfg, "visual", "collectivePopulatorBans"))
     show_name = str(sc.value(cfg, "showName"))
     prod = sc.production_dir(cfg)
 
     base = f"{prod}/{ep}/images"
     doc = json.load(open(f"{base}/prompts.json"))
     bible = load_bible(cfg, root)
-    # A character shot whose `source` is "showrunner" is the showrunner's to make by hand, so it
-    # never enters `shots`: no API call is spent on it, no audit judges it, and it takes no result
-    # row. The engine's `showrunner-images` guard is what holds the line until its PNG is on disk.
-    shots = [s for s in doc["shots"] if s.get("type") == "character"
-             and s.get("source", "pipeline") != "showrunner"]
+    # Every shot the pipeline owns is rendered here, whatever its type: an establishing shot from
+    # its brief alone, a character shot conditioned on its refs (spec 2026-11-04 §3.2). What takes
+    # a shot out of the set is `source`, not `type` — a shot whose `source` is "showrunner" is the
+    # showrunner's to make by hand, so no API call is spent on it, no audit judges it, and it takes
+    # no result row. The engine's `showrunner-images` guard is what holds the line until its PNG is
+    # on disk.
+    shots = [s for s in doc["shots"] if s.get("source", "pipeline") != "showrunner"]
     by_hand = [str(s.get("id", "?")) for s in doc["shots"]
-               if s.get("type") == "character" and s.get("source", "pipeline") == "showrunner"]
+               if s.get("source", "pipeline") == "showrunner"]
     if by_hand:
-        # Say it. Silence reads as loss: a run that generates two of five character shots and
-        # says nothing about the other three looks like a run that dropped them.
+        # Say it. Silence reads as loss: a run that generates two of five shots and says nothing
+        # about the other three looks like a run that dropped them.
         print(f"  {len(by_hand)} showrunner-made shot(s) left alone: {', '.join(by_hand)}")
 
     if only:
@@ -447,14 +260,8 @@ def run(ep, cfg, root, only=None, notes="", no_audit=False):
         unknown = [oid for oid in only if oid not in valid_ids]
         if unknown:                                   # validate BEFORE touching anything
             sys.exit(f"unknown --only id(s): {', '.join(unknown)}. "
-                     f"Valid character-shot ids: {', '.join(sorted(valid_ids)) or '(none)'}")
+                     f"Valid shot ids: {', '.join(sorted(valid_ids)) or '(none)'}")
         shots = [s for s in shots if s["id"] in only]
-
-    # Mechanical pre-flight: fail the whole run before any money is spent if
-    # ANY in-scope shot's brief has a collective populator. Must run before
-    # the .bak backup step and before any API call (showrunner ruling, after a brief that
-    # said "the crew" put an uncredited figure in a paid frame).
-    check_no_collective_populators(shots, bans, style_path)
 
     # --only re-roll: back a pre-existing PNG up (never delete it outright) so
     # a hand-made image can be restored if generation doesn't fully succeed.
@@ -502,7 +309,7 @@ def run(ep, cfg, root, only=None, notes="", no_audit=False):
                 else:
                     state, fb = "FAILED-AUDIT", notes
                     for attempt in range(1, MAX_ATTEMPTS + 1):
-                        ret = generate_image(
+                        ret = nb.generate_image(
                             compose_prompt(s, identities, style_constants, fb),
                             imgs, out, counter)
                         if ret == "refused":

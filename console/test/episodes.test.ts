@@ -71,18 +71,18 @@ describe("episodeRow", () => {
     const { root, store } = await appWith(await makeShow());
     await writeIn(root, "Episodes/s02e06/premise.md", "A salvage claim.\n");
     await writeIn(root, "Production/s02e06/images/prompts.json", JSON.stringify({
-      shots: [{ id: "amb-04", source: "showrunner", prompt: "the harbour at dusk" }, { id: "amb-05", source: "nano-banana", prompt: "a winch" }],
+      shots: [{ id: "s4-establishing", source: "showrunner", prompt: "the harbour at dusk" }, { id: "s5-establishing", source: "nano-banana", prompt: "a winch" }],
     }));
     await seedRun(root, "s02e06", "r1", [
       { kind: "run_started", payload: { pipeline: "episode", episodeId: "s02e06" } },
       { stepId: "audio-gate", kind: "gate_opened", payload: { attempt: 1, message: "approve the mix" } },
       { stepId: "audio-gate", kind: "gate_answered", payload: { approved: true, attempt: 1, by: "console:test" } },
-      { stepId: "nano-banana-gate", kind: "gate_opened", payload: { attempt: 1, message: "drop in the ambient shots" } },
+      { stepId: "image-gate", kind: "gate_opened", payload: { attempt: 1, message: "approve the shots" } },
     ]);
     const row = await store.episodeRow("s02e06");
     expect(row.stage).toBe("NEEDS_IMAGES");
-    expect(row.openGate).toMatchObject({ stepId: "nano-banana-gate", attempt: 1 });
-    expect(row.needs.imagesMissing).toEqual(["amb-04"]);
+    expect(row.openGate).toMatchObject({ stepId: "image-gate", attempt: 1 });
+    expect(row.needs.imagesMissing).toEqual(["s4-establishing"]);
     expect(row.needs.ideaMissing).toBe(false);
     store.close();
   });

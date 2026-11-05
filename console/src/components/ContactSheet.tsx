@@ -5,16 +5,16 @@ import { useApi, type DirEntry } from "../api.js";
  *  has a directory listing. The sheet is in filename order, which for shots named by scene and
  *  beat is the order the episode plays in.
  *
- *  The flags are the re-roll path. `image-gate` and `nano-banana-gate` both ask "are these the
- *  shots?", and the answer that is not "yes" is "these ones again, for this reason" — so flagging
- *  a shot here composes a line of the rejection note (`projections.ts`'s
- *  `composeShotRejection`), and the Gate page owns the note. This component owns no text: it
- *  reports the flag set upward and is handed the current one back, so the notes field has exactly
- *  one owner.
+ *  The flags are the re-roll path. `image-gate` asks "are these the shots?", and the answer that
+ *  is not "yes" is "these ones again, for this reason" — so flagging a shot here composes a line
+ *  of the rejection note (`projections.ts`'s `composeShotRejection`), and the Gate page owns the
+ *  note. This component owns no text: it reports the flag set upward and is handed the current
+ *  one back, so the notes field has exactly one owner.
  *
- *  Images are not lazily loaded and not thumbnailed: a shot list is forty PNGs from one directory
- *  on the same machine, and a judgment about whether a face reads at distance cannot be made from
- *  a thumbnail. */
+ *  Images are not lazily loaded and not thumbnailed: a shot list is twelve to fifteen PNGs from
+ *  one directory on the same machine — one establishing shot per scene, plus whatever the
+ *  showrunner added to a scene by hand (spec 2026-11-04 §0 and §9) — and a judgment about whether
+ *  a face reads at distance cannot be made from a thumbnail. */
 
 const IMAGE_EXTENSIONS = [".png", ".jpg", ".jpeg", ".webp"];
 

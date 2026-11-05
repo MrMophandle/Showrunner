@@ -12,8 +12,14 @@
     "writer": "claude-fable-5"
   },
   "airMap": {
-    "ep01": [1, 1],
-    "ep02": [1, 2]
+    "ep01": [
+      1,
+      1
+    ],
+    "ep02": [
+      1,
+      2
+    ]
   },
   "output": {
     "nasMount": "/Volumes/media",
@@ -24,7 +30,11 @@
   },
   "audio": {
     "sampleRate": 24000,
-    "loudness": { "i": -14, "tp": -1.5, "lra": 11 },
+    "loudness": {
+      "i": -14,
+      "tp": -1.5,
+      "lra": 11
+    },
     "voiceDesignLoudnessI": -16,
     "roomToneDb": -42,
     "roomToneFundamentalHz": 55,
@@ -33,9 +43,15 @@
     "titleCardGapMaxSeconds": 8.5,
     "sceneTransitionGapSeconds": 3.5,
     "sceneTransitionGapMaxSeconds": 4.0,
-    "authoredPauseRangeSeconds": [0.2, 3.5],
+    "authoredPauseRangeSeconds": [
+      0.2,
+      3.5
+    ],
     "narratorSpeakerKey": "narrator",
-    "mainCast": ["narrator", "Maeve"],
+    "mainCast": [
+      "narrator",
+      "Maeve"
+    ],
     "voiceRefsDir": "Production/voice-refs",
     "guestRefsDir": "Production/{episodeId}/guest-refs",
     "voiceRegistry": "Canon/voice-registry.md"
@@ -46,11 +62,11 @@
     "auditLaws": "Canon/visual-audit-laws.md",
     "castingPileDir": "Canon/characters",
     "candidatesDir": "Canon/_candidates",
-    "shotFrame": [1024, 576],
-    "characterKinds": ["human", "creature", "ship"],
-    "ambientPromptScaffold": ["lamp room glass, ", "grey sea horizon, "],
-    "styleConstants": "overcast coastal realism, hand-held framing, no text, no watermark.",
-    "collectivePopulatorBans": ["the crew", "a crowd", "background figures"]
+    "shotFrame": [
+      1024,
+      576
+    ],
+    "styleConstants": "overcast coastal realism, hand-held framing, no text, no watermark."
   },
   "video": {
     "fps": 30,

@@ -210,11 +210,11 @@ def production_dir(cfg: dict) -> str:
     """The show's production directory, as the SHOW-RELATIVE name every step builds its paths on.
 
     Show-relative rather than resolved against the show root -- which is what path() would do --
-    for two reasons measured across the twenty-seven sites that call it. A step runs with the show
-    root as its working directory (see this module's docstring), so a relative name opens the same
-    file an absolute one would. And seven of those sites PRINT the path: four into a result line or
-    a refusal (image-qc.py, master-video.py, publish-kit.py, shot-sheet.py), three into a markdown
-    sheet the show repository commits (IMAGE-SHEET.md, SHOT-SHEET.md, upload.md). An absolute path
+    for two reasons measured across every site that calls it. A step runs with the show root as
+    its working directory (see this module's docstring), so a relative name opens the same file an
+    absolute one would. And six of those sites PRINT the path: three into a result line or a
+    refusal (master-video.py, publish-kit.py, shot-sheet.py), three into a markdown sheet the show
+    repository commits (IMAGE-SHEET.md, SHOT-SHEET.md, upload.md). An absolute path
     there would record the operator's home directory in the show's own history.
 
     A show whose productionDir is itself absolute is still honoured, because every caller

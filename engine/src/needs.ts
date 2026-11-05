@@ -72,15 +72,25 @@ function dirs(show: ShowConfig) {
 }
 
 /** One line per reference the outline's cast needs and the show does not have, every subject
- *  looked up in the cast index the same way: a face for everybody on the page — a character, a
- *  location, a ship — and for everybody the outline tags `speaks`, a voice that is LOCKED in the
- *  index with its WAV on disk. Recurring and guest are not two paths any more (Plan L1,
- *  2026-10-31): a guest used to pass on a WAV whose filename began with their slug sitting in the
- *  episode's `guest-refs` directory, which is a candidate take and not a casting decision, so a
- *  guest could reach synthesis with nobody having ruled on the voice and no face at all. Two
- *  authoring slips are reported the same way, because a cast line this probe cannot read is a
- *  subject it cannot check: a line inside the section that misses the grammar, and an entry whose
- *  tags name none of `recurring`, `guest` or `location`.
+ *  looked up in the cast index the same way. Two things are demanded of a subject since spec
+ *  2026-11-04 §7 (docs/specs/2026-11-04-the-establishing-shot-design.md): an entry in the index
+ *  for everybody on the page, and — for everybody the outline tags `speaks` — a voice that is
+ *  LOCKED in the index with its WAV on disk, as Plan L1 (2026-10-31) left the voice half.
+ *
+ *  **No face is demanded of anybody, and none is looked at.** The engine makes one establishing
+ *  shot per scene and authors no character shot of its own, so there is no step here whose work a
+ *  missing face would ruin; the shot list is where a face becomes necessary, and the lint that
+ *  reads it (`scripts/shot-list-check.py`, spec 2026-11-04 §2.5 rule 3) refuses a shot whose refs
+ *  name an entry with no `face.ref` on disk — the one place the question "which faces does this
+ *  episode need?" has an answer. This supersedes the casting-stop spec of 2026-10-31 §1, which
+ *  demanded a face for everybody on the page.
+ *
+ *  Recurring and guest are not two paths (Plan L1, 2026-10-31): a guest used to pass on a WAV
+ *  whose filename began with their slug sitting in the episode's `guest-refs` directory, which is
+ *  a candidate take and not a casting decision, so a guest could reach synthesis with nobody
+ *  having ruled on the voice. Two authoring slips are reported the same way, because a cast line
+ *  this probe cannot read is a subject it cannot check: a line inside the section that misses the
+ *  grammar, and an entry whose tags name none of `recurring`, `guest` or `location`.
  *
  *  A show with no index at all is the one case that reports a single line and stops looking, and
  *  the line carries the command that builds it: there is one remedy, and a list of subjects that
@@ -123,12 +133,8 @@ export async function missingRefs(showRoot: string, episodeId: string, show: Sho
     const key = castKey(index, entry.name);
     const found = key === undefined ? undefined : index.cast[key];
     if (found === undefined) { missing.push(`${entry.name}: no entry in ${indexRel} (tried ${slug}, the-${slug})`); continue; }
-    // A face: every subject on the page has one — a character, a location, a ship.
-    const faceRef = found.face?.ref;
-    if (typeof faceRef !== "string" || !(await exists(resolveShowPath(showRoot, faceRef)))) {
-      missing.push(`${entry.name}: reference image missing at ${typeof faceRef === "string" ? faceRef : "(no ref)"} (${indexRel} key ${key})`);
-    }
-    // A voice: every speaking subject has one, LOCKED, with its WAV on disk.
+    // A voice: every speaking subject has one, LOCKED, with its WAV on disk. It is the only thing
+    // this probe demands of an entry; a face is the shot list's business (see the note above).
     if (speaks) {
       const v = found.voice;
       if (v === undefined || v === null) missing.push(`${entry.name}: no voice in ${indexRel} (key ${key})`);

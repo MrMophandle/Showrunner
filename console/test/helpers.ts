@@ -31,10 +31,10 @@ export const FAKE_WORKER = path.join(here, "fixtures", "fake-worker.mjs");
  *  real worker would have written. */
 export const FAKE_SETUP_WORKER = path.join(here, "fixtures", "fake-setup-worker.mjs");
 
-/** The eight gates of the episode pipeline, so `makeShow` can write the message file each one
+/** The seven gates of the episode pipeline, so `makeShow` can write the message file each one
  *  names. A gate with no message file is a load-time error in `orderSteps`, so a fixture show
  *  that is missing one cannot run at all. */
-const GATES = ["outline-gate", "script-gate", "casting-gate", "audio-gate", "nano-banana-gate", "image-gate", "final-gate", "canon-gate"] as const;
+const GATES = ["outline-gate", "script-gate", "casting-gate", "audio-gate", "image-gate", "final-gate", "canon-gate"] as const;
 
 /** Writes one file under the show root, creating its directory. Returns the absolute path. */
 export async function writeIn(root: string, rel: string, text: string): Promise<string> {

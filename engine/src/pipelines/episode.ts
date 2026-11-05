@@ -39,12 +39,12 @@ const HOUR = 60 * MIN;
  *  keyed on their gates, and a step id appearing in both `gates` and `approved` is legal and
  *  intended (see `validateStageMap` in engine/src/stages.ts), as ASSEMBLY already was on
  *  final-gate; IMAGES is keyed on image-sheet-final, which is the step stamp-images depended on,
- *  and not on image-gate three steps earlier. PUBLISH_KIT is keyed on the later of the two steps
+ *  and not on image-gate two steps earlier. PUBLISH_KIT is keyed on the later of the two steps
  *  that follow finalize; CANON on the commit rather than the gate, which carries a `when` (F-05). */
 export const EPISODE_STAGE_MAP: StageMap = {
   gates: {
     "outline-gate": "DRAFT_OUTLINE", "script-gate": "DRAFT_SCRIPT", "casting-gate": "DRAFT_CASTING", "audio-gate": "DRAFT_AUDIO",
-    "nano-banana-gate": "DRAFT_IMAGES", "image-gate": "DRAFT_IMAGES", "final-gate": "DRAFT_ASSEMBLY", "canon-gate": "DRAFT_CANON",
+    "image-gate": "DRAFT_IMAGES", "final-gate": "DRAFT_ASSEMBLY", "canon-gate": "DRAFT_CANON",
   },
   approved: {
     "outline-gate": "OUTLINE", "script-gate": "SCRIPT", "casting-gate": "CASTING", "audio-gate": "AUDIO",
@@ -352,6 +352,22 @@ export function episodePipeline(opts: EpisodePipelineOptions): Pipeline {
       onReject: fixAgent("audio-gate-fix", "audio-gate.reject.md", "medium", ["Read", "Edit", "Write", "Glob", "Grep", "Bash"], [ttsScript]),
       rerunOnReject: ["tts-generate"],
     },
+    // ── the image stage ──────────────────────────────────────────────────────────────────────
+    // Spec 2026-11-04 §4 (docs/specs/2026-11-04-the-establishing-shot-design.md), in order: the
+    // director, the lint, one renderer, the audit loop, the sheet, one gate, the guard, the sheet
+    // as approved. `visual-direction` writes one establishing shot per scene header of the script
+    // (§2.1) and the engine authors no character shot of its own; `shot-list-check` reads the
+    // script against the shot list (§2.5) and its report-only tag drives the same two-step fix
+    // loop the lint it replaced drove (`SHOTS_BAD` → the fix agent → a second check that fails
+    // the run). Every shot of every type is rendered by nano-banana (§3.2), which is why there is
+    // one renderer step and one gate: the gate that approved the first paid shots before more
+    // were spent is retired, because every shot is a paid shot now.
+    //
+    // `showrunner-images` sits **after** the gate because the gate is what creates its demand: a
+    // rejection note saying the showrunner will make a shot himself sets that shot's `source` to
+    // `showrunner` (§4.1), and the guard then holds the run until his PNG is on disk (§2.4).
+    // Before the gate there is nothing for it to wait on, and a run would park on a missing file
+    // the showrunner had not yet been asked for.
     {
       // Rule 1.1: the Vision module takes the approved mix as an input, so the ordering cannot be
       // lost by editing a dependency list — the mix is declared here as well as depended on.
@@ -359,35 +375,29 @@ export function episodePipeline(opts: EpisodePipelineOptions): Pipeline {
       allowedTools: ["Read", "Write", "Glob", "Grep"], context: "fresh", timeoutMs: 30 * MIN,
       inputs: [visualStyle, castIndex, script, outline, mix], outputs: [prompts],
     },
-    { kind: "script", id: "populator-check", dependsOn: ["visual-direction"], argv: py("populator-check.py", "--report-only"), inputs: [prompts], timeoutMs: MIN },
+    // The script is an input of both lint steps: the lint reads its scene headers, so a script
+    // edited between two attempts must miss the cache (an undeclared input never enters the hash).
+    { kind: "script", id: "shot-list-check", dependsOn: ["visual-direction"], argv: py("shot-list-check.py", "--report-only"), inputs: [script, prompts, castIndex], timeoutMs: MIN },
     {
-      kind: "agent", id: "visual-direction-fix", dependsOn: ["populator-check"], when: (ctx) => String(ctx.results["populator-check"] ?? "").startsWith("POPULATORS_BAD"),
+      kind: "agent", id: "visual-direction-fix", dependsOn: ["shot-list-check"], when: (ctx) => String(ctx.results["shot-list-check"] ?? "").startsWith("SHOTS_BAD"),
       promptFile: "visual-direction-fix.md", model: "medium", allowedTools: ["Read", "Edit", "Write", "Glob", "Grep"], context: "fresh", timeoutMs: 15 * MIN,
       inputs: [prompts, castIndex], outputs: [prompts],
     },
     {
-      kind: "script", id: "populator-check-final", dependsOn: ["visual-direction-fix"], when: (ctx) => String(ctx.results["populator-check"] ?? "").startsWith("POPULATORS_BAD"),
-      argv: py("populator-check.py"), inputs: [prompts], timeoutMs: MIN,
+      kind: "script", id: "shot-list-check-final", dependsOn: ["visual-direction-fix"], when: (ctx) => String(ctx.results["shot-list-check"] ?? "").startsWith("SHOTS_BAD"),
+      argv: py("shot-list-check.py"), inputs: [script, prompts, castIndex], timeoutMs: MIN,
     },
-    { kind: "script", id: "image-generate", dependsOn: ["populator-check-final", "audio-mix"], argv: py("image-generate.py"), inputs: [prompts, castIndex], timeoutMs: 3 * HOUR },
-    { kind: "script", id: "nano-banana-generate", dependsOn: ["populator-check-final"], argv: py("nano-banana-generate.py"), inputs: [prompts, castIndex], timeoutMs: 3 * HOUR },
-    { kind: "script", id: "image-sheet", dependsOn: ["nano-banana-generate", "image-generate"], argv: py("image-sheet.py"), inputs: [prompts], outputs: [imageSheet], timeoutMs: MIN },
-    {
-      kind: "gate", id: "nano-banana-gate", dependsOn: ["image-sheet"], messageFile: "nano-banana-gate.gate.md", maxAttempts: 10,
-      onReject: fixAgent("nano-banana-gate-fix", "nano-banana-gate.reject.md", "medium", ["Read", "Edit", "Write", "Glob", "Grep", "Bash"], [prompts, castIndex]),
-      rerunOnReject: ["nano-banana-generate", "image-generate"],
-    },
-    {
-      kind: "guard", id: "showrunner-images", dependsOn: ["nano-banana-gate"],
-      check: async (ctx) => {
-        const missing = await missingShowrunnerImages(ctx.showRoot, ctx.episodeId, show);
-        return missing.length === 0 ? { pass: true, message: "every showrunner-made shot is on disk" } : { pass: false, message: `NEEDS_IMAGES: drop in ${missing.join(", ")} under ${prod}/images/ and resume` };
-      },
-    },
-    imageAudit(1, ["showrunner-images"]),
-    { kind: "script", id: "image-regenerate-1", dependsOn: ["image-audit-1"], when: auditFailed(1), argv: py("image-generate.py"), inputs: [prompts], timeoutMs: 3 * HOUR },
+    // The three renderer steps opt out of the step cache (spec 2026-11-04 §4): the renderer skips
+    // a shot whose PNG is on disk, and the PNGs are declared as nobody's outputs, so a cached
+    // completion on an unchanged shot list would leave a PNG the audit deleted unrendered.
+    { kind: "script", id: "nano-banana-generate", dependsOn: ["shot-list-check-final"], argv: py("nano-banana-generate.py"), inputs: [prompts, castIndex], cache: "never", timeoutMs: 3 * HOUR },
+    imageAudit(1, ["nano-banana-generate"]),
+    // Each re-roll is a paid call, and the renderer skips a shot whose PNG is on disk, so a
+    // regenerate step renders exactly the shots whose PNGs the audit deleted. Two re-roll rounds
+    // is the cap, which spec 2026-11-04 §4 keeps unchanged.
+    { kind: "script", id: "image-regenerate-1", dependsOn: ["image-audit-1"], when: auditFailed(1), argv: py("nano-banana-generate.py"), inputs: [prompts, castIndex], cache: "never", timeoutMs: 3 * HOUR },
     imageAudit(2, ["image-regenerate-1"], auditFailed(1)),
-    { kind: "script", id: "image-regenerate-2", dependsOn: ["image-audit-2"], when: auditFailed(2), argv: py("image-generate.py"), inputs: [prompts], timeoutMs: 3 * HOUR },
+    { kind: "script", id: "image-regenerate-2", dependsOn: ["image-audit-2"], when: auditFailed(2), argv: py("nano-banana-generate.py"), inputs: [prompts, castIndex], cache: "never", timeoutMs: 3 * HOUR },
     imageAudit(3, ["image-regenerate-2"], auditFailed(2)),
     {
       kind: "guard", id: "image-audit-verdict", dependsOn: ["image-audit-3"],
@@ -396,20 +406,33 @@ export function episodePipeline(opts: EpisodePipelineOptions): Pipeline {
         const summary = String(verdictField(last, "summary") ?? "");
         return verdictPass(last)
           ? { pass: true, message: summary }
-          : { pass: false, message: `ambient images still failing after 3 audits: ${summary} — resume the run and reset image-audit-1 to start the audit again, or fix the named shots by hand` };
+          : { pass: false, message: `images still failing after 3 audits: ${summary} — resume the run and reset image-audit-1 to start the audit again, or fix the named shots by hand` };
       },
     },
+    { kind: "script", id: "image-sheet", dependsOn: ["image-audit-verdict"], argv: py("image-sheet.py"), inputs: [prompts], outputs: [imageSheet], timeoutMs: MIN },
     {
-      kind: "gate", id: "image-gate", dependsOn: ["image-audit-verdict"], messageFile: "image-gate.gate.md", maxAttempts: 5,
+      // The one image gate (§4.1). A rejection note names shots: the fix agent folds a note into
+      // that shot's brief and deletes its PNG, adds a character shot the showrunner asked for, or
+      // marks a shot as one he will make himself. `rerunOnReject` names the renderer alone, and
+      // the reset takes its whole dependency closure, so the audit loop, the sheet and this gate
+      // all run again on the regenerated set.
+      kind: "gate", id: "image-gate", dependsOn: ["image-sheet"], messageFile: "image-gate.gate.md", maxAttempts: 5,
       onReject: fixAgent("image-gate-fix", "image-gate.reject.md", "medium", ["Read", "Edit", "Write", "Glob", "Grep", "Bash"], [prompts]),
-      rerunOnReject: ["image-generate", "nano-banana-generate"],
+      rerunOnReject: ["nano-banana-generate"],
+    },
+    {
+      kind: "guard", id: "showrunner-images", dependsOn: ["image-gate"],
+      check: async (ctx) => {
+        const missing = await missingShowrunnerImages(ctx.showRoot, ctx.episodeId, show);
+        return missing.length === 0 ? { pass: true, message: "every showrunner-made shot is on disk" } : { pass: false, message: `NEEDS_IMAGES: drop in ${missing.join(", ")} under ${prod}/images/ and resume` };
+      },
     },
     // `registry-append` sat here, between the image gate and the final sheet, and copied every
     // approved character still into that character's folder under the casting pile. It is gone
     // (spec 2026-10-31 §1.2b): a character folder holds a sheet, one reference and at most three
     // gallery images, the gallery is a list in the cast index rather than whatever the step had
     // dropped on disk, and the step was the thing that grew the folders past the cap.
-    { kind: "script", id: "image-sheet-final", dependsOn: ["image-gate"], argv: py("image-sheet.py"), inputs: [prompts], outputs: [imageSheet], timeoutMs: MIN },
+    { kind: "script", id: "image-sheet-final", dependsOn: ["showrunner-images"], argv: py("image-sheet.py"), inputs: [prompts], outputs: [imageSheet], timeoutMs: MIN },
     commit("assets-commit", ["audio-gate", "image-sheet-final"], `${episodeId}: assets — manifest, shot list, image sheet, casting pile (assets phase)`,
       [ttsScript, prompts, imageSheet, castingPileDir, castIndex, runsDir]),
 

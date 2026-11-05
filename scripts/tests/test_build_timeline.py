@@ -55,8 +55,8 @@ def episode(show_root: Path) -> Path:
     ]}))
     (base / "images").mkdir(parents=True)
     (base / "images" / "prompts.json").write_text(json.dumps({"shots": [
-        {"id": "s01-lamp", "type": "ambient", "prompt": "lamp room glass, cold light"},
-        {"id": "s01-stair", "type": "ambient", "prompt": "grey sea horizon, a stair"},
+        {"id": "s01-lamp", "type": "establishing", "brief": "the lamp room in cold light"},
+        {"id": "s01-stair", "type": "establishing", "brief": "the stair under a grey sea horizon"},
     ]}))
     for shot in ("s01-lamp", "s01-stair"):
         _png(base / "images" / f"{shot}.png")

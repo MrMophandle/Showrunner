@@ -71,21 +71,7 @@
         1024,
         576
       ],
-      "characterKinds": [
-        "human",
-        "creature",
-        "ship"
-      ],
-      "ambientPromptScaffold": [
-        "lamp room glass, ",
-        "grey sea horizon, "
-      ],
-      "styleConstants": "overcast coastal realism, hand-held framing, no text, no watermark.",
-      "collectivePopulatorBans": [
-        "the crew",
-        "a crowd",
-        "background figures"
-      ]
+      "styleConstants": "overcast coastal realism, hand-held framing, no text, no watermark."
     },
     "video": {
       "fps": 30,
@@ -163,8 +149,7 @@
     "image-audit-verdict": "s01-lamp-room: pass; s04-quay-bench: fixed (prompt rewritten positively, seed +1000); s07-vale-still-corner: character-note — visible corner watermark, re-export clean.",
     "image-gate:rejection": "The showrunner rejected this step: the ending does not pay off the cold open, and the Warden's scale is wrong in two shots. Fix both and resubmit.",
     "master": "MASTER OK: episode-mastered.mp4, 00:21:08, -14.0 LUFS.",
-    "nano-banana-gate:rejection": "The showrunner rejected this step: the ending does not pay off the cold open, and the Warden's scale is wrong in two shots. Fix both and resubmit.",
-    "nano-banana-generate": "NANO_OK: 14 of 14 character shots generated, 0 audit failures.",
+    "nano-banana-generate": "NANO_OK 12/12",
     "outline-gate:rejections": [
       "The showrunner rejected this step: beat 4 has the Warden opening the conversation. He answers; he does not open. Rewrite the beat and keep the length."
     ],
@@ -172,7 +157,6 @@
       "round": 2,
       "green": true
     },
-    "populator-check": "POPULATORS_BAD: s05-galley-supper — \"the crew\" (banned substring); s09-dock-argument — \"background figures\" (banned substring).",
     "propose": "Proposed canon edits: two ledger threads advanced, one character sheet amended.",
     "publish-copy": "A keeper takes a winter contract on a stretch of coast whose light still burns, and finds out who has been tending it.",
     "repetition-check": {
@@ -181,6 +165,7 @@
       "issues": []
     },
     "script-gate:rejections": [],
+    "shot-list-check": "SHOTS_BAD 2 shots: s3-establishing, s4-establishing — s3-establishing: names Vale (cast key vale); s4-establishing: names Harbor (location, cast key harbor) — add it to refs so the render conditions on its reference",
     "structure-check": {
       "pass": true,
       "verdict": "DRAFT PASSED",

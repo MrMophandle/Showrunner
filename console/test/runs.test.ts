@@ -93,7 +93,7 @@ describe("RunStore", () => {
     // page prints beside the run's own hash.
     expect(v.pipeline).toMatchObject({ name: "episode", hash: "abc", engineVersion: "0.0.1", changed: true });
     expect(v.pipeline.hashNow).toMatch(/^[0-9a-f]{64}$/);
-    expect(v.steps.length).toBe(67);
+    expect(v.steps.length).toBe(65);
     // A step the log never mentions still has a row, which is what makes the count the
     // pipeline's rather than the log's.
     expect(v.steps.find((s) => s.id === "hand-edits-outline")).toEqual({ id: "hand-edits-outline", kind: "guard", status: "pending" });

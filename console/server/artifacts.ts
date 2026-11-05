@@ -175,11 +175,11 @@ export interface DirEntry { name: string; size: number; isDir: boolean }
 /** `GET /api/shows/:show/episodes/:id/files/*`: one file with Range, or one directory as a JSON
  *  listing.
  *
- *  A directory is answered rather than refused because three of the eight gates are about a
- *  directory and not a file — the shot images, the guest voice references — and the client cannot
- *  name their contents without being told what is in them. The listing is one level deep and
- *  hides the same dotfiles the fence refuses, so a name the listing offers is always a name the
- *  route will then serve. */
+ *  A directory is answered rather than refused because two of the seven gates are about a
+ *  directory and not a file — the shot images at `image-gate`, the guest voice references at
+ *  `casting-gate` — and the client cannot name their contents without being told what is in
+ *  them. The listing is one level deep and hides the same dotfiles the fence refuses, so a name
+ *  the listing offers is always a name the route will then serve. */
 export async function serveArtifact(c: Context, ctx: ShowContext, episodeId: string, showRelative: string): Promise<Response> {
   const fenced = resolveArtifactPath(ctx, episodeId, showRelative);
   if (!fenced.ok) return c.json({ error: fenced.error }, 400);

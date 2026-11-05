@@ -110,33 +110,7 @@
         1024,
         576
       ],
-      "characterKinds": [
-        "human",
-        "creature",
-        "ship"
-      ],
-      "ambientPromptScaffold": [
-        "ducting overhead, ",
-        "deep teal-black starfield, ",
-        "starfield, ",
-        "low-key but clearly exposed"
-      ],
-      "styleConstants": "dark hard science fiction, low-key but clearly exposed, real shadow, film grain. The picture fills the entire frame edge to edge \u2014 full-bleed, no letterbox bars or black borders. no text, no watermark, no signature.",
-      "collectivePopulatorBans": [
-        "the crew",
-        "the others",
-        "other figures",
-        "a few figures",
-        "several figures",
-        "some figures",
-        "some people",
-        "onlookers",
-        "bystanders",
-        "patrons",
-        "a crowd",
-        "crowd of",
-        "background figures"
-      ]
+      "styleConstants": "dark hard science fiction, low-key but clearly exposed, real shadow, film grain. The picture fills the entire frame edge to edge \u2014 full-bleed, no letterbox bars or black borders. no text, no watermark, no signature."
     },
     "video": {
       "fps": 30,
@@ -219,15 +193,13 @@
     "image-audit-verdict": "s01-hold-corridor: pass; s04-relic-bench: fixed (prompt rewritten positively, seed +1000); s07-opha-still-corner: character-note \u2014 visible corner watermark, re-export clean.",
     "image-gate:rejection": "The showrunner rejected this step: the ending does not pay off the cold open, and Opha's scale is wrong in two shots. Fix both and resubmit.",
     "master": "MASTER OK: episode-mastered.mp4, 00:23:41, -14.0 LUFS.",
-    "nano-banana-gate:rejection": "The showrunner rejected this step: the ending does not pay off the cold open, and Opha's scale is wrong in two shots. Fix both and resubmit.",
-    "nano-banana-generate": "NANO_OK: 18 of 18 character shots generated, 0 audit failures.",
+    "nano-banana-generate": "NANO_OK 12/12",
     "outline-gate:rejection": "The showrunner rejected this step: the ending does not pay off the cold open, and Opha's scale is wrong in two shots. Fix both and resubmit.",
     "outline-gate:rejections": [],
     "panel": {
       "round": 2,
       "green": true
     },
-    "populator-check": "POPULATORS_BAD: s05-galley-supper \u2014 \"the crew\" (banned substring); s09-dock-argument \u2014 \"several figures\" (banned substring).",
     "propose": "Proposed canon edits: two ledger threads advanced, one character sheet amended.",
     "publish-copy": "A salvage crew takes a contract on a dead hauler that still has power, and finds the reason it was left running.",
     "repetition-check": {
@@ -238,6 +210,7 @@
     "script-gate:rejection": "The showrunner rejected this step: the ending does not pay off the cold open, and Opha's scale is wrong in two shots. Fix both and resubmit.",
     "script-gate:rejections": [],
     "season-status": "SEASON STATUS: 10 episodes, 10 finalized, 0 drafting.",
+    "shot-list-check": "SHOTS_BAD 2 shots: s3-establishing, s4-establishing \u2014 s3-establishing: names Sarn (cast key sarn); s4-establishing: names Coalvane (ship, cast key coalvane) \u2014 add it to refs so the render conditions on its reference",
     "structure-check": {
       "pass": true,
       "verdict": "DRAFT PASSED",

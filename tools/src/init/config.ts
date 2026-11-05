@@ -29,9 +29,8 @@ export interface ShowIdentity {
  *     `publish.playlistName`, `publish.standingCopy.weekly` and `audio.mainCast` (the narrator
  *     plus the cast the `world-overview` interview recorded).
  *  2. **Left empty, because a new show cannot know it yet**: `publish.playlistUrl`,
- *     `publish.tags`, `visual.ambientPromptScaffold` and `airMap`. Inheriting another show's value
- *     for any of these is worse than an empty one: a wrong playlist, another show's genre tags, or
- *     another show's prompt scaffolding on every image.
+ *     `publish.tags` and `airMap`. Inheriting another show's value for any of these is worse than
+ *     an empty one: a wrong playlist, another show's genre tags, or another show's air dates.
  *  3. **A house default**: the model tiers, the directory names, the filename patterns, the audio
  *     numbers, the frame size, the loudness targets and the weekly auto-retry ceiling
  *     (`agents.autoRetryWeeklyUtilizationMax`). These are the engine's and the scripts'
@@ -117,14 +116,9 @@ export function buildShowConfig(id: ShowIdentity, cast: string[]): Record<string
       castingPileDir: "Canon/characters",
       candidatesDir: "Canon/_candidates",
       shotFrame: [1024, 576],
-      characterKinds: ["human", "creature", "ship"],
-      // Empty, not a sample: this list is prepended to every ambient image prompt, so another
-      // show's scaffolding would put its weather and its architecture in every frame of this one.
-      ambientPromptScaffold: [],
       // The two constants that are true of every generated frame whatever the show looks like.
       // The look itself is the author's, and `Canon/visual-style.md` is where they state it.
       styleConstants: "no text, no watermark, no signature.",
-      collectivePopulatorBans: ["the crew", "a crowd", "background figures"],
     },
     video: {
       fps: 30,

@@ -37,7 +37,7 @@ import zlib from "node:zlib";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 
-const GATES = ["outline-gate", "script-gate", "casting-gate", "audio-gate", "nano-banana-gate", "image-gate", "final-gate", "canon-gate"];
+const GATES = ["outline-gate", "script-gate", "casting-gate", "audio-gate", "image-gate", "final-gate", "canon-gate"];
 
 const CANON = [
   "world-overview", "technology", "timeline", "continuity-ledger", "series-arc", "episode-formula",
@@ -414,10 +414,10 @@ await seedRun(root, "s02e04", "20261002-0840-ef56", [
   { ts: t4(1), stepId: "script-gate", kind: "gate_answered", payload: { approved: true, notes: "", by: "console:walkthrough", attempt: 1 } },
   { ts: t4(1), stepId: "casting-gate", kind: "gate_answered", payload: { approved: true, notes: "", by: "console:walkthrough", attempt: 1 } },
   { ts: t4(1), stepId: "audio-gate", kind: "gate_answered", payload: { approved: true, notes: "", by: "console:walkthrough", attempt: 1 } },
-  { ts: t4(4), stepId: "image-generate", kind: "step_started", payload: { kind: "script" } },
-  { ts: t4(30), stepId: "image-generate", kind: "step_progress", payload: { done: 1, total: 3, unit: "shots" } },
-  { ts: t4(40), stepId: "image-generate", kind: "step_progress", payload: { done: 3, total: 3, unit: "shots" } },
-  { ts: t4(5), stepId: "image-generate", kind: "step_completed", payload: { result: "3 shots generated, 1 left to the showrunner", outputHashes: { "Production/s02e04/images/s01-harbour-wide.png": "7788aabb" } } },
+  { ts: t4(4), stepId: "nano-banana-generate", kind: "step_started", payload: { kind: "script" } },
+  { ts: t4(30), stepId: "nano-banana-generate", kind: "step_progress", payload: { done: 1, total: 3, unit: "shots" } },
+  { ts: t4(40), stepId: "nano-banana-generate", kind: "step_progress", payload: { done: 3, total: 3, unit: "shots" } },
+  { ts: t4(5), stepId: "nano-banana-generate", kind: "step_completed", payload: { result: "3 shots generated, 1 left to the showrunner", outputHashes: { "Production/s02e04/images/s01-harbour-wide.png": "7788aabb" } } },
   { ts: t4(2), stepId: "image-audit-verdict", kind: "step_started", payload: { kind: "agent" } },
   { ts: t4(50), stepId: "image-audit-verdict", kind: "step_completed", payload: { toolCalls: 6, result: { pass: false, issues: ["s03-two-hulls: the second hull reads as the same boat"] } } },
   { ts: t4(2), stepId: "image-gate", kind: "step_started", payload: { kind: "gate" } },

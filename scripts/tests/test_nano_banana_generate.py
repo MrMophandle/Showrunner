@@ -1,19 +1,23 @@
 import json, os, shutil
 from conftest import FIXTURES_DIR, load_script
-from lib import populators
+from lib import nanobanana as nb
 
 def _load(name="nano-banana-generate"):
     return load_script(f"{name}.py")      # safe: every script guards main()
 
 nbg = _load()
 
+# The Gemini client moved to lib/nanobanana.py on 2026-11-04 (spec 2026-11-04 §3.1), so every seam
+# below the prompt is patched on `nb`, not on `nbg`: nb.api_call, nb.client, nb.generate_image,
+# nb.time.sleep, nb.os.replace. The renderer calls nb.generate_image by attribute, so a patch on
+# the library module reaches run(); the old underscored names (nbg._api_call, nbg._write_atomic)
+# do not exist on the renderer any more, and would not be consulted by the client if they did.
+
 # What the SHOW supplies, now that none of it is a literal in the script under test. These are
 # the fixture show's values, read from the same showrunner.json every other test suite uses, so
 # a change to the fixture cannot leave these tests asserting against a stale copy.
 FIXTURE_CFG = json.loads((FIXTURES_DIR / "showrunner.json").read_text())
-BANS = FIXTURE_CFG["visual"]["collectivePopulatorBans"]
 STYLE = FIXTURE_CFG["visual"]["styleConstants"]
-STYLE_DOC = FIXTURE_CFG["visual"]["style"]
 SHOW_NAME = FIXTURE_CFG["showName"]
 
 # The audit laws are a FILE in the show's canon now (visual.auditLaws), not a string constant.
@@ -25,21 +29,16 @@ LAWS = """Audit laws (verify ALL):
    What fails is a solid black BAND, especially an asymmetric one."""
 
 
-def _find(brief):
-    """find_collective_populators moved to lib/populators.py and takes the show's ban list."""
-    return populators.find_collective_populators(brief, BANS)
-
-
 def _show(tmp_path):
     """Write the fixture show's config, audit-laws file and an empty cast index into a temp root;
     -> (cfg, root).
 
-    run() reads visual.styleConstants, visual.auditLaws, visual.style and
-    visual.collectivePopulatorBans through the config and the cast at Canon/cast.json, so a test
-    that calls run() needs a real show root rather than a bare directory. The index written here is
-    empty because every run() test replaces load_bible with its own cast; what the file has to be
-    is present and well-formed, so that a test which does NOT replace the seam fails on the cast
-    rather than on a missing file.
+    run() reads visual.styleConstants and visual.auditLaws through the config, and the cast at
+    Canon/cast.json, so a test that calls run() needs a real show root rather than a bare
+    directory. The index written here is empty because almost every run() test replaces load_bible
+    with its own cast; what the file has to be is present and well-formed, so that a test which
+    does NOT replace the seam — test_run_renders_an_establishing_shot_from_its_brief_alone is one,
+    deliberately — resolves against an empty cast rather than failing on a missing file.
     """
     shutil.copy(FIXTURES_DIR / "showrunner.json", tmp_path / "showrunner.json")
     canon = tmp_path / "Canon"
@@ -177,17 +176,14 @@ def test_assemble_refs_dedupes_stills_by_basename_across_folders(tmp_path):
     assert len(imgs) == 3, f"expected 3 images (2 sheets + 1 deduped still), got {len(imgs)}"
 
 
-def test_generate_image_writes_png_and_counts(tmp_path, monkeypatch):
-    out = tmp_path / "shot.png"
-    monkeypatch.setattr(nbg, "_api_call", lambda prompt, imgs: ("ok", b"PNGBYTES"))
-    counter = {"calls": 0}
-    ret = nbg.generate_image("p", [], str(out), counter)
-    assert ret == "ok" and out.read_bytes() == b"PNGBYTES" and counter["calls"] == 1
+# The happy path of nb.generate_image — a PNG written, one call counted — is pinned once, in
+# tests/test_nanobanana.py:27, the library's own suite. The tests below stay here because the
+# renderer is what their failure modes cost: a refusal, a retry, the cost cap, a redacted key.
 
 def test_generate_image_refusal_no_file(tmp_path, monkeypatch):
     out = tmp_path / "shot.png"
-    monkeypatch.setattr(nbg, "_api_call", lambda prompt, imgs: ("refused", None))
-    assert nbg.generate_image("p", [], str(out), {"calls": 0}) == "refused"
+    monkeypatch.setattr(nb, "api_call", lambda prompt, imgs: ("refused", None))
+    assert nb.generate_image("p", [], str(out), {"calls": 0}) == "refused"
     assert not out.exists()
 
 def test_generate_image_transport_retry_then_ok(tmp_path, monkeypatch):
@@ -197,20 +193,20 @@ def test_generate_image_transport_retry_then_ok(tmp_path, monkeypatch):
         calls["n"] += 1
         if calls["n"] < 3: raise ConnectionError("boom")
         return ("ok", b"X")
-    monkeypatch.setattr(nbg, "_api_call", flaky)
-    monkeypatch.setattr(nbg.time, "sleep", lambda s: slept.append(s))
-    assert nbg.generate_image("p", [], str(tmp_path / "s.png"), {"calls": 0}) == "ok"
+    monkeypatch.setattr(nb, "api_call", flaky)
+    monkeypatch.setattr(nb.time, "sleep", lambda s: slept.append(s))
+    assert nb.generate_image("p", [], str(tmp_path / "s.png"), {"calls": 0}) == "ok"
     # Backoff must be EXPONENTIAL, not constant: 2**0 then 2**1. Asserting the
     # recorded durations (not just the call count) is what rules out a
     # no-backoff or fixed-delay implementation.
     assert slept == [1, 2], f"expected exponential backoff [1, 2], got {slept}"
 
 def test_cost_cap_aborts(monkeypatch, tmp_path):
-    monkeypatch.setattr(nbg, "_api_call", lambda prompt, imgs: ("ok", b"X"))
-    counter = {"calls": nbg.MAX_CALLS}
+    monkeypatch.setattr(nb, "api_call", lambda prompt, imgs: ("ok", b"X"))
+    counter = {"calls": nb.MAX_CALLS}
     import pytest
     with pytest.raises(SystemExit):
-        nbg.generate_image("p", [], str(tmp_path / "s.png"), counter)
+        nb.generate_image("p", [], str(tmp_path / "s.png"), counter)
 
 def test_error_string_redacts_api_key(tmp_path, monkeypatch):
     """FINDING 1: the returned error string is printed/logged by the orchestrator.
@@ -220,9 +216,9 @@ def test_error_string_redacts_api_key(tmp_path, monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", KEY)
     def boom(prompt, imgs):
         raise ConnectionError(f"503 from https://host/v1beta/models?key={KEY}")
-    monkeypatch.setattr(nbg, "_api_call", boom)
-    monkeypatch.setattr(nbg.time, "sleep", lambda s: None)
-    ret = nbg.generate_image("p", [], str(tmp_path / "s.png"), {"calls": 0})
+    monkeypatch.setattr(nb, "api_call", boom)
+    monkeypatch.setattr(nb.time, "sleep", lambda s: None)
+    ret = nb.generate_image("p", [], str(tmp_path / "s.png"), {"calls": 0})
     assert ret.startswith("error:")
     assert KEY not in ret, "API key leaked into the error string"
     assert "<redacted>" in ret
@@ -234,26 +230,26 @@ def test_refusal_diagnostic_reports_shape_and_redacts(monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", KEY)
     class FakeInteraction:
         def __init__(self): self.block_reason = f"blocked key={KEY}"
-    line = nbg._refusal_diagnostic(FakeInteraction())
+    line = nb.refusal_diagnostic(FakeInteraction())
     # Shape only: the type and the attribute NAMES, enough to identify the real
     # safety-block form on the first live run.
     assert "FakeInteraction" in line and "block_reason" in line
     # No attribute VALUES are emitted, so a key sitting in the payload can't
     # leak at all — stronger than redacting it after the fact.
     assert KEY not in line and "blocked key" not in line
-    # _redact is still applied as a backstop; verify it directly.
-    assert nbg._redact(f"boom key={KEY}") == "boom key=<redacted>"
+    # redact is still applied as a backstop; verify it directly.
+    assert nb.redact(f"boom key={KEY}") == "boom key=<redacted>"
 
 def test_write_is_atomic_no_partial_file_or_temp_left(tmp_path, monkeypatch):
     """FINDING 2: a torn write must not leave a file at out_path — the pipeline
     skips shots whose PNG exists, so a truncated image would look 'done'."""
     out = tmp_path / "shot.png"
-    monkeypatch.setattr(nbg, "_api_call", lambda prompt, imgs: ("ok", b"PNGBYTES"))
-    monkeypatch.setattr(nbg.time, "sleep", lambda s: None)
+    monkeypatch.setattr(nb, "api_call", lambda prompt, imgs: ("ok", b"PNGBYTES"))
+    monkeypatch.setattr(nb.time, "sleep", lambda s: None)
     def failing_replace(src, dst): raise OSError("no space left on device")
-    monkeypatch.setattr(nbg.os, "replace", failing_replace)
+    monkeypatch.setattr(nb.os, "replace", failing_replace)
     counter = {"calls": 0}
-    ret = nbg.generate_image("p", [], str(out), counter)
+    ret = nb.generate_image("p", [], str(out), counter)
     assert ret.startswith("error:")
     assert not out.exists(), "a partial/failed write left a file at out_path"
     assert list(tmp_path.iterdir()) == [], f"temp left behind: {list(tmp_path.iterdir())}"
@@ -268,8 +264,8 @@ def test_write_is_atomic_no_partial_file_or_temp_left(tmp_path, monkeypatch):
 def test_successful_write_leaves_only_the_png(tmp_path, monkeypatch):
     """FINDING 2, happy path: the temp file must be renamed away, not orphaned."""
     out = tmp_path / "shot.png"
-    monkeypatch.setattr(nbg, "_api_call", lambda prompt, imgs: ("ok", b"PNGBYTES"))
-    assert nbg.generate_image("p", [], str(out), {"calls": 0}) == "ok"
+    monkeypatch.setattr(nb, "api_call", lambda prompt, imgs: ("ok", b"PNGBYTES"))
+    assert nb.generate_image("p", [], str(out), {"calls": 0}) == "ok"
     assert [p.name for p in tmp_path.iterdir()] == ["shot.png"]
 
 def test_local_ref_failure_does_not_bill_a_call(tmp_path, monkeypatch):
@@ -277,10 +273,10 @@ def test_local_ref_failure_does_not_bill_a_call(tmp_path, monkeypatch):
     generation fails locally, before any network I/O — it must NOT consume
     budget. Contrast with the transport case below, where each retry is a real
     API call and SHOULD be billed."""
-    monkeypatch.setattr(nbg.time, "sleep", lambda s: None)
+    monkeypatch.setattr(nb.time, "sleep", lambda s: None)
     counter = {"calls": 0}
-    ret = nbg.generate_image("p", [str(tmp_path / "gone.png")],
-                             str(tmp_path / "s.png"), counter)
+    ret = nb.generate_image("p", [str(tmp_path / "gone.png")],
+                            str(tmp_path / "s.png"), counter)
     assert ret.startswith("error:")
     assert counter["calls"] == 0, "a purely local failure burned API budget"
 
@@ -288,10 +284,10 @@ def test_transport_failures_do_bill_each_attempt(tmp_path, monkeypatch):
     """FINDING 3, other side: these attempts really did hit the API, so all
     three count against the 60-call cap."""
     def boom(prompt, imgs): raise ConnectionError("boom")
-    monkeypatch.setattr(nbg, "_api_call", boom)
-    monkeypatch.setattr(nbg.time, "sleep", lambda s: None)
+    monkeypatch.setattr(nb, "api_call", boom)
+    monkeypatch.setattr(nb.time, "sleep", lambda s: None)
     counter = {"calls": 0}
-    assert nbg.generate_image("p", [], str(tmp_path / "s.png"), counter).startswith("error:")
+    assert nb.generate_image("p", [], str(tmp_path / "s.png"), counter).startswith("error:")
     assert counter["calls"] == 3
 
 def test_audit_parses_pass(monkeypatch):
@@ -381,7 +377,13 @@ def _mk_episode(tmp_path, bible_dirs=True):
     canon = tmp_path / "Canon/characters/Pell"; canon.mkdir(parents=True)
     sheet = canon / "Pell Reference.png"; sheet.write_bytes(b"s")
     prompts = {"episode": "ep99", "shots": [
-        {"id": "s1-amb", "type": "ambient", "prompt": "x", "seed": 1},
+        # The first shot was an environment shot with a `prompt` and a `seed` until 2026-11-04,
+        # when the local renderer was deleted: every shot carries a `brief` now. This establishing
+        # shot names no refs, so it renders from its brief alone; an establishing shot may name a
+        # place in `refs`, and then the place's reference and gallery condition the render as a
+        # character's do (spec 2026-11-04 §2.2 and §3.2, as amended on 2026-11-04).
+        {"id": "s1-establishing", "scene": "COLD OPEN", "type": "establishing",
+         "source": "pipeline", "brief": "the quay at dawn"},
         {"id": "s2-pell", "type": "character", "refs": ["pell"], "brief": "PELL still."},
         {"id": "s3-done", "type": "character", "refs": ["pell"], "brief": "done"},
         {"id": "s4-ghost", "type": "character", "refs": ["nobody"], "brief": "g"}]}
@@ -395,16 +397,22 @@ def test_run_states_and_partial(tmp_path, monkeypatch, capsys):
     ep, bible = _mk_episode(tmp_path)
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(nbg, "load_bible", lambda cfg=None, root=None: bible)
-    monkeypatch.setattr(nbg, "generate_image",
+    monkeypatch.setattr(nb, "generate_image",
         lambda p, i, o, c: (open(o, "wb").write(b"g") and None) or "ok")
     monkeypatch.setattr(nbg, "audit_image", lambda s, p, laws, name: (True, ""))
     rc = nbg.run("ep99", *_show(tmp_path), only=None, notes="", no_audit=False)
     out = capsys.readouterr().out
     assert "s2-pell  OK" in out and "s3-done  SKIPPED-exists" in out
     assert "s4-ghost  SKIPPED-no-ref" in out
-    # NANO_PARTIAL exits 0: the tag is the step's result and the nano-banana gate shows the
-    # partial batch to the showrunner, who decides. A non-zero exit would fail the step first.
-    assert "NANO_PARTIAL 1/2" in out and rc == 0   # ghost counts, s3 skip doesn't
+    # The establishing shot is rendered too, since 2026-11-04: the selection is every shot the
+    # pipeline owns, of any type (spec 2026-11-04 §3.2). Before that it was character-only and
+    # this tally read 1/2.
+    assert "s1-establishing  OK" in out
+    # NANO_PARTIAL exits 0: the tag is the step's result, and a partial render is a result and not
+    # a failure. `image-audit-1` judges the PNGs on disk next and `image-gate` shows the batch to
+    # the showrunner after the audit loop and the sheet; a non-zero exit would fail the step before
+    # either of them ran (spec 2026-11-04 §4).
+    assert "NANO_PARTIAL 2/3" in out and rc == 0   # ghost counts, s3 skip doesn't
 
 def test_run_retry_then_failed_audit_keeps_last(tmp_path, monkeypatch, capsys):
     ep, bible = _mk_episode(tmp_path)
@@ -413,7 +421,7 @@ def test_run_retry_then_failed_audit_keeps_last(tmp_path, monkeypatch, capsys):
     prompts_seen = []
     def gen(p, i, o, c):
         prompts_seen.append(p); open(o, "wb").write(b"bad"); return "ok"
-    monkeypatch.setattr(nbg, "generate_image", gen)
+    monkeypatch.setattr(nb, "generate_image", gen)
     monkeypatch.setattr(nbg, "audit_image", lambda s, p, laws, name: (False, "three arms"))
     rc = nbg.run("ep99", *_show(tmp_path), only=["s2-pell"], notes="", no_audit=False)
     out = capsys.readouterr().out
@@ -429,7 +437,7 @@ def test_run_prints_audit_rejection_notes_as_they_happen(tmp_path, monkeypatch, 
     ep, bible = _mk_episode(tmp_path)
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(nbg, "load_bible", lambda cfg=None, root=None: bible)
-    monkeypatch.setattr(nbg, "generate_image",
+    monkeypatch.setattr(nb, "generate_image",
         lambda p, i, o, c: (open(o, "wb").write(b"bad") and None) or "ok")
     monkeypatch.setattr(nbg, "audit_image", lambda s, p, laws, name: (False, "three arms on Bryn"))
     nbg.run("ep99", *_show(tmp_path), only=["s2-pell"], notes="", no_audit=False)
@@ -441,7 +449,7 @@ def test_only_deletes_and_regenerates_named_shot(tmp_path, monkeypatch, capsys):
     ep, bible = _mk_episode(tmp_path)
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(nbg, "load_bible", lambda cfg=None, root=None: bible)
-    monkeypatch.setattr(nbg, "generate_image",
+    monkeypatch.setattr(nb, "generate_image",
         lambda p, i, o, c: (open(o, "wb").write(b"new") and None) or "ok")
     monkeypatch.setattr(nbg, "audit_image", lambda s, p, laws, name: (True, ""))
     rc = nbg.run("ep99", *_show(tmp_path), only=["s3-done"], notes="less grime", no_audit=False)
@@ -463,7 +471,7 @@ def test_refused_is_terminal_no_retry(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(nbg, "load_bible", lambda cfg=None, root=None: bible)
     n = {"gen": 0}
     def gen(p, i, o, c): n["gen"] += 1; return "refused"
-    monkeypatch.setattr(nbg, "generate_image", gen)
+    monkeypatch.setattr(nb, "generate_image", gen)
     rc = nbg.run("ep99", *_show(tmp_path), only=["s2-pell"], notes="", no_audit=False)
     assert n["gen"] == 1 and "s2-pell  REFUSED" in capsys.readouterr().out and rc == 0
 
@@ -475,7 +483,7 @@ def test_only_backup_restored_on_generation_failure(tmp_path, monkeypatch, capsy
     ep, bible = _mk_episode(tmp_path)
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(nbg, "load_bible", lambda cfg=None, root=None: bible)
-    monkeypatch.setattr(nbg, "generate_image",
+    monkeypatch.setattr(nb, "generate_image",
         lambda p, i, o, c: (open(o, "wb").write(b"new-but-bad") and None) or "ok")
     monkeypatch.setattr(nbg, "audit_image", lambda s, p, laws, name: (False, "three arms"))
     rc = nbg.run("ep99", *_show(tmp_path), only=["s3-done"], notes="", no_audit=False)
@@ -503,7 +511,7 @@ def test_cost_cap_systemexit_mid_run_prints_summary_and_restores_backup(tmp_path
         if calls["n"] == 1:
             open(o, "wb").write(b"g"); return "ok"
         raise SystemExit("COST CAP: 60 API calls reached — aborting.")
-    monkeypatch.setattr(nbg, "generate_image", gen)
+    monkeypatch.setattr(nb, "generate_image", gen)
     monkeypatch.setattr(nbg, "audit_image", lambda s, p, laws, name: (True, ""))
     with pytest.raises(SystemExit):
         nbg.run("ep99", *_show(tmp_path), only=["s2-pell", "s3-done"], notes="", no_audit=False)
@@ -526,7 +534,7 @@ def test_notes_merged_with_audit_feedback_across_retries(tmp_path, monkeypatch, 
     prompts_seen = []
     def gen(p, i, o, c):
         prompts_seen.append(p); open(o, "wb").write(b"bad"); return "ok"
-    monkeypatch.setattr(nbg, "generate_image", gen)
+    monkeypatch.setattr(nb, "generate_image", gen)
     monkeypatch.setattr(nbg, "audit_image", lambda s, p, laws, name: (False, "three arms"))
     nbg.run("ep99", *_show(tmp_path), only=["s2-pell"], notes="make it darker", no_audit=False)
     assert len(prompts_seen) == 3
@@ -586,7 +594,7 @@ def test_error_state_is_reported_distinctly_and_run_continues(tmp_path, monkeypa
     def gen(p, i, o, c):
         n["gen"] += 1
         return "error:503 from host"
-    monkeypatch.setattr(nbg, "generate_image", gen)
+    monkeypatch.setattr(nb, "generate_image", gen)
     monkeypatch.setattr(nbg, "audit_image", lambda s, p, laws, name: (True, ""))
     # s4-ghost has an unresolvable ref, so it is skipped without ever calling
     # generate_image — that skip, happening AFTER the s2-pell ERROR, is what
@@ -608,7 +616,7 @@ def test_run_no_audit_end_to_end_skips_the_audit_safety_net(tmp_path, monkeypatc
     ep, bible = _mk_episode(tmp_path)
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(nbg, "load_bible", lambda cfg=None, root=None: bible)
-    monkeypatch.setattr(nbg, "generate_image",
+    monkeypatch.setattr(nb, "generate_image",
         lambda p, i, o, c: (open(o, "wb").write(b"unaudited-bytes") and None) or "ok")
     audit_calls = {"n": 0}
     def spy_audit(s, p):
@@ -640,7 +648,7 @@ def test_plain_run_leaves_existing_png_byte_for_byte_untouched(tmp_path, monkeyp
         touched.append(o)
         open(o, "wb").write(b"freshly-generated")
         return "ok"
-    monkeypatch.setattr(nbg, "generate_image", gen)
+    monkeypatch.setattr(nb, "generate_image", gen)
     monkeypatch.setattr(nbg, "audit_image", lambda s, p, laws, name: (True, ""))
     nbg.run("ep99", *_show(tmp_path), only=None, notes="", no_audit=False)
     assert str(png) not in touched, (
@@ -651,12 +659,13 @@ def test_plain_run_leaves_existing_png_byte_for_byte_untouched(tmp_path, monkeyp
 
 
 def test_nano_ok_bare_when_nothing_to_do(tmp_path, monkeypatch, capsys):
-    """COVERAGE GAP 2: when every character shot already has a PNG, the
+    """COVERAGE GAP 2: when every pipeline shot already has a PNG, the
     active set is empty and the summary must print a bare NANO_OK, not
     'NANO_OK 0/0'."""
     ep, bible = _mk_episode(tmp_path)
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(nbg, "load_bible", lambda cfg=None, root=None: bible)
+    (ep / "s1-establishing.png").write_bytes(b"already-there-as-well")
     (ep / "s2-pell.png").write_bytes(b"already-there")
     (ep / "s4-ghost.png").write_bytes(b"already-there-too")
     rc = nbg.run("ep99", *_show(tmp_path), only=None, notes="", no_audit=False)
@@ -704,24 +713,24 @@ def test_api_call_requests_jpeg_and_pins_aspect_and_size(monkeypatch):
     back to PNG — or a dropped aspect_ratio/image_size — must fail here rather
     than at the paid call. Payload inspected via a fake client; no network."""
     sent = {}
-    monkeypatch.setattr(nbg, "_client", lambda: _FakeClient(sent, _tiny_jpeg_b64()))
-    status, data = nbg._api_call("a prompt", [])
+    monkeypatch.setattr(nb, "client", lambda: _FakeClient(sent, _tiny_jpeg_b64()))
+    status, data = nb.api_call("a prompt", [])
     assert status == "ok"
     rf = sent["response_format"]
     assert rf["mime_type"] == "image/jpeg", (
         "the live API supports ONLY image/jpeg here — image/png 400s")
     assert rf["type"] == "image"
-    assert rf["aspect_ratio"] == nbg.ASPECT_RATIO == "16:9"
-    assert rf["image_size"] == nbg.IMAGE_SIZE == "2K"
-    assert sent["model"] == nbg.MODEL
+    assert rf["aspect_ratio"] == nb.ASPECT_RATIO == "16:9"
+    assert rf["image_size"] == nb.IMAGE_SIZE == "2K"
+    assert sent["model"] == nb.MODEL
 
 
 def test_api_call_transcodes_jpeg_response_to_png_bytes(monkeypatch):
     """FIX 1: the wire format is JPEG but every downstream consumer addresses
-    <shot-id>.png, so _api_call must hand back genuine PNG bytes."""
+    <shot-id>.png, so api_call must hand back genuine PNG bytes."""
     sent = {}
-    monkeypatch.setattr(nbg, "_client", lambda: _FakeClient(sent, _tiny_jpeg_b64()))
-    status, data = nbg._api_call("p", [])
+    monkeypatch.setattr(nb, "client", lambda: _FakeClient(sent, _tiny_jpeg_b64()))
+    status, data = nb.api_call("p", [])
     assert status == "ok"
     assert data[:8] == b"\x89PNG\r\n\x1a\n", "output must be a real PNG, not the raw JPEG"
     from io import BytesIO
@@ -732,9 +741,9 @@ def test_api_call_transcodes_jpeg_response_to_png_bytes(monkeypatch):
 def test_generate_image_writes_a_real_png_end_to_end(tmp_path, monkeypatch):
     """FIX 1, through the writer: the file on disk must open as a PNG."""
     sent = {}
-    monkeypatch.setattr(nbg, "_client", lambda: _FakeClient(sent, _tiny_jpeg_b64()))
+    monkeypatch.setattr(nb, "client", lambda: _FakeClient(sent, _tiny_jpeg_b64()))
     out = tmp_path / "shot.png"
-    assert nbg.generate_image("p", [], str(out), {"calls": 0}) == "ok"
+    assert nb.generate_image("p", [], str(out), {"calls": 0}) == "ok"
     from PIL import Image
     assert Image.open(out).format == "PNG"
 
@@ -749,10 +758,10 @@ def test_client_error_is_not_retried_and_bills_exactly_one_call(tmp_path, monkey
         raise RuntimeError("Error code: 400 - {'error': {'message': \"The value "
                            "'image/png' is not supported for "
                            "'response_format.mime_type'.\", 'code': 'invalid_request'}}")
-    monkeypatch.setattr(nbg, "_api_call", four_hundred)
-    monkeypatch.setattr(nbg.time, "sleep", lambda s: slept.append(s))
+    monkeypatch.setattr(nb, "api_call", four_hundred)
+    monkeypatch.setattr(nb.time, "sleep", lambda s: slept.append(s))
     counter = {"calls": 0}
-    ret = nbg.generate_image("p", [], str(tmp_path / "s.png"), counter)
+    ret = nb.generate_image("p", [], str(tmp_path / "s.png"), counter)
     assert ret.startswith("error:")
     assert counter["calls"] == 1, "a deterministic 4xx must burn exactly one call"
     assert n["calls"] == 1, "the 4xx was retried"
@@ -763,14 +772,14 @@ def test_is_client_error_classification():
     """FIX 3: 4xx fails fast; 5xx and raw network faults keep their retries."""
     class WithStatus(Exception):
         status_code = 403
-    assert nbg._is_client_error(WithStatus())
-    assert nbg._is_client_error(RuntimeError("Error code: 400 - bad"))
-    assert nbg._is_client_error(RuntimeError("code: 'invalid_request'"))
-    assert nbg._is_client_error(RuntimeError("PERMISSION_DENIED"))
+    assert nb.is_client_error(WithStatus())
+    assert nb.is_client_error(RuntimeError("Error code: 400 - bad"))
+    assert nb.is_client_error(RuntimeError("code: 'invalid_request'"))
+    assert nb.is_client_error(RuntimeError("PERMISSION_DENIED"))
     # These must still retry.
-    assert not nbg._is_client_error(ConnectionError("boom"))
-    assert not nbg._is_client_error(RuntimeError("Error code: 503 - overloaded"))
-    assert not nbg._is_client_error(TimeoutError("read timed out"))
+    assert not nb.is_client_error(ConnectionError("boom"))
+    assert not nb.is_client_error(RuntimeError("Error code: 503 - overloaded"))
+    assert not nb.is_client_error(TimeoutError("read timed out"))
 
 
 def _capture_run(monkeypatch):
@@ -800,137 +809,21 @@ def test_audit_laws_include_the_full_bleed_law(monkeypatch):
     assert "fill the frame edge to edge" in p
 
 
-# --- collective-populator pre-flight (showrunner ruling, s04-pell-uneasy) ---
-# The law lived only in prose (Canon/visual-style.md, "No collective
-# populators in a character brief") until a live shot ("while the crew works
-# on around her, unaware") invented four or five uncredited humans, one
-# carrying a real-world flag patch. These tests pin the mechanical gate that
-# now fails the run BEFORE any money is spent.
-
-_REAL_ROOK_BRIEF = (
-    "Cinematic 16:9 shot, dark hard science fiction, a low cramped dockside "
-    "bar off the rim of a worn salvage station, one low warm light fixture "
-    "as the key (low-key but clearly exposed, real shadow, cargo-noise "
-    "atmosphere). At a scarred table sit three people: MAEVE — the fit, "
-    "fresh-faced, clean-cut young man of about 28 from his locked reference "
-    "sheet, deliberately unworn and clean among a grimy crew, listening with "
-    "a faint easy grin — and BRYN — the weathered, practical woman of "
-    "about sixty, grey hair, worn denim work clothes and a tool belt from "
-    "her locked reference sheet, quiet, listening without judgment. Across "
-    "from them sits ROOK, a NEW guest character with no existing reference "
-    "sheet: a worn dockside loading-floor worker, sober, gentle, unhurried, "
-    "sincere without a trace of crank in him, turning a plain cup in his "
-    "hands that he never drinks from, mid-way through telling them a "
-    "secondhand story about a recovered ship where none of the dead had "
-    "moved. The table has gone quiet around his telling. Design Rook fresh "
-    "from this description — an ordinary worn rim worker, weathered, "
-    "plain-dressed, calm-faced. Low-key but clearly exposed, film grain, "
-    "no text."
-)
-
-
-def test_find_collective_populators_the_crew_fails():
-    hits = _find(
-        "PELL is drawn tight while the crew works on around her, unaware.")
-    assert any("the crew" in h.lower() for h in hits)
-
-
-def test_find_collective_populators_real_rook_brief_passes():
-    """The already-approved s03-rook-table-scene brief is a HEADCOUNT
-    ('three people:') followed by named characters — exactly what the law
-    wants — and must NOT trip the gate."""
-    assert _find(_REAL_ROOK_BRIEF) == []
-
-
-def test_find_collective_populators_headcount_qualified_people_passes():
-    assert _find(
-        "At the table sit three people: A and B and C.") == []
-
-
-def test_find_collective_populators_a_few_figures_fails():
-    """A banned phrase from the show's OWN list. "a few figures" is on the show repository's
-    list and not on the fixture's, which is the point: the vocabulary is the show's."""
-    hits = _find("In the background, background figures move past unnoticed.")
-    assert any("background figures" in h.lower() for h in hits)
-    assert populators.find_collective_populators(
-        "In the background, a few figures move past unnoticed.", ["a few figures"])
-
-
-def test_find_collective_populators_capping_idiom_passes():
-    """The house-style CAP — 'no other figures anywhere in the frame' — is
-    the recommended fix, not a violation: it negates extras rather than
-    inventing them (used verbatim in s02-galley-table-numbers and
-    s04-cabin-tension-crew)."""
-    assert _find(
-        "EXACTLY these three at the table — no other figures anywhere "
-        "in the frame.") == []
-
-
-def test_check_no_collective_populators_passes_silently_when_clean():
-    nbg.check_no_collective_populators(
-        [{"id": "s1-x", "brief": "MAEVE alone at his station."}], BANS, STYLE_DOC)  # no raise
-
-
-def test_run_fails_preflight_before_backup_or_api_call(tmp_path, monkeypatch, capsys):
-    """The showrunner's ruling: fail the run mechanically, before the .bak
-    backup step and before any API call — the shot id and matched phrase must
-    be in the message, and generate_image must never be reached."""
-    import pytest
-    ep, bible = _mk_episode(tmp_path)
-    doc_path = ep / "prompts.json"
-    doc = json.loads(doc_path.read_text())
-    for s in doc["shots"]:
-        if s["id"] == "s2-pell":
-            s["brief"] = "PELL still, while the crew works on around her, unaware."
-    doc_path.write_text(json.dumps(doc))
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(nbg, "load_bible", lambda cfg=None, root=None: bible)
-    calls = {"n": 0}
-    monkeypatch.setattr(nbg, "generate_image",
-        lambda p, i, o, c: calls.__setitem__("n", calls["n"] + 1) or "ok")
-    with pytest.raises(SystemExit) as exc:
-        nbg.run("ep99", *_show(tmp_path), only=None, notes="", no_audit=False)
-    msg = str(exc.value)
-    assert "s2-pell" in msg
-    assert "the crew" in msg.lower()
-    assert "named" in msg.lower() and "refs" in msg.lower()
-    assert calls["n"] == 0, "API call must not happen once the pre-flight fails"
-    # nothing backed up either — s3-done has no .bak, and its PNG is untouched
-    assert (tmp_path / "Production/ep99/images/s3-done.png").read_bytes() == b"handmade"
-    assert not (tmp_path / "Production/ep99/images/.s3-done.png.bak").exists()
-
-
 def test_written_png_is_group_and_world_readable(tmp_path, monkeypatch):
     """FIX C: mkstemp creates 0600 and os.replace preserves it, so generated
     shots landed 0600 while every hand-made image in the folder is 0644 — a
     problem once these are rsync'd to the NAS or read by another process."""
     out = tmp_path / "shot.png"
-    monkeypatch.setattr(nbg, "_api_call", lambda prompt, imgs: ("ok", b"PNGBYTES"))
-    assert nbg.generate_image("p", [], str(out), {"calls": 0}) == "ok"
+    monkeypatch.setattr(nb, "api_call", lambda prompt, imgs: ("ok", b"PNGBYTES"))
+    assert nb.generate_image("p", [], str(out), {"calls": 0}) == "ok"
     assert (out.stat().st_mode & 0o777) == 0o644, oct(out.stat().st_mode & 0o777)
-
-
-def test_capping_idioms_are_not_violations():
-    """ep10 s03/s09: both briefs named every person, matched refs exactly, and
-    capped the headcount explicitly — and the guard refused to spend anyway,
-    on the very sentence that enforces what the guard wants. Two carve-outs
-    were too narrow: "both" was not a count word, and the "no ..." escape
-    required `no` immediately before the noun, so "no OTHER figures" missed it."""
-    ok = ("Strong directional key light, bright rim separation on both figures, "
-          "visible midtones, film grain. Two figures: Kestrel and Idris, no other "
-          "figures in the frame.")
-    assert _find(ok) == []
-
-def test_a_real_collective_populator_is_still_caught():
-    """The widened carve-outs must not open the door the guard exists to shut."""
-    bad = "The crew works the deck while a few figures move in the background."
-    assert _find(bad) != []
 
 
 # ── source: "showrunner" — the shot the showrunner makes by hand ─────────────────────────────
 
 def _mk_handmade_episode(tmp_path):
-    """An episode whose character shots are one for the pipeline and one for the showrunner."""
+    """An episode of three shots: a character shot for the pipeline, a character shot for the
+    showrunner, and an establishing shot for the pipeline."""
     ep = tmp_path / "Production/ep98/images"; ep.mkdir(parents=True)
     canon = tmp_path / "Canon/characters/Pell"; canon.mkdir(parents=True)
     sheet = canon / "Pell Reference.png"; sheet.write_bytes(b"s")
@@ -938,7 +831,8 @@ def _mk_handmade_episode(tmp_path):
         {"id": "s1-pell", "type": "character", "refs": ["pell"], "brief": "PELL still."},
         {"id": "s2-hand", "type": "character", "refs": ["pell"], "brief": "PELL again.",
          "source": "showrunner"},
-        {"id": "s3-amb", "type": "ambient", "prompt": "x", "seed": 1}]}))
+        {"id": "s3-establishing", "scene": "SCENE ONE — THE QUAY", "type": "establishing",
+         "source": "pipeline", "brief": "the quay at dusk"}]}))
     return ep, {"pell": {"ref": str(sheet), "identity": "dog-sized grub", "gallery": [],
                          "kind": "creature", "name": "Pell"}}
 
@@ -953,25 +847,27 @@ def test_a_showrunner_made_shot_is_never_generated(tmp_path, monkeypatch, capsys
     generated = []
     def gen(p, i, o, c):
         generated.append(o); open(o, "wb").write(b"g"); return "ok"
-    monkeypatch.setattr(nbg, "generate_image", gen)
+    monkeypatch.setattr(nb, "generate_image", gen)
     monkeypatch.setattr(nbg, "audit_image", lambda s, p, laws, name: (True, ""))
     rc = nbg.run("ep98", *_show(tmp_path), only=None, notes="", no_audit=False)
     out = capsys.readouterr().out
-    assert [os.path.basename(o) for o in generated] == ["s1-pell.png"]
+    # Both pipeline shots render — the character shot and the establishing shot — and the
+    # showrunner's does not.
+    assert [os.path.basename(o) for o in generated] == ["s1-pell.png", "s3-establishing.png"]
     assert not (ep / "s2-hand.png").exists()
     # A per-shot result row is printed as "  <id>  <state>"; the handmade shot has no row at all,
     # so it never counts toward the NANO_OK/NANO_PARTIAL tally either.
     assert "  s2-hand  " not in out
-    assert "NANO_OK 1/1" in out and rc == 0
+    assert "NANO_OK 2/2" in out and rc == 0
 
 
 def test_the_run_says_how_many_showrunner_made_shots_it_left_alone(tmp_path, monkeypatch, capsys):
-    """Silence would read as loss: a run that generates one of two character shots has to say the
-    other was somebody else's to make, or the operator counts a missing file as a failure."""
+    """Silence would read as loss: a run that leaves one of three shots unrendered has to say the
+    shot was somebody else's to make, or the operator counts a missing file as a failure."""
     ep, bible = _mk_handmade_episode(tmp_path)
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(nbg, "load_bible", lambda cfg=None, root=None: bible)
-    monkeypatch.setattr(nbg, "generate_image",
+    monkeypatch.setattr(nb, "generate_image",
         lambda p, i, o, c: (open(o, "wb").write(b"g") and None) or "ok")
     monkeypatch.setattr(nbg, "audit_image", lambda s, p, laws, name: (True, ""))
     nbg.run("ep98", *_show(tmp_path), only=None, notes="", no_audit=False)
@@ -981,11 +877,11 @@ def test_the_run_says_how_many_showrunner_made_shots_it_left_alone(tmp_path, mon
 
 def test_a_shot_with_no_source_field_is_still_generated(tmp_path, monkeypatch, capsys):
     """The default is "pipeline": every prompts.json written before the field existed still has
-    its character shots generated."""
+    its shots generated."""
     ep, bible = _mk_episode(tmp_path)
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(nbg, "load_bible", lambda cfg=None, root=None: bible)
-    monkeypatch.setattr(nbg, "generate_image",
+    monkeypatch.setattr(nb, "generate_image",
         lambda p, i, o, c: (open(o, "wb").write(b"g") and None) or "ok")
     monkeypatch.setattr(nbg, "audit_image", lambda s, p, laws, name: (True, ""))
     nbg.run("ep99", *_show(tmp_path), only=None, notes="", no_audit=False)
@@ -1005,6 +901,64 @@ def test_only_cannot_name_a_showrunner_made_shot(tmp_path, monkeypatch):
         assert False, "expected SystemExit for an id that is not a generated shot"
     except SystemExit as e:
         assert "s2-hand" in str(e)
+
+
+# ── the establishing shot — the one shot per scene the engine writes ────────────────────────────
+
+_PNG = b"\x89PNG\r\n\x1a\n" + b"0" * 32
+
+
+def _mk_establishing_episode(tmp_path, source="pipeline"):
+    """An episode of exactly one establishing shot, with no refs and no cast index entry behind
+    it. `source` is what decides whether the engine renders it (spec 2026-11-04 §2.2)."""
+    ep = tmp_path / "Production/ep97/images"; ep.mkdir(parents=True)
+    (ep / "prompts.json").write_text(json.dumps({"episode": "ep97", "shots": [
+        {"id": "s01-establishing", "scene": "COLD OPEN", "type": "establishing",
+         "source": source, "brief": "the quay at dawn"}]}))
+    return ep
+
+
+def test_run_renders_an_establishing_shot_from_its_brief_alone(tmp_path, monkeypatch, capsys):
+    """The shot the engine writes for every scene: one API call, a prompt that is the brief plus
+    the show's style constants, and no reference images at all. load_bible is NOT replaced here —
+    the empty cast index _show writes is the point: an establishing shot needs no cast entry."""
+    ep = _mk_establishing_episode(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    seen = {}
+    def fake(prompt, parts):
+        seen["prompt"], seen["parts"] = prompt, parts
+        return ("ok", _PNG)
+    monkeypatch.setattr(nb, "api_call", fake)
+    monkeypatch.setattr(nbg, "audit_image", lambda s, p, laws, name: (True, ""))
+    rc = nbg.run("ep97", *_show(tmp_path), only=None, notes="", no_audit=False)
+    out = capsys.readouterr().out
+    assert seen["parts"] == []                            # text only: nothing to condition on
+    assert seen["prompt"].startswith("the quay at dawn")
+    # The look is the show's (visual.styleConstants), read from the fixture rather than written
+    # out here, per this file's no-literals rule above: brief, then style constants, nothing else.
+    assert seen["prompt"] == f"the quay at dawn\n\n{STYLE}"
+    assert "NANO_OK 1/1" in out and rc == 0
+    assert (ep / "s01-establishing.png").read_bytes() == _PNG
+
+
+def test_run_leaves_a_showrunner_made_establishing_shot_alone(tmp_path, monkeypatch, capsys):
+    """`source: "showrunner"` holds for an establishing shot exactly as it does for a character
+    shot: no API call, no PNG, no result row, and the run says whose shot it was."""
+    ep = _mk_establishing_episode(tmp_path, source="showrunner")
+    monkeypatch.chdir(tmp_path)
+    calls = {"n": 0}
+    def fake(prompt, parts):
+        calls["n"] += 1
+        return ("ok", _PNG)
+    monkeypatch.setattr(nb, "api_call", fake)
+    monkeypatch.setattr(nbg, "audit_image", lambda s, p, laws, name: (True, ""))
+    rc = nbg.run("ep97", *_show(tmp_path), only=None, notes="", no_audit=False)
+    out = capsys.readouterr().out
+    assert calls["n"] == 0
+    assert not (ep / "s01-establishing.png").exists()
+    assert "1 showrunner-made shot(s) left alone: s01-establishing" in out
+    assert "  s01-establishing  " not in out              # no result row, so no place in the tally
+    assert "NANO_OK" in out and rc == 0
 
 
 def test_exit_code_for_treats_a_partial_run_as_a_reportable_result(tmp_path):

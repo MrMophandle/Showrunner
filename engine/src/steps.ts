@@ -70,6 +70,14 @@ export interface ScriptStep extends StepBase {
   argv: (ctx: RunContext) => string[];
   env?: (ctx: RunContext) => Record<string, string>;
   cwd?: string;
+  /** `"never"`: the runner never serves this step from a prior completion, however its declared
+   *  input and output hashes compare. A step declares it when its script is idempotent on disk and
+   *  its real effect is one the hashes cannot see — the image renderer is the case this exists for
+   *  (spec 2026-11-04 §4): it skips a shot whose PNG is already there, so re-running it costs
+   *  nothing, and the PNGs it writes are declared as nobody's outputs, so a cached completion
+   *  would leave a PNG the vision audit deleted unrendered whenever the shot list had not changed.
+   *  Such a step logs step_started and runs; it logs neither step_cached nor input_changed. */
+  cache?: "never";
 }
 
 /** A JSON Schema, draft-07. The Agent SDK validates verdicts against draft-07 and rejects a schema

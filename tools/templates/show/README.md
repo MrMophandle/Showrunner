@@ -46,12 +46,13 @@ uv run scripts/design-voice.py --show-root <this directory> \
     --text "<a line that character actually says>" \
     --out Production/voice-refs/<name>
 
-uv run scripts/design-visual.py all --show-root <this directory>
+uv run scripts/design-visual.py <subject-key> --briefs <a JSON file of briefs> \
+    --show-root <this directory>
 ```
 
 `design-voice.py` writes `<out>-1.wav`, `<out>-2.wav`, … and prints their paths — two candidates by default, `--candidates N` for more. Voice design is a fresh roll each time, so the WAV you keep *is* the voice: keep the one that is the character and write that character's `voice` block into `Canon/cast.json` by hand, with `LOCKED` in its `voice.status` and its `voice.ref` pointing at the WAV you kept.
 
-`design-visual.py` takes a subject key, or `all` for every entry in `Canon/cast.json` that carries a `baseline_prompt` and no `face.ref` yet, and writes candidates into `Canon/_candidates/`. It renders from that entry's `baseline_prompt`, so add an entry per recurring subject to `Canon/cast.json` first — `all` has nothing to do until you have. It prints the `cp` command that locks the candidate you pick into `Canon/characters/<Name>/reference.png`, and the `face.ref` to set beside it.
+`design-visual.py` takes one subject key from `Canon/cast.json` and a briefs file — a JSON list of strings, one brief per candidate — and makes one hosted render per brief into the directory `visual.candidatesDir` names, as `<key>-1.png`, `<key>-2.png`, and so on. The briefs are the variation: write each one as a distinct description of the same subject rather than re-rolling one description, and `baseline_prompt` in that subject's index entry is your starting point for them, not the prompt the script sends. A candidate already on disk is kept and costs no call, so a re-run after a partial failure renders only what is missing. The script prints the `cp` command that locks the candidate you pick into `Canon/characters/<Name>/reference.png`, and the `face.ref` to set beside it.
 
 This stop is deliberate. A voice and a face are decisions a person makes by ear and by eye, and the pipeline will wait for you rather than invent them.
 
@@ -61,7 +62,7 @@ A change to either of these breaks the pipeline and not merely a prompt.
 
 **The outline's `## Cast` section is the pipeline's NEEDS_REFS source**: every line in it reads `- <Name> (<tags>)`, tags drawn from `recurring`, `guest`, `speaks` and `location`, and `parseCastSection` in the engine's `engine/src/needs.ts` silently ignores any line in the section that does not match that grammar.
 
-**The shot list's `source` field is the pipeline's NEEDS_IMAGES source**: each shot in `Production/<episodeId>/images/prompts.json` is `"pipeline"` (the default, and what the generators make) or `"showrunner"` (a shot the showrunner makes by hand, which no generator touches and which holds the run at NEEDS_IMAGES until its PNG is on disk).
+**The shot list's `source` field is the pipeline's NEEDS_IMAGES source**: each shot in `Production/<episodeId>/images/prompts.json` is `"pipeline"` (the default, and what the renderer makes) or `"showrunner"` (a shot the showrunner makes by hand, which the renderer never touches and which holds the run at NEEDS_IMAGES until its PNG is on disk).
 
 ## After editing the bible
 

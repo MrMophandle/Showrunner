@@ -84,6 +84,38 @@ describe("prompt templates render against the invented show", () => {
   });
 });
 
+/** The vocabulary of the retired image path: the local renderer by name, the shot type it drew,
+ *  the crowd-naming guard it needed and the gate that reviewed its character shots. Every image
+ *  now goes through one hosted renderer, so a template that still names any of them instructs an
+ *  agent to write a field no script reads or to wait for a step the pipeline no longer runs.
+ *
+ *  Each word is spelled as two halves joined at run time, and this comment names none of them in
+ *  full, for the reason `SHOW_CONCEPTS` below and `config.test.ts`'s `FIRST_SHOW_NOUNS` are: the
+ *  repository-wide grep that holds this line greps `tools/` including this file, and a literal
+ *  alternation here would make the test the one hit that grep reports, so the constraint could
+ *  never go green again. */
+const RETIRED_IMAGE_WORDS = new RegExp(
+  ["popu" + "lator", "image-" + "generate", "Z-" + "Image", "amb" + "ient", "nano-banana-" + "gate"].join("|"),
+  "i",
+);
+
+/** The two gate templates the retired character-shot gate owned, named the same way. */
+const RETIRED_TEMPLATES = ["nano-banana-" + "gate.gate.md", "nano-banana-" + "gate.reject.md"];
+
+describe("the prompt templates name no retired image step and no retired renderer", () => {
+  it("no template names the retired image steps or the local renderer", async () => {
+    const names = await readdir(PROMPTS);
+    // By name as well as by content: a stale copy left in the directory is rendered by
+    // check-prompts and copied into the next new show, where it would open a gate that the
+    // pipeline has no step for.
+    for (const retired of RETIRED_TEMPLATES) expect(names).not.toContain(retired);
+    for (const name of names.filter((n) => n.endsWith(".md"))) {
+      const text = await readFile(path.join(PROMPTS, name), "utf8");
+      expect(text, name).not.toMatch(RETIRED_IMAGE_WORDS);
+    }
+  });
+});
+
 /** The six craft reviewers, whose prompts and schemas are one form. `canon-review-script` is not
  *  among them because it is the form's source rather than a copy of it: its pass rule was already
  *  mechanical, its non-failing field is `deviations`, and its issues are strings, so the six are
@@ -383,6 +415,16 @@ describe("every interviewed bible template carries the status legend", () => {
 /** A backticked level-2 heading as a prompt writes it: `` `## Cadence` ``. */
 const CITED_HEADING = /`##\s+([^`]+)`/g;
 
+/** One captured citation as the engine's `headingMatches` can read it: a single line.
+ *
+ *  Both regexes above admit a line break inside a citation on purpose, because these prompts are
+ *  hard-wrapped and a wrap falls wherever the line fills — including inside one backticked span,
+ *  as `` `## Composition\n  rules` ``. `headingMatches` is written for a heading line of a real
+ *  document, where a newline cannot occur, so it reports a two-line capture as matching nothing
+ *  and the citation reads as naming no section at all. Flattening here is what keeps a rewrap of a
+ *  prompt from turning into a failure about a section that is cited correctly. */
+const citedHeading = (captured: string): string => captured.replace(/\s+/g, " ").trim();
+
 /** A section citation in the house form -- one or more backticked `## <Heading>` spans, optionally
  *  followed by "section"/"sections", then "of" and the file, which may be backticked or bare:
  *  `` `## Narration` and `## Cadence` of `Canon/style-guide.md` ``. A line break may fall anywhere
@@ -441,7 +483,7 @@ describe("the canon templates carry every required section, and the prompts read
     for (const name of await mdFiles(PROMPTS)) {
       const text = await readFile(path.join(PROMPTS, name), "utf8");
       for (const m of text.matchAll(CITED_HEADING)) {
-        const heading = m[1]!.trim();
+        const heading = citedHeading(m[1]!);
         if (isScriptHeading(heading)) continue;
         if (!required(undefined, heading) && !inOutline(heading)) {
           bad.push(`${name}: \`## ${heading}\` is neither a REQUIRED_SECTIONS heading nor a heading of ${path.basename(OUTLINE_TEMPLATE)}`);
@@ -449,7 +491,7 @@ describe("the canon templates carry every required section, and the prompts read
       }
       for (const m of text.matchAll(CITATION)) {
         for (const h of m[1]!.matchAll(CITED_HEADING)) {
-          const heading = h[1]!.trim();
+          const heading = citedHeading(h[1]!);
           if (!required(m[2]!, heading)) bad.push(`${name}: \`## ${heading}\` of ${m[2]} is no REQUIRED_SECTIONS row`);
         }
       }
@@ -489,7 +531,7 @@ describe("the outline template carries every section the prompts name", () => {
       const text = await readFile(path.join(PROMPTS, name), "utf8");
       for (const re of [CITED_HEADING, QUOTED_HEADING]) {
         for (const m of text.matchAll(re)) {
-          const heading = m[1]!.trim();
+          const heading = citedHeading(m[1]!);
           // A script's own scene headers are upper case and belong to no template.
           if (isScriptHeading(heading)) continue;
           if (isBibleSection(heading) || inOutline(heading)) continue;

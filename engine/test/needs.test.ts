@@ -24,12 +24,15 @@ const show: ShowConfig = {
   models: { medium: "m", large: "l", writer: "w" }, airMap: {}, output: { nasRoot: "/nas" },
 };
 
-/** The fixture show: one cast index and the files it points at. Six subjects, each of which is a
- *  case the probe below asserts on — Vale complete (a face on disk and a LOCKED voice whose WAV is
- *  on disk), the Warden a face and a voice that is still a CANDIDATE, Harbor a location with a
- *  face, Ghost a face reference that names a file nobody made, Dock Hand Pim an entry filed under
- *  the short key `pim` with a face and **no** voice, and Quiet Pim a face and no voice, which is
- *  all a subject who does not speak needs. */
+/** The fixture show: one cast index and the files it points at. Seven subjects, each of which is a
+ *  case the probe below asserts on — Vale complete (a LOCKED voice whose WAV is on disk), the
+ *  Warden a voice that is still a CANDIDATE, Harbor a location, Ghost a `face.ref` naming a file
+ *  nobody made, Dock Hand Pim an entry filed under the short key `pim` with **no** voice, Quiet
+ *  Pim no voice and no `speaks` tag on the page, and Maeve no `face` key at all.
+ *
+ *  The faces are fixture detail rather than demands: since spec 2026-11-04 §7 the probe looks at
+ *  no face, so Ghost's broken reference and Maeve's absent one are both clean, and whether a shot
+ *  needs a face is the shot list's lint to answer (`scripts/shot-list-check.py`). */
 async function show1() {
   const root = await mkdtemp(path.join(tmpdir(), "show-"));
   const w = async (rel: string, text: string) => { await mkdir(path.dirname(path.join(root, rel)), { recursive: true }); await writeFile(path.join(root, rel), text); };
@@ -49,6 +52,7 @@ async function show1() {
       ghost: { name: "Ghost", kind: "human", speaks: false, face: { ref: "Canon/characters/Ghost/missing.png", gallery: [] } },
       pim: { name: "Dock Hand Pim", kind: "human", speaks: true, debut: "s02e01", face: { ref: "Canon/characters/Pim/ref.png", gallery: [] } },
       "quiet-pim": { name: "Quiet Pim", kind: "human", speaks: false, face: { ref: "Canon/characters/QuietPim/ref.png", gallery: [] } },
+      maeve: { name: "Maeve", kind: "human", speaks: false, debut: "s02e01" },
     },
   }));
   await w("Canon/characters/Vale/ref.png", "png"); await w("Canon/characters/Warden/ref.png", "png"); await w("Canon/locations/harbor.png", "png");
@@ -119,20 +123,27 @@ describe("parseCastSection", () => {
 });
 
 describe("missingRefs", () => {
-  it("is empty when every recurring subject has its image and every speaker its locked voice", async () => {
+  it("is empty when every speaker has a LOCKED voice with its WAV, whatever the faces say", async () => {
     const { root, w } = await show1();
     await w("Episodes/s02e01/outline.md", "## Cast\n- Vale (recurring, speaks)\n- Harbor (location)\n");
     expect(await missingRefs(root, "s02e01", show)).toEqual([]);
+    // Spec 2026-11-04 §7: the probe demands no face, so an entry carrying no `face` key at all and
+    // no `speaks` tag on the page — Maeve — is satisfied by the entry alone, and so is Ghost, whose
+    // `face.ref` names a file the fixture never writes. The engine authors no character shot, and
+    // the lint refuses a shot whose refs name an entry with no face on disk, which is where the
+    // demand lives now (spec 2026-11-04 §2.5 rule 3).
+    await w("Episodes/s02e01/outline.md", "## Cast\n- Vale (recurring, speaks)\n- Harbor (location)\n- Maeve (recurring)\n- Ghost (recurring)\n");
+    expect(await missingRefs(root, "s02e01", show)).toEqual([]);
   });
-  it("names a missing image, an unlocked voice, a subject with no entry, and a speaking guest with no voice", async () => {
+  it("names an unlocked voice, a subject with no entry, and a speaking guest with no voice", async () => {
     const { root, w } = await show1();
     // Every subject on the page is looked up in the index the same way, speaking or not, recurring
-    // or guest: the four findings below are one entry each. Quiet Pim is the fifth line and
-    // produces nothing, which is the proof that a guest who does not speak needs a face and no
-    // voice — and that a guest is no longer satisfied by a WAV someone dropped in a directory.
+    // or guest: the three findings below are one entry each. Two of the five lines produce nothing
+    // — Ghost, whose `face.ref` names a file nobody made (no finding since spec 2026-11-04 §7
+    // dropped the face demand), and Quiet Pim, who does not speak and therefore owes no voice —
+    // and a guest is no longer satisfied by a WAV someone dropped in a directory.
     await w("Episodes/s02e01/outline.md", "## Cast\n- Ghost (recurring)\n- the Warden (recurring, speaks)\n- Nobody (recurring)\n- Dock Hand Pim (guest, speaks)\n- Quiet Pim (guest)\n");
     expect(await missingRefs(root, "s02e01", show)).toEqual([
-      "Ghost: reference image missing at Canon/characters/Ghost/missing.png (Canon/cast.json key ghost)",
       "the Warden: voice is not LOCKED in Canon/cast.json (key the-warden)",
       "Nobody: no entry in Canon/cast.json (tried nobody, the-nobody)",
       "Dock Hand Pim: no voice in Canon/cast.json (key pim)",
@@ -256,7 +267,7 @@ describe("missingShowrunnerImages and episodeNeeds", () => {
     const { root, w } = await show1();
     expect(await missingShowrunnerImages(root, "s02e01", show)).toEqual([]);
     await w("Production/s02e01/images/prompts.json", JSON.stringify({ shots: [
-      { id: "s01-a", type: "ambient" }, { id: "s02-b", type: "character", source: "showrunner" }, { id: "s03-c", type: "character", source: "showrunner" }, { id: "s04-d", type: "character", source: "pipeline" },
+      { id: "s01-a", type: "establishing", source: "pipeline" }, { id: "s02-b", type: "character", source: "showrunner" }, { id: "s03-c", type: "character", source: "showrunner" }, { id: "s04-d", type: "character", source: "pipeline" },
     ] }));
     await w("Production/s02e01/images/s03-c.png", "png");
     expect(await missingShowrunnerImages(root, "s02e01", show)).toEqual(["s02-b"]);
