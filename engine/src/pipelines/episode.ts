@@ -387,14 +387,17 @@ export function episodePipeline(opts: EpisodePipelineOptions): Pipeline {
       kind: "script", id: "shot-list-check-final", dependsOn: ["visual-direction-fix"], when: (ctx) => String(ctx.results["shot-list-check"] ?? "").startsWith("SHOTS_BAD"),
       argv: py("shot-list-check.py"), inputs: [script, prompts, castIndex], timeoutMs: MIN,
     },
-    { kind: "script", id: "nano-banana-generate", dependsOn: ["shot-list-check-final"], argv: py("nano-banana-generate.py"), inputs: [prompts, castIndex], timeoutMs: 3 * HOUR },
+    // The three renderer steps opt out of the step cache (spec 2026-11-04 §4): the renderer skips
+    // a shot whose PNG is on disk, and the PNGs are declared as nobody's outputs, so a cached
+    // completion on an unchanged shot list would leave a PNG the audit deleted unrendered.
+    { kind: "script", id: "nano-banana-generate", dependsOn: ["shot-list-check-final"], argv: py("nano-banana-generate.py"), inputs: [prompts, castIndex], cache: "never", timeoutMs: 3 * HOUR },
     imageAudit(1, ["nano-banana-generate"]),
     // Each re-roll is a paid call, and the renderer skips a shot whose PNG is on disk, so a
     // regenerate step renders exactly the shots whose PNGs the audit deleted. Two re-roll rounds
     // is the cap, which spec 2026-11-04 §4 keeps unchanged.
-    { kind: "script", id: "image-regenerate-1", dependsOn: ["image-audit-1"], when: auditFailed(1), argv: py("nano-banana-generate.py"), inputs: [prompts, castIndex], timeoutMs: 3 * HOUR },
+    { kind: "script", id: "image-regenerate-1", dependsOn: ["image-audit-1"], when: auditFailed(1), argv: py("nano-banana-generate.py"), inputs: [prompts, castIndex], cache: "never", timeoutMs: 3 * HOUR },
     imageAudit(2, ["image-regenerate-1"], auditFailed(1)),
-    { kind: "script", id: "image-regenerate-2", dependsOn: ["image-audit-2"], when: auditFailed(2), argv: py("nano-banana-generate.py"), inputs: [prompts, castIndex], timeoutMs: 3 * HOUR },
+    { kind: "script", id: "image-regenerate-2", dependsOn: ["image-audit-2"], when: auditFailed(2), argv: py("nano-banana-generate.py"), inputs: [prompts, castIndex], cache: "never", timeoutMs: 3 * HOUR },
     imageAudit(3, ["image-regenerate-2"], auditFailed(2)),
     {
       kind: "guard", id: "image-audit-verdict", dependsOn: ["image-audit-3"],

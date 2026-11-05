@@ -428,7 +428,10 @@ async function runScriptStep(
   const inputs = step.inputs ?? [];
   const outputs = step.outputs ?? [];
   const inputHashes = await hashFiles(ctx.showRoot, inputs);
-  const prior = lastCompletion(step.id, allLogs);
+  // A step that declares `cache: "never"` is never served from a prior completion (spec
+  // 2026-11-04 §4): the lookup is skipped, so neither step_cached nor input_changed is logged for
+  // it, and the step_started below still records its input hashes.
+  const prior = step.cache === "never" ? undefined : lastCompletion(step.id, allLogs);
   if (prior && inputs.length > 0) {
     const outputHashesNow = await hashFiles(ctx.showRoot, outputs);
     if (sameHashes(prior.inputHashes, inputHashes) && sameHashes(prior.outputHashes, outputHashesNow)) {

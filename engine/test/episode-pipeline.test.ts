@@ -128,6 +128,18 @@ describe("episodePipeline", () => {
     }
   });
 
+  it("the three renderer steps opt out of the step cache, so a deleted PNG is re-rendered", () => {
+    // Spec 2026-11-04 §4: the PNGs the renderer writes are nobody's declared outputs, so a
+    // completion served from the declared hashes would leave a PNG the vision audit deleted
+    // unrendered whenever `prompts.json` had not changed. Re-running costs nothing, because the
+    // renderer skips a shot whose PNG is on disk.
+    for (const id of ["nano-banana-generate", "image-regenerate-1", "image-regenerate-2"]) {
+      const step = p.steps.find((s) => s.id === id);
+      expect(step?.kind, id).toBe("script");
+      expect((step as { cache?: string }).cache, id).toBe("never");
+    }
+  });
+
   it("the image stage is lint, render, audit loop, sheet, one gate, guard", () => {
     // Spec 2026-11-04 §4's table as declaration order: the fifteen steps from the visual director
     // to the final sheet. The console's run view and its gate handlers name these ids, so the
@@ -324,9 +336,9 @@ export function fakeExecutors(root: string, knobs: { failOnce?: Set<string>; rev
         // draft fake writes. s02's brief names its place, so the place's cast key is in `refs` —
         // which is the lint's rule (§2.5 rule 2) and not something the engine reads.
         await w(`Production/${ep}/images/prompts.json`, JSON.stringify({ episode: ep, shots: [
-          { id: "s01-establishing", scene: "SCENE 1", type: "establishing", source: "pipeline", brief: "the dock at first light", width: 1024, height: 576 },
-          { id: "s02-establishing", scene: "SCENE 2", type: "establishing", source: "pipeline", brief: "Harbor from the gantry, rain", refs: ["harbor"], width: 1024, height: 576 },
-          { id: "s03-establishing", scene: "SCENE 3", type: "establishing", source: "pipeline", brief: "the office at the night watch", width: 1024, height: 576 },
+          { id: "s1-establishing", scene: "SCENE 1", type: "establishing", source: "pipeline", brief: "the dock at first light", width: 1024, height: 576 },
+          { id: "s2-establishing", scene: "SCENE 2", type: "establishing", source: "pipeline", brief: "Harbor from the gantry, rain", refs: ["harbor"], width: 1024, height: 576 },
+          { id: "s3-establishing", scene: "SCENE 3", type: "establishing", source: "pipeline", brief: "the office at the night watch", width: 1024, height: 576 },
         ] }));
         return { ok: true, text: "3 shots", toolCalls: 2 };
       case "image-audit-1": case "image-audit-2": case "image-audit-3":
@@ -335,9 +347,10 @@ export function fakeExecutors(root: string, knobs: { failOnce?: Set<string>; rev
         // What image-gate.reject.md orders (spec 2026-11-04 §4.1): the note is folded into the
         // named shot's `brief` and that shot's PNG is deleted so the renderer re-rolls it, and a
         // note saying the showrunner will make a shot himself sets that shot's `source` to
-        // `showrunner` instead of re-rolling it. The file has to stay valid JSON — the renderer
-        // parses it — and it has to change, or the renderer would be served from the script cache
-        // on the restarted pass.
+        // `showrunner` instead of re-rolling it. The file has to stay valid JSON, because the
+        // renderer parses it. It does not have to change for the renderer to run again: the three
+        // renderer steps declare `cache: "never"` (spec 2026-11-04 §4), so the restarted pass
+        // re-renders whatever PNG is missing even on an unchanged shot list.
         const rel = `Production/${ep}/images/prompts.json`;
         const doc = JSON.parse(await readFile(path.join(root, rel), "utf8")) as { shots: { id: string; brief: string; source?: string }[] };
         const note = String(ctx.results["image-gate:rejection"] ?? "");
@@ -443,11 +456,11 @@ describe("the episode pipeline, walked", () => {
     expect(calls).not.toContain("visual-direction-fix"); // the lint said SHOTS_OK, so its fix loop was bypassed
     // An image-gate rejection naming two shots: the fix agent runs first, and `rerunOnReject`'s
     // single name resets its whole dependency closure — the renderer, the audit loop and the sheet
-    // — so the gate reopens on a re-rendered set. The renderer re-renders only s01-establishing,
-    // whose PNG the fix agent deleted; s03-establishing is the showrunner's own shot now, and
+    // — so the gate reopens on a re-rendered set. The renderer re-renders only s1-establishing,
+    // whose PNG the fix agent deleted; s3-establishing is the showrunner's own shot now, and
     // nothing renders a shot of his.
     const beforeImages = calls.length;
-    await answer("image-gate", false, "s01-establishing is muddy; I'll make s03-establishing myself");
+    await answer("image-gate", false, "s1-establishing is muddy; I'll make s3-establishing myself");
     expect(await go()).toMatchObject({ status: "waiting", gate: { stepId: "image-gate", attempt: 2 } });
     expect(calls.slice(beforeImages)).toEqual(["image-gate-fix", "nano-banana-generate", "image-audit-1", "image-sheet"]);
     const afterImageReject = await log.read();
@@ -460,15 +473,15 @@ describe("the episode pipeline, walked", () => {
     // No gate is reset, this one included: a reset gate re-runs on its recorded approval and emits
     // no event, so the projection would report an answered gate as never reached.
     expect(afterImageReject.filter((e) => e.kind === "step_reset").map((e) => e.stepId)).not.toContain("image-gate");
-    // The rejection made s03-establishing the showrunner's own shot and deleted its PNG, so the
+    // The rejection made s3-establishing the showrunner's own shot and deleted its PNG, so the
     // Board reads NEEDS_IMAGES while the gate waits, and the guard after the gate stops the line
     // until the file is on disk (spec 2026-11-04 §2.4).
     expect(await stage()).toBe("NEEDS_IMAGES");
     await answer("image-gate", true);
     const stopped = await go();
     expect(stopped).toMatchObject({ status: "failed", stepId: "showrunner-images" });
-    expect(stopped.status === "failed" && stopped.error).toMatch(/^NEEDS_IMAGES: drop in s03-establishing/);
-    await w("Production/s02e01/images/s03-establishing.png", "png");
+    expect(stopped.status === "failed" && stopped.error).toMatch(/^NEEDS_IMAGES: drop in s3-establishing/);
+    await w("Production/s02e01/images/s3-establishing.png", "png");
     expect(await stage()).toBe("AUDIO");
     await resumeRun(log, "r1");
 
