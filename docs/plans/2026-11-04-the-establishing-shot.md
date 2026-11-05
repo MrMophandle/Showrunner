@@ -621,9 +621,12 @@ Read (LIVE — these are the law and they grow):
 - `Canon/visual-style.md` — `## The look`, `## Palette`, `## Composition
   rules` and `## The establishing shot`. Every law those sections state
   applies to every brief you write.
-- `Canon/cast.json` — the cast index. You read it to know which names you
-  must NOT write: an establishing shot names no character of the cast, no
-  creature and no species.
+- `Canon/cast.json` — the cast index. You read it for two things: the
+  names you must NOT write (an establishing shot names no person of the
+  cast — no entry of kind character, human, creature or species), and the
+  place entries you MAY name (kind location or ship): when the place you
+  name has a `face.ref`, put its key in the shot's `refs`, so the render
+  conditions on the place's own reference.
 - {{show.episodesDir}}/{{episodeId}}/script.md — its scene headers are
   your list.
 
@@ -648,21 +651,25 @@ Rules:
 - THE ESTABLISHING BRIEF sets the listener in the place. Say where it is,
   the hour and the light, the weather or the air, the scale cues (a
   gantry, a hull, a long table) and the one or two objects the scene
-  turns on. Wide, not close. It names NO character of the cast, NO
-  creature and NO species, and asks for NO legible text. Human figures,
-  if the place needs them, are distant and faceless. Positive description
-  only: name what is in the frame, never what is not (the show's negation
-  law). Do not write the style constants; the renderer appends them.
-- 1024x576 unless a vertical moment truly demands otherwise. No `prompt`,
-  no `seed`, no `refs` on an establishing shot: the renderer is Nano
-  Banana and takes the brief as written.
+  turns on. Wide, not close. It names NO person of the cast (no entry of
+  kind character, human, creature or species) and asks for NO legible
+  text. Human figures, if the place needs them, are distant and faceless.
+  It MAY name the place itself — a location or a ship of the index — and
+  then lists that key in `refs` when the entry has a reference image.
+  Positive description only: name what is in the frame, never what is
+  not (the show's negation law). Do not write the style constants; the
+  renderer appends them.
+- 1024x576 unless a vertical moment truly demands otherwise. No `prompt`
+  and no `seed`: the renderer is Nano Banana and takes the brief as
+  written. `refs` on an establishing shot holds only place keys.
 - `source` is "pipeline". Write "showrunner" only when the premise or the
   outline says the showrunner makes that scene's image himself; the
   renderer never touches a "showrunner" shot and the run waits for its PNG.
 
 The pipeline runs shot-list-check.py after this step; it fails the list on
-a missing or extra scene, a cast name or a species in a brief, or a
-leftover `prompt`/`seed` key. Do not run it yourself; write the list so it
+a missing or extra scene, a person of the cast named in a brief, a named
+place with a reference that is not in `refs`, or a leftover
+`prompt`/`seed` key. Do not run it yourself; write the list so it
 passes. Summarize: the scene count and one line per shot (id — the place).
 ```
 
@@ -675,10 +682,11 @@ check found:
 {{results.shot-list-check}}
 The law: one establishing shot per scene header of
 {{show.episodesDir}}/{{episodeId}}/script.md, id `s<n>-establishing`,
-`scene` equal to the header; an establishing brief names no character of
-`Canon/cast.json`, no creature and no species; a character shot's refs
-are cast-index keys with a reference image on disk; no `prompt` or
-`seed` keys. For each reason the check names, repair that shot (add the
+`scene` equal to the header; an establishing brief names no person of
+`Canon/cast.json` (kind character, human, creature or species) and lists
+in `refs` every place it names that has a reference image; a character
+shot's refs are cast-index keys with a reference image on disk; no
+`prompt` or `seed` keys. For each reason the check names, repair that shot (add the
 missing scene's shot, remove the extra, rewrite the brief around the
 name, drop the key) and change nothing else. The pipeline re-runs the
 check as its own step after your edits and stops the line if it still
@@ -703,10 +711,12 @@ paid Nano Banana call: delete a PNG only for a defect the laws name.
 3. Verdict each still against every numbered law, one at a time, plus
    generation defects (mangled hands, duplicated structures, garbled
    text, a matte border the frame should not have).
-3a. AN ESTABLISHING SHOT that rendered a character of the cast, a
-   creature, a species, or legible text is a DEFECT: rewrite its brief
-   positively around the thing (a wider frame, the place without the
-   figure), then delete the PNG.
+3a. AN ESTABLISHING SHOT that rendered a person of the cast, a creature,
+   a species, or legible text is a DEFECT: rewrite its brief positively
+   around the thing (a wider frame, the place without the figure), then
+   delete the PNG. A place the shot names (a location or ship in its
+   `refs`) must match that place's reference image; a drift is a defect
+   the same way.
 3b. WATERMARK: scan all four corners and edges for a VISIBLE mark — a
    "Gemini" sparkle/star icon, a "✦" mark, an "AI" badge, any logo or
    text stamp. The paid tier's watermark is invisible (fine, expected);
@@ -777,10 +787,10 @@ Summarize what changed, one line per shot.
 
 ```
 ## The establishing shot
-<!-- Q: The engine makes one image per scene — a wide view that sets the listener in the place at that scene's hour and light, with no character of the cast, no creature, no species and no legible text in it. What does an establishing shot of your world always carry (the materials, the weather, the scale of its structures), and what must it never show? -->
+<!-- Q: The engine makes one image per scene — a wide view that sets the listener in the place at that scene's hour and light, with no person of the cast (no character, creature or species) and no legible text in it; the place itself may be named and, when it has a reference image, the render matches it. What does an establishing shot of your world always carry (the materials, the weather, the scale of its structures), and what must it never show? -->
 ```
 
-and under `## Per-episode counts` replace the question with: `<!-- Q: One establishing shot per scene is the engine's count; any shot beyond it is the showrunner's to add at the image gate. Is there a scene kind in your show that never gets one (a black-screen cold open, a title card)? Say so here. -->`. In `tools/templates/canon/visual-audit-laws.md` add a numbered law: "An establishing shot shows the place and no one of the cast: a named character, a creature, a species or legible text in it is a defect."
+and under `## Per-episode counts` replace the question with: `<!-- Q: One establishing shot per scene is the engine's count; any shot beyond it is the showrunner's to add at the image gate. Is there a scene kind in your show that never gets one (a black-screen cold open, a title card)? Say so here. -->`. In `tools/templates/canon/visual-audit-laws.md` add a numbered law: "An establishing shot shows the place and no one of the cast: a person of the cast, a creature, a species or legible text in it is a defect, and a named place that does not match its reference image is a defect."
 
 `tools/src/init/config.ts` lines 112-128: delete `characterKinds`, `ambientPromptScaffold` (and its comment), `collectivePopulatorBans`; keep `styleConstants` and its comment; `refs` was removed by Plan L1's follow-up if it is still there (check `git log -p -S'refs: "Canon/refs.json"' -- tools/src/init/config.ts`; if the key is present, leave it to that plan's deferred record and note it in your report).
 
