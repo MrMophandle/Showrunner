@@ -6,7 +6,7 @@ requires-python = ">=3.11"
 # The union of every script's inline `# /// script` dependency block, listed once. The inline
 # blocks stay in the scripts so a single script still runs standalone under `uv run`; this list is
 # what the test environment and the engine's own runs resolve.
-#   google-genai   nano-banana-generate.py
+#   google-genai   lib/nanobanana.py, and nano-banana-generate.py and design-visual.py through it
 #   kokoro-onnx    tts-generate.py (the legacy kokoro engine)
 #   mlx-audio      tts-generate.py, design-voice.py
 #   numpy          audio-mix.py, breath-qc.py, design-voice.py, truncation-qc.py, tts-generate.py
