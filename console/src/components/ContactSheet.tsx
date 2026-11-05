@@ -11,9 +11,10 @@ import { useApi, type DirEntry } from "../api.js";
  *  note. This component owns no text: it reports the flag set upward and is handed the current
  *  one back, so the notes field has exactly one owner.
  *
- *  Images are not lazily loaded and not thumbnailed: a shot list is forty PNGs from one directory
- *  on the same machine, and a judgment about whether a face reads at distance cannot be made from
- *  a thumbnail. */
+ *  Images are not lazily loaded and not thumbnailed: a shot list is twelve to fifteen PNGs from
+ *  one directory on the same machine — one establishing shot per scene, plus whatever the
+ *  showrunner added to a scene by hand (spec 2026-11-04 §0 and §9) — and a judgment about whether
+ *  a face reads at distance cannot be made from a thumbnail. */
 
 const IMAGE_EXTENSIONS = [".png", ".jpg", ".jpeg", ".webp"];
 
