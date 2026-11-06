@@ -517,6 +517,11 @@ export function Gate() {
 
       <section className="gate-artifacts">
         <h2>what the gate is about</h2>
+        {/* The engine's standing sentence for this gate, printed before the artifacts because the
+            heading above it promised exactly this and delivered only files (Ryan's ruling,
+            2026-11-06, at s02e01's canon gate). Omitted when empty, which is only a gate the
+            pipeline no longer declares. */}
+        {view.purpose !== "" && <p className="gate-purpose">{view.purpose}</p>}
         {view.artifacts.length === 0 && (
           <p className="quiet">
             this gate names no artifacts — the table in <span className="mono">server/gates.ts</span> is keyed on the
@@ -670,7 +675,10 @@ export function Gate() {
           expander that said only "the gate's message" would hide the one sentence naming what is
           ready. The scrolling container inside it is what keeps a message with four-hundred-column
           verdict JSON from scrolling the whole page sideways. */}
-      <details className="gate-message" open={view.artifacts.length === 0}>
+      {/* Open at `canon-gate` as well, because there the message *is* the content — the librarian's
+          account of the canon edits it proposes — and the patch beside it is the support; the
+          collapse stays for the gates whose artifact is something to listen to or look at. */}
+      <details className="gate-message" open={view.artifacts.length === 0 || view.stepId === "canon-gate"}>
         <summary>the gate's message{messageSummary === "" ? "" : ` — ${messageSummary}`}</summary>
         <div className="gate-message-scroll">
           <Markdown text={view.message} className="pane pane-tall" />

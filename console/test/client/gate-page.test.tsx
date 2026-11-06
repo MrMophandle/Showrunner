@@ -79,6 +79,12 @@ const MESSAGE_BODY = "The panel is green after 2 round(s)";
 /** The first line as the summary says it, which is `gateSummaryLine`'s answer for `MESSAGE`. */
 const SUMMARY = "Script drafted: Episodes/s02e01/script.md";
 
+/** The gate's standing purpose, which the page prints under "what the gate is about". This is
+ *  `script-gate`'s own text from the engine's pipeline, verbatim (`engine/src/pipelines/episode.ts`,
+ *  Ryan's ruling of 2026-11-06), since the server fills the field from the pipeline and every show
+ *  gets the same wording. */
+const PURPOSE = "The script is drafted and the review panel is green. Read it as the listener will hear it; edit it in place, or reject with notes. Approval sends it to casting and synthesis.";
+
 function gateView(over: Partial<GateView> = {}): GateView {
   return {
     episodeId: "s02e01",
@@ -87,6 +93,7 @@ function gateView(over: Partial<GateView> = {}): GateView {
     attempt: 1,
     maxAttempts: 10,
     openedAt: "2026-10-15T14:05:00.000Z",
+    purpose: PURPOSE,
     message: MESSAGE,
     artifacts: [{ kind: "markdown", label: "script.md", path: SCRIPT_PATH, url: SCRIPT_URL }],
     verdicts: {},
@@ -358,6 +365,34 @@ describe("the Gate page's order", () => {
     await waitFor(() => { expect(screen.getByText(/this gate names no artifacts/)).toBeInTheDocument(); });
 
     expect(container.querySelector("details")?.open).toBe(true);
+  });
+
+  it("prints the gate's standing purpose under the heading, above the artifact", async () => {
+    // Ryan's ruling of 2026-11-06, made at s02e01's canon gate: the heading "what the gate is
+    // about" introduced only the artifacts, so the page read as blank. The purpose is the
+    // heading's own answer and sits between the two.
+    const { container } = mount(gateView());
+    await waitFor(() => { expect(screen.getByText(SCRIPT_LINE)).toBeInTheDocument(); });
+
+    const purpose = container.querySelector("p.gate-purpose");
+    expect(purpose?.textContent).toBe(PURPOSE);
+    expect(positionOf(container, "what the gate is about")).toBeLessThan(positionOf(container, PURPOSE));
+    expect(positionOf(container, PURPOSE)).toBeLessThan(positionOf(container, SCRIPT_LINE));
+  });
+
+  it("opens the message at canon-gate and keeps it collapsed at image-gate", async () => {
+    // At `canon-gate` the message is the content — the librarian's account of the canon edits it
+    // proposes — and the patch is the support, so the message opens. At `image-gate` the artifact
+    // is something to look at, so the message stays one click away. Both fixtures carry the same
+    // one markdown artifact, because the rule turns on the step id alone.
+    const canon = mount(gateView({ stepId: "canon-gate" }));
+    await waitFor(() => { expect(screen.getByText(SCRIPT_LINE)).toBeInTheDocument(); });
+    expect(canon.container.querySelector<HTMLDetailsElement>("details.gate-message")?.open).toBe(true);
+    cleanup();
+
+    const image = mount(gateView({ stepId: "image-gate" }));
+    await waitFor(() => { expect(screen.getByText(SCRIPT_LINE)).toBeInTheDocument(); });
+    expect(image.container.querySelector<HTMLDetailsElement>("details.gate-message")?.open).toBe(false);
   });
 
   it("keeps the order on a read-only show and offers no answer", async () => {

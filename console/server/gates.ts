@@ -220,7 +220,14 @@ export async function gateView(ctx: ShowContext, store: RunStore, episodeId: str
   // rejections are left before the gate gives up, and which steps are schema-bearing agent steps,
   // which is what makes a result a verdict.
   const description = describePipeline(episodePipeline({ show: ctx.show, episodeId, engineRoot: ctx.engineRoot }));
-  const maxAttempts = description.steps.find((s) => s.id === gate.stepId)?.maxAttempts;
+  const described = description.steps.find((s) => s.id === gate.stepId);
+  const maxAttempts = described?.maxAttempts;
+  // The gate's standing purpose, from the pipeline and never from the log: `gate.message` is the
+  // show's prompt rendered for this run, while the purpose is the engine's own sentence about the
+  // gate, which a run logged before the field existed must still show (Ryan's ruling, 2026-11-06).
+  // Empty for a gate the pipeline no longer declares, which is the same loud-but-harmless silence
+  // `gateArtifacts` gives a renamed gate: the page then draws no purpose line rather than guessing.
+  const purpose = described?.purpose ?? "";
   const schemaBearing = new Set(
     description.steps.filter((s) => s.kind === "agent" && s.schemaFile !== undefined).map((s) => s.id),
   );
@@ -248,6 +255,7 @@ export async function gateView(ctx: ShowContext, store: RunStore, episodeId: str
     stepId: gate.stepId,
     attempt: gate.attempt,
     openedAt: gate.openedAt,
+    purpose,
     message: gate.message,
     artifacts: await gateArtifacts(ctx, episodeId, gate.stepId),
     verdicts,

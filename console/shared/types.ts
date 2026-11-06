@@ -531,6 +531,16 @@ export interface GateView {
   stepId: string;
   attempt: number;
   openedAt: string;
+  /** What this gate is for and what approve and reject do: the engine's own standing sentence for
+   *  this gate (`GateStep.purpose`), the same wording for every show and for every run, which the
+   *  Gate page prints under its "what the gate is about" heading above the artifacts (Ryan's
+   *  ruling, 2026-11-06).
+   *
+   *  **Filled from the pipeline and never from the run's log.** `gateView` reads it off the
+   *  described gate step, so a run logged before the field existed still shows today's wording,
+   *  and an edit to the engine's text changes what an already-open gate prints. The log carries
+   *  only `message` below, which is the show's own prompt rendered against this run. */
+  purpose: string;
   /** The gate's rendered message — several paragraphs of prose, which is why the Board's row
    *  carries the gate's identity and not this. */
   message: string;
