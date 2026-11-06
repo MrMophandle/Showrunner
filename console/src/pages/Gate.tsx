@@ -668,7 +668,7 @@ export function Gate() {
           A native `details` and no state of this page's: the reader's own toggle is the browser's
           to remember, and React patches `open` only when the rendered value changes — which it
           does not do on an SSE notice, the one thing that re-renders this page (the file header's
-          "a notice, never a refetch"). **Open only for a gate with no artifact at all**, so a gate
+          "a notice, never a refetch"). **Open for a gate with no artifact at all, and at `canon-gate` whatever its artifacts** (the exception is explained below), so a gate
           whose step id the artifact table does not know still shows its message without a click.
 
           The summary carries the message's first line (`gateSummaryLine`), because a collapsed
