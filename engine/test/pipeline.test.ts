@@ -11,7 +11,7 @@ const agent = (id: string): AgentStep => ({
 });
 
 const gate = (id: string, onRejectId?: string): GateStep => ({
-  kind: "gate", id, message: () => "approve?", ...(onRejectId === undefined ? {} : { onReject: agent(onRejectId) }),
+  kind: "gate", purpose: "Approve the work, or reject it with notes.", id, message: () => "approve?", ...(onRejectId === undefined ? {} : { onReject: agent(onRejectId) }),
 });
 
 const loop = (id: string, bodyId: string): LoopStep => ({
@@ -94,17 +94,28 @@ describe("downstreamOf", () => {
     expect(() => downstreamOf(p, ["zz"])).toThrow(/unknown step "zz"/);
   });
   it("orderSteps refuses a gate whose rerunOnReject names an unknown step", () => {
-    const bad: Pipeline = { name: "p", steps: [{ kind: "gate", id: "g", message: () => "m", rerunOnReject: ["nope"] }] };
+    const bad: Pipeline = { name: "p", steps: [{ kind: "gate", purpose: "Approve the work, or reject it with notes.", id: "g", message: () => "m", rerunOnReject: ["nope"] }] };
     expect(() => orderSteps(bad)).toThrow(/gate "g" names unknown step "nope" in rerunOnReject/);
   });
   it("orderSteps refuses a gate with neither message nor messageFile, and one with both", () => {
-    const neither: Pipeline = { name: "p", steps: [{ kind: "gate", id: "g" }] };
+    const neither: Pipeline = { name: "p", steps: [{ kind: "gate", purpose: "Approve the work, or reject it with notes.", id: "g" }] };
     expect(() => orderSteps(neither)).toThrow(PipelineError);
     expect(() => orderSteps(neither)).toThrow(/gate "g" sets neither message nor messageFile; set exactly one/);
-    const both: Pipeline = { name: "p", steps: [{ kind: "gate", id: "g", message: () => "m", messageFile: "g.md" }] };
+    const both: Pipeline = { name: "p", steps: [{ kind: "gate", purpose: "Approve the work, or reject it with notes.", id: "g", message: () => "m", messageFile: "g.md" }] };
     expect(() => orderSteps(both)).toThrow(/gate "g" sets both message and messageFile; set exactly one/);
-    const file: Pipeline = { name: "p", steps: [{ kind: "gate", id: "g", messageFile: "g.md" }] };
+    const file: Pipeline = { name: "p", steps: [{ kind: "gate", purpose: "Approve the work, or reject it with notes.", id: "g", messageFile: "g.md" }] };
     expect(() => orderSteps(file)).not.toThrow();
+  });
+  it("orderSteps refuses a gate whose purpose is empty or blank", () => {
+    // The purpose is what the console prints under "what the gate is about" (Ryan's ruling,
+    // 2026-11-06), so a gate that declares an empty one draws the blank page the ruling was made
+    // about. Blank-but-not-empty is refused too: a gate whose purpose is three spaces says as
+    // little as one whose purpose is "".
+    const empty: Pipeline = { name: "p", steps: [{ kind: "gate", purpose: "", id: "g", messageFile: "g.md" }] };
+    expect(() => orderSteps(empty)).toThrow(PipelineError);
+    expect(() => orderSteps(empty)).toThrow(/gate "g" declares an empty purpose/);
+    const blank: Pipeline = { name: "p", steps: [{ kind: "gate", purpose: "   \n ", id: "g", messageFile: "g.md" }] };
+    expect(() => orderSteps(blank)).toThrow(/gate "g" declares an empty purpose/);
   });
 });
 
@@ -114,7 +125,7 @@ describe("describePipeline", () => {
       { kind: "guard", id: "g0", check: () => ({ pass: true }) },
       { kind: "script", id: "s", dependsOn: ["g0"], argv: () => ["true"], inputs: ["a.md"], outputs: ["b.md"], cwd: "/x", timeoutMs: 5 },
       { kind: "agent", id: "a", dependsOn: ["s"], promptFile: "a.md", schemaFile: "a.schema.json", model: "medium", allowedTools: ["Read"], context: "fresh", when: () => true },
-      { kind: "gate", id: "g", dependsOn: ["a"], messageFile: "g.gate.md", maxAttempts: 3, rerunOnReject: ["s"], onReject: { kind: "agent", id: "g-fix", promptFile: "g.reject.md", model: "writer", allowedTools: [], context: "fresh" } },
+      { kind: "gate", purpose: "Approve the work, or reject it with notes.", id: "g", dependsOn: ["a"], messageFile: "g.gate.md", maxAttempts: 3, rerunOnReject: ["s"], onReject: { kind: "agent", id: "g-fix", promptFile: "g.reject.md", model: "writer", allowedTools: [], context: "fresh" } },
       { kind: "loop", id: "l", dependsOn: ["g"], until: "DONE", maxIterations: 2, body: { kind: "agent", id: "l-body", promptFile: "l.md", model: "writer", allowedTools: [], context: "shared" } },
     ] };
     const d = describePipeline(p);
@@ -122,7 +133,7 @@ describe("describePipeline", () => {
     expect(d.steps.map((s) => s.id)).toEqual(["g0", "s", "a", "g", "l"]);
     expect(d.steps[1]).toEqual({ id: "s", kind: "script", dependsOn: ["g0"], inputs: ["a.md"], outputs: ["b.md"], when: false, cwd: "/x", timeoutMs: 5 });
     expect(d.steps[2]).toMatchObject({ id: "a", kind: "agent", when: true, promptFile: "a.md", schemaFile: "a.schema.json", model: "medium", allowedTools: ["Read"], context: "fresh" });
-    expect(d.steps[3]).toMatchObject({ id: "g", kind: "gate", messageFile: "g.gate.md", maxAttempts: 3, rerunOnReject: ["s"], onReject: { id: "g-fix", promptFile: "g.reject.md", model: "writer" } });
+    expect(d.steps[3]).toMatchObject({ id: "g", kind: "gate", purpose: "Approve the work, or reject it with notes.", messageFile: "g.gate.md", maxAttempts: 3, rerunOnReject: ["s"], onReject: { id: "g-fix", promptFile: "g.reject.md", model: "writer" } });
     expect(d.steps[4]).toMatchObject({ id: "l", kind: "loop", until: "DONE", maxIterations: 2, body: { id: "l-body", promptFile: "l.md", model: "writer" } });
     expect(pipelineHash(p)).toMatch(/^[0-9a-f]{64}$/);
     expect(pipelineHash(p)).toBe(pipelineHash({ ...p }));
@@ -134,7 +145,7 @@ describe("describePipeline: vars", () => {
   it("records an agent's and a gate's vars with sorted keys, so the hash tracks the values and not the order they were written in", () => {
     const withVars = (vars: Record<string, string>): Pipeline => ({ name: "p", steps: [
       { kind: "agent", id: "a", promptFile: "write.md", model: "m", allowedTools: [], context: "fresh", vars },
-      { kind: "gate", id: "gv", dependsOn: ["a"], messageFile: "g.gate.md", vars },
+      { kind: "gate", purpose: "Approve the work, or reject it with notes.", id: "gv", dependsOn: ["a"], messageFile: "g.gate.md", vars },
     ] });
     const d = describePipeline(withVars({ heading: "Voice", file: "Canon/x.md" }));
     expect(d.steps[0]).toMatchObject({ id: "a", vars: { file: "Canon/x.md", heading: "Voice" } });
@@ -153,7 +164,7 @@ describe("describePipeline: vars", () => {
     // A gate's onReject and a loop's body carry vars through NestedAgentStep. They are rendered by
     // the same renderer as any other prompt, so a changed var there is a changed pipeline.
     const nested = (vars: Record<string, string>): Pipeline => ({ name: "p", steps: [
-      { kind: "gate", id: "gn", message: () => "approve?", onReject: { ...agent("gn-fix"), vars } },
+      { kind: "gate", purpose: "Approve the work, or reject it with notes.", id: "gn", message: () => "approve?", onReject: { ...agent("gn-fix"), vars } },
       { kind: "loop", id: "ln", dependsOn: ["gn"], until: "DONE", maxIterations: 2, body: { ...agent("ln-body"), vars } },
     ] });
     const d = nested({ heading: "Voice", file: "Canon/x.md" });

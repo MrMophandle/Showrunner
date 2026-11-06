@@ -65,6 +65,12 @@ export function bibleFilePipeline(opts: BibleFilePipelineOptions): Pipeline {
   }
   steps.push({
     kind: "gate", id: "gate", ...(entry.mode === "interview" ? { dependsOn: ["write"] } : {}), messageFile: "gate.md",
+    // The gate's own standing purpose (`GateStep.purpose`, engine/src/steps.ts), which is a
+    // different thing from `vars.purpose` below: that one is this bible *file's* one-line purpose,
+    // rendered into the three interview prompts. This sentence names only approve and reject,
+    // which are the two answers the engine's gate has; the interview's rendered `gate.md` message
+    // lists the other two the console and the terminal offer (write it yourself, import a file).
+    purpose: "The bible file is written and ready to read. Approve it to keep it as the canon every later prompt reads; reject with notes to have the writer revise it, after which this gate reopens. Every episode is written against this file, so a correction made here is cheaper than one made in a script.",
     maxAttempts: 10, onReject: revise, rerunOnReject: [], vars,
   });
   return { name: `bible-${entry.key}`, steps };

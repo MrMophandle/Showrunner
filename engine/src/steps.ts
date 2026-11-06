@@ -137,6 +137,21 @@ export type GateMessageRenderer = (file: string, ctx: RunContext, vars?: Record<
 
 export interface GateStep extends StepBase {
   kind: "gate";
+  /** The standing statement of what this gate is for and what approve and reject do. **It is the
+   *  pipeline's fact and not the show's**: the same wording for every show, written here in the
+   *  engine, never rendered from a prompt file and never read from a run's log. The console's Gate
+   *  page prints it under its "what the gate is about" heading, above the per-run message
+   *  (Ryan-ruled 2026-11-06, at s02e01's canon gate, where the heading introduced only the
+   *  artifacts and the per-run message sat collapsed at the bottom, so the page read as blank).
+   *
+   *  Required, and `orderSteps` refuses an empty or blank one: a gate with nothing to say about
+   *  itself is the bug this field exists to prevent, and refusing it at load time beats finding it
+   *  hours into a run. `describePipeline` records it, so the console reads it off the description
+   *  per request and a changed purpose changes the pipeline hash.
+   *
+   *  Not to be confused with the bible interview's `vars.purpose`, which is one bible *file's*
+   *  one-line purpose rendered into that file's prompts (`tools/src/init/interview.ts`). */
+  purpose: string;
   /** The message the showrunner is shown, built from the run context. Exactly one of `message` and
    *  `messageFile` is set: `orderSteps` refuses a gate with neither or both. */
   message?: (ctx: RunContext) => string;

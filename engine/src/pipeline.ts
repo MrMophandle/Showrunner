@@ -79,6 +79,13 @@ export function orderSteps(p: Pipeline): Step[] {
   }
   for (const s of p.steps) {
     if (s.kind !== "gate") continue;
+    // Every gate says what it is for. The purpose is the engine's own standing text and the
+    // console prints it above the per-run message (Ryan's ruling, 2026-11-06), so a gate that
+    // declares an empty one would draw the blank page that ruling was made about. Refused at load
+    // time, where it is a missing string, rather than at the gate, hours into a run.
+    if (s.purpose.trim() === "") {
+      throw new PipelineError(`gate ${JSON.stringify(s.id)} declares an empty purpose; give it the standing sentence saying what the gate is for and what approve and reject do, in pipeline ${p.name}`);
+    }
     // Exactly one source for the message the showrunner is shown. Neither leaves the gate with
     // nothing to open with; both leave two answers with no rule for which wins. Either is a
     // mistake worth catching at load time rather than hours in, when the gate is reached.
@@ -149,6 +156,12 @@ export interface StepDescription {
   when: boolean;
   timeoutMs?: number; promptFile?: string; schemaFile?: string; model?: string; allowedTools?: string[]; context?: "fresh" | "shared";
   idleTimeoutMs?: number; messageFile?: string; maxAttempts?: number; rerunOnReject?: StepId[];
+  /** A gate step's `purpose` — the standing statement of what the gate is for, which the console's
+   *  Gate page prints above the per-run message. Described because this is how it reaches the
+   *  console (`gateView`, `console/server/gates.ts`, reads it off the description per request) and
+   *  because changing the wording changes the pipeline hash, which is what makes the change
+   *  visible in a run's log. Present on every gate and on no other kind. */
+  purpose?: string;
   onReject?: NestedStepDescription; body?: NestedStepDescription;
   until?: string; maxIterations?: number; cwd?: string;
   /** A `panel` step's two lists: the steps whose verdicts decide the round, and the steps a failed
@@ -205,6 +218,7 @@ export function describePipeline(p: Pipeline): PipelineDescription {
       if (s.vars !== undefined) d.vars = describeVars(s.vars);
     }
     if (s.kind === "gate") {
+      d.purpose = s.purpose;
       if (s.messageFile !== undefined) d.messageFile = s.messageFile;
       if (s.maxAttempts !== undefined) d.maxAttempts = s.maxAttempts;
       if (s.rerunOnReject !== undefined) d.rerunOnReject = [...s.rerunOnReject];

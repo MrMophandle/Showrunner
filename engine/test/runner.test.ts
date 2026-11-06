@@ -403,7 +403,7 @@ describe("run", () => {
     };
     const pipeline: Pipeline = { name: "p", steps: [
       { kind: "agent", id: "a", promptFile: "a.md", model: "m", allowedTools: [], context: "fresh" },
-      { kind: "gate", id: "g", dependsOn: ["a"], message: () => "m" },
+      { kind: "gate", purpose: "Approve the work, or reject it with notes.", id: "g", dependsOn: ["a"], message: () => "m" },
     ] };
     const log = new EventLog(EventLog.logPath(root, "s02e01", "r1"));
     await run({ pipeline, ctx: { runId: "r1", episodeId: "s02e01", showRoot: root }, log, executors });
@@ -482,7 +482,7 @@ describe("run", () => {
 describe("run: a gate's vars", () => {
   it("hands the gate's own vars to the message renderer", async () => {
     const root = await show();
-    const pipeline: Pipeline = { name: "p", steps: [{ kind: "gate", id: "g", messageFile: "gate.md", vars: { file: "Canon/x.md" } }] };
+    const pipeline: Pipeline = { name: "p", steps: [{ kind: "gate", purpose: "Approve the work, or reject it with notes.", id: "g", messageFile: "gate.md", vars: { file: "Canon/x.md" } }] };
     const log = new EventLog(EventLog.logPath(root, "s02e01", "r1"));
     const r = await run({
       pipeline, ctx: { runId: "r1", episodeId: "s02e01", showRoot: root }, log, executors: okExecutors([]),

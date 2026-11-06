@@ -9,7 +9,7 @@ describe("agent step types", () => {
     const withWhen: NestedAgentStep = { ...base, when: () => true };
     // @ts-expect-error — a nested step may not declare `dependsOn`
     const withDeps: NestedAgentStep = { ...base, dependsOn: ["x"] };
-    const gate: GateStep = { kind: "gate", id: "g", message: () => "?", onReject: nested };
+    const gate: GateStep = { kind: "gate", purpose: "Approve the work, or reject it with notes.", id: "g", message: () => "?", onReject: nested };
     const loop: LoopStep = { kind: "loop", id: "l", body: nested, until: "DONE", maxIterations: 1 };
     expect(gate.onReject?.id).toBe("fix");
     expect(loop.body.id).toBe("fix");

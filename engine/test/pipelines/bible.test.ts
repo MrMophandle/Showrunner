@@ -71,6 +71,27 @@ describe("bibleFilePipeline", () => {
     expect(orderSteps(p).map((s) => s.id)).toEqual(["gate"]);
   });
 
+  it("gives the gate a standing purpose in both modes, described and distinct from the file's own purpose", () => {
+    // Ryan's ruling of 2026-11-06: every gate carries the engine's standing statement of what it
+    // is for. The bible pipeline has exactly one gate, and it is the same gate in both modes —
+    // after `write` for an interviewed file, alone over the template for a default one — so one
+    // purpose serves both. It is asserted non-empty and asserted to be the *gate's* text rather
+    // than `vars.purpose`, which is the bible file's own one-line purpose ("The narration's
+    // voice.") and is a different field that happens to share the name.
+    for (const entry of [interviewed, defaulted]) {
+      const p = bibleFilePipeline({ entry, vars: vars({ file: entry.file, key: entry.key, purpose: entry.purpose }) });
+      const gate = p.steps[p.steps.length - 1] as GateStep;
+      expect(gate.kind).toBe("gate");
+      expect(gate.purpose.trim()).not.toBe("");
+      expect(gate.purpose).toContain("Approve it to keep it as the canon every later prompt reads");
+      expect(gate.purpose).not.toBe(entry.purpose);
+      expect(() => orderSteps(p)).not.toThrow();
+      // The console reads the purpose off the description, so it has to survive describePipeline.
+      const described = describePipeline(p).steps[p.steps.length - 1];
+      expect(described?.purpose).toBe(gate.purpose);
+    }
+  });
+
   it("takes the answers path from the production directory it is given", () => {
     const p = bibleFilePipeline({ entry: interviewed, vars: vars(), productionDir: "Prod" });
     expect((p.steps[0] as AgentStep).inputs).toEqual(["Prod/setup/style-guide/answers.md"]);

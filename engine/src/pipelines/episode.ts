@@ -233,7 +233,12 @@ export function episodePipeline(opts: EpisodePipelineOptions): Pipeline {
       body: { kind: "agent", id: "outline-revise-body", promptFile: "outline-revise.md", model: "writer", allowedTools: ["Read", "Edit", "Write", "Glob", "Grep"], context: "shared", idleTimeoutMs: 15 * MIN },
     },
     {
+      // Every gate of this pipeline carries a `purpose`: the standing sentence the console prints
+      // under "what the gate is about", the same wording for every show (`GateStep.purpose`,
+      // engine/src/steps.ts, Ryan's ruling of 2026-11-06). It is not the per-run message, which is
+      // the show's own `.gate.md` prompt rendered against the run.
       kind: "gate", id: "outline-gate", dependsOn: ["outline-revise", "canon-ledger-outline"], messageFile: "outline-gate.gate.md", maxAttempts: 10,
+      purpose: "The outline is written and reviewed. Approve it to let the writer draft the script scene by scene; reject with notes to have it revised. Nothing is drafted yet, so this is the cheapest place to change the story.",
       onReject: fixAgent("outline-gate-fix", "outline-gate.reject.md", "writer", ["Read", "Edit", "Write", "Glob", "Grep"], [outline]),
       rerunOnReject: ["hand-edits-outline"],
     },
@@ -314,6 +319,7 @@ export function episodePipeline(opts: EpisodePipelineOptions): Pipeline {
     } satisfies PanelStep,
     {
       kind: "gate", id: "script-gate", dependsOn: ["panel", "canon-ledger-script"], messageFile: "script-gate.gate.md", maxAttempts: 10,
+      purpose: "The script is drafted and the review panel is green. Read it as the listener will hear it; edit it in place, or reject with notes. Approval sends it to casting and synthesis.",
       onReject: fixAgent("script-gate-fix", "script-gate.reject.md", "writer", ["Read", "Edit", "Write", "Glob", "Grep"], [script]),
       rerunOnReject: ["hand-edits-script", ...REVIEWERS],
     },
@@ -339,6 +345,7 @@ export function episodePipeline(opts: EpisodePipelineOptions): Pipeline {
     { kind: "script", id: "validate-manifest", dependsOn: ["tts-script"], argv: py("validate-manifest.py"), inputs: [ttsScript, voiceRegistry], timeoutMs: MIN },
     {
       kind: "gate", id: "casting-gate", dependsOn: ["validate-manifest"], messageFile: "casting-gate.gate.md", maxAttempts: 10,
+      purpose: "Every new speaking character has candidate voice takes. Pick one per character; the pick is written into the TTS manifest. Reject to have the takes redesigned.",
       onReject: fixAgent("casting-gate-fix", "casting-gate.reject.md", "medium", ["Read", "Edit", "Write", "Glob", "Grep"], [ttsScript]),
       rerunOnReject: ["validate-manifest"],
     },
@@ -349,6 +356,7 @@ export function episodePipeline(opts: EpisodePipelineOptions): Pipeline {
     { kind: "script", id: "audio-mix", dependsOn: ["breath-qc"], argv: py("audio-mix.py"), inputs: [manifest], outputs: [mix], timeoutMs: 10 * MIN },
     {
       kind: "gate", id: "audio-gate", dependsOn: ["audio-mix"], messageFile: "audio-gate.gate.md", maxAttempts: 5,
+      purpose: "The episode is synthesised and mixed. Listen end to end. Approve to go on to the images; reject with notes naming the lines or voices to resynthesise.",
       onReject: fixAgent("audio-gate-fix", "audio-gate.reject.md", "medium", ["Read", "Edit", "Write", "Glob", "Grep", "Bash"], [ttsScript]),
       rerunOnReject: ["tts-generate"],
     },
@@ -417,6 +425,7 @@ export function episodePipeline(opts: EpisodePipelineOptions): Pipeline {
       // the reset takes its whole dependency closure, so the audit loop, the sheet and this gate
       // all run again on the regenerated set.
       kind: "gate", id: "image-gate", dependsOn: ["image-sheet"], messageFile: "image-gate.gate.md", maxAttempts: 5,
+      purpose: "One establishing shot per scene, rendered and audited. Approve, or reject with notes naming shots to re-render, shots to add to a scene, or shots you will make yourself.",
       onReject: fixAgent("image-gate-fix", "image-gate.reject.md", "medium", ["Read", "Edit", "Write", "Glob", "Grep", "Bash"], [prompts]),
       rerunOnReject: ["nano-banana-generate"],
     },
@@ -460,6 +469,7 @@ export function episodePipeline(opts: EpisodePipelineOptions): Pipeline {
     { kind: "script", id: "master", dependsOn: ["render"], argv: py("master-video.py"), inputs: [video], outputs: [mastered], timeoutMs: 15 * MIN },
     {
       kind: "gate", id: "final-gate", dependsOn: ["master"], messageFile: "final-gate.gate.md", maxAttempts: 2,
+      purpose: "The episode is rendered and mastered, with its logline. Watch it. Approve to produce the publish kit and start the canon update; reject with notes.",
       onReject: fixAgent("final-gate-fix", "final-gate.reject.md", "medium", ["Read", "Edit", "Write", "Glob", "Grep"], [prompts, publishJson]),
       rerunOnReject: ["build-timeline"],
     },
@@ -489,6 +499,7 @@ export function episodePipeline(opts: EpisodePipelineOptions): Pipeline {
     { kind: "script", id: "canon-diff", dependsOn: ["propose"], argv: py("canon-diff.py"), outputs: [`${prod}/canon-diff.patch`], timeoutMs: 15_000 },
     {
       kind: "gate", id: "canon-gate", dependsOn: ["canon-diff"], when: (ctx) => ctx.results["canon-diff"] !== "NO_CHANGES", messageFile: "canon-gate.gate.md", maxAttempts: 10,
+      purpose: "The librarian has proposed the canon edits the finished episode requires. Approve to commit them, which completes the run and lets the next episode start; reject with notes to redo the edits.",
       onReject: fixAgent("canon-gate-fix", "canon-gate.reject.md", "medium", ["Read", "Edit", "Write", "Glob", "Grep"], [canonLedger]),
       rerunOnReject: ["canon-diff"],
     },

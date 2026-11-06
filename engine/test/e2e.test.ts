@@ -51,7 +51,7 @@ describe("end to end", () => {
         { kind: "guard", id: "setup", inputs: ["premise.md"], check: async (ctx) => (await readFile(path.join(ctx.showRoot, "premise.md"), "utf8")).length > 0 ? { pass: true } : { pass: false, message: "no premise" } },
         { kind: "loop", id: "draft-loop", dependsOn: ["setup"], until: "DRAFT_COMPLETE", maxIterations: 5,
           body: { kind: "agent", id: "draft", promptFile: "draft.md", model: "writer", allowedTools: ["Read", "Write"], context: "fresh" } },
-        { kind: "gate", id: "script-gate", dependsOn: ["draft-loop"], message: () => "Read the script", maxAttempts: 3 },
+        { kind: "gate", purpose: "Approve the work, or reject it with notes.", id: "script-gate", dependsOn: ["draft-loop"], message: () => "Read the script", maxAttempts: 3 },
         { kind: "script", id: "stamp", dependsOn: ["script-gate"], inputs: ["script.md"], outputs: ["stamp.txt"],
           argv: (ctx) => ["python3", "-c", "import sys; open(sys.argv[1],'w').write('ok'); print('::progress {\"done\":1,\"total\":1,\"unit\":\"stamps\"}')", path.join(ctx.showRoot, "stamp.txt")] },
       ],
