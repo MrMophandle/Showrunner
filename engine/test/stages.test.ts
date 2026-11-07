@@ -103,7 +103,7 @@ describe("the NEEDS_ windows", () => {
 
 describe("validateStageMap", () => {
   const p: Pipeline = { name: "p", steps: [
-    { kind: "gate", id: "g", message: () => "m" },
+    { kind: "gate", purpose: "Approve the work, or reject it with notes.", id: "g", message: () => "m" },
     { kind: "script", id: "stamp", dependsOn: ["g"], argv: () => ["true"] },
     { kind: "script", id: "maybe", dependsOn: ["g"], when: () => true, argv: () => ["true"] },
   ] };

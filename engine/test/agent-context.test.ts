@@ -89,7 +89,7 @@ describe("the executor inside a run", () => {
     const f = scripted(["sess-F"], ["fixed"]);
     const executors = { script: async () => ({ ok: true as const }), agent: createAgentExecutor({ query: f.query }) };
     const fix: AgentStep = { kind: "agent", id: "fix", promptFile: "fix.md", model: "m", allowedTools: ["Edit"], context: "fresh" };
-    const g: GateStep = { kind: "gate", id: "g", message: () => "ok?", onReject: fix };
+    const g: GateStep = { kind: "gate", purpose: "Approve the work, or reject it with notes.", id: "g", message: () => "ok?", onReject: fix };
     const pipeline: Pipeline = { name: "p", steps: [g] };
     const log = new EventLog(EventLog.logPath(root, "s02e01", "r1"));
     const { answerGate } = await import("../src/runner.js");

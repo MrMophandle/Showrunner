@@ -481,6 +481,11 @@ select { min-height: var(--tap); }
 
 .pane-tall { max-height: 32rem; }
 
+/* The gate's standing purpose, printed under "what the gate is about" and above the artifacts
+   (Ryan's ruling, 2026-11-06). Full-strength text and not `.quiet`: it is the first thing read at
+   a gate, and the page's one answer to "what am I being asked". */
+.gate-purpose { margin: 0.2rem 0 0.8rem; max-width: 64rem; }
+
 /* The gate's message, collapsed behind one expander and last on the page (Ryan's ruling,
    2026-10-15). Quiet, because a thing folded away should not look like a thing being pointed at.
 

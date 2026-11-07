@@ -54,7 +54,7 @@ function pipelineOf(): Pipeline {
   const panel: PanelStep = {
     kind: "panel", id: "panel", dependsOn: [...REVIEWERS], reviewers: [...REVIEWERS], resets: [...RESETS],
   };
-  const gate: GateStep = { kind: "gate", id: "script-gate", dependsOn: ["panel"], messageFile: "script-gate.gate.md" };
+  const gate: GateStep = { kind: "gate", purpose: "Approve the work, or reject it with notes.", id: "script-gate", dependsOn: ["panel"], messageFile: "script-gate.gate.md" };
   return { name: "p", steps: [draft, handEdits, revise, ...REVIEWERS.map(reviewer), panel, gate] };
 }
 

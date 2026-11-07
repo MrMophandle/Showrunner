@@ -37,6 +37,26 @@ describe("the gate view", () => {
     store.close();
   });
 
+  it("carries each gate's standing purpose, read from the pipeline and not from the log's message", async () => {
+    // Ryan's ruling of 2026-11-06: the Gate page prints the engine's standing sentence about the
+    // gate under "what the gate is about". The view takes it from the described pipeline step, so
+    // the assertion is the engine's own text verbatim, and the log's rendered message ("Approve
+    // outline-gate.", which `parkedAt` seeds) is asserted to be a different string — a view that
+    // fell back to the message would pass a mere non-empty check.
+    const outline = await parkedAt("outline-gate");
+    const atOutline = (await gateView(outline.ctx, outline.store, "s02e01", "r1"))!;
+    expect(atOutline.purpose).toBe("The outline is written and reviewed. Approve it to let the writer draft the script scene by scene; reject with notes to have it revised. Nothing is drafted yet, so this is the cheapest place to change the story.");
+    expect(atOutline.message).toBe("Approve outline-gate.");
+    outline.store.close();
+
+    // A second gate, because the purpose has to be this gate's and not the first one in the
+    // pipeline: the view looks the step up by id.
+    const canon = await parkedAt("canon-gate");
+    const atCanon = (await gateView(canon.ctx, canon.store, "s02e01", "r1"))!;
+    expect(atCanon.purpose).toBe("The librarian has proposed the canon edits the finished episode requires. Approve to commit them, which completes the run and lets the next episode start; reject with notes to redo the edits.");
+    canon.store.close();
+  });
+
   it("carries every rejection note the gate has collected, and the attempt it is open at", async () => {
     const { ctx, store } = await parkedAt("script-gate", [
       { stepId: "script-gate", kind: "gate_opened", payload: { attempt: 1, message: "first ask" } },

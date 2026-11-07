@@ -84,6 +84,29 @@ describe("episodePipeline", () => {
     expect(Object.keys(EPISODE_STAGE_MAP.gates).sort()).toEqual([...gates].sort());
   });
 
+  it("gives every gate the standing purpose the console prints, verbatim", () => {
+    // Ryan's ruling of 2026-11-06, made at s02e01's canon gate: every gate carries a standing
+    // description of what it is for, owned by the engine and the same wording for every show, and
+    // the console's Gate page prints it under "what the gate is about" above the per-run message.
+    // The texts are asserted word for word rather than merely tested for being non-empty, because
+    // the wording is the ruling: these sentences are what the showrunner reads before approving,
+    // and an edit to one of them is a decision rather than a refactor.
+    const purposes = new Map(orderSteps(p).flatMap((s) => (s.kind === "gate" ? [[s.id, s.purpose] as const] : [])));
+    expect(purposes.get("outline-gate")).toBe("The outline is written and reviewed. Approve it to let the writer draft the script scene by scene; reject with notes to have it revised. Nothing is drafted yet, so this is the cheapest place to change the story.");
+    expect(purposes.get("script-gate")).toBe("The script is drafted and the review panel is green. Read it as the listener will hear it; edit it in place, or reject with notes. Approval sends it to casting and synthesis.");
+    expect(purposes.get("casting-gate")).toBe("Every new speaking character has candidate voice takes. Pick one per character; the pick is written into the TTS manifest. Reject to have the takes redesigned.");
+    expect(purposes.get("audio-gate")).toBe("The episode is synthesised and mixed. Listen end to end. Approve to go on to the images; reject with notes naming the lines or voices to resynthesise.");
+    expect(purposes.get("image-gate")).toBe("One establishing shot per scene, rendered and audited. Approve, or reject with notes naming shots to re-render, shots to add to a scene, or shots you will make yourself.");
+    expect(purposes.get("final-gate")).toBe("The episode is rendered and mastered, with its logline. Watch it. Approve to produce the publish kit and start the canon update; reject with notes.");
+    expect(purposes.get("canon-gate")).toBe("The librarian has proposed the canon edits the finished episode requires. Approve to commit them, which completes the run and lets the next episode start; reject with notes to redo the edits.");
+    // And no gate added later may go without one: the loop is over the pipeline's own gates, so a
+    // new gate with a blank purpose fails here as well as in `orderSteps`.
+    expect(purposes.size).toBe(7);
+    for (const [id, purpose] of purposes) {
+      expect(purpose.trim(), `gate ${id} declares a blank purpose`).not.toBe("");
+    }
+  });
+
   it("keys each stage to the step that reaches it: the real map's seven gates, eight approved rows and final, exhaustively", () => {
     // The stage map is the Board's only source for "how far along is this episode", and the only
     // automated check on it is validateStageMap, which refuses a key naming no step and a value of

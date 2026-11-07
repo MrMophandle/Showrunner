@@ -15,7 +15,7 @@ async function setup() {
   };
   const fix: AgentStep = { kind: "agent", id: "fix", promptFile: "fix.md", model: "m", allowedTools: [], context: "fresh" };
   const before: GuardStep = { kind: "guard", id: "before", check: () => ({ pass: true }) };
-  const g: GateStep = { kind: "gate", id: "g", dependsOn: ["before"], message: (ctx) => `Approve ${ctx.episodeId}?`, onReject: fix, maxAttempts: 2 };
+  const g: GateStep = { kind: "gate", purpose: "Approve the work, or reject it with notes.", id: "g", dependsOn: ["before"], message: (ctx) => `Approve ${ctx.episodeId}?`, onReject: fix, maxAttempts: 2 };
   const after: GuardStep = { kind: "guard", id: "after", dependsOn: ["g"], check: () => ({ pass: true }) };
   const pipeline: Pipeline = { name: "p", steps: [before, g, after] };
   const log = new EventLog(EventLog.logPath(root, "s02e01", "r1"));
@@ -69,7 +69,7 @@ describe("gates", () => {
 
   it("defaults the attempt cap to 10, and fails once those ten rejections are spent", async () => {
     const { log, ctx, executors } = await setup();
-    const g: GateStep = { kind: "gate", id: "g", message: () => "Approve?" };
+    const g: GateStep = { kind: "gate", purpose: "Approve the work, or reject it with notes.", id: "g", message: () => "Approve?" };
     const pipeline: Pipeline = { name: "p", steps: [g] };
 
     for (let attempt = 1; attempt <= 10; attempt++) {
@@ -148,7 +148,7 @@ describe("gates", () => {
   it("runs the fix agent again for a later rejection, even though an earlier one completed", async () => {
     const { log, ctx, executors, fixCalls } = await setup();
     const fix: AgentStep = { kind: "agent", id: "fix", promptFile: "fix.md", model: "m", allowedTools: [], context: "fresh" };
-    const g: GateStep = { kind: "gate", id: "g", message: () => "Approve?", onReject: fix, maxAttempts: 4 };
+    const g: GateStep = { kind: "gate", purpose: "Approve the work, or reject it with notes.", id: "g", message: () => "Approve?", onReject: fix, maxAttempts: 4 };
     const pipeline: Pipeline = { name: "p", steps: [g] };
 
     await run({ pipeline, ctx, log, executors });
@@ -167,7 +167,7 @@ describe("gates", () => {
   it("never opens a gate whose dependency failed", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "show-"));
     const dep: GuardStep = { kind: "guard", id: "dep", check: () => ({ pass: false, message: "nope" }) };
-    const g: GateStep = { kind: "gate", id: "g", dependsOn: ["dep"], message: () => "Approve?" };
+    const g: GateStep = { kind: "gate", purpose: "Approve the work, or reject it with notes.", id: "g", dependsOn: ["dep"], message: () => "Approve?" };
     const after: GuardStep = { kind: "guard", id: "after", dependsOn: ["g"], check: () => ({ pass: true }) };
     const log = new EventLog(EventLog.logPath(root, "s02e01", "r1"));
     const r = await run({ pipeline: { name: "p", steps: [dep, g, after] }, ctx: { runId: "r1", episodeId: "s02e01", showRoot: root }, log, executors: { script: async () => ({ ok: true }), agent: async () => ({ ok: true, text: "", toolCalls: 0 }) } });
@@ -206,7 +206,7 @@ describe("rerunOnReject", () => {
       { kind: "script", id: "make", argv: () => ["true"] },
       { kind: "agent", id: "review", dependsOn: ["make"], promptFile: "r.md", model: "m", allowedTools: [], context: "fresh" },
       { kind: "script", id: "side", argv: () => ["true"] },
-      { kind: "gate", id: "g", dependsOn: ["review", "side"], message: () => "ok?", maxAttempts: 3,
+      { kind: "gate", purpose: "Approve the work, or reject it with notes.", id: "g", dependsOn: ["review", "side"], message: () => "ok?", maxAttempts: 3,
         onReject: { kind: "agent", id: "fix", promptFile: "f.md", model: "m", allowedTools: [], context: "fresh" },
         rerunOnReject: ["make"] },
       { kind: "script", id: "after", dependsOn: ["g"], argv: () => ["true"] },
@@ -255,7 +255,7 @@ describe("rerunOnReject", () => {
   it("reopens without resetting when the closure is empty (the named step is downstream of the gate)", async () => {
     const { log, ctx, executors, calls } = await rerunSetup();
     const pipeline: Pipeline = { name: "p", steps: [
-      { kind: "gate", id: "g", message: () => "ok?", rerunOnReject: ["after"] },
+      { kind: "gate", purpose: "Approve the work, or reject it with notes.", id: "g", message: () => "ok?", rerunOnReject: ["after"] },
       { kind: "script", id: "after", dependsOn: ["g"], argv: () => ["true"] },
     ] };
     await run({ pipeline, ctx, log, executors });
@@ -270,7 +270,7 @@ describe("rerunOnReject", () => {
     const { log, ctx, executors, calls } = await rerunSetup();
     const pipeline: Pipeline = { name: "p", steps: [
       { kind: "script", id: "make", argv: () => ["true"] },
-      { kind: "gate", id: "g", dependsOn: ["make"], message: () => "ok?", rerunOnReject: ["make"] },
+      { kind: "gate", purpose: "Approve the work, or reject it with notes.", id: "g", dependsOn: ["make"], message: () => "ok?", rerunOnReject: ["make"] },
     ] };
     await run({ pipeline, ctx, log, executors });
     await answerGate(log, "r1", "g", { approved: false, notes: "no" });
@@ -278,7 +278,7 @@ describe("rerunOnReject", () => {
     expect(calls).toEqual(["make", "make"]);
   });
   it("renders a messageFile gate through RunOptions.renderGateMessage, and fails the gate without one", async () => {
-    const pipeline: Pipeline = { name: "p", steps: [{ kind: "gate", id: "g", messageFile: "outline-gate.gate.md" } satisfies GateStep] };
+    const pipeline: Pipeline = { name: "p", steps: [{ kind: "gate", purpose: "Approve the work, or reject it with notes.", id: "g", messageFile: "outline-gate.gate.md" } satisfies GateStep] };
 
     // No renderer: the gate fails rather than opening with a message the showrunner cannot read.
     const bare = await setup();
@@ -295,7 +295,7 @@ describe("rerunOnReject", () => {
   });
 
   it("fails the gate when its messageFile does not render", async () => {
-    const pipeline: Pipeline = { name: "p", steps: [{ kind: "gate", id: "g", messageFile: "hole.gate.md" } satisfies GateStep] };
+    const pipeline: Pipeline = { name: "p", steps: [{ kind: "gate", purpose: "Approve the work, or reject it with notes.", id: "g", messageFile: "hole.gate.md" } satisfies GateStep] };
     const { log, ctx, executors } = await setup();
     const renderGateMessage = async (): Promise<string> => { throw new Error('{{results.missing}}: no result for step "missing"'); };
     const r = await run({ pipeline, ctx, log, executors, renderGateMessage });
@@ -306,7 +306,7 @@ describe("rerunOnReject", () => {
   it("records the fix agent's output hashes on its completion", async () => {
     const { log, ctx, executors } = await setup();
     const fix: AgentStep = { kind: "agent", id: "fix", promptFile: "fix.md", model: "m", allowedTools: [], context: "fresh", outputs: ["draft.md"] };
-    const pipeline: Pipeline = { name: "p", steps: [{ kind: "gate", id: "g", message: () => "?", onReject: fix }] };
+    const pipeline: Pipeline = { name: "p", steps: [{ kind: "gate", purpose: "Approve the work, or reject it with notes.", id: "g", message: () => "?", onReject: fix }] };
     await run({ pipeline, ctx, log, executors });
     await answerGate(log, "r1", "g", { approved: false, notes: "n" });
     await writeFile(path.join(ctx.showRoot, "draft.md"), "edited by the fix agent");
@@ -326,9 +326,9 @@ describe("withdrawApproval", () => {
     };
     const pipeline: Pipeline = { name: "p", steps: [
       { kind: "script", id: "make", argv: () => ["true"] },
-      { kind: "gate", id: "g", dependsOn: ["make"], message: () => "ok?", rerunOnReject: ["make"], onReject: { kind: "agent", id: "fix", promptFile: "f.md", model: "m", allowedTools: [], context: "fresh" } },
+      { kind: "gate", purpose: "Approve the work, or reject it with notes.", id: "g", dependsOn: ["make"], message: () => "ok?", rerunOnReject: ["make"], onReject: { kind: "agent", id: "fix", promptFile: "f.md", model: "m", allowedTools: [], context: "fresh" } },
       { kind: "script", id: "after", dependsOn: ["g"], argv: () => ["true"] },
-      { kind: "gate", id: "g2", dependsOn: ["after"], message: () => "ok2?" },
+      { kind: "gate", purpose: "Approve the work, or reject it with notes.", id: "g2", dependsOn: ["after"], message: () => "ok2?" },
       { kind: "script", id: "last", dependsOn: ["g2"], argv: () => ["true"] },
     ] };
     const log = new EventLog(EventLog.logPath(root, "s02e01", "r1"));
